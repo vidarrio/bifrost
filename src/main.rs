@@ -15,7 +15,7 @@ use axum::{
     extract::{Form, State},
     http::HeaderMap,
     response::{Html, Redirect},
-    routing::get,
+    routing::{get, post},
 };
 use serde::Deserialize;
 use tower_http::trace::TraceLayer;
@@ -32,6 +32,7 @@ type Shared = Arc<RwLock<ap::Board>>;
 struct AppState {
     board: Shared,
     db: db::Db,
+    ap_cfg: Option<ap::ApConfig>,
 }
 
 const LANDING: &str = include_str!("../static/index.html");
@@ -56,8 +57,9 @@ async fn main() {
         .await
         .unwrap_or_else(|e| panic!("open db {db_path}: {e}"));
 
+    let ap_cfg = ap::ApConfig::from_env();
     let board: Shared = Arc::new(RwLock::new(ap::Board::default()));
-    match ap::ApConfig::from_env() {
+    match ap_cfg.clone() {
         Some(cfg) => {
             let coop = parse_coop();
             tracing::info!("AP tracker: watching {} as slot {}", cfg.url, cfg.slot);
@@ -66,13 +68,14 @@ async fn main() {
         None => tracing::info!("AP tracker idle (set BIFROST_SLOT to enable the live board)"),
     }
 
-    let state = AppState { board, db };
+    let state = AppState { board, db, ap_cfg };
     let app = Router::new()
         .route("/health", get(health))
         .route("/", get(landing))
         .route("/check", get(check_form).post(check_run))
         .route("/board", get(board_view))
         .route("/claim", get(claim_get).post(claim_post))
+        .route("/hint", post(hint_post))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
@@ -179,4 +182,47 @@ async fn claim_post(
         _ => {}
     }
     Redirect::to("/claim")
+}
+
+#[derive(Deserialize)]
+struct HintForm {
+    slot_id: i64,
+    item: String,
+}
+
+async fn hint_post(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<HintForm>,
+) -> Html<String> {
+    let (me, is_admin) = identity(&headers);
+    let detail = st.db.slot_detail(f.slot_id).await.ok().flatten();
+    let Some((ap_slot, claimant)) = detail else {
+        return render::hint_result("Unknown slot.", false);
+    };
+    if !(is_admin || claimant.as_deref() == Some(me.as_str())) {
+        return render::hint_result("You haven't claimed that slot.", false);
+    }
+    let connect_name = st
+        .board
+        .read()
+        .ok()
+        .and_then(|b| b.slots.get(&ap_slot).map(|s| s.name.clone()));
+    let Some(name) = connect_name else {
+        return render::hint_result("That slot isn't live right now.", false);
+    };
+    let Some(cfg) = st.ap_cfg.as_ref() else {
+        return render::hint_result("Hinting isn't configured.", false);
+    };
+    match ap::send_hint(&cfg.url, &cfg.password, &name, f.item.trim()).await {
+        Ok(parts) => {
+            let text = st
+                .board
+                .read()
+                .map(|b| ap::resolve_parts(&b, &parts))
+                .unwrap_or_default();
+            render::hint_result(&text, true)
+        }
+        Err(e) => render::hint_result(&format!("Hint failed: {e}"), false),
+    }
 }

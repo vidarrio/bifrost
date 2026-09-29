@@ -120,6 +120,17 @@ impl Db {
         Ok(res.rows_affected() > 0)
     }
 
+    /// (ap_slot, current claimant) for a Bifrost slot, or None if it doesn't exist.
+    pub async fn slot_detail(&self, id: i64) -> Result<Option<(i64, Option<String>)>, sqlx::Error> {
+        sqlx::query_as::<_, (i64, Option<String>)>(
+            "SELECT s.ap_slot, c.sso FROM bifrost_slot s
+             LEFT JOIN claim c ON c.bifrost_slot_id = s.id WHERE s.id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
     /// Release a claim. A non-admin may only release their own; an admin any.
     pub async fn unclaim(
         &self,

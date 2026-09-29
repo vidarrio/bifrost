@@ -43,6 +43,8 @@ h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute
 .seat .who{font-family:var(--mono);font-size:13px}.seat .by{font-family:var(--mono);font-size:11px;color:var(--muted)}
 .seat .by.mine{color:var(--ok)}.seat .free{color:var(--warn)}
 .slot .hint{font-family:var(--mono);font-size:11px;color:var(--warn);margin-top:4px;padding-left:8px;border-left:2px solid var(--bd)}
+.hintform{display:flex;gap:6px;margin:4px 0 8px}.hintform input{flex:1;min-width:0;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:5px 8px;font-size:12px}
+.banner{border-radius:10px;padding:12px 16px;margin:0 0 14px}.banner.ok{background:rgba(40,165,109,.15);border:1px solid var(--ok)}.banner.bad{background:rgba(226,77,95,.13);border:1px solid var(--bad)}
 button{background:var(--accent);color:#0d1117;border:0;border-radius:7px;padding:5px 12px;font-weight:600;font-size:12px;cursor:pointer}
 button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted)}
 .feed{display:grid;gap:6px}.ev{display:flex;gap:8px;font-size:13px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px}
@@ -198,11 +200,31 @@ pub fn claim_page(
                 r#"<div class="seat"><span class="who">{}</span><span>{by} {action}</span></div>"#,
                 esc(&r.name)
             ));
+            if mine {
+                out.push_str(&format!(
+                    r#"<form class="hintform" method="post" action="/hint">
+<input type="hidden" name="slot_id" value="{}"><input name="item" placeholder="hint one of your items…" required>
+<button type="submit">Hint</button></form>"#,
+                    r.id
+                ));
+            }
         }
         out.push_str("</div>");
     }
     out.push_str("</div></main></body></html>");
     Html(out)
+}
+
+pub fn hint_result(text: &str, ok: bool) -> Html<String> {
+    let mut b = String::from(HEAD);
+    let cls = if ok { "banner ok" } else { "banner bad" };
+    b.push_str(&format!(
+        r#"<h1>Hint</h1><div class="crumb"><a href="/claim">← claim</a></div>
+<div class="{cls}">{}</div><div><a href="/board">see the board →</a></div>"#,
+        esc(text)
+    ));
+    b.push_str("</main></body></html>");
+    Html(b)
 }
 
 fn claim_button(id: i64, op: &str, label: &str, ghost: bool) -> String {

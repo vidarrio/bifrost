@@ -514,3 +514,102 @@ fn on_bounced(board: &Arc<RwLock<Board>>, pkt: &Value) {
         b.push_event("death", text);
     }
 }
+
+// ---- hinting (a short-lived connection AS the target AP slot) ----
+
+/// Connect as `name` (the AP slot's connect name), run `!hint <item>`, and
+/// return the CommandResult's message parts. The hint spends *that* slot's
+/// points, which is why we connect as it rather than acting as admin.
+pub async fn send_hint(
+    url: &str,
+    password: &str,
+    name: &str,
+    item: &str,
+) -> Result<Vec<Value>, String> {
+    let fut = async {
+        let (ws, _) = tokio_tungstenite::connect_async(url)
+            .await
+            .map_err(|e| format!("connect: {e}"))?;
+        let (mut tx, mut rx) = ws.split();
+        let mut said = false;
+        while let Some(msg) = rx.next().await {
+            let msg = msg.map_err(|e| format!("recv: {e}"))?;
+            let text = match msg {
+                Message::Text(t) => t.to_string(),
+                Message::Ping(p) => {
+                    let _ = tx.send(Message::Pong(p)).await;
+                    continue;
+                }
+                Message::Close(_) => return Err("server closed".to_string()),
+                _ => continue,
+            };
+            let packets: Vec<Value> = serde_json::from_str(&text).map_err(|_| "bad json")?;
+            for pkt in packets {
+                match pkt.get("cmd").and_then(Value::as_str).unwrap_or("") {
+                    "RoomInfo" => {
+                        let connect = json!([{
+                            "cmd": "Connect", "game": "", "name": name, "uuid": "bifrost-hint",
+                            "version": {"class": "Version", "major": 0, "minor": 6, "build": 7},
+                            "items_handling": 0, "tags": ["TextOnly"], "slot_data": false,
+                            "password": password,
+                        }]);
+                        tx.send(Message::Text(connect.to_string()))
+                            .await
+                            .map_err(|e| format!("send Connect: {e}"))?;
+                    }
+                    "ConnectionRefused" => {
+                        let errs = pkt.get("errors").map(|e| e.to_string()).unwrap_or_default();
+                        return Err(format!("connection refused: {errs}"));
+                    }
+                    "Connected" if !said => {
+                        let say = json!([{ "cmd": "Say", "text": format!("!hint {item}") }]);
+                        tx.send(Message::Text(say.to_string()))
+                            .await
+                            .map_err(|e| format!("send Say: {e}"))?;
+                        said = true;
+                    }
+                    "PrintJSON"
+                        if pkt.get("type").and_then(Value::as_str) == Some("CommandResult") =>
+                    {
+                        if let Some(data) = pkt.get("data").and_then(Value::as_array) {
+                            return Ok(data.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Err("no response".to_string())
+    };
+    tokio::time::timeout(Duration::from_secs(8), fut)
+        .await
+        .map_err(|_| "hint timed out".to_string())?
+}
+
+/// Resolve a PrintJSON `data` list into readable text, using the board's slot
+/// names + the season metadata for item/location names.
+pub fn resolve_parts(b: &Board, parts: &[Value]) -> String {
+    let mut out = String::new();
+    for p in parts {
+        let ty = p.get("type").and_then(Value::as_str).unwrap_or("text");
+        let text = p.get("text").and_then(Value::as_str).unwrap_or("");
+        match ty {
+            "player_id" => out.push_str(&b.name_of(text.parse().unwrap_or(0))),
+            "item_id" | "location_id" => {
+                let owner = p.get("player").and_then(Value::as_i64).unwrap_or(0);
+                let id: i64 = text.parse().unwrap_or(0);
+                let game = b.slots.get(&owner).map(|x| x.game.as_str()).unwrap_or("");
+                let resolved = b.meta.as_ref().and_then(|m| {
+                    if ty == "item_id" {
+                        m.item_name(game, id)
+                    } else {
+                        m.location_name(game, id)
+                    }
+                });
+                out.push_str(resolved.unwrap_or(text));
+            }
+            _ => out.push_str(text),
+        }
+    }
+    out
+}
