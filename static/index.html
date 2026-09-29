@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bifrost</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161c26; --bd:#2a3542; --fg:#e6e9ef; --muted:#98a3b6;
+    --accent:#5aa9e6; --accent2:#c58af9; --ok:#28a56d;
+    --font:"IBM Plex Sans", system-ui, -apple-system, Segoe UI, sans-serif;
+    --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0; background:
+      radial-gradient(1200px 500px at 50% -10%, rgba(90,169,230,.14), transparent 60%),
+      var(--bg);
+    color:var(--fg); font-family:var(--font); line-height:1.55;
+    min-height:100vh; display:flex; flex-direction:column; align-items:center}
+  main{width:100%; max-width:760px; padding:16px; padding-block:8vh 40px}
+  .brand{display:flex; align-items:baseline; gap:14px; flex-wrap:wrap}
+  h1{font-size:44px; margin:0; letter-spacing:-.02em;
+     background:linear-gradient(90deg,var(--accent),var(--accent2));
+     -webkit-background-clip:text; background-clip:text; color:transparent}
+  .tag{font-family:var(--mono); font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted)}
+  .lede{color:var(--muted); font-size:16px; max-width:60ch; margin:14px 0 28px}
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+  @media (max-width:560px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel); border:1px solid var(--bd); border-radius:12px; padding:16px 18px}
+  .card h2{font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin:0 0 8px}
+  .connect{font-family:var(--mono); font-size:18px; color:var(--fg)}
+  .hint{color:var(--muted); font-size:13px; margin-top:6px}
+  .soon{display:inline-block; font-family:var(--mono); font-size:10px; letter-spacing:.08em;
+        text-transform:uppercase; color:var(--accent); border:1px solid var(--bd);
+        border-radius:999px; padding:2px 8px; margin-left:8px; vertical-align:middle}
+  ul.links{list-style:none; padding:0; margin:0; display:grid; gap:8px}
+  ul.links a{color:var(--accent); text-decoration:none}
+  ul.links a:hover{text-decoration:underline}
+  footer{color:var(--muted); font-family:var(--mono); font-size:11px; margin-top:34px}
+</style>
+</head>
+<body>
+<main>
+  <div class="brand">
+    <h1>Bifrost</h1>
+    <span class="tag">archipelago</span>
+  </div>
+  <p class="lede">The bridge between the worlds — one place for our Archipelago multiworlds: how to connect, checking your YAML, and watching the run live.</p>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Current season</h2>
+      <div class="connect">ap.example.org:38281</div>
+      <div class="hint">Password shared in Discord. Bring your game's client + AP mod.</div>
+    </div>
+    <div class="card">
+      <h2>Trackers</h2>
+      <ul class="links">
+        <li><a href="https://github.com/FarisTheAncient/Archipelago/releases" target="_blank" rel="noopener">Universal Tracker</a> — in-logic locations</li>
+        <li><a href="https://github.com/black-sliver/PopTracker" target="_blank" rel="noopener">PopTracker</a> — per-game maps</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h2>YAML checker <span class="soon">soon</span></h2>
+      <div class="hint">Validate your options file against the installed worlds before submitting.</div>
+    </div>
+    <div class="card">
+      <h2>Live board <span class="soon">soon</span></h2>
+      <div class="hint">Everyone's checks, hints, goals and DeathLinks, live.</div>
+    </div>
+  </div>
+
+  <footer>Bifrost · phase 0</footer>
+</main>
+</body>
+</html>
