@@ -12,7 +12,6 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use axum::response::Html;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
@@ -62,6 +61,48 @@ impl Board {
     }
 }
 
+/// Live per-AP-slot figures, snapshotted for rendering without holding the lock.
+#[derive(Clone, Default)]
+pub struct ApLive {
+    pub status: i64,
+    pub hints: usize,
+    pub sent: u64,
+    pub received: u64,
+}
+
+/// An owned copy of what the pages need to render, taken under one short lock.
+pub struct BoardSnapshot {
+    pub connected: bool,
+    pub seed: Option<String>,
+    pub ap: BTreeMap<i64, ApLive>,
+    pub events: Vec<Event>,
+}
+
+impl Board {
+    pub fn snapshot(&self) -> BoardSnapshot {
+        BoardSnapshot {
+            connected: self.connected,
+            seed: self.seed.clone(),
+            ap: self
+                .slots
+                .iter()
+                .map(|(n, s)| {
+                    (
+                        *n,
+                        ApLive {
+                            status: s.status,
+                            hints: s.hints,
+                            sent: s.sent,
+                            received: s.received,
+                        },
+                    )
+                })
+                .collect(),
+            events: self.events.iter().cloned().collect(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ApConfig {
     pub url: String,
@@ -82,11 +123,17 @@ impl ApConfig {
     }
 }
 
-/// Spawn the reconnecting tracker task.
-pub fn spawn(board: Arc<RwLock<Board>>, cfg: ApConfig) {
+/// Spawn the reconnecting tracker task. `coop` maps an AP slot name to an extra
+/// Bifrost-slot name (co-op seats), used when seeding a new season.
+pub fn spawn(
+    board: Arc<RwLock<Board>>,
+    cfg: ApConfig,
+    db: crate::db::Db,
+    coop: Vec<(String, String)>,
+) {
     tokio::spawn(async move {
         loop {
-            if let Err(e) = run_once(&board, &cfg).await {
+            if let Err(e) = run_once(&board, &cfg, &db, &coop).await {
                 tracing::warn!("AP tracker disconnected: {e}");
             }
             if let Ok(mut b) = board.write() {
@@ -97,7 +144,12 @@ pub fn spawn(board: Arc<RwLock<Board>>, cfg: ApConfig) {
     });
 }
 
-async fn run_once(board: &Arc<RwLock<Board>>, cfg: &ApConfig) -> Result<(), String> {
+async fn run_once(
+    board: &Arc<RwLock<Board>>,
+    cfg: &ApConfig,
+    db: &crate::db::Db,
+    coop: &[(String, String)],
+) -> Result<(), String> {
     let (ws, _) = tokio_tungstenite::connect_async(&cfg.url)
         .await
         .map_err(|e| format!("connect {}: {e}", cfg.url))?;
@@ -158,6 +210,23 @@ async fn run_once(board: &Arc<RwLock<Board>>, cfg: &ApConfig) -> Result<(), Stri
                     tx.send(Message::Text(sub.to_string()))
                         .await
                         .map_err(|e| format!("send Get/SetNotify: {e}"))?;
+                    // Seed this season's Bifrost slots (1:1 + co-op extras).
+                    let (season, ap_slots) = {
+                        let b = board.read().map_err(|_| "lock")?;
+                        (
+                            b.seed.clone(),
+                            b.slots
+                                .iter()
+                                .map(|(n, s)| (*n, s.name.clone(), s.game.clone()))
+                                .collect::<Vec<_>>(),
+                        )
+                    };
+                    if let Some(season) = season {
+                        match db.seed_season(&season, &ap_slots, coop).await {
+                            Ok(()) => {}
+                            Err(e) => tracing::warn!("season seed failed: {e}"),
+                        }
+                    }
                 }
                 "PrintJSON" => on_printjson(board, &pkt),
                 "Retrieved" => {
@@ -352,106 +421,4 @@ fn on_bounced(board: &Arc<RwLock<Board>>, pkt: &Value) {
         };
         b.push_event("death", text);
     }
-}
-
-// ---- rendering ----
-
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
-fn status_label(status: i64) -> (&'static str, &'static str) {
-    match status {
-        30 => ("goal", "goaled"),
-        20 => ("playing", "playing"),
-        10 => ("ready", "ready"),
-        5 => ("conn", "connected"),
-        _ => ("idle", "—"),
-    }
-}
-
-pub fn board_page(board: &Arc<RwLock<Board>>) -> Html<String> {
-    let b = match board.read() {
-        Ok(b) => b,
-        Err(_) => return Html("<p>board unavailable</p>".into()),
-    };
-    let mut out = String::from(
-        r#"<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="refresh" content="12">
-<title>Bifrost · live board</title><style>
-:root{--bg:#0d1117;--panel:#161c26;--bd:#2a3542;--fg:#e6e9ef;--muted:#98a3b6;--accent:#5aa9e6;--ok:#28a56d;--bad:#e24d5f;--warn:#d98324;
---font:"IBM Plex Sans",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,Menlo,monospace}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);line-height:1.5;
-display:flex;flex-direction:column;align-items:center}main{width:100%;max-width:900px;padding:16px;padding-block:5vh 40px}
-a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
-h1{font-size:30px;margin:0 0 2px}.crumb{font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:20px}
-.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
-.on{background:var(--ok)}.off{background:var(--bad)}
-h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin:26px 0 10px}
-.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}@media(max-width:560px){.grid{grid-template-columns:1fr}}
-.slot{background:var(--panel);border:1px solid var(--bd);border-left-width:4px;border-radius:10px;padding:10px 12px}
-.slot.goal{border-left-color:var(--ok)}.slot.playing{border-left-color:var(--accent)}.slot.idle{border-left-color:var(--bd)}
-.slot .top{display:flex;justify-content:space-between;gap:8px}
-.slot .who{font-family:var(--mono);font-size:13px}.slot .game{color:var(--muted);font-size:12px}
-.slot .st{font-family:var(--mono);font-size:11px;color:var(--muted)}.slot.goal .st{color:var(--ok)}
-.slot .meta{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:6px}
-.feed{display:grid;gap:6px}.ev{display:flex;gap:8px;font-size:13px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px}
-.ev .i{font-family:var(--mono);font-size:10px;color:var(--muted);min-width:44px}
-.ev.goal .i{color:var(--ok)}.ev.death .i{color:var(--bad)}.ev.trap .i{color:var(--warn)}
-.empty{color:var(--muted);font-size:13px}
-</style></head><body><main>
-<h1>Live board</h1><div class="crumb"><a href="/">← Bifrost</a> · "#,
-    );
-    if b.connected {
-        out.push_str(r#"<span class="dot on"></span>connected"#);
-    } else {
-        out.push_str(r#"<span class="dot off"></span>waiting for the server…"#);
-    }
-    if let Some(seed) = &b.seed {
-        out.push_str(&format!(" · seed {}", esc(seed)));
-    }
-    out.push_str("</div>");
-
-    // slots
-    out.push_str(r#"<h2>Slots</h2>"#);
-    if b.slots.is_empty() {
-        out.push_str(r#"<div class="empty">No slots yet — the board fills once Bifrost connects to a running game.</div>"#);
-    } else {
-        out.push_str(r#"<div class="grid">"#);
-        for s in b.slots.values() {
-            let (cls, label) = status_label(s.status);
-            out.push_str(&format!(
-                r#"<div class="slot {cls}"><div class="top"><span class="who">{}</span><span class="st">{}</span></div>
-<div class="game">{}</div><div class="meta">sent {} · recv {} · hints {}</div></div>"#,
-                esc(&s.name),
-                label,
-                esc(&s.game),
-                s.sent,
-                s.received,
-                s.hints,
-            ));
-        }
-        out.push_str("</div>");
-    }
-
-    // feed
-    out.push_str(r#"<h2>Activity</h2>"#);
-    if b.events.is_empty() {
-        out.push_str(r#"<div class="empty">Quiet so far. Item finds, hints, goals and DeathLinks show up here.</div>"#);
-    } else {
-        out.push_str(r#"<div class="feed">"#);
-        for e in &b.events {
-            out.push_str(&format!(
-                r#"<div class="ev {}"><span class="i">{}</span><span>{}</span></div>"#,
-                e.icon,
-                e.icon,
-                esc(&e.text)
-            ));
-        }
-        out.push_str("</div>");
-    }
-    out.push_str("</main></body></html>");
-    Html(out)
 }
