@@ -8,8 +8,18 @@
 use axum::response::Html;
 use serde::Deserialize;
 use std::process::Stdio;
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::process::Command;
+use tokio::sync::Semaphore;
+
+/// Each check spawns a Python that loads every world (~300 MB). This box also
+/// runs the game, so we serialize checks — a burst of requests queues instead of
+/// storm-spawning and OOM-killing the MultiServer.
+fn check_gate() -> &'static Semaphore {
+    static SEM: OnceLock<Semaphore> = OnceLock::new();
+    SEM.get_or_init(|| Semaphore::new(1))
+}
 
 const AP_PYTHON: &str = "/srv/archipelago/venv/bin/python";
 const AP_DIR: &str = "/srv/archipelago";
@@ -44,6 +54,11 @@ pub async fn check_yaml(yaml: &str) -> Result<CheckResult, String> {
             yaml.len()
         ));
     }
+    // Serialize checks (see check_gate). Held for the whole subprocess run.
+    let _permit = check_gate()
+        .acquire()
+        .await
+        .map_err(|e| format!("checker busy: {e}"))?;
     // A per-request temp file; PrivateTmp isolates /tmp to this service.
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
