@@ -9,8 +9,11 @@
 //! bifrost.example.org (public shell now; `/admin` + generate routes get `lan-only`
 //! once they exist).
 
-use axum::{Router, response::Html, routing::get};
+use axum::{Router, extract::Form, response::Html, routing::get};
+use serde::Deserialize;
 use tower_http::trace::TraceLayer;
+
+mod checker;
 
 /// The landing page. Kept in its own file so Phase 1 can flesh out the hub
 /// without touching the server wiring.
@@ -35,6 +38,7 @@ async fn main() {
     let app = Router::new()
         .route("/health", get(health))
         .route("/", get(landing))
+        .route("/check", get(check_form).post(check_run))
         .layer(TraceLayer::new_for_http());
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
@@ -52,4 +56,20 @@ async fn health() -> &'static str {
 
 async fn landing() -> Html<&'static str> {
     Html(LANDING)
+}
+
+#[derive(Deserialize)]
+struct CheckForm {
+    yaml: String,
+}
+
+async fn check_form() -> Html<String> {
+    checker::form_page()
+}
+
+async fn check_run(Form(form): Form<CheckForm>) -> Html<String> {
+    match checker::check_yaml(&form.yaml).await {
+        Ok(res) => checker::result_page(&res),
+        Err(e) => checker::error_page(&e),
+    }
 }
