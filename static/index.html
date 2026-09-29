@@ -6,37 +6,51 @@
 <title>Bifrost</title>
 <style>
   :root{
-    --bg:#0d1117; --panel:#161c26; --bd:#2a3542; --fg:#e6e9ef; --muted:#98a3b6;
+    --bg:#0d1117; --panel:#161c26; --panel2:#1b2330; --bd:#2a3542; --fg:#e6e9ef; --muted:#98a3b6;
     --accent:#5aa9e6; --accent2:#c58af9; --ok:#28a56d;
     --font:"IBM Plex Sans", system-ui, -apple-system, Segoe UI, sans-serif;
     --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   *{box-sizing:border-box}
   body{margin:0; background:
-      radial-gradient(1200px 500px at 50% -10%, rgba(90,169,230,.14), transparent 60%),
+      radial-gradient(1200px 520px at 50% -10%, rgba(90,169,230,.14), transparent 60%),
       var(--bg);
     color:var(--fg); font-family:var(--font); line-height:1.55;
     min-height:100vh; display:flex; flex-direction:column; align-items:center}
-  main{width:100%; max-width:760px; padding:16px; padding-block:8vh 40px}
+  main{width:100%; max-width:900px; padding:16px; padding-block:7vh 48px}
+  a{color:var(--accent); text-decoration:none} a:hover{text-decoration:underline}
   .brand{display:flex; align-items:baseline; gap:14px; flex-wrap:wrap}
-  h1{font-size:44px; margin:0; letter-spacing:-.02em;
+  h1{font-size:46px; margin:0; letter-spacing:-.02em;
      background:linear-gradient(90deg,var(--accent),var(--accent2));
      -webkit-background-clip:text; background-clip:text; color:transparent}
   .tag{font-family:var(--mono); font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted)}
-  .lede{color:var(--muted); font-size:16px; max-width:60ch; margin:14px 0 28px}
-  .grid{display:grid; grid-template-columns:1fr 1fr; gap:14px}
-  @media (max-width:560px){.grid{grid-template-columns:1fr}}
-  .card{background:var(--panel); border:1px solid var(--bd); border-radius:12px; padding:16px 18px}
-  .card h2{font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin:0 0 8px}
-  .connect{font-family:var(--mono); font-size:18px; color:var(--fg)}
-  .hint{color:var(--muted); font-size:13px; margin-top:6px}
+  .lede{color:var(--muted); font-size:16px; max-width:62ch; margin:14px 0 30px}
+  h2.sec{font-size:13px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted); margin:34px 0 12px}
+  .card{background:var(--panel); border:1px solid var(--bd); border-radius:14px; padding:18px 20px}
+  .join{display:flex; flex-wrap:wrap; gap:18px 26px; align-items:center}
+  .join .cs{font-family:var(--mono); font-size:22px; color:var(--fg)}
+  .join .lbl{font-family:var(--mono); font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin-bottom:4px}
+  .join .pw{color:var(--muted); font-size:14px}
+  .steps{margin:14px 0 0; padding-left:18px; color:var(--muted); font-size:14px}
+  .steps li{margin:3px 0}
+  .grid{display:grid; gap:12px}
+  .roster{grid-template-columns:repeat(3,1fr)}
+  @media (max-width:640px){.roster{grid-template-columns:repeat(2,1fr)}}
+  @media (max-width:420px){.roster{grid-template-columns:1fr}}
+  .slot{background:var(--panel); border:1px solid var(--bd); border-radius:10px; padding:10px 12px}
+  .slot .who{font-family:var(--mono); font-size:13px; color:var(--accent)}
+  .slot .game{font-size:14px}
+  .cols{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  @media (max-width:640px){.cols{grid-template-columns:1fr}}
+  ul.links{list-style:none; padding:0; margin:0; display:grid; gap:10px}
+  ul.links .d{font-family:var(--mono); font-size:12px; color:var(--muted)}
+  .soon-row{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+  @media (max-width:640px){.soon-row{grid-template-columns:1fr}}
   .soon{display:inline-block; font-family:var(--mono); font-size:10px; letter-spacing:.08em;
         text-transform:uppercase; color:var(--accent); border:1px solid var(--bd);
         border-radius:999px; padding:2px 8px; margin-left:8px; vertical-align:middle}
-  ul.links{list-style:none; padding:0; margin:0; display:grid; gap:8px}
-  ul.links a{color:var(--accent); text-decoration:none}
-  ul.links a:hover{text-decoration:underline}
-  footer{color:var(--muted); font-family:var(--mono); font-size:11px; margin-top:34px}
+  .hint{color:var(--muted); font-size:13px; margin-top:6px}
+  footer{color:var(--muted); font-family:var(--mono); font-size:11px; margin-top:40px}
 </style>
 </head>
 <body>
@@ -45,32 +59,83 @@
     <h1>Bifrost</h1>
     <span class="tag">archipelago</span>
   </div>
-  <p class="lede">The bridge between the worlds — one place for our Archipelago multiworlds: how to connect, checking your YAML, and watching the run live.</p>
+  <p class="lede">The bridge between the worlds — our home for Archipelago multiworlds. How to connect, who's playing what, where to track your run, and the servers to hang out in.</p>
 
-  <div class="grid">
-    <div class="card">
-      <h2>Current season</h2>
-      <div class="connect">ap.example.org:38281</div>
-      <div class="hint">Password shared in Discord. Bring your game's client + AP mod.</div>
+  <h2 class="sec">Join the current game</h2>
+  <div class="card join">
+    <div>
+      <div class="lbl">Connect to</div>
+      <div class="cs">ap.example.org:38281</div>
+      <div class="pw">Password: shared in our Discord.</div>
     </div>
-    <div class="card">
-      <h2>Trackers</h2>
-      <ul class="links">
-        <li><a href="https://github.com/FarisTheAncient/Archipelago/releases" target="_blank" rel="noopener">Universal Tracker</a> — in-logic locations</li>
-        <li><a href="https://github.com/black-sliver/PopTracker" target="_blank" rel="noopener">PopTracker</a> — per-game maps</li>
-      </ul>
+    <ol class="steps">
+      <li>Install the <strong>Archipelago 0.6.7</strong> client and your game's AP mod/patch.</li>
+      <li>Grab your slot's files (patch / spoiler) from whoever generated the seed.</li>
+      <li>Connect the client to the address above with your slot name.</li>
+    </ol>
+  </div>
+
+  <h2 class="sec">This season — who's playing what</h2>
+  <div class="grid roster">
+    <div class="slot"><div class="who">Optic</div><div class="game">DOOM 1993</div></div>
+    <div class="slot"><div class="who">Dustbiter</div><div class="game">Noita</div></div>
+    <div class="slot"><div class="who">Cam</div><div class="game">Don't Starve Together</div></div>
+    <div class="slot"><div class="who">Elle</div><div class="game">Baldur's Gate 3</div></div>
+    <div class="slot"><div class="who">Meriesje</div><div class="game">CloverPit</div></div>
+    <div class="slot"><div class="who">Nid</div><div class="game">Deadlock</div></div>
+    <div class="slot"><div class="who">Endon</div><div class="game">Outer Wilds</div></div>
+    <div class="slot"><div class="who">Nacrolai</div><div class="game">Path of Exile</div></div>
+    <div class="slot"><div class="who">HunkOfJunk</div><div class="game">RimWorld</div></div>
+    <div class="slot"><div class="who">Vidarr</div><div class="game">Touhou EoSD</div></div>
+    <div class="slot"><div class="who">MissMandalyn</div><div class="game">Raft</div></div>
+    <div class="slot"><div class="who">Jelenka</div><div class="game">Satisfactory</div></div>
+    <div class="slot"><div class="who">Wika</div><div class="game">Undertale</div></div>
+  </div>
+
+  <div class="cols">
+    <div>
+      <h2 class="sec">Games &amp; worlds</h2>
+      <div class="card">
+        <ul class="links">
+          <li><a href="https://archipelago.gg/games" target="_blank" rel="noopener">Official supported games</a></li>
+          <li><a href="https://docs.google.com/spreadsheets/d/1iuzDTOAvdoNe8Ne8i461qGNucg5OuEoF-Ikqs8aUQZw/htmlview?gid=58422002#gid=58422002" target="_blank" rel="noopener">Unofficial worlds sheet</a> — community apworlds</li>
+        </ul>
+      </div>
     </div>
-    <div class="card">
-      <h2>YAML checker <span class="soon">soon</span></h2>
-      <div class="hint">Validate your options file against the installed worlds before submitting.</div>
-    </div>
-    <div class="card">
-      <h2>Live board <span class="soon">soon</span></h2>
-      <div class="hint">Everyone's checks, hints, goals and DeathLinks, live.</div>
+    <div>
+      <h2 class="sec">Discords</h2>
+      <div class="card">
+        <ul class="links">
+          <li><a href="https://discord.gg/archipelago" target="_blank" rel="noopener">Archipelago</a> <span class="d">official</span></li>
+          <li><a href="https://discord.gg/rvsX3x8zv" target="_blank" rel="noopener">AP After Dark</a> <span class="d">after-dark worlds</span></li>
+          <li><a href="https://discord.gg/jPHFVkSgK" target="_blank" rel="noopener">Archipelago Unofficial</a> <span class="d">unofficial worlds</span></li>
+        </ul>
+      </div>
     </div>
   </div>
 
-  <footer>Bifrost · phase 0</footer>
+  <h2 class="sec">Track your run</h2>
+  <div class="card">
+    <ul class="links">
+      <li><a href="https://github.com/FarisTheAncient/Archipelago/releases" target="_blank" rel="noopener">Universal Tracker</a> — drop-in tracker showing which of your locations are in logic right now. Works with almost any game.</li>
+      <li><a href="https://github.com/black-sliver/PopTracker" target="_blank" rel="noopener">PopTracker</a> — visual map/item auto-tracker; grab your game's pack.</li>
+    </ul>
+    <div class="hint">Several games also ship their own tracker (e.g. the BG3 and Pokémon packs, the PoE web tracker). Point it at the server address above with your slot.</div>
+  </div>
+
+  <h2 class="sec">Coming to Bifrost</h2>
+  <div class="soon-row">
+    <div class="card">
+      <strong>YAML checker</strong><span class="soon">soon</span>
+      <div class="hint">Validate your options file against the installed worlds before you submit it — catches version drift and bad option values.</div>
+    </div>
+    <div class="card">
+      <strong>Live board</strong><span class="soon">soon</span>
+      <div class="hint">Everyone's checks, hints, goals and DeathLinks, live in one place.</div>
+    </div>
+  </div>
+
+  <footer>Bifrost · the bridge between the worlds</footer>
 </main>
 </body>
 </html>
