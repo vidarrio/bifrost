@@ -23,6 +23,7 @@ use tower_http::trace::TraceLayer;
 mod ap;
 mod checker;
 mod db;
+mod meta;
 mod render;
 
 type Shared = Arc<RwLock<ap::Board>>;

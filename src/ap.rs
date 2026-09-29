@@ -18,12 +18,23 @@ use tokio_tungstenite::tungstenite::Message;
 
 const MAX_EVENTS: usize = 60;
 
+/// A hint as stored in `_read_hints_*` (ids; names resolved at render via Meta).
+#[derive(Clone)]
+pub struct HintRaw {
+    pub receiving: i64,
+    pub finding: i64,
+    pub item: i64,
+    pub location: i64,
+    pub found: bool,
+}
+
 #[derive(Clone, Default)]
 pub struct SlotState {
     pub name: String,
     pub game: String,
     pub status: i64, // ClientStatus: 0 unknown,5 connected,10 ready,20 playing,30 goal
     pub hints: usize,
+    pub hint_list: Vec<HintRaw>,
     pub sent: u64,
     pub received: u64,
 }
@@ -41,6 +52,7 @@ pub struct Board {
     pub seed: Option<String>,
     pub slots: BTreeMap<i64, SlotState>,
     pub events: VecDeque<Event>,
+    pub meta: Option<std::sync::Arc<crate::meta::Meta>>,
 }
 
 impl Board {
@@ -68,6 +80,10 @@ pub struct ApLive {
     pub hints: usize,
     pub sent: u64,
     pub received: u64,
+    pub world_size: u32,
+    pub items_elsewhere: u32,
+    /// Resolved hint lines for items hinted to be *in this slot's world*.
+    pub hint_lines: Vec<String>,
 }
 
 /// An owned copy of what the pages need to render, taken under one short lock.
@@ -80,24 +96,49 @@ pub struct BoardSnapshot {
 
 impl Board {
     pub fn snapshot(&self) -> BoardSnapshot {
+        let ap = self
+            .slots
+            .iter()
+            .map(|(n, s)| {
+                let (world_size, items_elsewhere) = self
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.totals(*n))
+                    .map(|t| (t.world_size, t.items_for_elsewhere))
+                    .unwrap_or((0, 0));
+                let mut hint_lines = Vec::new();
+                if let Some(m) = self.meta.as_ref() {
+                    for h in s.hint_list.iter().filter(|h| h.finding == *n) {
+                        let recv_game = self
+                            .slots
+                            .get(&h.receiving)
+                            .map(|x| x.game.as_str())
+                            .unwrap_or("");
+                        let item = m.item_name(recv_game, h.item).unwrap_or("?");
+                        let loc = m.location_name(&s.game, h.location).unwrap_or("?");
+                        let recv = self.name_of(h.receiving);
+                        let mark = if h.found { " ✓" } else { "" };
+                        hint_lines.push(format!("{item} → {recv} @ {loc}{mark}"));
+                    }
+                }
+                (
+                    *n,
+                    ApLive {
+                        status: s.status,
+                        hints: s.hints,
+                        sent: s.sent,
+                        received: s.received,
+                        world_size,
+                        items_elsewhere,
+                        hint_lines,
+                    },
+                )
+            })
+            .collect();
         BoardSnapshot {
             connected: self.connected,
             seed: self.seed.clone(),
-            ap: self
-                .slots
-                .iter()
-                .map(|(n, s)| {
-                    (
-                        *n,
-                        ApLive {
-                            status: s.status,
-                            hints: s.hints,
-                            sent: s.sent,
-                            received: s.received,
-                        },
-                    )
-                })
-                .collect(),
+            ap,
             events: self.events.iter().cloned().collect(),
         }
     }
@@ -227,6 +268,20 @@ async fn run_once(
                             Err(e) => tracing::warn!("season seed failed: {e}"),
                         }
                     }
+                    // Load season metadata (item names + per-slot totals) in the
+                    // background — it decodes the seed via a Python subprocess.
+                    let bclone = board.clone();
+                    tokio::spawn(async move {
+                        match crate::meta::load().await {
+                            Ok(m) => {
+                                if let Ok(mut b) = bclone.write() {
+                                    b.meta = Some(std::sync::Arc::new(m));
+                                }
+                                tracing::info!("season metadata loaded");
+                            }
+                            Err(e) => tracing::warn!("meta load failed: {e}"),
+                        }
+                    });
                 }
                 "PrintJSON" => on_printjson(board, &pkt),
                 "Retrieved" => {
@@ -318,10 +373,38 @@ fn apply_storage(b: &mut Board, key: &str, value: &Value) {
         let Some(slot) = slot_from_key(rest) else {
             return;
         };
-        let n = value.as_array().map(|a| a.len()).unwrap_or(0);
+        let list: Vec<HintRaw> = value
+            .as_array()
+            .map(|a| a.iter().filter_map(parse_hint).collect())
+            .unwrap_or_default();
         if let Some(s) = b.slots.get_mut(&slot) {
-            s.hints = n;
+            s.hints = list.len();
+            s.hint_list = list;
         }
+    }
+}
+
+/// Parse a stored Hint, tolerating either the object or NamedTuple-as-array form.
+/// Array order is (receiving, finding, location, item, found, …).
+fn parse_hint(v: &Value) -> Option<HintRaw> {
+    if let Some(o) = v.as_object() {
+        Some(HintRaw {
+            receiving: o.get("receiving_player").and_then(Value::as_i64)?,
+            finding: o.get("finding_player").and_then(Value::as_i64)?,
+            location: o.get("location").and_then(Value::as_i64).unwrap_or(0),
+            item: o.get("item").and_then(Value::as_i64).unwrap_or(0),
+            found: o.get("found").and_then(Value::as_bool).unwrap_or(false),
+        })
+    } else if let Some(a) = v.as_array() {
+        Some(HintRaw {
+            receiving: a.first().and_then(Value::as_i64)?,
+            finding: a.get(1).and_then(Value::as_i64)?,
+            location: a.get(2).and_then(Value::as_i64).unwrap_or(0),
+            item: a.get(3).and_then(Value::as_i64).unwrap_or(0),
+            found: a.get(4).and_then(Value::as_bool).unwrap_or(false),
+        })
+    } else {
+        None
     }
 }
 
@@ -333,15 +416,18 @@ fn on_printjson(board: &Arc<RwLock<Board>>, pkt: &Value) {
     };
     match ty {
         "ItemSend" => {
-            let src = pkt
-                .get("item")
+            let item = pkt.get("item");
+            let src = item
                 .and_then(|i| i.get("player"))
                 .and_then(Value::as_i64)
                 .unwrap_or(0);
             let dst = pkt.get("receiving").and_then(Value::as_i64).unwrap_or(0);
-            let flags = pkt
-                .get("item")
+            let flags = item
                 .and_then(|i| i.get("flags"))
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
+            let item_id = item
+                .and_then(|i| i.get("item"))
                 .and_then(Value::as_i64)
                 .unwrap_or(0);
             if let Some(s) = b.slots.get_mut(&src) {
@@ -355,10 +441,16 @@ fn on_printjson(board: &Arc<RwLock<Board>>, pkt: &Value) {
             if flags != 0 {
                 let (sn, dn) = (b.name_of(src), b.name_of(dst));
                 let icon = if flags & 0b100 != 0 { "trap" } else { "item" };
-                let text = if src == dst {
-                    format!("{sn} found their own item")
-                } else {
-                    format!("{sn} → {dn}")
+                // Resolve the item name if season metadata is loaded.
+                let named = b.meta.as_ref().and_then(|m| {
+                    let recv_game = b.slots.get(&dst)?.game.as_str();
+                    m.item_name(recv_game, item_id).map(str::to_string)
+                });
+                let text = match named {
+                    Some(it) if src == dst => format!("{sn} found their own {it}"),
+                    Some(it) => format!("{sn} found {dn}'s {it}"),
+                    None if src == dst => format!("{sn} found their own item"),
+                    None => format!("{sn} → {dn}"),
                 };
                 b.push_event(icon, text);
             }

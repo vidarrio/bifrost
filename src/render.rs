@@ -42,6 +42,7 @@ h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute
 .seat{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 0;border-top:1px solid var(--bd)}
 .seat .who{font-family:var(--mono);font-size:13px}.seat .by{font-family:var(--mono);font-size:11px;color:var(--muted)}
 .seat .by.mine{color:var(--ok)}.seat .free{color:var(--warn)}
+.slot .hint{font-family:var(--mono);font-size:11px;color:var(--warn);margin-top:4px;padding-left:8px;border-left:2px solid var(--bd)}
 button{background:var(--accent);color:#0d1117;border:0;border-radius:7px;padding:5px 12px;font-weight:600;font-size:12px;cursor:pointer}
 button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted)}
 .feed{display:grid;gap:6px}.ev{display:flex;gap:8px;font-size:13px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px}
@@ -100,10 +101,12 @@ pub fn board_page(snap: &BoardSnapshot, slots: &[SlotRow]) -> Html<String> {
             let (cls, label) = status_label(live.status);
             out.push_str(&format!(
                 r#"<div class="slot {cls}"><span class="st">{label}</span><div class="game">{}</div>
-<div class="meta">sent {} · recv {} · hints {}</div>"#,
+<div class="meta">world {} · sent {} · recv {} · {} out elsewhere · hints {}</div>"#,
                 esc(g.game),
+                live.world_size,
                 live.sent,
                 live.received,
+                live.items_elsewhere,
                 live.hints,
             ));
             for r in &g.rows {
@@ -115,6 +118,9 @@ pub fn board_page(snap: &BoardSnapshot, slots: &[SlotRow]) -> Html<String> {
                     r#"<div class="seat"><span class="who">{}</span>{by}</div>"#,
                     esc(&r.name)
                 ));
+            }
+            for h in &live.hint_lines {
+                out.push_str(&format!(r#"<div class="hint">{}</div>"#, esc(h)));
             }
             out.push_str("</div>");
         }
