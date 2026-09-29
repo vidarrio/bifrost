@@ -9,11 +9,21 @@
 //! bifrost.example.org (public shell now; `/admin` + generate routes get `lan-only`
 //! once they exist).
 
-use axum::{Router, extract::Form, response::Html, routing::get};
+use std::sync::{Arc, RwLock};
+
+use axum::{
+    Router,
+    extract::{Form, State},
+    response::Html,
+    routing::get,
+};
 use serde::Deserialize;
 use tower_http::trace::TraceLayer;
 
+mod ap;
 mod checker;
+
+type Shared = Arc<RwLock<ap::Board>>;
 
 /// The landing page. Kept in its own file so Phase 1 can flesh out the hub
 /// without touching the server wiring.
@@ -35,11 +45,24 @@ async fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(8080);
 
+    // Shared live-board state, fed by the AP tracker task (when a slot is
+    // configured for the current season).
+    let board: Shared = Arc::new(RwLock::new(ap::Board::default()));
+    match ap::ApConfig::from_env() {
+        Some(cfg) => {
+            tracing::info!("AP tracker: watching {} as slot {}", cfg.url, cfg.slot);
+            ap::spawn(board.clone(), cfg);
+        }
+        None => tracing::info!("AP tracker idle (set BIFROST_SLOT to enable the live board)"),
+    }
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/", get(landing))
         .route("/check", get(check_form).post(check_run))
-        .layer(TraceLayer::new_for_http());
+        .route("/board", get(board_page))
+        .layer(TraceLayer::new_for_http())
+        .with_state(board);
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr)
@@ -72,4 +95,8 @@ async fn check_run(Form(form): Form<CheckForm>) -> Html<String> {
         Ok(res) => checker::result_page(&res),
         Err(e) => checker::error_page(&e),
     }
+}
+
+async fn board_page(State(board): State<Shared>) -> Html<String> {
+    ap::board_page(&board)
 }
