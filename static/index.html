@@ -88,7 +88,7 @@ fetch('/api/me').then(function(r){return r.json()}).then(function(m){
       <div class="lbl">Connect to</div>
       <div class="cs">ap.example.org:38281</div>
       <div class="pw">Password: shared in our Discord.</div>
-      <div class="pw" style="margin-top:8px">On a locked-down network (eduroam, work/uni WiFi)? Use <strong>ap.example.org:443</strong> instead — it's the same server over an encrypted <code>wss://</code> connection that firewalls let through.</div>
+      <div class="pw" style="margin-top:8px">On a locked-down network (eduroam, work/uni WiFi)? Connect to <strong>wss://ap.example.org:443</strong> instead — same server, encrypted, on the HTTPS port so firewalls let it through. You must type the <code>wss://</code> prefix (without it the client uses the plain port and the connection is refused).</div>
     </div>
     <ol class="steps">
       <li>Install the <strong>Archipelago 0.6.7</strong> client and your game's AP mod/patch.</li>
