@@ -385,7 +385,7 @@ fn hint_rejected(text: &str) -> bool {
         "do not have",
         "unable to find",
         "did you mean",
-        "cannot afford",
+        "afford", // "can't afford" / "cannot afford"
         "sorry",
     ]
     .iter()
@@ -496,7 +496,7 @@ async fn hint_post(
 /// A `!hint` rejection that is specifically a points shortfall (vs. a bad item).
 fn rejected_for_points(text: &str) -> bool {
     let t = text.to_lowercase();
-    ["not enough", "do not have", "cannot afford"]
+    ["not enough", "do not have", "afford"]
         .iter()
         .any(|k| t.contains(k))
 }
