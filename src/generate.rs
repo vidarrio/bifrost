@@ -75,6 +75,13 @@ async fn deploy_seed(seed_zip: &str) -> Result<(), String> {
     tokio::fs::copy(seed_zip, &dst)
         .await
         .map_err(|e| format!("deploy: {e}"))?;
+    // Best-effort save wipe. The AUTHORITATIVE wipe lives in
+    // archipelago-reload.service, which (on the reload this copy just fired)
+    // stops the old server, deletes current.apsave *after* its shutdown
+    // auto-save, then starts fresh. Deleting here can't win that race — the
+    // dying old server re-writes current.apsave on SIGTERM with the previous
+    // seed's hints/checks, and without the reload-unit delete the new server
+    // would load those stale hints against the new (different) placements.
     let _ = tokio::fs::remove_file(format!("{OUTPUT}/current.apsave")).await;
     Ok(())
 }

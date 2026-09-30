@@ -971,7 +971,11 @@ async fn admin_console(
                         })
                         .unwrap_or_default();
                     if text.trim().is_empty() {
-                        "(command ran; no output)".to_string()
+                        // Several server commands (/hint, /send, /option, /collect,
+                        // /release …) succeed silently — they act on the room and
+                        // broadcast to players but return no console text. An empty
+                        // reply here is normal, not a failure.
+                        "(command accepted — no console output; some commands like /hint and /send are silent on success and just broadcast to the room)".to_string()
                     } else {
                         text
                     }
