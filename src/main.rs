@@ -12,7 +12,7 @@ use std::sync::{Arc, RwLock};
 
 use axum::{
     Router,
-    extract::{Form, Multipart, State},
+    extract::{Form, Multipart, Path, State},
     http::HeaderMap,
     response::{Html, Redirect},
     routing::{get, post},
@@ -82,8 +82,10 @@ async fn main() {
         .route("/", get(landing))
         .route("/check", get(check_form).post(check_run))
         .route("/board", get(board_view))
+        .route("/game/{ap_slot}", get(game_view))
         .route("/claim", get(claim_get).post(claim_post))
         .route("/hint", post(hint_post))
+        .route("/prioritize", post(prioritize_post))
         .route("/signup", get(signup_get).post(signup_post))
         .route("/signup/delete", post(signup_delete))
         .route("/generate", get(generate_get).post(generate_post))
@@ -158,7 +160,89 @@ async fn board_view(State(st): State<AppState>) -> Html<String> {
     };
     let season = snap.seed.clone().unwrap_or_default();
     let slots = st.db.slots(&season).await.unwrap_or_default();
-    render::board_page(&snap, &slots)
+    let prios = st.db.priorities(&season).await.unwrap_or_default();
+    render::board_page(&snap, &slots, &prios)
+}
+
+/// A safe local redirect target (must be an absolute path, not protocol-relative).
+fn safe_back(b: Option<&str>, default: &str) -> String {
+    match b {
+        Some(p) if p.starts_with('/') && !p.starts_with("//") => p.to_string(),
+        _ => default.to_string(),
+    }
+}
+
+async fn game_view(
+    Path(ap_slot): Path<i64>,
+    State(st): State<AppState>,
+    headers: HeaderMap,
+) -> Html<String> {
+    let (me, is_admin) = identity(&headers);
+    let (snap, game, item_names) = match st.board.read() {
+        Ok(b) => {
+            let game = b
+                .slots
+                .get(&ap_slot)
+                .map(|s| s.game.clone())
+                .unwrap_or_default();
+            let items = b
+                .meta
+                .as_ref()
+                .and_then(|m| m.item_names.get(&game))
+                .map(|nm| {
+                    let mut v: Vec<String> = nm.values().cloned().collect();
+                    v.sort();
+                    v.dedup();
+                    v
+                })
+                .unwrap_or_default();
+            (b.snapshot(), game, items)
+        }
+        Err(_) => return Html("board unavailable".into()),
+    };
+    if game.is_empty() {
+        return Html("<p>Unknown game slot.</p>".into());
+    }
+    let season = snap.seed.clone().unwrap_or_default();
+    let slots = st.db.slots(&season).await.unwrap_or_default();
+    let prios = st.db.priorities(&season).await.unwrap_or_default();
+    render::game_page(
+        ap_slot,
+        &game,
+        &snap,
+        &slots,
+        &prios,
+        &item_names,
+        &me,
+        is_admin,
+    )
+}
+
+#[derive(Deserialize)]
+struct PrioForm {
+    finding: i64,
+    location: i64,
+    item: i64,
+    back: Option<String>,
+}
+
+async fn prioritize_post(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<PrioForm>,
+) -> Redirect {
+    let (_me, _is_admin) = identity(&headers);
+    let season = st
+        .board
+        .read()
+        .ok()
+        .and_then(|b| b.seed.clone())
+        .unwrap_or_default();
+    let _ = st
+        .db
+        .toggle_priority(&season, f.finding, f.location, f.item)
+        .await;
+    Redirect::to(&safe_back(f.back.as_deref(), "/board"))
 }
 
 async fn claim_get(State(st): State<AppState>, headers: HeaderMap) -> Html<String> {
@@ -176,6 +260,7 @@ async fn claim_get(State(st): State<AppState>, headers: HeaderMap) -> Html<Strin
 struct ClaimForm {
     slot_id: i64,
     op: String,
+    back: Option<String>,
 }
 
 async fn claim_post(
@@ -193,13 +278,14 @@ async fn claim_post(
         }
         _ => {}
     }
-    Redirect::to("/claim")
+    Redirect::to(&safe_back(f.back.as_deref(), "/claim"))
 }
 
 #[derive(Deserialize)]
 struct HintForm {
     slot_id: i64,
     item: String,
+    back: Option<String>,
 }
 
 async fn hint_post(
@@ -208,12 +294,13 @@ async fn hint_post(
     Form(f): Form<HintForm>,
 ) -> Html<String> {
     let (me, is_admin) = identity(&headers);
+    let back = safe_back(f.back.as_deref(), "/board");
     let detail = st.db.slot_detail(f.slot_id).await.ok().flatten();
     let Some((ap_slot, claimant)) = detail else {
-        return render::hint_result("Unknown slot.", false);
+        return render::hint_result("Unknown slot.", false, &back);
     };
     if !(is_admin || claimant.as_deref() == Some(me.as_str())) {
-        return render::hint_result("You haven't claimed that slot.", false);
+        return render::hint_result("You haven't claimed that slot.", false, &back);
     }
     let connect_name = st
         .board
@@ -221,10 +308,10 @@ async fn hint_post(
         .ok()
         .and_then(|b| b.slots.get(&ap_slot).map(|s| s.name.clone()));
     let Some(name) = connect_name else {
-        return render::hint_result("That slot isn't live right now.", false);
+        return render::hint_result("That slot isn't live right now.", false, &back);
     };
     let Some(cfg) = st.ap_cfg.as_ref() else {
-        return render::hint_result("Hinting isn't configured.", false);
+        return render::hint_result("Hinting isn't configured.", false, &back);
     };
     match ap::send_hint(&cfg.url, &cfg.password, &name, f.item.trim()).await {
         Ok(parts) => {
@@ -233,9 +320,9 @@ async fn hint_post(
                 .read()
                 .map(|b| ap::resolve_parts(&b, &parts))
                 .unwrap_or_default();
-            render::hint_result(&text, true)
+            render::hint_result(&text, true, &back)
         }
-        Err(e) => render::hint_result(&format!("Hint failed: {e}"), false),
+        Err(e) => render::hint_result(&format!("Hint failed: {e}"), false, &back),
     }
 }
 

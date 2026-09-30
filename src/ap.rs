@@ -73,6 +73,16 @@ impl Board {
     }
 }
 
+/// A resolved hint about an item *in this slot's world*, carrying both the
+/// display text and the identity used to prioritize it.
+#[derive(Clone)]
+pub struct HintView {
+    pub finding: i64,
+    pub location: i64,
+    pub item: i64,
+    pub text: String,
+}
+
 /// Live per-AP-slot figures, snapshotted for rendering without holding the lock.
 #[derive(Clone, Default)]
 pub struct ApLive {
@@ -82,8 +92,8 @@ pub struct ApLive {
     pub received: u64,
     pub world_size: u32,
     pub items_elsewhere: u32,
-    /// Resolved hint lines for items hinted to be *in this slot's world*.
-    pub hint_lines: Vec<String>,
+    /// Hints for items hinted to be in this slot's world (with identity).
+    pub hint_views: Vec<HintView>,
 }
 
 /// An owned copy of what the pages need to render, taken under one short lock.
@@ -106,7 +116,7 @@ impl Board {
                     .and_then(|m| m.totals(*n))
                     .map(|t| (t.world_size, t.items_for_elsewhere))
                     .unwrap_or((0, 0));
-                let mut hint_lines = Vec::new();
+                let mut hint_views = Vec::new();
                 if let Some(m) = self.meta.as_ref() {
                     for h in s.hint_list.iter().filter(|h| h.finding == *n) {
                         let recv_game = self
@@ -118,7 +128,12 @@ impl Board {
                         let loc = m.location_name(&s.game, h.location).unwrap_or("?");
                         let recv = self.name_of(h.receiving);
                         let mark = if h.found { " ✓" } else { "" };
-                        hint_lines.push(format!("{item} → {recv} @ {loc}{mark}"));
+                        hint_views.push(HintView {
+                            finding: h.finding,
+                            location: h.location,
+                            item: h.item,
+                            text: format!("{item} → {recv} @ {loc}{mark}"),
+                        });
                     }
                 }
                 (
@@ -130,7 +145,7 @@ impl Board {
                         received: s.received,
                         world_size,
                         items_elsewhere,
-                        hint_lines,
+                        hint_views,
                     },
                 )
             })

@@ -80,7 +80,65 @@ impl Db {
         )
         .execute(&pool)
         .await?;
+        // Hints a player has flagged to surface on the board.
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS hint_priority (
+                 season TEXT NOT NULL,
+                 finding INTEGER NOT NULL,
+                 location INTEGER NOT NULL,
+                 item INTEGER NOT NULL,
+                 PRIMARY KEY (season, finding, location, item)
+               )"#,
+        )
+        .execute(&pool)
+        .await?;
         Ok(Self { pool })
+    }
+
+    /// The set of prioritized hint keys (finding, location, item) for a season.
+    pub async fn priorities(
+        &self,
+        season: &str,
+    ) -> Result<std::collections::HashSet<(i64, i64, i64)>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, (i64, i64, i64)>(
+            "SELECT finding, location, item FROM hint_priority WHERE season = ?",
+        )
+        .bind(season)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().collect())
+    }
+
+    /// Toggle a hint's priority. Returns true if it is now prioritized.
+    pub async fn toggle_priority(
+        &self,
+        season: &str,
+        finding: i64,
+        location: i64,
+        item: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let del = sqlx::query(
+            "DELETE FROM hint_priority WHERE season=? AND finding=? AND location=? AND item=?",
+        )
+        .bind(season)
+        .bind(finding)
+        .bind(location)
+        .bind(item)
+        .execute(&self.pool)
+        .await?;
+        if del.rows_affected() > 0 {
+            return Ok(false);
+        }
+        sqlx::query(
+            "INSERT OR IGNORE INTO hint_priority (season, finding, location, item) VALUES (?,?,?,?)",
+        )
+        .bind(season)
+        .bind(finding)
+        .bind(location)
+        .bind(item)
+        .execute(&self.pool)
+        .await?;
+        Ok(true)
     }
 
     /// Seed a season's Bifrost slots from the AP roster (1:1), then add any

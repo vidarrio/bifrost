@@ -48,6 +48,9 @@ h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute
 .signup{display:grid;gap:12px;max-width:460px;margin-bottom:10px}.signup label{display:grid;gap:4px;font-size:13px;color:var(--muted)}.signup label.chk{display:flex;flex-direction:row;align-items:center;gap:8px}
 .signup input[type=file],.signup input[type=text]{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:6px 8px;font-size:13px}
 code{font-family:var(--mono);font-size:12px;color:var(--accent)}
+.cardlink{text-decoration:none;color:inherit;display:block;transition:border-color .1s}.cardlink:hover{border-color:var(--accent)}
+.matches{max-width:460px;margin:-4px 0 12px;display:grid}.matches .match{font-family:var(--mono);font-size:12px;padding:5px 8px;border:1px solid var(--bd);border-top:0;cursor:pointer;background:var(--panel)}.matches .match:hover{background:var(--bd)}
+.hintrow{display:flex;justify-content:space-between;align-items:center;gap:10px;font-family:var(--mono);font-size:12.5px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px;margin:6px 0}
 button{background:var(--accent);color:#0d1117;border:0;border-radius:7px;padding:5px 12px;font-weight:600;font-size:12px;cursor:pointer}
 button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted)}
 .feed{display:grid;gap:6px}.ev{display:flex;gap:8px;font-size:13px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px}
@@ -89,14 +92,18 @@ fn conn_line(snap: &BoardSnapshot) -> String {
     s
 }
 
-pub fn board_page(snap: &BoardSnapshot, slots: &[SlotRow]) -> Html<String> {
+pub fn board_page(
+    snap: &BoardSnapshot,
+    slots: &[SlotRow],
+    prios: &std::collections::HashSet<(i64, i64, i64)>,
+) -> Html<String> {
     let mut out = String::from(HEAD);
     out.push_str(&format!(
-        r#"<h1>Live board</h1><div class="crumb"><a href="/">← Bifrost</a> · {} · <a href="/claim">claim a slot →</a></div>"#,
+        r#"<h1>Live board</h1><div class="crumb"><a href="/">← Bifrost</a> · {} · <a href="/signup">signup</a></div>"#,
         conn_line(snap)
     ));
 
-    out.push_str(r#"<h2>Slots</h2>"#);
+    out.push_str(r#"<h2>Slots — tap one to claim, hint, and see its hints</h2>"#);
     if slots.is_empty() {
         out.push_str(r#"<div class="empty">No slots yet — the board fills once Bifrost connects to a running game.</div>"#);
     } else {
@@ -105,8 +112,9 @@ pub fn board_page(snap: &BoardSnapshot, slots: &[SlotRow]) -> Html<String> {
             let live = snap.ap.get(&g.ap_slot).cloned().unwrap_or_default();
             let (cls, label) = status_label(live.status);
             out.push_str(&format!(
-                r#"<div class="slot {cls}"><span class="st">{label}</span><div class="game">{}</div>
+                r#"<a class="slot cardlink {cls}" href="/game/{}"><span class="st">{label}</span><div class="game">{}</div>
 <div class="meta">world {} · sent {} · recv {} · {} out elsewhere · hints {}</div>"#,
+                g.ap_slot,
                 esc(g.game),
                 live.world_size,
                 live.sent,
@@ -124,10 +132,14 @@ pub fn board_page(snap: &BoardSnapshot, slots: &[SlotRow]) -> Html<String> {
                     esc(&r.name)
                 ));
             }
-            for h in &live.hint_lines {
-                out.push_str(&format!(r#"<div class="hint">{}</div>"#, esc(h)));
+            for h in live
+                .hint_views
+                .iter()
+                .filter(|h| prios.contains(&(h.finding, h.location, h.item)))
+            {
+                out.push_str(&format!(r#"<div class="hint">★ {}</div>"#, esc(&h.text)));
             }
-            out.push_str("</div>");
+            out.push_str("</a>");
         }
         out.push_str("</div>");
     }
@@ -184,19 +196,19 @@ pub fn claim_page(
             let (by, action) = match &r.claimed_by {
                 Some(_) if mine => (
                     r#"<span class="by mine">you</span>"#.to_string(),
-                    claim_button(r.id, "unclaim", "Unclaim", true),
+                    claim_button(r.id, "unclaim", "Unclaim", true, "/claim"),
                 ),
                 Some(who) => (
                     format!(r#"<span class="by">{}</span>"#, esc(who)),
                     if is_admin {
-                        claim_button(r.id, "unclaim", "Force unclaim", true)
+                        claim_button(r.id, "unclaim", "Force unclaim", true, "/claim")
                     } else {
                         String::new()
                     },
                 ),
                 None => (
                     r#"<span class="by free">unclaimed</span>"#.to_string(),
-                    claim_button(r.id, "claim", "Claim", false),
+                    claim_button(r.id, "claim", "Claim", false, "/claim"),
                 ),
             };
             out.push_str(&format!(
@@ -310,23 +322,142 @@ pub fn signup_result(text: &str, ok: bool) -> Html<String> {
     Html(b)
 }
 
-pub fn hint_result(text: &str, ok: bool) -> Html<String> {
+pub fn hint_result(text: &str, ok: bool, back: &str) -> Html<String> {
     let mut b = String::from(HEAD);
     let cls = if ok { "banner ok" } else { "banner bad" };
     b.push_str(&format!(
-        r#"<h1>Hint</h1><div class="crumb"><a href="/claim">← claim</a></div>
+        r#"<h1>Hint</h1><div class="crumb"><a href="{}">← back</a></div>
 <div class="{cls}">{}</div><div><a href="/board">see the board →</a></div>"#,
+        esc(back),
         esc(text)
     ));
     b.push_str("</main></body></html>");
     Html(b)
 }
 
-fn claim_button(id: i64, op: &str, label: &str, ghost: bool) -> String {
+fn claim_button(id: i64, op: &str, label: &str, ghost: bool, back: &str) -> String {
     let cls = if ghost { "ghost" } else { "" };
     format!(
         r#"<form method="post" action="/claim" style="display:inline;margin-left:6px">
 <input type="hidden" name="slot_id" value="{id}"><input type="hidden" name="op" value="{op}">
+<input type="hidden" name="back" value="{back}">
 <button class="{cls}" type="submit">{label}</button></form>"#
     )
+}
+
+/// The per-game page: claim/unclaim its players, hint with live item search,
+/// and all hints in this world with a "prioritize" toggle.
+#[allow(clippy::too_many_arguments)]
+pub fn game_page(
+    ap_slot: i64,
+    game: &str,
+    snap: &BoardSnapshot,
+    slots: &[SlotRow],
+    prios: &std::collections::HashSet<(i64, i64, i64)>,
+    item_names: &[String],
+    me: &str,
+    is_admin: bool,
+) -> Html<String> {
+    let live = snap.ap.get(&ap_slot).cloned().unwrap_or_default();
+    let back = format!("/game/{ap_slot}");
+    let here: Vec<&SlotRow> = slots.iter().filter(|r| r.ap_slot == ap_slot).collect();
+    let mut out = String::from(HEAD);
+    out.push_str(&format!(
+        r#"<h1>{}</h1><div class="crumb"><a href="/board">← board</a> · signed in as <b>{}</b>{}</div>
+<div class="meta">world {} · sent {} · received {} · {} items out in other worlds</div>"#,
+        esc(game),
+        esc(me),
+        if is_admin { " · admin" } else { "" },
+        live.world_size,
+        live.sent,
+        live.received,
+        live.items_elsewhere,
+    ));
+
+    // Players (claim / unclaim)
+    out.push_str(r#"<h2>Players</h2><div class="grid">"#);
+    for r in &here {
+        let mine = r.claimed_by.as_deref() == Some(me);
+        let (by, action) = match &r.claimed_by {
+            Some(_) if mine => (
+                r#"<span class="by mine">you</span>"#.to_string(),
+                claim_button(r.id, "unclaim", "Unclaim", true, &back),
+            ),
+            Some(who) => (
+                format!(r#"<span class="by">{}</span>"#, esc(who)),
+                if is_admin {
+                    claim_button(r.id, "unclaim", "Force unclaim", true, &back)
+                } else {
+                    String::new()
+                },
+            ),
+            None => (
+                r#"<span class="by free">unclaimed</span>"#.to_string(),
+                claim_button(r.id, "claim", "Claim", false, &back),
+            ),
+        };
+        out.push_str(&format!(
+            r#"<div class="slot idle"><div class="seat"><span class="who">{}</span><span>{by} {action}</span></div></div>"#,
+            esc(&r.name)
+        ));
+    }
+    out.push_str("</div>");
+
+    // Hinting — only if the viewer claims a seat on this slot (or is admin)
+    let hint_slot = here
+        .iter()
+        .find(|r| r.claimed_by.as_deref() == Some(me))
+        .or_else(|| if is_admin { here.first() } else { None })
+        .map(|r| r.id);
+    if let Some(sid) = hint_slot {
+        let items_json = serde_json::to_string(item_names).unwrap_or_else(|_| "[]".into());
+        out.push_str(&format!(
+            r#"<h2>Send a hint</h2>
+<p class="empty">Search your item pool and hint one — it spends your hint points.</p>
+<form method="post" action="/hint" class="hintform">
+<input type="hidden" name="slot_id" value="{sid}"><input type="hidden" name="back" value="{back}">
+<input id="hintq" name="item" placeholder="search your items…" autocomplete="off" required>
+<button type="submit">Hint</button></form>
+<div id="hintmatches" class="matches"></div>
+<script>
+const ITEMS={items_json};
+const q=document.getElementById('hintq'),box=document.getElementById('hintmatches');
+q.addEventListener('input',function(){{
+  const v=q.value.toLowerCase().trim();box.innerHTML='';
+  if(!v)return;const w=v.split(/\s+/);
+  ITEMS.filter(function(n){{const l=n.toLowerCase();return w.every(function(x){{return l.includes(x)}})}}).slice(0,15).forEach(function(n){{
+    const d=document.createElement('div');d.className='match';d.textContent=n;
+    d.onclick=function(){{q.value=n;box.innerHTML=''}};box.appendChild(d);}});
+}});
+</script>"#
+        ));
+    }
+
+    // All hints in this world, with prioritize toggles
+    out.push_str(r#"<h2>Hints in this world</h2>"#);
+    if live.hint_views.is_empty() {
+        out.push_str(r#"<div class="empty">No hints here yet.</div>"#);
+    } else {
+        for h in &live.hint_views {
+            let on = prios.contains(&(h.finding, h.location, h.item));
+            let (cls, label) = if on {
+                ("", "★ prioritized")
+            } else {
+                ("ghost", "☆ prioritize")
+            };
+            out.push_str(&format!(
+                r#"<div class="hintrow"><span>{}</span><form method="post" action="/prioritize" style="display:inline">
+<input type="hidden" name="finding" value="{}"><input type="hidden" name="location" value="{}">
+<input type="hidden" name="item" value="{}"><input type="hidden" name="back" value="{back}">
+<button class="{cls}" type="submit">{label}</button></form></div>"#,
+                esc(&h.text),
+                h.finding,
+                h.location,
+                h.item,
+            ));
+        }
+    }
+
+    out.push_str("</main></body></html>");
+    Html(out)
 }
