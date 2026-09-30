@@ -12,7 +12,7 @@ use std::sync::{Arc, RwLock};
 
 use axum::{
     Router,
-    extract::{Form, State},
+    extract::{Form, Multipart, State},
     http::HeaderMap,
     response::{Html, Redirect},
     routing::{get, post},
@@ -76,6 +76,9 @@ async fn main() {
         .route("/board", get(board_view))
         .route("/claim", get(claim_get).post(claim_post))
         .route("/hint", post(hint_post))
+        .route("/signup", get(signup_get).post(signup_post))
+        .route("/signup/delete", post(signup_delete))
+        .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
@@ -225,4 +228,146 @@ async fn hint_post(
         }
         Err(e) => render::hint_result(&format!("Hint failed: {e}"), false),
     }
+}
+
+const UPLOAD_DIR: &str = "/var/lib/bifrost/uploads";
+
+fn slugify(s: &str) -> String {
+    let out: String = s
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
+    if out.is_empty() { "slot".into() } else { out }
+}
+
+async fn signup_get(State(st): State<AppState>, headers: HeaderMap) -> Html<String> {
+    let (me, is_admin) = identity(&headers);
+    let subs = st.db.submissions().await.unwrap_or_default();
+    render::signup_page(&subs, &me, is_admin)
+}
+
+async fn signup_post(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    mut mp: Multipart,
+) -> Html<String> {
+    let (me, _) = identity(&headers);
+    let mut yaml: Option<Vec<u8>> = None;
+    let mut apworld: Option<Vec<u8>> = None;
+    let mut is_custom = false;
+    let mut coop = String::new();
+    while let Ok(Some(field)) = mp.next_field().await {
+        match field.name().unwrap_or("") {
+            "yaml" => yaml = field.bytes().await.ok().map(|b| b.to_vec()),
+            "apworld" => {
+                apworld = field
+                    .bytes()
+                    .await
+                    .ok()
+                    .filter(|b| !b.is_empty())
+                    .map(|b| b.to_vec());
+            }
+            "is_custom" => {
+                let _ = field.text().await;
+                is_custom = true;
+            }
+            "coop" => coop = field.text().await.unwrap_or_default(),
+            _ => {
+                let _ = field.bytes().await;
+            }
+        }
+    }
+
+    let Some(yaml) = yaml.filter(|b| !b.is_empty()) else {
+        return render::signup_result("No YAML uploaded.", false);
+    };
+    let yaml_str = String::from_utf8_lossy(&yaml).to_string();
+    let result = match checker::check_yaml(&yaml_str).await {
+        Ok(r) => r,
+        Err(e) => return render::signup_result(&format!("Checker error: {e}"), false),
+    };
+    let Some(p0) = result.players.first() else {
+        return render::signup_result("Couldn't read a player from that YAML.", false);
+    };
+    let slot_name = p0.name.clone();
+    let game = p0.game.clone().unwrap_or_else(|| "?".into());
+    if !result.ok && !is_custom {
+        return render::signup_result(
+            &format!("That YAML didn't pass: {}", result.errors.join("; ")),
+            false,
+        );
+    }
+    if is_custom && apworld.is_none() {
+        return render::signup_result("Custom game selected but no .apworld uploaded.", false);
+    }
+
+    let slug = slugify(&slot_name);
+    let _ = tokio::fs::create_dir_all(UPLOAD_DIR).await;
+    let yaml_path = format!("{UPLOAD_DIR}/{slug}.yaml");
+    if tokio::fs::write(&yaml_path, &yaml).await.is_err() {
+        return render::signup_result("Couldn't store the YAML.", false);
+    }
+    let apworld_path = if let Some(aw) = &apworld {
+        let p = format!("{UPLOAD_DIR}/{slug}.apworld");
+        if tokio::fs::write(&p, aw).await.is_err() {
+            return render::signup_result("Couldn't store the apworld.", false);
+        }
+        Some(p)
+    } else {
+        None
+    };
+    let coop_clean: String = coop
+        .split([',', '\n'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    match st
+        .db
+        .add_submission(
+            &me,
+            &slot_name,
+            &game,
+            is_custom,
+            &coop_clean,
+            &yaml_path,
+            apworld_path.as_deref(),
+        )
+        .await
+    {
+        Ok(_) => {
+            let note = if !result.ok && is_custom {
+                " (custom — validates when the season is generated)"
+            } else {
+                ""
+            };
+            render::signup_result(&format!("Signed up: {slot_name} — {game}.{note}"), true)
+        }
+        Err(_) => render::signup_result(
+            &format!("'{slot_name}' is already signed up — delete that entry first to resubmit."),
+            false,
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+struct DelForm {
+    id: i64,
+}
+
+async fn signup_delete(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<DelForm>,
+) -> Redirect {
+    let (me, is_admin) = identity(&headers);
+    if let Ok(Some((yaml_file, apworld_file))) = st.db.delete_submission(f.id, &me, is_admin).await
+    {
+        let _ = tokio::fs::remove_file(&yaml_file).await;
+        if let Some(a) = apworld_file {
+            let _ = tokio::fs::remove_file(&a).await;
+        }
+    }
+    Redirect::to("/signup")
 }

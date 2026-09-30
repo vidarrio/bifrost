@@ -50,14 +50,15 @@ def main() -> None:
         if doc is None:
             continue
         name = str(doc.get("name", "?"))
+        game = str(doc.get("game", "?"))
         try:
             settings = roll_settings(doc, plando_options=PLANDO)
-            game = getattr(settings, "game", None) or doc.get("game")
+            game = getattr(settings, "game", None) or game
             out["players"].append({"name": name, "game": str(game), "ok": True})
         except Exception as e:
             cause = " - %s" % e.__cause__ if getattr(e, "__cause__", None) else ""
             msg = "%s%s" % (e, cause)
-            out["players"].append({"name": name, "ok": False, "error": msg})
+            out["players"].append({"name": name, "game": game, "ok": False, "error": msg})
             out["errors"].append("%s: %s" % (name, msg))
             out["ok"] = False
 

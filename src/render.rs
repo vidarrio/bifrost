@@ -5,7 +5,7 @@
 use axum::response::Html;
 
 use crate::ap::BoardSnapshot;
-use crate::db::SlotRow;
+use crate::db::{SlotRow, SubmissionRow};
 
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -45,6 +45,9 @@ h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute
 .slot .hint{font-family:var(--mono);font-size:11px;color:var(--warn);margin-top:4px;padding-left:8px;border-left:2px solid var(--bd)}
 .hintform{display:flex;gap:6px;margin:4px 0 8px}.hintform input{flex:1;min-width:0;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:5px 8px;font-size:12px}
 .banner{border-radius:10px;padding:12px 16px;margin:0 0 14px}.banner.ok{background:rgba(40,165,109,.15);border:1px solid var(--ok)}.banner.bad{background:rgba(226,77,95,.13);border:1px solid var(--bad)}
+.signup{display:grid;gap:12px;max-width:460px;margin-bottom:10px}.signup label{display:grid;gap:4px;font-size:13px;color:var(--muted)}.signup label.chk{display:flex;flex-direction:row;align-items:center;gap:8px}
+.signup input[type=file],.signup input[type=text]{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:6px 8px;font-size:13px}
+code{font-family:var(--mono);font-size:12px;color:var(--accent)}
 button{background:var(--accent);color:#0d1117;border:0;border-radius:7px;padding:5px 12px;font-weight:600;font-size:12px;cursor:pointer}
 button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted)}
 .feed{display:grid;gap:6px}.ev{display:flex;gap:8px;font-size:13px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px}
@@ -213,6 +216,72 @@ pub fn claim_page(
     }
     out.push_str("</div></main></body></html>");
     Html(out)
+}
+
+pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool) -> Html<String> {
+    let mut b = String::from(HEAD);
+    b.push_str(&format!(
+        r#"<h1>Season signup</h1><div class="crumb"><a href="/board">← board</a> · signed in as <b>{}</b></div>
+<p class="empty">Upload your options YAML for the next season. It's checked against the installed worlds before it's accepted. Playing a custom game? Tick the box and upload its <code>.apworld</code> too. Sharing one game between people (like Don't Starve Together)? List the extra players.</p>
+<form method="post" action="/signup" enctype="multipart/form-data" class="signup">
+  <label>Options YAML<input type="file" name="yaml" accept=".yaml,.yml" required></label>
+  <label class="chk"><input type="checkbox" name="is_custom" value="1"> Custom (non-core) game</label>
+  <label>apworld (custom games only)<input type="file" name="apworld" accept=".apworld"></label>
+  <label>Co-op players — extra names, comma-separated<input type="text" name="coop" placeholder="e.g. Awoo"></label>
+  <button type="submit">Sign up</button>
+</form>"#,
+        esc(me)
+    ));
+
+    b.push_str(r#"<h2>Signed up</h2>"#);
+    if subs.is_empty() {
+        b.push_str(r#"<div class="empty">Nobody yet.</div>"#);
+    } else {
+        b.push_str(r#"<div class="grid">"#);
+        for s in subs {
+            let custom = if s.is_custom {
+                r#" <span class="by free">custom</span>"#
+            } else {
+                ""
+            };
+            let coop = if s.coop_names.is_empty() {
+                String::new()
+            } else {
+                format!(r#"<div class="meta">+ {}</div>"#, esc(&s.coop_names))
+            };
+            let del = if is_admin || s.sso == me {
+                format!(
+                    r#"<form method="post" action="/signup/delete" style="display:inline">
+<input type="hidden" name="id" value="{}"><button class="ghost" type="submit">Remove</button></form>"#,
+                    s.id
+                )
+            } else {
+                String::new()
+            };
+            b.push_str(&format!(
+                r#"<div class="slot idle"><div class="game">{}{custom}</div>
+<div class="meta">{} · by {}</div>{coop}<div class="seat"><span></span>{del}</div></div>"#,
+                esc(&s.slot_name),
+                esc(&s.game),
+                esc(&s.sso),
+            ));
+        }
+        b.push_str("</div>");
+    }
+    b.push_str("</main></body></html>");
+    Html(b)
+}
+
+pub fn signup_result(text: &str, ok: bool) -> Html<String> {
+    let mut b = String::from(HEAD);
+    let cls = if ok { "banner ok" } else { "banner bad" };
+    b.push_str(&format!(
+        r#"<h1>Signup</h1><div class="crumb"><a href="/signup">← signup</a></div>
+<div class="{cls}">{}</div>"#,
+        esc(text)
+    ));
+    b.push_str("</main></body></html>");
+    Html(b)
 }
 
 pub fn hint_result(text: &str, ok: bool) -> Html<String> {

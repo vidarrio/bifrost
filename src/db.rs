@@ -22,6 +22,16 @@ pub struct SlotRow {
     pub claimed_by: Option<String>,
 }
 
+#[derive(Debug, FromRow, Clone)]
+pub struct SubmissionRow {
+    pub id: i64,
+    pub sso: String,
+    pub slot_name: String,
+    pub game: String,
+    pub is_custom: bool,
+    pub coop_names: String,
+}
+
 impl Db {
     pub async fn open(path: &str) -> Result<Self, sqlx::Error> {
         let opts = SqliteConnectOptions::new()
@@ -48,6 +58,22 @@ impl Db {
                  bifrost_slot_id INTEGER PRIMARY KEY REFERENCES bifrost_slot(id) ON DELETE CASCADE,
                  sso TEXT NOT NULL,
                  claimed_at INTEGER NOT NULL
+               )"#,
+        )
+        .execute(&pool)
+        .await?;
+        // Signup submissions for the *next* season (before any seed exists).
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS submission (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 sso TEXT NOT NULL,
+                 slot_name TEXT NOT NULL UNIQUE,
+                 game TEXT NOT NULL,
+                 is_custom INTEGER NOT NULL DEFAULT 0,
+                 coop_names TEXT NOT NULL DEFAULT '',
+                 yaml_file TEXT NOT NULL,
+                 apworld_file TEXT,
+                 created_at INTEGER NOT NULL
                )"#,
         )
         .execute(&pool)
@@ -118,6 +144,74 @@ impl Db {
         .execute(&self.pool)
         .await?;
         Ok(res.rows_affected() > 0)
+    }
+
+    /// Record a signup submission. Errors (e.g. duplicate slot name) bubble up.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_submission(
+        &self,
+        sso: &str,
+        slot_name: &str,
+        game: &str,
+        is_custom: bool,
+        coop_names: &str,
+        yaml_file: &str,
+        apworld_file: Option<&str>,
+    ) -> Result<i64, sqlx::Error> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let res = sqlx::query(
+            "INSERT INTO submission (sso, slot_name, game, is_custom, coop_names, yaml_file, apworld_file, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(sso)
+        .bind(slot_name)
+        .bind(game)
+        .bind(is_custom as i64)
+        .bind(coop_names)
+        .bind(yaml_file)
+        .bind(apworld_file)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(res.last_insert_rowid())
+    }
+
+    pub async fn submissions(&self) -> Result<Vec<SubmissionRow>, sqlx::Error> {
+        sqlx::query_as::<_, SubmissionRow>(
+            "SELECT id, sso, slot_name, game, is_custom, coop_names FROM submission ORDER BY created_at",
+        )
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    /// Delete a submission (its own submitter, or an admin). Returns the deleted
+    /// row's file paths so the caller can clean them up.
+    pub async fn delete_submission(
+        &self,
+        id: i64,
+        sso: &str,
+        is_admin: bool,
+    ) -> Result<Option<(String, Option<String>)>, sqlx::Error> {
+        let row = sqlx::query_as::<_, (String, String, Option<String>)>(
+            "SELECT sso, yaml_file, apworld_file FROM submission WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some((owner, yaml_file, apworld_file)) = row else {
+            return Ok(None);
+        };
+        if !is_admin && owner != sso {
+            return Ok(None);
+        }
+        sqlx::query("DELETE FROM submission WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(Some((yaml_file, apworld_file)))
     }
 
     /// (ap_slot, current claimant) for a Bifrost slot, or None if it doesn't exist.
