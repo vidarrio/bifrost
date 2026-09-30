@@ -165,7 +165,7 @@ pub fn board_page(
             let (cls, label) = status_label(live.status);
             out.push_str(&format!(
                 r#"<a class="slot cardlink {cls}" href="/game/{}"><span class="st">{label}</span><div class="game">{}</div>
-<div class="meta">world {} · sent {} · recv {} · {} out elsewhere</div>"#,
+<div class="meta">{} locations · sent {} · recv {} · {} out elsewhere</div>"#,
                 g.ap_slot,
                 esc(g.game),
                 live.world_size,
@@ -864,7 +864,7 @@ pub fn game_page(
     let mut out = page_head(Some(me));
     out.push_str(&format!(
         r#"<h1>{}</h1><div class="crumb"><a href="/board">← board</a>{}</div>
-<div class="meta">world {} · sent {} · received {} · {} items out in other worlds</div>"#,
+<div class="meta">{} locations · sent {} · received {} · {} items out in other worlds</div>"#,
         esc(game),
         if is_admin { " · admin" } else { "" },
         live.world_size,
