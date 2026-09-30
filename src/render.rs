@@ -538,8 +538,8 @@ pub fn admin_page(
         ));
     }
 
-    // Players (signups)
-    b.push_str(r#"<h2>Players (signups)</h2>"#);
+    // Signups (the queue for the next season)
+    b.push_str(r#"<h2>Signups</h2>"#);
     if subs.is_empty() {
         b.push_str(r#"<div class="empty">No signups.</div>"#);
     } else {
@@ -564,10 +564,10 @@ pub fn admin_page(
         r#"<div class="btnrow">{}</div>"#,
         action_btn(
             "/admin/clear",
-            &[("what", "players")],
-            "Clear all players",
+            &[("what", "signups")],
+            "Clear all signups",
             true,
-            "Delete ALL signups, their YAMLs, and every Bifrost slot?"
+            "Delete every signup and its uploaded files? (The current season's players stay.)"
         )
     ));
 
@@ -604,7 +604,14 @@ pub fn admin_page(
     // Maintenance + reset
     b.push_str(r#"<h2>Maintenance</h2>"#);
     b.push_str(&format!(
-        r#"<div class="btnrow">{}{}</div>"#,
+        r#"<div class="btnrow">{}{}{}</div>"#,
+        action_btn(
+            "/admin/clear",
+            &[("what", "players")],
+            "Clear current players",
+            true,
+            "Delete this season's players — all Bifrost slots, their claims, and the staged YAMLs? (Signups stay.)"
+        ),
         action_btn(
             "/admin/clear",
             &[("what", "save")],
@@ -816,11 +823,11 @@ pub fn game_page(
     }
     out.push_str("</div>");
 
-    // Hinting — only if the viewer claims a seat on this slot (or is admin)
+    // Hinting — shown only to a player who claims a seat on this slot. Admins do
+    // not get it here; they hint via the server console instead.
     let hint_slot = here
         .iter()
         .find(|r| r.claimed_by.as_deref() == Some(me))
-        .or_else(|| if is_admin { here.first() } else { None })
         .map(|r| r.id);
     if let Some(sid) = hint_slot {
         let items_json = serde_json::to_string(item_names).unwrap_or_else(|_| "[]".into());

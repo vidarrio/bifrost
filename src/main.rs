@@ -236,11 +236,11 @@ async fn game_view(
     } else {
         0
     };
-    // Live points for the viewer's own slot (fetched by connecting as it).
-    let i_claim = is_admin
-        || slots
-            .iter()
-            .any(|r| r.ap_slot == ap_slot && r.claimed_by.as_deref() == Some(me.as_str()));
+    // Live points for the viewer's own slot (fetched by connecting as it). Only
+    // an actual claimant sees the hint form, so only fetch points for them.
+    let i_claim = slots
+        .iter()
+        .any(|r| r.ap_slot == ap_slot && r.claimed_by.as_deref() == Some(me.as_str()));
     let points = match (i_claim, &st.ap_cfg) {
         (true, Some(cfg)) if !connect_name.is_empty() => {
             ap::slot_points(&cfg.url, &cfg.password, &connect_name).await
@@ -347,14 +347,18 @@ async fn hint_post(
     headers: HeaderMap,
     Form(f): Form<HintForm>,
 ) -> Html<String> {
-    let (me, is_admin) = identity(&headers);
+    let (me, _is_admin) = identity(&headers);
     let back = safe_back(f.back.as_deref(), "/board");
     let detail = st.db.slot_detail(f.slot_id).await.ok().flatten();
     let Some((ap_slot, claimant)) = detail else {
         return render::hint_result("Unknown slot.", false, &back);
     };
-    if !(is_admin || claimant.as_deref() == Some(me.as_str())) {
-        return render::hint_result("You haven't claimed that slot.", false, &back);
+    if claimant.as_deref() != Some(me.as_str()) {
+        return render::hint_result(
+            "Only the player who claimed this slot can hint on it.",
+            false,
+            &back,
+        );
     }
     let connect_name = st
         .board
@@ -648,13 +652,18 @@ async fn admin_generate(State(st): State<AppState>, headers: HeaderMap) -> Redir
     Redirect::to("/admin")
 }
 
-/// Delete all signups (+ their files), all Bifrost slots, and staged YAMLs.
-async fn clear_players(st: &AppState) {
+/// Delete the signup queue: all `submission` rows and their uploaded files.
+async fn clear_signups(st: &AppState) {
     if let Ok(files) = st.db.clear_submissions().await {
         for f in files {
             let _ = tokio::fs::remove_file(&f).await;
         }
     }
+}
+
+/// Delete the current season's players: every Bifrost slot (claims cascade) and
+/// the staged Players/ YAMLs.
+async fn clear_current_players(st: &AppState) {
     let _ = st.db.clear_all_slots().await;
     let _ = generate::clear_player_yamls().await;
 }
@@ -677,12 +686,14 @@ async fn admin_clear(
         "apworlds" => {
             let _ = generate::clear_apworlds().await;
         }
-        "players" => clear_players(&st).await,
+        "signups" => clear_signups(&st).await,
+        "players" => clear_current_players(&st).await,
         "save" => generate::clear_save().await,
         "world" => generate::clear_world().await,
         "reset" => {
             let _ = generate::clear_apworlds().await;
-            clear_players(&st).await;
+            clear_signups(&st).await;
+            clear_current_players(&st).await;
             generate::clear_save().await;
             generate::clear_world().await;
             let _ = st.db.set_signups_open(false).await;
