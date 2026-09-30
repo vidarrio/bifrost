@@ -528,18 +528,8 @@ fn on_printjson(board: &Arc<RwLock<Board>>, pkt: &Value) {
                 b.push_event("*", format!("{name} collected their remaining items"));
             }
         }
-        "Join" => {
-            if let Some(slot) = pkt.get("slot").and_then(Value::as_i64) {
-                let name = b.name_of(slot);
-                b.push_event("join", format!("{name} connected"));
-            }
-        }
-        "Part" => {
-            if let Some(slot) = pkt.get("slot").and_then(Value::as_i64) {
-                let name = b.name_of(slot);
-                b.push_event("part", format!("{name} disconnected"));
-            }
-        }
+        // Join/Part (connect/disconnect) are deliberately not fed into the
+        // activity feed — clients flap on unstable networks and would drown it.
         _ => {}
     }
 }
