@@ -25,7 +25,12 @@ mod checker;
 mod db;
 mod generate;
 mod meta;
+mod mine;
 mod render;
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 type Shared = Arc<RwLock<ap::Board>>;
 
@@ -35,6 +40,9 @@ struct AppState {
     db: db::Db,
     ap_cfg: Option<ap::ApConfig>,
     genstate: generate::GenState,
+    /// Active minesweeper games by id (server holds the board).
+    mine_games: Arc<Mutex<HashMap<u64, mine::Game>>>,
+    mine_next: Arc<AtomicU64>,
 }
 
 const LANDING: &str = include_str!("../static/index.html");
@@ -76,6 +84,8 @@ async fn main() {
         db,
         ap_cfg,
         genstate,
+        mine_games: Arc::new(Mutex::new(HashMap::new())),
+        mine_next: Arc::new(AtomicU64::new(1)),
     };
     let app = Router::new()
         .route("/health", get(health))
@@ -98,6 +108,10 @@ async fn main() {
         .route("/admin/delete-player", post(admin_delete_player))
         .route("/admin/delete-apworld", post(admin_delete_apworld))
         .route("/admin/console", post(admin_console))
+        .route("/admin/minesweeper", post(admin_minesweeper))
+        .route("/minesweeper", get(minesweeper_page))
+        .route("/minesweeper/new", post(mine_new))
+        .route("/minesweeper/reveal", post(mine_reveal))
         .route("/api/me", get(api_me))
         .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
@@ -248,6 +262,11 @@ async fn game_view(
         }
         _ => None,
     };
+    let credits = if i_claim {
+        st.db.credits(&season, &me).await
+    } else {
+        0
+    };
 
     render::game_page(
         ap_slot,
@@ -260,6 +279,7 @@ async fn game_view(
         is_admin,
         cost,
         points,
+        credits,
     )
 }
 
@@ -387,6 +407,13 @@ async fn hint_post(
     let Some(cfg) = st.ap_cfg.as_ref() else {
         return reject("Hinting isn't configured.");
     };
+    let season = st
+        .board
+        .read()
+        .ok()
+        .and_then(|b| b.seed.clone())
+        .unwrap_or_default();
+    let creds = st.db.credits(&season, &me).await;
     match ap::send_hint(&cfg.url, &cfg.password, &name, f.item.trim()).await {
         Ok(parts) => {
             let text = st
@@ -394,18 +421,74 @@ async fn hint_post(
                 .read()
                 .map(|b| ap::resolve_parts(&b, &parts))
                 .unwrap_or_default();
-            let ok = !hint_rejected(&text);
-            // On success the points changed — read them back so the page can
-            // update the "you have N points" figure without a reload.
-            let points = if ok {
-                ap::slot_points(&cfg.url, &cfg.password, &name).await
-            } else {
-                None
-            };
-            Json(serde_json::json!({"ok": ok, "message": text, "points": points}))
+            if !hint_rejected(&text) {
+                // Placed with AP points — report the new balance.
+                let points = ap::slot_points(&cfg.url, &cfg.password, &name).await;
+                return Json(serde_json::json!({
+                    "ok": true, "message": text, "points": points, "credits": creds
+                }));
+            }
+            // Rejected. If it was only a points shortfall and the player holds a
+            // bonus-hint credit, place the hint as admin (free) and spend one.
+            if rejected_for_points(&text) && creds > 0 {
+                let admin_cmd = format!("/hint {name} {}", f.item.trim());
+                match ap::send_admin(
+                    &cfg.url,
+                    &cfg.slot,
+                    &cfg.password,
+                    &cfg.admin_password,
+                    &admin_cmd,
+                )
+                .await
+                {
+                    Ok(lists) => {
+                        let msg = st
+                            .board
+                            .read()
+                            .map(|b| {
+                                lists
+                                    .iter()
+                                    .map(|p| ap::resolve_parts(&b, p))
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            })
+                            .unwrap_or_default();
+                        if hint_rejected(&msg) {
+                            return Json(serde_json::json!({
+                                "ok": false, "message": msg, "credits": creds
+                            }));
+                        }
+                        st.db.spend_credit(&season, &me).await;
+                        let newc = st.db.credits(&season, &me).await;
+                        let points = ap::slot_points(&cfg.url, &cfg.password, &name).await;
+                        return Json(serde_json::json!({
+                            "ok": true,
+                            "message": format!("Out of points — used a bonus hint. {msg}"),
+                            "points": points,
+                            "credits": newc
+                        }));
+                    }
+                    Err(e) => {
+                        return Json(serde_json::json!({
+                            "ok": false, "message": format!("Bonus hint failed: {e}"), "credits": creds
+                        }));
+                    }
+                }
+            }
+            Json(serde_json::json!({"ok": false, "message": text, "credits": creds}))
         }
-        Err(e) => reject(&format!("Hint failed: {e}")),
+        Err(e) => Json(serde_json::json!({
+            "ok": false, "message": format!("Hint failed: {e}"), "credits": creds
+        })),
     }
+}
+
+/// A `!hint` rejection that is specifically a points shortfall (vs. a bad item).
+fn rejected_for_points(text: &str) -> bool {
+    let t = text.to_lowercase();
+    ["not enough", "do not have", "cannot afford"]
+        .iter()
+        .any(|k| t.contains(k))
 }
 
 /// The "Hints in this world" rows for one AP slot, as an HTML fragment — used by
@@ -638,6 +721,7 @@ async fn render_admin(st: &AppState) -> Html<String> {
         })
         .unwrap_or((false, None, "{}".into()));
     let signups_open = st.db.signups_open().await;
+    let minesweeper_on = st.db.minesweeper_enabled().await;
     let (running, gen_msg) = st
         .genstate
         .lock()
@@ -649,6 +733,7 @@ async fn render_admin(st: &AppState) -> Html<String> {
         connected,
         seed.as_deref(),
         signups_open,
+        minesweeper_on,
         running,
         &gen_msg,
         &subs,
@@ -834,4 +919,122 @@ async fn admin_console(
         None => "AP connection not configured.".to_string(),
     };
     Json(serde_json::json!({"ok": true, "cmd": cmd, "output": output}))
+}
+
+async fn admin_minesweeper(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<SignupsForm>,
+) -> Redirect {
+    let (_me, is_admin) = identity(&headers);
+    if is_admin {
+        let _ = st.db.set_minesweeper_enabled(f.open == "1").await;
+    }
+    Redirect::to("/admin")
+}
+
+async fn minesweeper_page(State(st): State<AppState>, headers: HeaderMap) -> Html<String> {
+    let (me, _is_admin) = identity(&headers);
+    let enabled = st.db.minesweeper_enabled().await;
+    let season = st
+        .board
+        .read()
+        .ok()
+        .and_then(|b| b.seed.clone())
+        .unwrap_or_default();
+    let credits = st.db.credits(&season, &me).await;
+    render::minesweeper_page(enabled, credits)
+}
+
+fn now_nanos() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0)
+}
+
+async fn mine_new(State(st): State<AppState>, headers: HeaderMap) -> Json<serde_json::Value> {
+    let (me, _) = identity(&headers);
+    if !st.db.minesweeper_enabled().await {
+        return Json(serde_json::json!({"ok": false, "error": "Minesweeper is disabled."}));
+    }
+    let id = st.mine_next.fetch_add(1, Ordering::Relaxed);
+    let game = mine::Game::new(me);
+    let (w, h, mines) = (game.w, game.h, game.mines_n);
+    if let Ok(mut games) = st.mine_games.lock() {
+        let now = now_nanos();
+        // Drop finished games and anything older than ~2h so the map stays small.
+        games.retain(|_, g| !g.over && now.saturating_sub(g.created) < 2 * 3600 * 1_000_000_000);
+        games.insert(id, game);
+    }
+    Json(serde_json::json!({"ok": true, "id": id, "w": w, "h": h, "mines": mines}))
+}
+
+#[derive(Deserialize)]
+struct RevealForm {
+    id: u64,
+    r: usize,
+    c: usize,
+}
+
+async fn mine_reveal(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<RevealForm>,
+) -> Json<serde_json::Value> {
+    let (me, _) = identity(&headers);
+    // Reveal under the lock, then release it before any await.
+    let outcome = {
+        let mut games = match st.mine_games.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        match games.get_mut(&f.id) {
+            Some(g) if g.sso == me => {
+                let rv = g.reveal(f.r, f.c);
+                let (won, over) = (g.won, g.over);
+                if over {
+                    games.remove(&f.id);
+                }
+                Some((rv, won))
+            }
+            Some(_) => return Json(serde_json::json!({"ok": false, "error": "Not your game."})),
+            None => return Json(serde_json::json!({"ok": false, "error": "No such game."})),
+        }
+    };
+    let Some((rv, won)) = outcome else {
+        return Json(serde_json::json!({"ok": false, "error": "No such game."}));
+    };
+    let mut credits: Option<i64> = None;
+    if won {
+        let season = st
+            .board
+            .read()
+            .ok()
+            .and_then(|b| b.seed.clone())
+            .unwrap_or_default();
+        credits = st.db.add_credits(&season, &me, 1).await.ok();
+    }
+    let cells_json = |cells: &[(usize, usize, u8)]| {
+        cells
+            .iter()
+            .map(|(r, c, n)| serde_json::json!({"r": r, "c": c, "n": n}))
+            .collect::<Vec<_>>()
+    };
+    match rv {
+        mine::Reveal::Play(cells) => {
+            Json(serde_json::json!({"ok": true, "state": "play", "cells": cells_json(&cells)}))
+        }
+        mine::Reveal::Won(cells) => Json(serde_json::json!({
+            "ok": true, "state": "won", "cells": cells_json(&cells), "credits": credits
+        })),
+        mine::Reveal::Lost(mines) => {
+            let ms: Vec<_> = mines
+                .iter()
+                .map(|(r, c)| serde_json::json!({"r": r, "c": c}))
+                .collect();
+            Json(serde_json::json!({"ok": true, "state": "lost", "mines": ms}))
+        }
+        mine::Reveal::Invalid => Json(serde_json::json!({"ok": false, "error": "Invalid move."})),
+    }
 }

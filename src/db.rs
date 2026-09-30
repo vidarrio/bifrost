@@ -97,6 +97,17 @@ impl Db {
         )
         .execute(&pool)
         .await?;
+        // Bonus hint credits earned via the minesweeper minigame (per season).
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS hint_credit (
+                 season TEXT NOT NULL,
+                 sso TEXT NOT NULL,
+                 credits INTEGER NOT NULL DEFAULT 0,
+                 PRIMARY KEY (season, sso)
+               )"#,
+        )
+        .execute(&pool)
+        .await?;
         // Hints a player has flagged to surface on the board.
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS hint_priority (
@@ -136,6 +147,55 @@ impl Db {
     pub async fn set_signups_open(&self, open: bool) -> Result<(), sqlx::Error> {
         self.set_setting("signups_open", if open { "1" } else { "0" })
             .await
+    }
+
+    /// Whether the minesweeper minigame is enabled (defaults to off).
+    pub async fn minesweeper_enabled(&self) -> bool {
+        matches!(self.get_setting("minesweeper_enabled").await, Ok(Some(v)) if v == "1")
+    }
+
+    pub async fn set_minesweeper_enabled(&self, on: bool) -> Result<(), sqlx::Error> {
+        self.set_setting("minesweeper_enabled", if on { "1" } else { "0" })
+            .await
+    }
+
+    /// A player's bonus-hint credits for a season.
+    pub async fn credits(&self, season: &str, sso: &str) -> i64 {
+        sqlx::query_scalar("SELECT credits FROM hint_credit WHERE season = ? AND sso = ?")
+            .bind(season)
+            .bind(sso)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(0)
+    }
+
+    /// Grant `n` bonus-hint credits, returning the new total.
+    pub async fn add_credits(&self, season: &str, sso: &str, n: i64) -> Result<i64, sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO hint_credit (season, sso, credits) VALUES (?, ?, ?)
+             ON CONFLICT(season, sso) DO UPDATE SET credits = credits + excluded.credits",
+        )
+        .bind(season)
+        .bind(sso)
+        .bind(n)
+        .execute(&self.pool)
+        .await?;
+        Ok(self.credits(season, sso).await)
+    }
+
+    /// Spend one bonus-hint credit if available; returns true if one was spent.
+    pub async fn spend_credit(&self, season: &str, sso: &str) -> bool {
+        let res = sqlx::query(
+            "UPDATE hint_credit SET credits = credits - 1
+             WHERE season = ? AND sso = ? AND credits > 0",
+        )
+        .bind(season)
+        .bind(sso)
+        .execute(&self.pool)
+        .await;
+        matches!(res, Ok(r) if r.rows_affected() > 0)
     }
 
     /// Delete every signup submission, returning their stored file paths so the

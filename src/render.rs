@@ -466,6 +466,7 @@ pub fn admin_page(
     connected: bool,
     seed: Option<&str>,
     signups_open: bool,
+    minesweeper_on: bool,
     running: bool,
     gen_msg: &str,
     subs: &[SubmissionRow],
@@ -506,6 +507,34 @@ pub fn admin_page(
                 "/admin/signups",
                 &[("open", "1")],
                 "Open signups",
+                false,
+                ""
+            )
+        ));
+    }
+
+    // Minesweeper minigame
+    b.push_str(r#"<h2>Minesweeper</h2>"#);
+    if minesweeper_on {
+        b.push_str(r#"<div class="statline">The minesweeper minigame is <b>enabled</b> — players can farm bonus hints.</div>"#);
+        b.push_str(&format!(
+            r#"<div class="btnrow">{}</div>"#,
+            action_btn(
+                "/admin/minesweeper",
+                &[("open", "0")],
+                "Disable minesweeper",
+                false,
+                ""
+            )
+        ));
+    } else {
+        b.push_str(r#"<div class="statline">The minesweeper minigame is <b>disabled</b>.</div>"#);
+        b.push_str(&format!(
+            r#"<div class="btnrow">{}</div>"#,
+            action_btn(
+                "/admin/minesweeper",
+                &[("open", "1")],
+                "Enable minesweeper",
                 false,
                 ""
             )
@@ -815,6 +844,7 @@ pub fn game_page(
     is_admin: bool,
     cost: i64,
     points: Option<i64>,
+    credits: i64,
 ) -> Html<String> {
     let live = snap.ap.get(&ap_slot).cloned().unwrap_or_default();
     let back = format!("/game/{ap_slot}");
@@ -872,9 +902,17 @@ pub fn game_page(
             Some(p) => format!(r#"You have <b id="hintpts">{p}</b> hint points. "#),
             None => String::new(),
         };
+        let bonus = if credits > 0 {
+            format!(
+                r#" You also have <b id="bonushints">{credits}</b> bonus hint(s) — spent automatically when you're out of points."#
+            )
+        } else {
+            String::new()
+        };
         out.push_str(&format!(
             r#"<h2>Send a hint</h2>
-<p class="empty">{have}Each hint in this world costs <b>{cost}</b> points. Search your pool and hint one.</p>
+<p class="empty">{have}Each hint in this world costs <b>{cost}</b> points.{bonus} Search your pool and hint one.</p>
+<p class="empty"><a href="/minesweeper">Play minesweeper to earn bonus hints →</a></p>
 <form method="post" action="/hint" class="hintform" id="hintform">
 <input type="hidden" name="slot_id" value="{sid}"><input type="hidden" name="back" value="{back}">
 <input id="hintq" name="item" placeholder="search your items…" autocomplete="off" required>
@@ -944,6 +982,88 @@ pub fn hint_rows(
     }
     out
 }
+
+/// The minesweeper minigame page: a server-authoritative board that awards a
+/// bonus-hint credit on a full clear.
+pub fn minesweeper_page(enabled: bool, credits: i64) -> Html<String> {
+    let mut b = page_head(None);
+    b.push_str(r#"<h1>Minesweeper</h1><div class="crumb"><a href="/board">← board</a></div>"#);
+    if !enabled {
+        b.push_str(
+            r#"<div class="banner bad">The minesweeper minigame is disabled right now.</div></main></body></html>"#,
+        );
+        return Html(b);
+    }
+    b.push_str(&format!(
+        r#"<p class="empty">Clear the board without hitting a mine to earn a bonus hint. Every board is solvable by logic alone — no guessing needed. Left-click reveals, right-click flags. Bonus hints are spent automatically when you hint without enough points.</p>
+<div class="statline">Bonus hints: <b id="credits">{credits}</b> · <span id="minesleft"></span></div>
+<div id="msg" class="inlinemsg"></div>
+<div id="grid" class="msgrid"></div>
+<div class="btnrow"><button id="newgame" class="ghost">New game</button></div>"#
+    ));
+    b.push_str(MINE_STYLE);
+    b.push_str(MINE_JS);
+    b.push_str("</main></body></html>");
+    Html(b)
+}
+
+const MINE_STYLE: &str = r#"<style>
+.msgrid{display:grid;gap:2px;margin:14px 0;width:max-content;max-width:100%}
+.cell{width:28px;height:28px;padding:0;background:var(--panel);border:1px solid var(--bd);border-radius:4px;color:var(--fg);font-family:var(--mono);font-size:14px;font-weight:700;cursor:pointer;line-height:1;text-align:center}
+.cell:hover:not(.open){border-color:var(--accent)}
+.cell.open{background:var(--bg);cursor:default}
+.cell.mine{background:var(--bad);color:#fff;border-color:var(--bad)}
+.cell.flag{color:var(--warn)}
+.cell[data-n="1"]{color:#5aa9e6}.cell[data-n="2"]{color:#28a56d}.cell[data-n="3"]{color:#e24d5f}
+.cell[data-n="4"]{color:#c58af9}.cell[data-n="5"]{color:#d98324}.cell[data-n="6"]{color:#3fbfbf}
+.cell[data-n="7"]{color:#e6e9ef}.cell[data-n="8"]{color:#98a3b6}
+</style>"#;
+
+const MINE_JS: &str = r#"<script>
+(function(){
+var W,H,ID,minesN,over=false,flags=0,cells=[];
+var grid=document.getElementById('grid'),msg=document.getElementById('msg'),
+    minesleft=document.getElementById('minesleft'),creditsEl=document.getElementById('credits');
+function post(url,body){return fetch(url,{method:'POST',body:body?new URLSearchParams(body):undefined,headers:{}}).then(function(r){return r.json()});}
+function updateMines(){if(minesleft)minesleft.textContent=(minesN-flags)+' mines';}
+function buildGrid(){
+ grid.innerHTML='';grid.style.gridTemplateColumns='repeat('+W+',28px)';cells=[];
+ for(var r=0;r<H;r++){var row=[];for(var c=0;c<W;c++){
+  var btn=document.createElement('button');btn.className='cell';
+  (function(r,c,btn){
+   btn.addEventListener('click',function(){reveal(r,c);});
+   btn.addEventListener('contextmenu',function(e){e.preventDefault();toggleFlag(btn);});
+  })(r,c,btn);
+  grid.appendChild(btn);row.push(btn);
+ }cells.push(row);}
+}
+function toggleFlag(btn){
+ if(over||btn.classList.contains('open'))return;
+ if(btn.classList.contains('flag')){btn.classList.remove('flag');btn.textContent='';flags--;}
+ else{btn.classList.add('flag');btn.textContent='⚑';flags++;}
+ updateMines();
+}
+function reveal(r,c){
+ if(over)return;var btn=cells[r][c];
+ if(btn.classList.contains('open')||btn.classList.contains('flag'))return;
+ post('/minesweeper/reveal',{id:ID,r:r,c:c}).then(function(j){
+  if(!j.ok){msg.className='inlinemsg bad';msg.textContent=j.error||'Invalid.';return;}
+  if(j.state==='lost'){over=true;(j.mines||[]).forEach(function(m){var mb=cells[m.r][m.c];mb.classList.add('open','mine');mb.textContent='✱';});msg.className='inlinemsg bad';msg.textContent='Boom — try again.';return;}
+  (j.cells||[]).forEach(function(cell){var cb=cells[cell.r][cell.c];cb.classList.remove('flag');cb.classList.add('open');if(cell.n>0){cb.textContent=cell.n;cb.setAttribute('data-n',cell.n);}else{cb.textContent='';}});
+  if(j.state==='won'){over=true;msg.className='inlinemsg ok';msg.textContent='Cleared! You earned a bonus hint.';if(j.credits!=null&&creditsEl)creditsEl.textContent=j.credits;}
+ }).catch(function(){msg.className='inlinemsg bad';msg.textContent='Request failed.';});
+}
+function newGame(){
+ msg.textContent='';msg.className='inlinemsg';over=false;flags=0;
+ post('/minesweeper/new').then(function(j){
+  if(!j.ok){msg.className='inlinemsg bad';msg.textContent=j.error||'Could not start.';grid.innerHTML='';return;}
+  W=j.w;H=j.h;ID=j.id;minesN=j.mines;buildGrid();updateMines();
+ }).catch(function(){msg.className='inlinemsg bad';msg.textContent='Could not start.';});
+}
+document.getElementById('newgame').addEventListener('click',newGame);
+newGame();
+})();
+</script>"#;
 
 /// Page shell. The header bar (brand · "signed in as …" · home) lives in `HEAD`
 /// and is filled client-side from `/api/me`, so the identity isn't needed here.
