@@ -90,6 +90,7 @@ async fn main() {
     let app = Router::new()
         .route("/health", get(health))
         .route("/", get(landing))
+        .route("/favicon.svg", get(favicon))
         .route("/check", get(check_form).post(check_run))
         .route("/board", get(board_view))
         .route("/game/{ap_slot}", get(game_view))
@@ -157,6 +158,13 @@ fn identity(h: &HeaderMap) -> (String, bool) {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+async fn favicon() -> impl IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "image/svg+xml")],
+        render::FAVICON,
+    )
 }
 
 /// Identity for the header bar, filled client-side. Gated behind oauth2-proxy,

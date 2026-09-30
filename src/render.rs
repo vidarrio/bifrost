@@ -13,6 +13,13 @@ fn esc(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// The signature favicon — a dark rounded square with a gold `›` caret,
+/// matching the home launcher. Served at `/favicon.svg`.
+pub const FAVICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <rect width="32" height="32" rx="7" fill="#121a26"/>
+  <path d="M13 9.5 L21 16 L13 22.5" fill="none" stroke="#d8b46b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>"##;
+
 fn status_label(status: i64) -> (&'static str, &'static str) {
     match status {
         30 => ("goal", "goaled"),
@@ -24,7 +31,8 @@ fn status_label(status: i64) -> (&'static str, &'static str) {
 }
 
 const HEAD: &str = r#"<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Bifrost</title><style>
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Bifrost</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg"><style>
 :root{--bg:#0d1117;--panel:#161c26;--bd:#2a3542;--fg:#e6e9ef;--muted:#98a3b6;--accent:#5aa9e6;--ok:#28a56d;--bad:#e24d5f;--warn:#d98324;
 --font:"IBM Plex Sans",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,Menlo,monospace}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);line-height:1.5;
