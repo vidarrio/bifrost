@@ -11,7 +11,7 @@
 use std::sync::{Arc, RwLock};
 
 use axum::{
-    Router,
+    Json, Router,
     extract::{Form, Multipart, Path, State},
     http::HeaderMap,
     response::{Html, Redirect},
@@ -89,6 +89,7 @@ async fn main() {
         .route("/signup", get(signup_get).post(signup_post))
         .route("/signup/delete", post(signup_delete))
         .route("/generate", get(generate_get).post(generate_post))
+        .route("/api/me", get(api_me))
         .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -131,6 +132,19 @@ fn identity(h: &HeaderMap) -> (String, bool) {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+/// Identity for the header bar, filled client-side. Gated behind oauth2-proxy,
+/// so a real user is always present; `user` is null only if the headers are
+/// somehow missing, which the page renders as a "sign in" link.
+async fn api_me(headers: HeaderMap) -> Json<serde_json::Value> {
+    let (user, is_admin) = identity(&headers);
+    let user = if user == "unknown" || user.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::String(user)
+    };
+    Json(serde_json::json!({ "user": user, "admin": is_admin }))
 }
 
 async fn landing() -> Html<&'static str> {

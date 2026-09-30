@@ -17,7 +17,7 @@
       var(--bg);
     color:var(--fg); font-family:var(--font); line-height:1.55;
     min-height:100vh; display:flex; flex-direction:column; align-items:center}
-  main{width:100%; max-width:900px; padding:16px; padding-block:7vh 48px}
+  main{width:100%; max-width:900px; padding:16px; padding-block:32px 48px}
   a{color:var(--accent); text-decoration:none} a:hover{text-decoration:underline}
   .brand{display:flex; align-items:baseline; gap:14px; flex-wrap:wrap}
   h1{font-size:46px; margin:0; letter-spacing:-.02em;
@@ -26,8 +26,14 @@
   .tag{font-family:var(--mono); font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted)}
   .lede{color:var(--muted); font-size:16px; max-width:62ch; margin:14px 0 30px}
   h2.sec{font-size:13px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted); margin:34px 0 12px}
-  .topbar{position:fixed; top:calc(env(safe-area-inset-top,0px) + 10px); right:16px; z-index:10; font-family:var(--mono); font-size:12px}
-  .topbar a{color:var(--accent); text-decoration:none}
+  header{width:100%; border-bottom:1px solid var(--bd); background:var(--panel)}
+  header .hwrap{max-width:900px; margin:0 auto; padding:0 16px; height:52px; display:flex; align-items:center; gap:14px}
+  header .hbrand{font-weight:700; font-size:16px; color:var(--fg); text-decoration:none}
+  header .hbrand:hover{text-decoration:none}
+  header .spacer{flex:1}
+  .who{font-family:var(--mono); font-size:12px; color:var(--muted)}.who b{color:var(--fg)}.who a{color:var(--accent)}
+  .pill{font-family:var(--mono); font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); text-decoration:none; border:1px solid var(--bd); border-radius:999px; padding:3px 11px}
+  .pill:hover{border-color:var(--accent); color:var(--accent); text-decoration:none}
   .seasonhdr{display:flex; align-items:baseline; justify-content:space-between; gap:12px}
   .signup-link{font-size:13px; text-transform:none; letter-spacing:0; color:var(--accent); text-decoration:none; white-space:nowrap}
   .signup-link:hover{text-decoration:underline}
@@ -59,8 +65,11 @@
 </style>
 </head>
 <body>
+<header><div class="hwrap"><a class="hbrand" href="/">Bifrost</a><span class="spacer"></span><span class="who" id="who"></span><a class="pill" href="https://home.example.org/">home</a></div></header>
+<script>
+fetch('/api/me').then(function(r){return r.json()}).then(function(m){var w=document.getElementById('who');if(!w)return;if(m&&m.user){w.innerHTML='signed in as <b></b>';w.querySelector('b').textContent=m.user}}).catch(function(){});
+</script>
 <main>
-  <div class="topbar"><a href="https://home.example.org">⌂ home</a></div>
   <div class="brand">
     <h1>Bifrost</h1>
     <span class="tag">archipelago</span>

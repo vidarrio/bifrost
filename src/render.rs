@@ -28,7 +28,7 @@ const HEAD: &str = r#"<!doctype html><html lang="en"><head><meta charset="utf-8"
 :root{--bg:#0d1117;--panel:#161c26;--bd:#2a3542;--fg:#e6e9ef;--muted:#98a3b6;--accent:#5aa9e6;--ok:#28a56d;--bad:#e24d5f;--warn:#d98324;
 --font:"IBM Plex Sans",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,Menlo,monospace}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);line-height:1.5;
-display:flex;flex-direction:column;align-items:center}main{width:100%;max-width:900px;padding:16px;padding-block:5vh 40px}
+display:flex;flex-direction:column;align-items:center}main{width:100%;max-width:900px;padding:16px;padding-block:24px 40px}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 h1{font-size:30px;margin:0 0 2px}.crumb{font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:20px}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}.on{background:var(--ok)}.off{background:var(--bad)}
@@ -51,7 +51,12 @@ code{font-family:var(--mono);font-size:12px;color:var(--accent)}
 .cardlink{text-decoration:none;color:inherit;display:block;transition:border-color .1s}.cardlink:hover{border-color:var(--accent);text-decoration:none}
 .cardlink:hover .game{color:var(--accent)}
 .prow{display:flex;justify-content:space-between;align-items:center;gap:8px}
-.topbar{position:fixed;top:calc(env(safe-area-inset-top,0px) + 10px);right:16px;z-index:10;font-family:var(--mono);font-size:11.5px;color:var(--muted);display:flex;gap:10px;align-items:center}.topbar b{color:var(--fg)}.topbar a{color:var(--accent);text-decoration:none}
+header{width:100%;border-bottom:1px solid var(--bd);background:var(--panel)}
+header .hwrap{max-width:900px;margin:0 auto;padding:0 16px;height:52px;display:flex;align-items:center;gap:14px}
+header .brand{font-weight:700;font-size:16px;color:var(--fg);text-decoration:none}header .brand:hover{text-decoration:none}
+header .spacer{flex:1}
+.who{font-family:var(--mono);font-size:12px;color:var(--muted)}.who b{color:var(--fg)}.who a{color:var(--accent)}
+.pill{font-family:var(--mono);font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);text-decoration:none;border:1px solid var(--bd);border-radius:999px;padding:3px 11px}.pill:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
 .matches{max-width:460px;margin:-4px 0 12px;display:grid}.matches .match{font-family:var(--mono);font-size:12px;padding:5px 8px;border:1px solid var(--bd);border-top:0;cursor:pointer;background:var(--panel)}.matches .match:hover{background:var(--bd)}
 .hintrow{display:flex;justify-content:space-between;align-items:center;gap:10px;font-family:var(--mono);font-size:12.5px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px;margin:6px 0}
 button{background:var(--accent);color:#0d1117;border:0;border-radius:7px;padding:5px 12px;font-weight:600;font-size:12px;cursor:pointer}
@@ -59,17 +64,12 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .feed{display:grid;gap:6px}.ev{display:flex;gap:8px;font-size:13px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px}
 .ev .i{font-family:var(--mono);font-size:10px;color:var(--muted);min-width:44px}.ev.goal .i{color:var(--ok)}.ev.death .i{color:var(--bad)}.ev.trap .i{color:var(--warn)}
 .empty{color:var(--muted);font-size:13px}
-</style></head><body><main>"#;
-
-/// The top-right bar shared with the rest of the site: who you're logged in as
-/// (when known) and a home button back to the launcher.
-fn topbar(me: Option<&str>) -> String {
-    let who = match me {
-        Some(u) if !u.is_empty() && u != "unknown" => format!("signed in as <b>{}</b>", esc(u)),
-        _ => String::new(),
-    };
-    format!(r#"<div class="topbar">{who}<a href="https://home.example.org">⌂ home</a></div>"#)
-}
+</style></head><body>
+<header><div class="hwrap"><a class="brand" href="/">Bifrost</a><span class="spacer"></span><span class="who" id="who"></span><a class="pill" href="https://home.example.org/">home</a></div></header>
+<script>
+fetch('/api/me').then(function(r){return r.json()}).then(function(m){var w=document.getElementById('who');if(!w)return;if(m&&m.user){w.innerHTML='signed in as <b></b>';w.querySelector('b').textContent=m.user}else{w.innerHTML='<a href="/signup">sign in</a>'}}).catch(function(){});
+</script>
+<main>"#;
 
 struct Group<'a> {
     ap_slot: i64,
@@ -112,7 +112,7 @@ pub fn board_page(
 ) -> Html<String> {
     let mut out = page_head(None);
     out.push_str(&format!(
-        r#"<h1>Live board</h1><div class="crumb"><a href="/">← Bifrost</a> · {} · <a href="/signup">signup</a></div>"#,
+        r#"<h1>Live board</h1><div class="crumb"><a href="/">← Bifrost</a> · {}</div>"#,
         conn_line(snap)
     ));
 
@@ -183,9 +183,8 @@ pub fn claim_page(
 ) -> Html<String> {
     let mut out = page_head(Some(me));
     out.push_str(&format!(
-        r#"<h1>Claim a slot</h1><div class="crumb"><a href="/board">← board</a> · signed in as <b>{}</b>{}</div>
+        r#"<h1>Claim a slot</h1><div class="crumb"><a href="/board">← board</a>{}</div>
 <p class="empty">Claim your slot so only you can hint on it. You can unclaim it again if you grabbed the wrong one.</p>"#,
-        esc(me),
         if is_admin { " · admin" } else { "" },
     ));
 
@@ -244,8 +243,8 @@ pub fn claim_page(
 
 pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool) -> Html<String> {
     let mut b = page_head(Some(me));
-    b.push_str(&format!(
-        r#"<h1>Season signup</h1><div class="crumb"><a href="/board">← board</a> · signed in as <b>{}</b></div>
+    b.push_str(
+        r#"<h1>Season signup</h1><div class="crumb"><a href="/board">← board</a></div>
 <p class="empty">Upload your options YAML for the next season. It's checked against the installed worlds before it's accepted. Playing a custom game? Tick the box and upload its <code>.apworld</code> too. Sharing one game between people (like Don't Starve Together)? List the extra players.</p>
 <form method="post" action="/signup" enctype="multipart/form-data" class="signup">
   <label>Options YAML<input type="file" name="yaml" accept=".yaml,.yml" required></label>
@@ -254,8 +253,7 @@ pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool) -> Html<Str
   <label>Co-op players — extra names, comma-separated<input type="text" name="coop" placeholder="e.g. Awoo"></label>
   <button type="submit">Sign up</button>
 </form>"#,
-        esc(me)
-    ));
+    );
 
     b.push_str(r#"<h2>Signed up</h2>"#);
     if subs.is_empty() {
@@ -377,10 +375,9 @@ pub fn game_page(
     let here: Vec<&SlotRow> = slots.iter().filter(|r| r.ap_slot == ap_slot).collect();
     let mut out = page_head(Some(me));
     out.push_str(&format!(
-        r#"<h1>{}</h1><div class="crumb"><a href="/board">← board</a> · signed in as <b>{}</b>{}</div>
+        r#"<h1>{}</h1><div class="crumb"><a href="/board">← board</a>{}</div>
 <div class="meta">world {} · sent {} · received {} · {} items out in other worlds</div>"#,
         esc(game),
-        esc(me),
         if is_admin { " · admin" } else { "" },
         live.world_size,
         live.sent,
@@ -480,8 +477,8 @@ q.addEventListener('input',function(){{
     Html(out)
 }
 
-fn page_head(me: Option<&str>) -> String {
-    let mut s = String::from(HEAD);
-    s.push_str(&topbar(me));
-    s
+/// Page shell. The header bar (brand · "signed in as …" · home) lives in `HEAD`
+/// and is filled client-side from `/api/me`, so the identity isn't needed here.
+fn page_head(_me: Option<&str>) -> String {
+    String::from(HEAD)
 }
