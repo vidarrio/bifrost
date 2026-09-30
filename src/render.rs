@@ -130,6 +130,10 @@ struct Group<'a> {
     rows: Vec<&'a SlotRow>,
 }
 
+/// Group Bifrost slots under their shared AP slot, then order the groups
+/// alphabetically by game name (case-insensitive) — the board/claim pages read
+/// top-to-bottom by game. `slots` must arrive ordered by ap_slot (as db::slots
+/// returns it) so consecutive rows of one AP slot land in the same group.
 fn group_by_ap(slots: &[SlotRow]) -> Vec<Group<'_>> {
     let mut groups: Vec<Group> = Vec::new();
     for r in slots {
@@ -142,7 +146,62 @@ fn group_by_ap(slots: &[SlotRow]) -> Vec<Group<'_>> {
             }),
         }
     }
+    groups.sort_by(|a, b| a.game.to_ascii_lowercase().cmp(&b.game.to_ascii_lowercase()));
     groups
+}
+
+/// Build the landing page's season roster grid from live data: one card per AP
+/// slot (game + its player(s)), co-op slots listing every player with the AP
+/// slot's own player first, ordered alphabetically by that lead player's name.
+/// `ap_names` maps an AP slot to its connect name (from the live board) so we
+/// can tell which co-op member is the slot's primary.
+pub fn landing_roster(
+    slots: &[SlotRow],
+    ap_names: &std::collections::HashMap<i64, String>,
+) -> String {
+    if slots.is_empty() {
+        return r#"<div class="empty" style="grid-column:1/-1">The roster fills in once the season's game is running.</div>"#
+            .to_string();
+    }
+    struct Entry {
+        key: String,
+        game: String,
+        who: String,
+    }
+    let mut entries: Vec<Entry> = group_by_ap(slots)
+        .into_iter()
+        .map(|g| {
+            let mut names: Vec<String> = g.rows.iter().map(|r| r.name.clone()).collect();
+            names.sort_by_key(|n| n.to_ascii_lowercase());
+            // Put the AP slot's own player (the primary) first, rest alphabetical.
+            if let Some(lead) = ap_names.get(&g.ap_slot) {
+                if let Some(pos) = names.iter().position(|n| n.eq_ignore_ascii_case(lead)) {
+                    let p = names.remove(pos);
+                    names.insert(0, p);
+                }
+            }
+            let key = names
+                .first()
+                .map(|n| n.to_ascii_lowercase())
+                .unwrap_or_default();
+            Entry {
+                key,
+                game: g.game.to_string(),
+                who: names.join(" & "),
+            }
+        })
+        .collect();
+    entries.sort_by(|a, b| a.key.cmp(&b.key));
+
+    let mut out = String::new();
+    for e in &entries {
+        out.push_str(&format!(
+            r#"<div class="slot"><div class="who">{}</div><div class="game">{}</div></div>"#,
+            esc(&e.who),
+            esc(&e.game)
+        ));
+    }
+    out
 }
 
 fn conn_line(snap: &BoardSnapshot) -> String {

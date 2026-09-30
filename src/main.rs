@@ -180,8 +180,22 @@ async fn api_me(headers: HeaderMap) -> Json<serde_json::Value> {
     Json(serde_json::json!({ "user": user, "admin": is_admin }))
 }
 
-async fn landing() -> Html<&'static str> {
-    Html(LANDING)
+async fn landing(State(st): State<AppState>) -> Html<String> {
+    // The season roster is rendered live from the current game so it never needs
+    // hand-editing between seasons: AP slot names come from the live board, the
+    // people (incl. co-op) from the DB.
+    let (season, ap_names) = match st.board.read() {
+        Ok(b) => {
+            let season = b.seed.clone().unwrap_or_default();
+            let names: std::collections::HashMap<i64, String> =
+                b.slots.iter().map(|(k, s)| (*k, s.name.clone())).collect();
+            (season, names)
+        }
+        Err(_) => (String::new(), std::collections::HashMap::new()),
+    };
+    let slots = st.db.slots(&season).await.unwrap_or_default();
+    let roster = render::landing_roster(&slots, &ap_names);
+    Html(LANDING.replace("<!--ROSTER-->", &roster))
 }
 
 #[derive(Deserialize)]
