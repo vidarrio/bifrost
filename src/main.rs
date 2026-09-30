@@ -14,7 +14,7 @@ use axum::{
     Json, Router,
     extract::{Form, Multipart, Path, State},
     http::HeaderMap,
-    response::{Html, Redirect},
+    response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
 use serde::Deserialize;
@@ -87,6 +87,8 @@ async fn main() {
         .route("/hint", post(hint_post))
         .route("/prioritize", post(prioritize_post))
         .route("/signup", get(signup_get).post(signup_post))
+        .route("/signup/apworld", post(signup_apworld))
+        .route("/signup/check", post(signup_check))
         .route("/signup/delete", post(signup_delete))
         .route("/generate", get(generate_get).post(generate_post))
         .route("/api/me", get(api_me))
@@ -303,18 +305,28 @@ async fn claim_post(
     State(st): State<AppState>,
     headers: HeaderMap,
     Form(f): Form<ClaimForm>,
-) -> Redirect {
+) -> Response {
     let (me, is_admin) = identity(&headers);
+    let back = safe_back(f.back.as_deref(), "/claim");
     match f.op.as_str() {
-        "claim" => {
-            let _ = st.db.claim(f.slot_id, &me).await;
-        }
+        "claim" => match st.db.claim_one(f.slot_id, &me).await {
+            Ok(db::ClaimOutcome::AlreadyHave(name)) => render::notice(
+                &format!("You already claim {name} — one slot per player. Unclaim it first if you want to move."),
+                false,
+                &back,
+            )
+            .into_response(),
+            Ok(db::ClaimOutcome::SlotTaken) => {
+                render::notice("That slot is already claimed.", false, &back).into_response()
+            }
+            _ => Redirect::to(&back).into_response(),
+        },
         "unclaim" => {
             let _ = st.db.unclaim(f.slot_id, &me, is_admin).await;
+            Redirect::to(&back).into_response()
         }
-        _ => {}
+        _ => Redirect::to(&back).into_response(),
     }
-    Redirect::to(&safe_back(f.back.as_deref(), "/claim"))
 }
 
 #[derive(Deserialize)]
@@ -363,6 +375,7 @@ async fn hint_post(
 }
 
 const UPLOAD_DIR: &str = "/var/lib/bifrost/uploads";
+const CUSTOM_WORLDS: &str = "/srv/archipelago/custom_worlds";
 
 fn slugify(s: &str) -> String {
     let out: String = s
@@ -378,6 +391,73 @@ async fn signup_get(State(st): State<AppState>, headers: HeaderMap) -> Html<Stri
     render::signup_page(&subs, &me, is_admin)
 }
 
+/// Step 1 of signup: install an uploaded `.apworld` into the server's
+/// `custom_worlds/` right away, so the checker can validate a custom-game YAML
+/// against it in step 2. Returns JSON for the wizard.
+async fn signup_apworld(mut mp: Multipart) -> Json<serde_json::Value> {
+    let mut bytes: Option<Vec<u8>> = None;
+    let mut fname = String::new();
+    while let Ok(Some(field)) = mp.next_field().await {
+        if field.name() == Some("apworld") {
+            fname = field.file_name().unwrap_or("").to_string();
+            bytes = field.bytes().await.ok().map(|b| b.to_vec());
+        } else {
+            let _ = field.bytes().await;
+        }
+    }
+    let Some(bytes) = bytes.filter(|b| !b.is_empty()) else {
+        return Json(serde_json::json!({"ok": false, "error": "No file received."}));
+    };
+    // .apworld files are zips; a quick magic-byte check rejects obvious mistakes.
+    if bytes.len() < 4 || &bytes[..2] != b"PK" {
+        return Json(serde_json::json!({
+            "ok": false, "error": "That doesn't look like a valid .apworld (zip) file."
+        }));
+    }
+    let stem = std::path::Path::new(&fname)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("world");
+    let base = slugify(stem);
+    let dst = format!("{CUSTOM_WORLDS}/{base}.apworld");
+    if tokio::fs::write(&dst, &bytes).await.is_err() {
+        return Json(serde_json::json!({
+            "ok": false, "error": "Couldn't install the apworld on the server."
+        }));
+    }
+    Json(serde_json::json!({"ok": true, "world": format!("{base}.apworld")}))
+}
+
+/// Step 2 of signup: validate a YAML live against the installed worlds (incl. an
+/// apworld just installed in step 1). Returns JSON for the wizard.
+async fn signup_check(mut mp: Multipart) -> Json<serde_json::Value> {
+    let mut yaml: Option<Vec<u8>> = None;
+    while let Ok(Some(field)) = mp.next_field().await {
+        if field.name() == Some("yaml") {
+            yaml = field.bytes().await.ok().map(|b| b.to_vec());
+        } else {
+            let _ = field.bytes().await;
+        }
+    }
+    let Some(yaml) = yaml.filter(|b| !b.is_empty()) else {
+        return Json(serde_json::json!({"ok": false, "error": "No YAML received."}));
+    };
+    let yaml_str = String::from_utf8_lossy(&yaml).to_string();
+    match checker::check_yaml(&yaml_str).await {
+        Ok(r) => {
+            let (name, game) = r
+                .players
+                .first()
+                .map(|p| (p.name.clone(), p.game.clone().unwrap_or_default()))
+                .unwrap_or_default();
+            Json(serde_json::json!({
+                "ok": r.ok, "name": name, "game": game, "errors": r.errors
+            }))
+        }
+        Err(e) => Json(serde_json::json!({"ok": false, "error": e})),
+    }
+}
+
 async fn signup_post(
     State(st): State<AppState>,
     headers: HeaderMap,
@@ -385,24 +465,12 @@ async fn signup_post(
 ) -> Html<String> {
     let (me, _) = identity(&headers);
     let mut yaml: Option<Vec<u8>> = None;
-    let mut apworld: Option<Vec<u8>> = None;
     let mut is_custom = false;
     let mut coop = String::new();
     while let Ok(Some(field)) = mp.next_field().await {
         match field.name().unwrap_or("") {
             "yaml" => yaml = field.bytes().await.ok().map(|b| b.to_vec()),
-            "apworld" => {
-                apworld = field
-                    .bytes()
-                    .await
-                    .ok()
-                    .filter(|b| !b.is_empty())
-                    .map(|b| b.to_vec());
-            }
-            "is_custom" => {
-                let _ = field.text().await;
-                is_custom = true;
-            }
+            "is_custom" => is_custom = field.text().await.unwrap_or_default() == "1",
             "coop" => coop = field.text().await.unwrap_or_default(),
             _ => {
                 let _ = field.bytes().await;
@@ -414,6 +482,9 @@ async fn signup_post(
         return render::signup_result("No YAML uploaded.", false);
     };
     let yaml_str = String::from_utf8_lossy(&yaml).to_string();
+    // Trust-but-verify: the wizard already checked, but re-roll server-side so a
+    // hand-crafted POST can't slip an invalid YAML through. Custom worlds are
+    // installed by now, so everything must pass.
     let result = match checker::check_yaml(&yaml_str).await {
         Ok(r) => r,
         Err(e) => return render::signup_result(&format!("Checker error: {e}"), false),
@@ -423,14 +494,14 @@ async fn signup_post(
     };
     let slot_name = p0.name.clone();
     let game = p0.game.clone().unwrap_or_else(|| "?".into());
-    if !result.ok && !is_custom {
+    if !result.ok {
         return render::signup_result(
-            &format!("That YAML didn't pass: {}", result.errors.join("; ")),
+            &format!(
+                "That YAML didn't pass: {}. Custom game? Install its apworld in step 1 first.",
+                result.errors.join("; ")
+            ),
             false,
         );
-    }
-    if is_custom && apworld.is_none() {
-        return render::signup_result("Custom game selected but no .apworld uploaded.", false);
     }
 
     let slug = slugify(&slot_name);
@@ -439,15 +510,6 @@ async fn signup_post(
     if tokio::fs::write(&yaml_path, &yaml).await.is_err() {
         return render::signup_result("Couldn't store the YAML.", false);
     }
-    let apworld_path = if let Some(aw) = &apworld {
-        let p = format!("{UPLOAD_DIR}/{slug}.apworld");
-        if tokio::fs::write(&p, aw).await.is_err() {
-            return render::signup_result("Couldn't store the apworld.", false);
-        }
-        Some(p)
-    } else {
-        None
-    };
     let coop_clean: String = coop
         .split([',', '\n'])
         .map(str::trim)
@@ -464,18 +526,11 @@ async fn signup_post(
             is_custom,
             &coop_clean,
             &yaml_path,
-            apworld_path.as_deref(),
+            None,
         )
         .await
     {
-        Ok(_) => {
-            let note = if !result.ok && is_custom {
-                " (custom — validates when the season is generated)"
-            } else {
-                ""
-            };
-            render::signup_result(&format!("Signed up: {slot_name} — {game}.{note}"), true)
-        }
+        Ok(_) => render::signup_result(&format!("Signed up: {slot_name} — {game}."), true),
         Err(_) => render::signup_result(
             &format!("'{slot_name}' is already signed up — delete that entry first to resubmit."),
             false,

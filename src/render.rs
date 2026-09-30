@@ -64,6 +64,23 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .feed{display:grid;gap:6px}.ev{display:flex;gap:8px;font-size:13px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px}
 .ev .i{font-family:var(--mono);font-size:10px;color:var(--muted);min-width:44px}.ev.goal .i{color:var(--ok)}.ev.death .i{color:var(--bad)}.ev.trap .i{color:var(--warn)}
 .empty{color:var(--muted);font-size:13px}
+button:disabled{opacity:.45;cursor:not-allowed}
+.stepper{display:flex;gap:8px;margin:0 0 22px;padding:0;list-style:none;font-family:var(--mono);font-size:12px;max-width:520px}
+.stepper li{flex:1;display:flex;align-items:center;gap:8px;color:var(--muted);border-top:2px solid var(--bd);padding-top:8px}
+.stepper li.active{color:var(--fg);border-top-color:var(--accent)}.stepper li.done{color:var(--ok);border-top-color:var(--ok)}
+.stepper .n{display:inline-flex;width:20px;height:20px;border-radius:50%;background:var(--bd);color:var(--fg);align-items:center;justify-content:center;font-size:11px}
+.stepper li.active .n{background:var(--accent);color:#0d1117}.stepper li.done .n{background:var(--ok);color:#0d1117}
+.wstep{background:var(--panel);border:1px solid var(--bd);border-radius:14px;padding:20px 22px;max-width:520px}
+.wstep h2{margin:0 0 14px;color:var(--fg);font-size:16px;letter-spacing:0;text-transform:none}
+.wstep .hint{color:var(--muted);font-size:13px;margin:0 0 10px}
+.choice{display:grid;gap:10px;margin-bottom:6px}
+.choice label{display:flex;gap:10px;align-items:flex-start;background:var(--bg);border:1px solid var(--bd);border-radius:9px;padding:11px 13px;cursor:pointer;font-size:14px}
+.choice label:has(input:checked){border-color:var(--accent)}
+.wstep input[type=file],.wstep input[type=text]{width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:8px 10px;font-size:13px;margin:2px 0}
+.nav{display:flex;justify-content:space-between;gap:10px;margin-top:18px}.nav:has(>:only-child){justify-content:flex-end}
+.nav .back{background:transparent;border:1px solid var(--bd);color:var(--muted)}
+.inlinemsg{font-family:var(--mono);font-size:12.5px;margin-top:8px;min-height:1em;word-break:break-word}.inlinemsg.ok{color:var(--ok)}.inlinemsg.bad{color:var(--bad)}
+.chk{display:flex;gap:9px;align-items:center;font-size:14px;margin-bottom:8px}
 </style></head><body>
 <header><div class="hwrap"><a class="brand" href="/">Bifrost</a><span class="spacer"></span><span class="who" id="who"></span><a class="pill" href="https://home.example.org/">home</a></div></header>
 <script>
@@ -245,14 +262,92 @@ pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool) -> Html<Str
     let mut b = page_head(Some(me));
     b.push_str(
         r#"<h1>Season signup</h1><div class="crumb"><a href="/board">← board</a></div>
-<p class="empty">Upload your options YAML for the next season. It's checked against the installed worlds before it's accepted. Playing a custom game? Tick the box and upload its <code>.apworld</code> too. Sharing one game between people (like Don't Starve Together)? List the extra players.</p>
-<form method="post" action="/signup" enctype="multipart/form-data" class="signup">
-  <label>Options YAML<input type="file" name="yaml" accept=".yaml,.yml" required></label>
-  <label class="chk"><input type="checkbox" name="is_custom" value="1"> Custom (non-core) game</label>
-  <label>apworld (custom games only)<input type="file" name="apworld" accept=".apworld"></label>
-  <label>Co-op players — extra names, comma-separated<input type="text" name="coop" placeholder="e.g. Awoo"></label>
-  <button type="submit">Sign up</button>
-</form>"#,
+<p class="empty">Three quick steps. We check everything against the server as you go, so the seed rolls clean when the season is generated.</p>
+<ol class="stepper">
+  <li data-step="1"><span class="n">1</span> Game</li>
+  <li data-step="2"><span class="n">2</span> YAML</li>
+  <li data-step="3"><span class="n">3</span> Players</li>
+</ol>
+<form id="wiz" method="post" action="/signup" enctype="multipart/form-data">
+  <section class="wstep" data-step="1">
+    <h2>Your game</h2>
+    <div class="choice">
+      <label><input type="radio" name="gtype" value="core" checked> A core / officially supported game</label>
+      <label><input type="radio" name="gtype" value="custom"> A custom (unofficial) game — I have its <code>.apworld</code></label>
+    </div>
+    <div id="apbox" hidden>
+      <p class="hint">Upload the world's <code>.apworld</code>. It installs on the server right away so we can validate your YAML next.</p>
+      <input type="file" id="apfile" accept=".apworld">
+      <button type="button" id="apbtn" class="back">Install apworld</button>
+      <div id="apmsg" class="inlinemsg"></div>
+    </div>
+    <div class="nav"><button type="button" id="tostep2" data-goto="2">Next →</button></div>
+  </section>
+  <section class="wstep" data-step="2" hidden>
+    <h2>Options YAML</h2>
+    <p class="hint">Upload your options file. It's rolled against the installed worlds — it has to pass before you continue.</p>
+    <input type="file" name="yaml" id="yamlfile" accept=".yaml,.yml" required>
+    <button type="button" id="checkbtn" class="back">Check it</button>
+    <div id="checkmsg" class="inlinemsg"></div>
+    <div class="nav"><button type="button" class="back" data-goto="1">← Back</button><button type="button" id="tostep3" data-goto="3" disabled>Next →</button></div>
+  </section>
+  <section class="wstep" data-step="3" hidden>
+    <h2>Players</h2>
+    <label class="chk"><input type="checkbox" id="coopchk"> Sharing this game between people (co-op, e.g. Don't Starve Together)</label>
+    <div id="coopbox" hidden>
+      <label class="hint">Extra player names, comma-separated<input type="text" name="coop" placeholder="e.g. Awoo, Abi"></label>
+    </div>
+    <input type="hidden" name="is_custom" id="iscustom" value="">
+    <div class="nav"><button type="button" class="back" data-goto="2">← Back</button><button type="submit">Sign me up</button></div>
+  </section>
+</form>
+<script>
+(function(){
+ var form=document.getElementById('wiz');
+ function show(n){
+   form.querySelectorAll('.wstep').forEach(function(s){s.hidden=s.dataset.step!=String(n)});
+   document.querySelectorAll('.stepper li').forEach(function(li){var s=Number(li.dataset.step);li.classList.toggle('active',s==n);li.classList.toggle('done',s<n)});
+ }
+ form.querySelectorAll('[data-goto]').forEach(function(btn){btn.addEventListener('click',function(){if(!btn.disabled)show(Number(btn.dataset.goto))})});
+ var installed=false,next1=document.getElementById('tostep2');
+ function refresh1(){
+   var custom=form.querySelector('input[name=gtype]:checked').value=='custom';
+   document.getElementById('apbox').hidden=!custom;
+   document.getElementById('iscustom').value=custom?'1':'';
+   next1.disabled=custom&&!installed;
+ }
+ form.querySelectorAll('input[name=gtype]').forEach(function(r){r.addEventListener('change',refresh1)});
+ refresh1();
+ var apbtn=document.getElementById('apbtn'),apmsg=document.getElementById('apmsg');
+ apbtn.addEventListener('click',function(){
+   var f=document.getElementById('apfile').files[0];
+   if(!f){apmsg.className='inlinemsg bad';apmsg.textContent='Choose an .apworld file first.';return;}
+   apmsg.className='inlinemsg';apmsg.textContent='Installing…';apbtn.disabled=true;
+   var fd=new FormData();fd.append('apworld',f);
+   fetch('/signup/apworld',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(j){
+     apbtn.disabled=false;
+     if(j.ok){installed=true;apmsg.className='inlinemsg ok';apmsg.textContent='Installed '+j.world+'. You can continue.';next1.disabled=false;}
+     else{installed=false;apmsg.className='inlinemsg bad';apmsg.textContent=j.error||'Install failed.';next1.disabled=true;}
+   }).catch(function(){apbtn.disabled=false;apmsg.className='inlinemsg bad';apmsg.textContent='Install failed (network).';});
+ });
+ var chkbtn=document.getElementById('checkbtn'),chkmsg=document.getElementById('checkmsg'),next2=document.getElementById('tostep3'),yamlfile=document.getElementById('yamlfile');
+ yamlfile.addEventListener('change',function(){next2.disabled=true;chkmsg.textContent='';});
+ chkbtn.addEventListener('click',function(){
+   var f=yamlfile.files[0];
+   if(!f){chkmsg.className='inlinemsg bad';chkmsg.textContent='Choose your YAML first.';return;}
+   chkmsg.className='inlinemsg';chkmsg.textContent='Checking…';chkbtn.disabled=true;
+   var fd=new FormData();fd.append('yaml',f);
+   fetch('/signup/check',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(j){
+     chkbtn.disabled=false;
+     if(j.ok){chkmsg.className='inlinemsg ok';chkmsg.textContent='✓ '+(j.name||'slot')+' — '+(j.game||'?')+' rolled cleanly.';next2.disabled=false;}
+     else{next2.disabled=true;chkmsg.className='inlinemsg bad';chkmsg.textContent=(j.errors&&j.errors.length?j.errors.join('; '):(j.error||'Did not pass.'));}
+   }).catch(function(){chkbtn.disabled=false;chkmsg.className='inlinemsg bad';chkmsg.textContent='Check failed (network).';});
+ });
+ var coopchk=document.getElementById('coopchk');
+ coopchk.addEventListener('change',function(){document.getElementById('coopbox').hidden=!coopchk.checked;});
+ show(1);
+})();
+</script>"#,
     );
 
     b.push_str(r#"<h2>Signed up</h2>"#);
@@ -338,6 +433,20 @@ pub fn hint_result(text: &str, ok: bool, back: &str) -> Html<String> {
     b.push_str(&format!(
         r#"<h1>Hint</h1><div class="crumb"><a href="{}">← back</a></div>
 <div class="{cls}">{}</div><div><a href="/board">see the board →</a></div>"#,
+        esc(back),
+        esc(text)
+    ));
+    b.push_str("</main></body></html>");
+    Html(b)
+}
+
+/// A small result/feedback page with a message and a link back.
+pub fn notice(text: &str, ok: bool, back: &str) -> Html<String> {
+    let mut b = page_head(None);
+    let cls = if ok { "banner ok" } else { "banner bad" };
+    b.push_str(&format!(
+        r#"<h1>Heads up</h1><div class="crumb"><a href="{}">← back</a></div>
+<div class="{cls}">{}</div>"#,
         esc(back),
         esc(text)
     ));

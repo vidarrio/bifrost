@@ -17,7 +17,6 @@ const AP_PYTHON: &str = "/srv/archipelago/venv/bin/python";
 const GEN_SCRIPT: &str = "/srv/archipelago/bifrost_generate.py";
 const META_SCRIPT: &str = "/srv/archipelago/bifrost_meta.py";
 const PLAYERS: &str = "/srv/archipelago/Players";
-const CUSTOM: &str = "/srv/archipelago/custom_worlds";
 const OUTPUT: &str = "/srv/archipelago/output";
 
 /// (running, last message).
@@ -116,20 +115,16 @@ async fn run_inner(db: &Db, state: &GenState) -> Result<String, String> {
     }
 
     set(state, true, "Staging submissions…");
+    // Only the player YAMLs are staged here; custom apworlds are installed into
+    // custom_worlds/ at signup time (so the checker can validate against them),
+    // so we leave that directory alone.
     clear_ext(PLAYERS, "yaml").await?;
-    clear_ext(CUSTOM, "apworld").await?;
     clear_old_seeds().await;
     for sub in &subs {
         let dst = format!("{PLAYERS}/{}.yaml", slug(&sub.slot_name));
         tokio::fs::copy(&sub.yaml_file, &dst)
             .await
             .map_err(|e| format!("staging {}'s YAML: {e}", sub.slot_name))?;
-        if let Some(aw) = &sub.apworld_file {
-            let dst = format!("{CUSTOM}/{}.apworld", slug(&sub.slot_name));
-            tokio::fs::copy(aw, &dst)
-                .await
-                .map_err(|e| format!("staging {}'s apworld: {e}", sub.slot_name))?;
-        }
     }
 
     set(

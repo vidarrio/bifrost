@@ -22,6 +22,15 @@ pub struct SlotRow {
     pub claimed_by: Option<String>,
 }
 
+/// Result of an attempted claim under the one-slot-per-player rule.
+pub enum ClaimOutcome {
+    Ok,
+    /// The slot is already claimed by someone else.
+    SlotTaken,
+    /// This player already claims another slot this season (its name).
+    AlreadyHave(String),
+}
+
 #[derive(Debug, FromRow, Clone)]
 pub struct SubmissionRow {
     pub id: i64,
@@ -31,7 +40,6 @@ pub struct SubmissionRow {
     pub is_custom: bool,
     pub coop_names: String,
     pub yaml_file: String,
-    pub apworld_file: Option<String>,
 }
 
 impl Db {
@@ -247,9 +255,29 @@ impl Db {
         .await
     }
 
-    /// Claim a free slot. Returns Ok(true) if newly claimed, Ok(false) if it was
-    /// already claimed by someone.
-    pub async fn claim(&self, slot_id: i64, sso: &str) -> Result<bool, sqlx::Error> {
+    /// Claim a slot, enforcing one claim per player per season.
+    pub async fn claim_one(&self, slot_id: i64, sso: &str) -> Result<ClaimOutcome, sqlx::Error> {
+        let season: Option<String> =
+            sqlx::query_scalar("SELECT season FROM bifrost_slot WHERE id = ?")
+                .bind(slot_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        let Some(season) = season else {
+            return Ok(ClaimOutcome::SlotTaken);
+        };
+        // Already holding a *different* slot this season? One per player.
+        let existing: Option<String> = sqlx::query_scalar(
+            "SELECT s.name FROM claim c JOIN bifrost_slot s ON s.id = c.bifrost_slot_id
+             WHERE s.season = ? AND c.sso = ? AND s.id <> ?",
+        )
+        .bind(&season)
+        .bind(sso)
+        .bind(slot_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        if let Some(name) = existing {
+            return Ok(ClaimOutcome::AlreadyHave(name));
+        }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -262,7 +290,20 @@ impl Db {
         .bind(now)
         .execute(&self.pool)
         .await?;
-        Ok(res.rows_affected() > 0)
+        if res.rows_affected() > 0 {
+            return Ok(ClaimOutcome::Ok);
+        }
+        // Slot was already claimed — fine if it's this same user, else taken.
+        let owner: Option<String> =
+            sqlx::query_scalar("SELECT sso FROM claim WHERE bifrost_slot_id = ?")
+                .bind(slot_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        if owner.as_deref() == Some(sso) {
+            Ok(ClaimOutcome::Ok)
+        } else {
+            Ok(ClaimOutcome::SlotTaken)
+        }
     }
 
     /// Record a signup submission. Errors (e.g. duplicate slot name) bubble up.
@@ -300,7 +341,7 @@ impl Db {
 
     pub async fn submissions(&self) -> Result<Vec<SubmissionRow>, sqlx::Error> {
         sqlx::query_as::<_, SubmissionRow>(
-            "SELECT id, sso, slot_name, game, is_custom, coop_names, yaml_file, apworld_file
+            "SELECT id, sso, slot_name, game, is_custom, coop_names, yaml_file
              FROM submission ORDER BY created_at",
         )
         .fetch_all(&self.pool)
