@@ -70,6 +70,12 @@ header .spacer{flex:1}
 .hintrow{display:flex;justify-content:space-between;align-items:center;gap:10px;font-family:var(--mono);font-size:12.5px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px;margin:6px 0}
 button{background:var(--accent);color:#0d1117;border:0;border-radius:7px;padding:5px 12px;font-weight:600;font-size:12px;cursor:pointer}
 button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted)}
+.foundhints{margin:6px 0}
+.foundhints>summary{cursor:pointer;font-family:var(--mono);font-size:12px;color:var(--muted);padding:5px 2px;list-style:none;user-select:none}
+.foundhints>summary::-webkit-details-marker{display:none}
+.foundhints>summary::before{content:"▸ ";color:var(--muted)}
+.foundhints[open]>summary::before{content:"▾ "}
+.hintrow.found{opacity:.6;color:var(--muted)}
 .feed{display:grid;gap:6px}.ev{display:flex;gap:8px;font-size:13px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px}
 .ev .i{font-family:var(--mono);font-size:10px;color:var(--muted);min-width:44px}.ev.goal .i{color:var(--ok)}.ev.death .i{color:var(--bad)}.ev.trap .i{color:var(--warn)}
 .empty{color:var(--muted);font-size:13px}
@@ -194,7 +200,7 @@ pub fn board_page(
             for h in live
                 .hint_views
                 .iter()
-                .filter(|h| prios.contains(&(h.finding, h.location, h.item)))
+                .filter(|h| !h.found && prios.contains(&(h.finding, h.location, h.item)))
             {
                 out.push_str(&format!(r#"<div class="hint">★ {}</div>"#, esc(&h.text)));
             }
@@ -979,8 +985,16 @@ pub fn hint_rows(
     if views.is_empty() {
         return r#"<div class="empty">No hints here yet.</div>"#.to_string();
     }
+    // Found items sink to the bottom, into a collapsed section, and are never
+    // prioritizable (there's nothing left to prioritize).
+    let (found, active): (Vec<&crate::ap::HintView>, Vec<&crate::ap::HintView>) =
+        views.iter().partition(|h| h.found);
+
     let mut out = String::new();
-    for h in views {
+    if active.is_empty() {
+        out.push_str(r#"<div class="empty">No unfound hints.</div>"#);
+    }
+    for h in &active {
         let on = prios.contains(&(h.finding, h.location, h.item));
         if !can_prioritize {
             // Non-claimants see the hints but can't reprioritize them; a
@@ -1010,6 +1024,19 @@ pub fn hint_rows(
             h.receiving,
             esc(back),
         ));
+    }
+    if !found.is_empty() {
+        out.push_str(&format!(
+            r#"<details class="foundhints"><summary>Found ({})</summary>"#,
+            found.len()
+        ));
+        for h in &found {
+            out.push_str(&format!(
+                r#"<div class="hintrow found"><span>{}</span></div>"#,
+                esc(&h.text)
+            ));
+        }
+        out.push_str("</details>");
     }
     out
 }

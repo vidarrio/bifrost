@@ -83,6 +83,9 @@ pub struct HintView {
     pub location: i64,
     pub item: i64,
     pub receiving: i64,
+    /// The item has already been found at its location — such hints sort to the
+    /// bottom, can't be prioritized, and drop off the board.
+    pub found: bool,
     pub text: String,
 }
 
@@ -170,6 +173,7 @@ impl Board {
                             location: h.location,
                             item: h.item,
                             receiving: h.receiving,
+                            found: h.found,
                             text: format!("{item} @ {loc} · {finder}{mark}"),
                         });
                     }

@@ -200,6 +200,35 @@ async fn check_run(Form(form): Form<CheckForm>) -> Html<String> {
     }
 }
 
+/// Fetch the season's prioritized hints, first dropping the star from any hint
+/// whose item has since been found (a found hint is non-prioritizable, so a
+/// pre-found one is cleaned up in the DB and excluded from the returned set).
+async fn live_priorities(
+    st: &AppState,
+    snap: &ap::BoardSnapshot,
+    season: &str,
+) -> std::collections::HashSet<(i64, i64, i64)> {
+    let mut prios = st.db.priorities(season).await.unwrap_or_default();
+    if prios.is_empty() {
+        return prios;
+    }
+    let stale: Vec<(i64, i64, i64)> = snap
+        .ap
+        .values()
+        .flat_map(|a| a.hint_views.iter())
+        .filter(|h| h.found)
+        .map(|h| (h.finding, h.location, h.item))
+        .filter(|id| prios.contains(id))
+        .collect();
+    if !stale.is_empty() {
+        st.db.unprioritize_many(season, &stale).await;
+        for id in &stale {
+            prios.remove(id);
+        }
+    }
+    prios
+}
+
 async fn board_view(State(st): State<AppState>) -> Html<String> {
     let snap = match st.board.read() {
         Ok(b) => b.snapshot(),
@@ -207,7 +236,7 @@ async fn board_view(State(st): State<AppState>) -> Html<String> {
     };
     let season = snap.seed.clone().unwrap_or_default();
     let slots = st.db.slots(&season).await.unwrap_or_default();
-    let prios = st.db.priorities(&season).await.unwrap_or_default();
+    let prios = live_priorities(&st, &snap, &season).await;
     render::board_page(&snap, &slots, &prios)
 }
 
@@ -252,7 +281,7 @@ async fn game_view(
     }
     let season = snap.seed.clone().unwrap_or_default();
     let slots = st.db.slots(&season).await.unwrap_or_default();
-    let prios = st.db.priorities(&season).await.unwrap_or_default();
+    let prios = live_priorities(&st, &snap, &season).await;
 
     // Cost to hint (per AP: hint_cost% of a world's locations).
     let world_size = snap.ap.get(&ap_slot).map(|a| a.world_size).unwrap_or(0) as i64;
@@ -308,16 +337,23 @@ async fn prioritize_post(
     Form(f): Form<PrioForm>,
 ) -> Redirect {
     let (me, is_admin) = identity(&headers);
-    let season = st
-        .board
-        .read()
-        .ok()
-        .and_then(|b| b.seed.clone())
-        .unwrap_or_default();
+    let (season, is_found) = match st.board.read() {
+        Ok(b) => {
+            let season = b.seed.clone().unwrap_or_default();
+            // Already-found hints are non-prioritizable.
+            let found = b.snapshot().ap.values().any(|a| {
+                a.hint_views.iter().any(|h| {
+                    h.found && h.finding == f.finding && h.location == f.location && h.item == f.item
+                })
+            });
+            (season, found)
+        }
+        Err(_) => (String::new(), false),
+    };
     // A hint is prioritized by the item's owner: a claimant of the receiving
     // slot (whose items the hint is about), or an admin. The finder's world can
     // be someone else's, so we gate on `receiving`, not `finding`.
-    if is_admin || st.db.claims_ap_slot(&season, &me, f.receiving).await {
+    if !is_found && (is_admin || st.db.claims_ap_slot(&season, &me, f.receiving).await) {
         let _ = st
             .db
             .toggle_priority(&season, f.finding, f.location, f.item)
@@ -521,7 +557,7 @@ async fn game_hints(
         Ok(b) => (b.snapshot(), b.seed.clone().unwrap_or_default()),
         Err(_) => return Html(String::new()),
     };
-    let prios = st.db.priorities(&season).await.unwrap_or_default();
+    let prios = live_priorities(&st, &snap, &season).await;
     let can_prioritize = is_admin || st.db.claims_ap_slot(&season, &me, ap_slot).await;
     let views = snap
         .ap

@@ -264,6 +264,22 @@ impl Db {
         Ok(true)
     }
 
+    /// Remove priority rows for the given (finding, location, item) hints — used
+    /// to drop the star from hints whose item has since been found.
+    pub async fn unprioritize_many(&self, season: &str, hints: &[(i64, i64, i64)]) {
+        for (finding, location, item) in hints {
+            let _ = sqlx::query(
+                "DELETE FROM hint_priority WHERE season=? AND finding=? AND location=? AND item=?",
+            )
+            .bind(season)
+            .bind(finding)
+            .bind(location)
+            .bind(item)
+            .execute(&self.pool)
+            .await;
+        }
+    }
+
     /// Seed a season's Bifrost slots from the AP roster (1:1), then add any
     /// co-op extras (`ap_slot_name -> extra_bifrost_name`). Idempotent.
     pub async fn seed_season(
