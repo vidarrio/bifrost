@@ -26,6 +26,11 @@
   .tag{font-family:var(--mono); font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted)}
   .lede{color:var(--muted); font-size:16px; max-width:62ch; margin:14px 0 30px}
   h2.sec{font-size:13px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted); margin:34px 0 12px}
+  .topbar{position:fixed; top:calc(env(safe-area-inset-top,0px) + 10px); right:16px; z-index:10; font-family:var(--mono); font-size:12px}
+  .topbar a{color:var(--accent); text-decoration:none}
+  .seasonhdr{display:flex; align-items:baseline; justify-content:space-between; gap:12px}
+  .signup-link{font-size:13px; text-transform:none; letter-spacing:0; color:var(--accent); text-decoration:none; white-space:nowrap}
+  .signup-link:hover{text-decoration:underline}
   .card{background:var(--panel); border:1px solid var(--bd); border-radius:14px; padding:18px 20px}
   .join{display:flex; flex-wrap:wrap; gap:18px 26px; align-items:center}
   .join .cs{font-family:var(--mono); font-size:22px; color:var(--fg)}
@@ -55,6 +60,7 @@
 </head>
 <body>
 <main>
+  <div class="topbar"><a href="https://home.example.org">⌂ home</a></div>
   <div class="brand">
     <h1>Bifrost</h1>
     <span class="tag">archipelago</span>
@@ -75,7 +81,7 @@
     </ol>
   </div>
 
-  <h2 class="sec">This season — who's playing what</h2>
+  <h2 class="sec seasonhdr"><span>This season — who's playing what</span><a class="signup-link" href="/signup">Sign up for a season →</a></h2>
   <div class="grid roster">
     <div class="slot"><div class="who">Optic</div><div class="game">DOOM 1993</div></div>
     <div class="slot"><div class="who">Dustbiter</div><div class="game">Noita</div></div>

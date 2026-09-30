@@ -50,6 +50,8 @@ h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute
 code{font-family:var(--mono);font-size:12px;color:var(--accent)}
 .cardlink{text-decoration:none;color:inherit;display:block;transition:border-color .1s}.cardlink:hover{border-color:var(--accent);text-decoration:none}
 .cardlink:hover .game{color:var(--accent)}
+.prow{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.topbar{position:fixed;top:calc(env(safe-area-inset-top,0px) + 10px);right:16px;z-index:10;font-family:var(--mono);font-size:11.5px;color:var(--muted);display:flex;gap:10px;align-items:center}.topbar b{color:var(--fg)}.topbar a{color:var(--accent);text-decoration:none}
 .matches{max-width:460px;margin:-4px 0 12px;display:grid}.matches .match{font-family:var(--mono);font-size:12px;padding:5px 8px;border:1px solid var(--bd);border-top:0;cursor:pointer;background:var(--panel)}.matches .match:hover{background:var(--bd)}
 .hintrow{display:flex;justify-content:space-between;align-items:center;gap:10px;font-family:var(--mono);font-size:12.5px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px;margin:6px 0}
 button{background:var(--accent);color:#0d1117;border:0;border-radius:7px;padding:5px 12px;font-weight:600;font-size:12px;cursor:pointer}
@@ -58,6 +60,16 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .ev .i{font-family:var(--mono);font-size:10px;color:var(--muted);min-width:44px}.ev.goal .i{color:var(--ok)}.ev.death .i{color:var(--bad)}.ev.trap .i{color:var(--warn)}
 .empty{color:var(--muted);font-size:13px}
 </style></head><body><main>"#;
+
+/// The top-right bar shared with the rest of the site: who you're logged in as
+/// (when known) and a home button back to the launcher.
+fn topbar(me: Option<&str>) -> String {
+    let who = match me {
+        Some(u) if !u.is_empty() && u != "unknown" => format!("signed in as <b>{}</b>", esc(u)),
+        _ => String::new(),
+    };
+    format!(r#"<div class="topbar">{who}<a href="https://home.example.org">⌂ home</a></div>"#)
+}
 
 struct Group<'a> {
     ap_slot: i64,
@@ -98,7 +110,7 @@ pub fn board_page(
     slots: &[SlotRow],
     prios: &std::collections::HashSet<(i64, i64, i64)>,
 ) -> Html<String> {
-    let mut out = String::from(HEAD);
+    let mut out = page_head(None);
     out.push_str(&format!(
         r#"<h1>Live board</h1><div class="crumb"><a href="/">← Bifrost</a> · {} · <a href="/signup">signup</a></div>"#,
         conn_line(snap)
@@ -149,7 +161,7 @@ pub fn board_page(
         out.push_str(r#"<div class="empty">Quiet so far. Item finds, goals and DeathLinks show up here.</div>"#);
     } else {
         out.push_str(r#"<div class="feed">"#);
-        for e in &snap.events {
+        for e in snap.events.iter().take(15) {
             out.push_str(&format!(
                 r#"<div class="ev {}"><span class="i">{}</span><span>{}</span></div>"#,
                 e.icon,
@@ -169,7 +181,7 @@ pub fn claim_page(
     me: &str,
     is_admin: bool,
 ) -> Html<String> {
-    let mut out = String::from(HEAD);
+    let mut out = page_head(Some(me));
     out.push_str(&format!(
         r#"<h1>Claim a slot</h1><div class="crumb"><a href="/board">← board</a> · signed in as <b>{}</b>{}</div>
 <p class="empty">Claim your slot so only you can hint on it. You can unclaim it again if you grabbed the wrong one.</p>"#,
@@ -231,7 +243,7 @@ pub fn claim_page(
 }
 
 pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool) -> Html<String> {
-    let mut b = String::from(HEAD);
+    let mut b = page_head(Some(me));
     b.push_str(&format!(
         r#"<h1>Season signup</h1><div class="crumb"><a href="/board">← board</a> · signed in as <b>{}</b></div>
 <p class="empty">Upload your options YAML for the next season. It's checked against the installed worlds before it's accepted. Playing a custom game? Tick the box and upload its <code>.apworld</code> too. Sharing one game between people (like Don't Starve Together)? List the extra players.</p>
@@ -285,7 +297,7 @@ pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool) -> Html<Str
 }
 
 pub fn generate_page(msg: &str, running: bool, count: usize, is_admin: bool) -> Html<String> {
-    let mut b = String::from(HEAD);
+    let mut b = page_head(None);
     b.push_str(
         r#"<h1>Generate season</h1><div class="crumb"><a href="/board">← board</a> · admin</div>"#,
     );
@@ -311,7 +323,7 @@ pub fn generate_page(msg: &str, running: bool, count: usize, is_admin: bool) -> 
 }
 
 pub fn signup_result(text: &str, ok: bool) -> Html<String> {
-    let mut b = String::from(HEAD);
+    let mut b = page_head(None);
     let cls = if ok { "banner ok" } else { "banner bad" };
     b.push_str(&format!(
         r#"<h1>Signup</h1><div class="crumb"><a href="/signup">← signup</a></div>
@@ -323,7 +335,7 @@ pub fn signup_result(text: &str, ok: bool) -> Html<String> {
 }
 
 pub fn hint_result(text: &str, ok: bool, back: &str) -> Html<String> {
-    let mut b = String::from(HEAD);
+    let mut b = page_head(None);
     let cls = if ok { "banner ok" } else { "banner bad" };
     b.push_str(&format!(
         r#"<h1>Hint</h1><div class="crumb"><a href="{}">← back</a></div>
@@ -363,7 +375,7 @@ pub fn game_page(
     let live = snap.ap.get(&ap_slot).cloned().unwrap_or_default();
     let back = format!("/game/{ap_slot}");
     let here: Vec<&SlotRow> = slots.iter().filter(|r| r.ap_slot == ap_slot).collect();
-    let mut out = String::from(HEAD);
+    let mut out = page_head(Some(me));
     out.push_str(&format!(
         r#"<h1>{}</h1><div class="crumb"><a href="/board">← board</a> · signed in as <b>{}</b>{}</div>
 <div class="meta">world {} · sent {} · received {} · {} items out in other worlds</div>"#,
@@ -399,7 +411,7 @@ pub fn game_page(
             ),
         };
         out.push_str(&format!(
-            r#"<div class="slot idle"><div class="seat"><span class="who">{}</span><span>{by} {action}</span></div></div>"#,
+            r#"<div class="slot idle"><div class="prow"><span class="who">{}</span><span>{by} {action}</span></div></div>"#,
             esc(&r.name)
         ));
     }
@@ -466,4 +478,10 @@ q.addEventListener('input',function(){{
 
     out.push_str("</main></body></html>");
     Html(out)
+}
+
+fn page_head(me: Option<&str>) -> String {
+    let mut s = String::from(HEAD);
+    s.push_str(&topbar(me));
+    s
 }
