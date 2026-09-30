@@ -178,12 +178,12 @@ async fn game_view(
     headers: HeaderMap,
 ) -> Html<String> {
     let (me, is_admin) = identity(&headers);
-    let (snap, game, item_names) = match st.board.read() {
+    let (snap, game, item_names, connect_name) = match st.board.read() {
         Ok(b) => {
-            let game = b
+            let (game, cn) = b
                 .slots
                 .get(&ap_slot)
-                .map(|s| s.game.clone())
+                .map(|s| (s.game.clone(), s.name.clone()))
                 .unwrap_or_default();
             let items = b
                 .meta
@@ -196,7 +196,7 @@ async fn game_view(
                     v
                 })
                 .unwrap_or_default();
-            (b.snapshot(), game, items)
+            (b.snapshot(), game, items, cn)
         }
         Err(_) => return Html("board unavailable".into()),
     };
@@ -206,6 +206,26 @@ async fn game_view(
     let season = snap.seed.clone().unwrap_or_default();
     let slots = st.db.slots(&season).await.unwrap_or_default();
     let prios = st.db.priorities(&season).await.unwrap_or_default();
+
+    // Cost to hint (per AP: hint_cost% of a world's locations).
+    let world_size = snap.ap.get(&ap_slot).map(|a| a.world_size).unwrap_or(0) as i64;
+    let cost = if snap.hint_cost > 0 && world_size > 0 {
+        (snap.hint_cost * world_size / 100).max(1)
+    } else {
+        0
+    };
+    // Live points for the viewer's own slot (fetched by connecting as it).
+    let i_claim = is_admin
+        || slots
+            .iter()
+            .any(|r| r.ap_slot == ap_slot && r.claimed_by.as_deref() == Some(me.as_str()));
+    let points = match (i_claim, &st.ap_cfg) {
+        (true, Some(cfg)) if !connect_name.is_empty() => {
+            ap::slot_points(&cfg.url, &cfg.password, &connect_name).await
+        }
+        _ => None,
+    };
+
     render::game_page(
         ap_slot,
         &game,
@@ -215,6 +235,8 @@ async fn game_view(
         &item_names,
         &me,
         is_admin,
+        cost,
+        points,
     )
 }
 

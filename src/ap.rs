@@ -33,7 +33,6 @@ pub struct SlotState {
     pub name: String,
     pub game: String,
     pub status: i64, // ClientStatus: 0 unknown,5 connected,10 ready,20 playing,30 goal
-    pub hints: usize,
     pub hint_list: Vec<HintRaw>,
     pub sent: u64,
     pub received: u64,
@@ -50,6 +49,8 @@ pub struct Board {
     pub connected: bool,
     pub team: i64,
     pub seed: Option<String>,
+    /// Percentage of a world's locations that must be checked to afford a hint.
+    pub hint_cost: i64,
     pub slots: BTreeMap<i64, SlotState>,
     pub events: VecDeque<Event>,
     pub meta: Option<std::sync::Arc<crate::meta::Meta>>,
@@ -87,7 +88,6 @@ pub struct HintView {
 #[derive(Clone, Default)]
 pub struct ApLive {
     pub status: i64,
-    pub hints: usize,
     pub sent: u64,
     pub received: u64,
     pub world_size: u32,
@@ -100,6 +100,7 @@ pub struct ApLive {
 pub struct BoardSnapshot {
     pub connected: bool,
     pub seed: Option<String>,
+    pub hint_cost: i64,
     pub ap: BTreeMap<i64, ApLive>,
     pub events: Vec<Event>,
 }
@@ -140,7 +141,6 @@ impl Board {
                     *n,
                     ApLive {
                         status: s.status,
-                        hints: s.hints,
                         sent: s.sent,
                         received: s.received,
                         world_size,
@@ -153,6 +153,7 @@ impl Board {
         BoardSnapshot {
             connected: self.connected,
             seed: self.seed.clone(),
+            hint_cost: self.hint_cost,
             ap,
             events: self.events.iter().cloned().collect(),
         }
@@ -243,10 +244,13 @@ async fn run_once(
                         "slot_data": false,
                         "password": cfg.password,
                     }]);
-                    if let (Some(seed), Ok(mut b)) =
-                        (pkt.get("seed_name").and_then(Value::as_str), board.write())
-                    {
-                        b.seed = Some(seed.to_string());
+                    if let Ok(mut b) = board.write() {
+                        if let Some(seed) = pkt.get("seed_name").and_then(Value::as_str) {
+                            b.seed = Some(seed.to_string());
+                        }
+                        if let Some(hc) = pkt.get("hint_cost").and_then(Value::as_i64) {
+                            b.hint_cost = hc;
+                        }
                     }
                     tx.send(Message::Text(connect.to_string()))
                         .await
@@ -393,7 +397,6 @@ fn apply_storage(b: &mut Board, key: &str, value: &Value) {
             .map(|a| a.iter().filter_map(parse_hint).collect())
             .unwrap_or_default();
         if let Some(s) = b.slots.get_mut(&slot) {
-            s.hints = list.len();
             s.hint_list = list;
         }
     }
@@ -627,4 +630,48 @@ pub fn resolve_parts(b: &Board, parts: &[Value]) -> String {
         }
     }
     out
+}
+
+/// Read a slot's current hint points by briefly connecting as it (the points
+/// arrive in `Connected`). Returns None on any failure/timeout.
+pub async fn slot_points(url: &str, password: &str, name: &str) -> Option<i64> {
+    let fut = async {
+        let (ws, _) = tokio_tungstenite::connect_async(url).await.ok()?;
+        let (mut tx, mut rx) = ws.split();
+        while let Some(msg) = rx.next().await {
+            let text = match msg.ok()? {
+                Message::Text(t) => t.to_string(),
+                Message::Ping(p) => {
+                    let _ = tx.send(Message::Pong(p)).await;
+                    continue;
+                }
+                Message::Close(_) => return None,
+                _ => continue,
+            };
+            let packets: Vec<Value> = serde_json::from_str(&text).ok()?;
+            for pkt in packets {
+                match pkt.get("cmd").and_then(Value::as_str).unwrap_or("") {
+                    "RoomInfo" => {
+                        let connect = json!([{
+                            "cmd": "Connect", "game": "", "name": name, "uuid": "bifrost-points",
+                            "version": {"class": "Version", "major": 0, "minor": 6, "build": 7},
+                            "items_handling": 0, "tags": ["TextOnly"], "slot_data": false,
+                            "password": password,
+                        }]);
+                        tx.send(Message::Text(connect.to_string())).await.ok()?;
+                    }
+                    "ConnectionRefused" => return None,
+                    "Connected" => {
+                        return pkt.get("hint_points").and_then(Value::as_i64);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        None
+    };
+    tokio::time::timeout(Duration::from_secs(6), fut)
+        .await
+        .ok()
+        .flatten()
 }

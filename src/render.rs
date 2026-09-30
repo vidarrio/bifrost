@@ -48,7 +48,8 @@ h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute
 .signup{display:grid;gap:12px;max-width:460px;margin-bottom:10px}.signup label{display:grid;gap:4px;font-size:13px;color:var(--muted)}.signup label.chk{display:flex;flex-direction:row;align-items:center;gap:8px}
 .signup input[type=file],.signup input[type=text]{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:6px 8px;font-size:13px}
 code{font-family:var(--mono);font-size:12px;color:var(--accent)}
-.cardlink{text-decoration:none;color:inherit;display:block;transition:border-color .1s}.cardlink:hover{border-color:var(--accent)}
+.cardlink{text-decoration:none;color:inherit;display:block;transition:border-color .1s}.cardlink:hover{border-color:var(--accent);text-decoration:none}
+.cardlink:hover .game{color:var(--accent)}
 .matches{max-width:460px;margin:-4px 0 12px;display:grid}.matches .match{font-family:var(--mono);font-size:12px;padding:5px 8px;border:1px solid var(--bd);border-top:0;cursor:pointer;background:var(--panel)}.matches .match:hover{background:var(--bd)}
 .hintrow{display:flex;justify-content:space-between;align-items:center;gap:10px;font-family:var(--mono);font-size:12.5px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px;margin:6px 0}
 button{background:var(--accent);color:#0d1117;border:0;border-radius:7px;padding:5px 12px;font-weight:600;font-size:12px;cursor:pointer}
@@ -113,14 +114,13 @@ pub fn board_page(
             let (cls, label) = status_label(live.status);
             out.push_str(&format!(
                 r#"<a class="slot cardlink {cls}" href="/game/{}"><span class="st">{label}</span><div class="game">{}</div>
-<div class="meta">world {} · sent {} · recv {} · {} out elsewhere · hints {}</div>"#,
+<div class="meta">world {} · sent {} · recv {} · {} out elsewhere</div>"#,
                 g.ap_slot,
                 esc(g.game),
                 live.world_size,
                 live.sent,
                 live.received,
                 live.items_elsewhere,
-                live.hints,
             ));
             for r in &g.rows {
                 let by = match &r.claimed_by {
@@ -357,6 +357,8 @@ pub fn game_page(
     item_names: &[String],
     me: &str,
     is_admin: bool,
+    cost: i64,
+    points: Option<i64>,
 ) -> Html<String> {
     let live = snap.ap.get(&ap_slot).cloned().unwrap_or_default();
     let back = format!("/game/{ap_slot}");
@@ -411,9 +413,13 @@ pub fn game_page(
         .map(|r| r.id);
     if let Some(sid) = hint_slot {
         let items_json = serde_json::to_string(item_names).unwrap_or_else(|_| "[]".into());
+        let have = match points {
+            Some(p) => format!("You have <b>{p}</b> hint points. "),
+            None => String::new(),
+        };
         out.push_str(&format!(
             r#"<h2>Send a hint</h2>
-<p class="empty">Search your item pool and hint one — it spends your hint points.</p>
+<p class="empty">{have}Each hint in this world costs <b>{cost}</b> points. Search your pool and hint one.</p>
 <form method="post" action="/hint" class="hintform">
 <input type="hidden" name="slot_id" value="{sid}"><input type="hidden" name="back" value="{back}">
 <input id="hintq" name="item" placeholder="search your items…" autocomplete="off" required>
