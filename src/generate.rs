@@ -63,6 +63,22 @@ async fn clear_old_seeds() {
     }
 }
 
+/// Deploy a rolled seed as `current.zip` (which fires the root reload path unit)
+/// and drop the old save. Removing the existing file first is essential: the old
+/// `current.zip` is owned by the `archipelago` user, and `std::fs::copy` would
+/// try to chmod it to match the source — which fails with EPERM for `bifrost`
+/// even though the file is group-writable. Removing it (the dir is writable)
+/// lets the copy create a fresh bifrost-owned file.
+async fn deploy_seed(seed_zip: &str) -> Result<(), String> {
+    let dst = format!("{OUTPUT}/current.zip");
+    let _ = tokio::fs::remove_file(&dst).await;
+    tokio::fs::copy(seed_zip, &dst)
+        .await
+        .map_err(|e| format!("deploy: {e}"))?;
+    let _ = tokio::fs::remove_file(format!("{OUTPUT}/current.apsave")).await;
+    Ok(())
+}
+
 /// The newest AP_*.zip in output/, if any.
 async fn newest_seed() -> Option<String> {
     let mut best: Option<(std::time::SystemTime, String)> = None;
@@ -239,10 +255,7 @@ async fn regen_inner(db: &Db, state: &GenState, old_season: &str) -> Result<Stri
         .map_err(|e| e.to_string())?;
 
     set(state, true, "Deploying…");
-    tokio::fs::copy(&seed_zip, format!("{OUTPUT}/current.zip"))
-        .await
-        .map_err(|e| format!("deploy: {e}"))?;
-    let _ = tokio::fs::remove_file(format!("{OUTPUT}/current.apsave")).await;
+    deploy_seed(&seed_zip).await?;
 
     Ok(format!(
         "Regenerated seed {seed_name} — {} AP slots, claims carried over. The game is restarting on a fresh save.",
@@ -303,10 +316,7 @@ async fn run_inner(db: &Db, state: &GenState) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
 
     set(state, true, "Deploying…");
-    tokio::fs::copy(&seed_zip, format!("{OUTPUT}/current.zip"))
-        .await
-        .map_err(|e| format!("deploy: {e}"))?;
-    let _ = tokio::fs::remove_file(format!("{OUTPUT}/current.apsave")).await;
+    deploy_seed(&seed_zip).await?;
 
     // A clean generate closes signups for the season now under way; the admin
     // reopens them for the next signup period.
