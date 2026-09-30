@@ -806,6 +806,17 @@ async fn admin_regenerate(State(st): State<AppState>, headers: HeaderMap) -> Red
             .ok()
             .and_then(|b| b.seed.clone())
             .unwrap_or_default();
+        // Need the live board's current seed to carry claims over; refuse if the
+        // tracker hasn't populated it yet (e.g. right after a restart).
+        if old_season.is_empty() {
+            if let Ok(mut g) = st.genstate.lock()
+                && !g.0
+            {
+                g.1 = "Regenerate needs the live board connected first — try again in a moment."
+                    .into();
+            }
+            return Redirect::to("/admin");
+        }
         let start = match st.genstate.lock() {
             Ok(mut g) if !g.0 => {
                 g.0 = true;
