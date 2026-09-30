@@ -471,11 +471,17 @@ async fn hint_post(
                         st.db.spend_credit(&season, &me).await;
                         let newc = st.db.credits(&season, &me).await;
                         let points = ap::slot_points(&cfg.url, &cfg.password, &name).await;
+                        // The admin /hint returns no text on success, so confirm
+                        // it ourselves; the new hint shows in the list below.
+                        let confirm = if msg.trim().is_empty() {
+                            format!(
+                                "Out of points — spent a bonus hint ({newc} left). It's in this world's hints below."
+                            )
+                        } else {
+                            format!("Out of points — spent a bonus hint ({newc} left). {msg}")
+                        };
                         return Json(serde_json::json!({
-                            "ok": true,
-                            "message": format!("Out of points — used a bonus hint. {msg}"),
-                            "points": points,
-                            "credits": newc
+                            "ok": true, "message": confirm, "points": points, "credits": newc
                         }));
                     }
                     Err(e) => {
