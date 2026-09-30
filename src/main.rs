@@ -23,6 +23,7 @@ use tower_http::trace::TraceLayer;
 mod ap;
 mod checker;
 mod db;
+mod generate;
 mod meta;
 mod render;
 
@@ -33,6 +34,7 @@ struct AppState {
     board: Shared,
     db: db::Db,
     ap_cfg: Option<ap::ApConfig>,
+    genstate: generate::GenState,
 }
 
 const LANDING: &str = include_str!("../static/index.html");
@@ -68,7 +70,13 @@ async fn main() {
         None => tracing::info!("AP tracker idle (set BIFROST_SLOT to enable the live board)"),
     }
 
-    let state = AppState { board, db, ap_cfg };
+    let genstate: generate::GenState = Arc::new(std::sync::Mutex::new((false, "idle".into())));
+    let state = AppState {
+        board,
+        db,
+        ap_cfg,
+        genstate,
+    };
     let app = Router::new()
         .route("/health", get(health))
         .route("/", get(landing))
@@ -78,6 +86,7 @@ async fn main() {
         .route("/hint", post(hint_post))
         .route("/signup", get(signup_get).post(signup_post))
         .route("/signup/delete", post(signup_delete))
+        .route("/generate", get(generate_get).post(generate_post))
         .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -370,4 +379,34 @@ async fn signup_delete(
         }
     }
     Redirect::to("/signup")
+}
+
+async fn generate_get(State(st): State<AppState>, headers: HeaderMap) -> Html<String> {
+    let (_me, is_admin) = identity(&headers);
+    let (running, msg) = st
+        .genstate
+        .lock()
+        .map(|g| (g.0, g.1.clone()))
+        .unwrap_or((false, "unknown".into()));
+    let count = st.db.submissions().await.map(|s| s.len()).unwrap_or(0);
+    render::generate_page(&msg, running, count, is_admin)
+}
+
+async fn generate_post(State(st): State<AppState>, headers: HeaderMap) -> Redirect {
+    let (_me, is_admin) = identity(&headers);
+    if is_admin {
+        let start = match st.genstate.lock() {
+            Ok(mut g) if !g.0 => {
+                g.0 = true;
+                g.1 = "Starting…".into();
+                true
+            }
+            _ => false,
+        };
+        if start {
+            let (db, genstate) = (st.db.clone(), st.genstate.clone());
+            tokio::spawn(async move { generate::run(db, genstate).await });
+        }
+    }
+    Redirect::to("/generate")
 }

@@ -30,6 +30,8 @@ pub struct SubmissionRow {
     pub game: String,
     pub is_custom: bool,
     pub coop_names: String,
+    pub yaml_file: String,
+    pub apworld_file: Option<String>,
 }
 
 impl Db {
@@ -116,6 +118,65 @@ impl Db {
         Ok(())
     }
 
+    /// Seed a freshly-generated season from submissions: 1:1 Bifrost slots from
+    /// the AP roster, each matching submission's uploader auto-claimed, and a
+    /// co-op Bifrost slot minted (unclaimed) per co-op name.
+    pub async fn seed_from_submissions(
+        &self,
+        season: &str,
+        ap_slots: &[(i64, String, String)],
+        subs: &[SubmissionRow],
+    ) -> Result<(), sqlx::Error> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        for (num, name, game) in ap_slots {
+            sqlx::query(
+                "INSERT OR IGNORE INTO bifrost_slot (season, name, ap_slot, game) VALUES (?, ?, ?, ?)",
+            )
+            .bind(season)
+            .bind(name)
+            .bind(num)
+            .bind(game)
+            .execute(&self.pool)
+            .await?;
+            let id: i64 =
+                sqlx::query_scalar("SELECT id FROM bifrost_slot WHERE season = ? AND name = ?")
+                    .bind(season)
+                    .bind(name)
+                    .fetch_one(&self.pool)
+                    .await?;
+            if let Some(sub) = subs.iter().find(|s| &s.slot_name == name) {
+                sqlx::query(
+                    "INSERT OR IGNORE INTO claim (bifrost_slot_id, sso, claimed_at) VALUES (?, ?, ?)",
+                )
+                .bind(id)
+                .bind(&sub.sso)
+                .bind(now)
+                .execute(&self.pool)
+                .await?;
+                for coop in sub
+                    .coop_names
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    sqlx::query(
+                        "INSERT OR IGNORE INTO bifrost_slot (season, name, ap_slot, game) VALUES (?, ?, ?, ?)",
+                    )
+                    .bind(season)
+                    .bind(coop)
+                    .bind(num)
+                    .bind(game)
+                    .execute(&self.pool)
+                    .await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub async fn slots(&self, season: &str) -> Result<Vec<SlotRow>, sqlx::Error> {
         sqlx::query_as::<_, SlotRow>(
             r#"SELECT s.id, s.name, s.ap_slot, s.game, c.sso AS claimed_by
@@ -181,7 +242,8 @@ impl Db {
 
     pub async fn submissions(&self) -> Result<Vec<SubmissionRow>, sqlx::Error> {
         sqlx::query_as::<_, SubmissionRow>(
-            "SELECT id, sso, slot_name, game, is_custom, coop_names FROM submission ORDER BY created_at",
+            "SELECT id, sso, slot_name, game, is_custom, coop_names, yaml_file, apworld_file
+             FROM submission ORDER BY created_at",
         )
         .fetch_all(&self.pool)
         .await

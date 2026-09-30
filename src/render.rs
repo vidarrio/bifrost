@@ -272,6 +272,32 @@ pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool) -> Html<Str
     Html(b)
 }
 
+pub fn generate_page(msg: &str, running: bool, count: usize, is_admin: bool) -> Html<String> {
+    let mut b = String::from(HEAD);
+    b.push_str(
+        r#"<h1>Generate season</h1><div class="crumb"><a href="/board">← board</a> · admin</div>"#,
+    );
+    if !is_admin {
+        b.push_str(r#"<div class="banner bad">Admins only.</div></main></body></html>"#);
+        return Html(b);
+    }
+    b.push_str(&format!(
+        r#"<p class="empty">{count} submission(s) queued. Generating rolls a new seed from the signups, maps slots + auto-claims, and deploys it — the game then restarts on the new seed.</p>"#
+    ));
+    let cls = if running { "banner" } else { "banner ok" };
+    let mark = if running { "⏳ " } else { "" };
+    b.push_str(&format!(r#"<div class="{cls}">{mark}{}</div>"#, esc(msg)));
+    if running {
+        b.push_str(r#"<script>setTimeout(function(){location.reload()},4000)</script>"#);
+    } else {
+        b.push_str(
+            r#"<form method="post" action="/generate"><button type="submit">Generate the season</button></form>"#,
+        );
+    }
+    b.push_str("</main></body></html>");
+    Html(b)
+}
+
 pub fn signup_result(text: &str, ok: bool) -> Html<String> {
     let mut b = String::from(HEAD);
     let cls = if ok { "banner ok" } else { "banner bad" };
