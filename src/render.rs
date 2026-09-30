@@ -954,11 +954,13 @@ pub fn game_page(
         out.push_str("\n</script>");
     }
 
-    // All hints in this world. Only a claimant of this game (or an admin) gets
-    // the prioritize toggles. Wrapped in #worldhints so a successful hint can
-    // live-refresh just this list (see /game/{}/hints).
+    // Hints for this game's items — where each of this slot's items is located.
+    // Only a claimant of this game (or an admin) gets the prioritize toggles.
+    // Wrapped in #worldhints so a successful hint can live-refresh it.
     let can_prioritize = hint_slot.is_some() || is_admin;
-    out.push_str(r#"<h2>Hints in this world</h2><div id="worldhints">"#);
+    out.push_str(
+        r#"<h2>Hints for this game's items</h2><p class="empty" style="margin-top:-4px">Where this slot's items are — in its own or others' worlds.</p><div id="worldhints">"#,
+    );
     out.push_str(&hint_rows(&live.hint_views, prios, &back, can_prioritize));
     out.push_str("</div>");
 
@@ -966,8 +968,8 @@ pub fn game_page(
     Html(out)
 }
 
-/// The rows of the "Hints in this world" list (also served as a fragment for
-/// live refresh after a hint).
+/// The rows of the per-game hint list ("where this slot's items are"), also
+/// served as a fragment for live refresh after a hint.
 pub fn hint_rows(
     views: &[crate::ap::HintView],
     prios: &std::collections::HashSet<(i64, i64, i64)>,

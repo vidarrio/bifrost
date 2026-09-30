@@ -148,23 +148,26 @@ impl Board {
                     .and_then(|m| m.totals(*n))
                     .map(|t| (t.world_size, t.items_for_elsewhere))
                     .unwrap_or((0, 0));
+                // Hints for THIS slot's own items — "where is my item", the way
+                // hints are normally read. Filter by receiving == this slot; the
+                // item is ours, the location is in whichever world is finding it.
                 let mut hint_views = Vec::new();
                 if let Some(m) = self.meta.as_ref() {
-                    for h in s.hint_list.iter().filter(|h| h.finding == *n) {
-                        let recv_game = self
+                    for h in s.hint_list.iter().filter(|h| h.receiving == *n) {
+                        let item = m.item_name(&s.game, h.item).unwrap_or("?");
+                        let find_game = self
                             .slots
-                            .get(&h.receiving)
+                            .get(&h.finding)
                             .map(|x| x.game.as_str())
                             .unwrap_or("");
-                        let item = m.item_name(recv_game, h.item).unwrap_or("?");
-                        let loc = m.location_name(&s.game, h.location).unwrap_or("?");
-                        let recv = self.name_of(h.receiving);
+                        let loc = m.location_name(find_game, h.location).unwrap_or("?");
+                        let finder = self.name_of(h.finding);
                         let mark = if h.found { " ✓" } else { "" };
                         hint_views.push(HintView {
                             finding: h.finding,
                             location: h.location,
                             item: h.item,
-                            text: format!("{item} → {recv} @ {loc}{mark}"),
+                            text: format!("{item} @ {loc} · {finder}{mark}"),
                         });
                     }
                 }
