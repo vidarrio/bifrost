@@ -104,6 +104,7 @@ async fn main() {
         .route("/admin", get(admin_view))
         .route("/admin/signups", post(admin_signups))
         .route("/admin/generate", post(admin_generate))
+        .route("/admin/regenerate", post(admin_regenerate))
         .route("/admin/clear", post(admin_clear))
         .route("/admin/delete-player", post(admin_delete_player))
         .route("/admin/delete-apworld", post(admin_delete_apworld))
@@ -791,6 +792,31 @@ async fn admin_generate(State(st): State<AppState>, headers: HeaderMap) -> Redir
         if start {
             let (db, genstate) = (st.db.clone(), st.genstate.clone());
             tokio::spawn(async move { generate::run(db, genstate).await });
+        }
+    }
+    Redirect::to("/admin")
+}
+
+async fn admin_regenerate(State(st): State<AppState>, headers: HeaderMap) -> Redirect {
+    let (_me, is_admin) = identity(&headers);
+    if is_admin {
+        let old_season = st
+            .board
+            .read()
+            .ok()
+            .and_then(|b| b.seed.clone())
+            .unwrap_or_default();
+        let start = match st.genstate.lock() {
+            Ok(mut g) if !g.0 => {
+                g.0 = true;
+                g.1 = "Starting…".into();
+                true
+            }
+            _ => false,
+        };
+        if start {
+            let (db, genstate) = (st.db.clone(), st.genstate.clone());
+            tokio::spawn(async move { generate::regenerate(db, genstate, old_season).await });
         }
     }
     Redirect::to("/admin")

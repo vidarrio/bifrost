@@ -149,12 +149,105 @@ pub async fn list_apworlds() -> Vec<String> {
     out
 }
 
+/// The seed's AP roster as (slot number, player name, game) from meta JSON.
+fn parse_ap_slots(meta: &Value) -> Vec<(i64, String, String)> {
+    meta.get("slots")
+        .and_then(Value::as_object)
+        .map(|m| {
+            m.iter()
+                .filter_map(|(k, v)| {
+                    let num = k.parse::<i64>().ok()?;
+                    let name = v.get("name")?.as_str()?.to_string();
+                    let game = v
+                        .get("game")
+                        .and_then(Value::as_str)
+                        .unwrap_or("?")
+                        .to_string();
+                    Some((num, name, game))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Entry point: run the whole flow, updating `state` as it goes.
 pub async fn run(db: Db, state: GenState) {
     match run_inner(&db, &state).await {
         Ok(msg) => set(&state, false, msg),
         Err(e) => set(&state, false, format!("Failed — {e}")),
     }
+}
+
+/// Re-roll the *current* lineup: reuse the already-staged Players/ + installed
+/// custom_worlds/, generate a fresh seed (and fresh save, picking up the current
+/// host.yaml), and carry the existing slots + claims onto it. Doesn't touch
+/// submissions or signups.
+pub async fn regenerate(db: Db, state: GenState, old_season: String) {
+    match regen_inner(&db, &state, &old_season).await {
+        Ok(msg) => set(&state, false, msg),
+        Err(e) => set(&state, false, format!("Failed — {e}")),
+    }
+}
+
+async fn regen_inner(db: &Db, state: &GenState, old_season: &str) -> Result<String, String> {
+    // Must have a staged lineup to re-roll.
+    let mut has_yaml = false;
+    if let Ok(mut rd) = tokio::fs::read_dir(PLAYERS).await {
+        while let Ok(Some(e)) = rd.next_entry().await {
+            if e.path().extension().and_then(|x| x.to_str()) == Some("yaml") {
+                has_yaml = true;
+                break;
+            }
+        }
+    }
+    if !has_yaml {
+        return Err("no staged player YAMLs to re-roll — generate a season first".into());
+    }
+
+    set(
+        state,
+        true,
+        "Re-rolling the current lineup… (this can take a minute)",
+    );
+    clear_old_seeds().await;
+    let out = Command::new(AP_PYTHON)
+        .arg(GEN_SCRIPT)
+        .current_dir(AP_DIR)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .map_err(|e| format!("spawn generate: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let mut tail: Vec<&str> = err.lines().filter(|l| !l.trim().is_empty()).collect();
+        let tail = tail.split_off(tail.len().saturating_sub(3)).join(" | ");
+        return Err(format!("generation error: {tail}"));
+    }
+
+    let seed_zip = newest_seed().await.ok_or("no seed was produced")?;
+    set(state, true, "Mapping slots and carrying over claims…");
+    let meta = run_meta(&seed_zip).await?;
+    let seed_name = meta
+        .get("seed")
+        .and_then(Value::as_str)
+        .ok_or("seed metadata missing its name")?
+        .to_string();
+    let ap_slots = parse_ap_slots(&meta);
+    db.carry_over_season(old_season, &seed_name, &ap_slots)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    set(state, true, "Deploying…");
+    tokio::fs::copy(&seed_zip, format!("{OUTPUT}/current.zip"))
+        .await
+        .map_err(|e| format!("deploy: {e}"))?;
+    let _ = tokio::fs::remove_file(format!("{OUTPUT}/current.apsave")).await;
+
+    Ok(format!(
+        "Regenerated seed {seed_name} — {} AP slots, claims carried over. The game is restarting on a fresh save.",
+        ap_slots.len()
+    ))
 }
 
 async fn run_inner(db: &Db, state: &GenState) -> Result<String, String> {
@@ -204,24 +297,7 @@ async fn run_inner(db: &Db, state: &GenState) -> Result<String, String> {
         .and_then(Value::as_str)
         .ok_or("seed metadata missing its name")?
         .to_string();
-    let ap_slots: Vec<(i64, String, String)> = meta
-        .get("slots")
-        .and_then(Value::as_object)
-        .map(|m| {
-            m.iter()
-                .filter_map(|(k, v)| {
-                    let num = k.parse::<i64>().ok()?;
-                    let name = v.get("name")?.as_str()?.to_string();
-                    let game = v
-                        .get("game")
-                        .and_then(Value::as_str)
-                        .unwrap_or("?")
-                        .to_string();
-                    Some((num, name, game))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let ap_slots = parse_ap_slots(&meta);
     db.seed_from_submissions(&seed_name, &ap_slots, &subs)
         .await
         .map_err(|e| e.to_string())?;

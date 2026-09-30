@@ -358,6 +358,92 @@ impl Db {
         Ok(())
     }
 
+    /// Re-seed a freshly regenerated season from the previous one: recreate every
+    /// Bifrost slot (1:1 AP slots + co-op seats) mapped onto the new AP slot
+    /// numbers by name, and carry each claim over. Player names are stable across
+    /// a re-roll, so claims and co-op grouping survive.
+    pub async fn carry_over_season(
+        &self,
+        old_season: &str,
+        new_season: &str,
+        new_ap_slots: &[(i64, String, String)],
+    ) -> Result<(), sqlx::Error> {
+        use std::collections::{HashMap, HashSet};
+        let old = self.slots(old_season).await?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let roster: HashSet<&str> = new_ap_slots.iter().map(|(_, n, _)| n.as_str()).collect();
+        let new_ap_by_name: HashMap<&str, i64> = new_ap_slots
+            .iter()
+            .map(|(n, name, _)| (name.as_str(), *n))
+            .collect();
+        // For each old AP slot number, the roster name occupying it (its "base").
+        let mut base_by_old_ap: HashMap<i64, String> = HashMap::new();
+        for s in &old {
+            if roster.contains(s.name.as_str()) {
+                base_by_old_ap
+                    .entry(s.ap_slot)
+                    .or_insert_with(|| s.name.clone());
+            }
+        }
+        // 1:1 AP slots.
+        for (num, name, game) in new_ap_slots {
+            sqlx::query(
+                "INSERT OR IGNORE INTO bifrost_slot (season, name, ap_slot, game) VALUES (?, ?, ?, ?)",
+            )
+            .bind(new_season)
+            .bind(name)
+            .bind(num)
+            .bind(game)
+            .execute(&self.pool)
+            .await?;
+        }
+        // Co-op seats (names not in the AP roster) → their base's new AP slot.
+        for s in &old {
+            if roster.contains(s.name.as_str()) {
+                continue;
+            }
+            let Some(base) = base_by_old_ap.get(&s.ap_slot) else {
+                continue;
+            };
+            let Some(new_ap) = new_ap_by_name.get(base.as_str()) else {
+                continue;
+            };
+            sqlx::query(
+                "INSERT OR IGNORE INTO bifrost_slot (season, name, ap_slot, game) VALUES (?, ?, ?, ?)",
+            )
+            .bind(new_season)
+            .bind(&s.name)
+            .bind(new_ap)
+            .bind(&s.game)
+            .execute(&self.pool)
+            .await?;
+        }
+        // Carry claims over by name.
+        for s in &old {
+            let Some(sso) = &s.claimed_by else { continue };
+            let id: Option<i64> =
+                sqlx::query_scalar("SELECT id FROM bifrost_slot WHERE season = ? AND name = ?")
+                    .bind(new_season)
+                    .bind(&s.name)
+                    .fetch_optional(&self.pool)
+                    .await?;
+            if let Some(id) = id {
+                sqlx::query(
+                    "INSERT OR IGNORE INTO claim (bifrost_slot_id, sso, claimed_at) VALUES (?, ?, ?)",
+                )
+                .bind(id)
+                .bind(sso)
+                .bind(now)
+                .execute(&self.pool)
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
     pub async fn slots(&self, season: &str) -> Result<Vec<SlotRow>, sqlx::Error> {
         sqlx::query_as::<_, SlotRow>(
             r#"SELECT s.id, s.name, s.ap_slot, s.game, c.sso AS claimed_by

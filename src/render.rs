@@ -556,7 +556,7 @@ pub fn admin_page(
     // Generate
     b.push_str(r#"<h2>Generate</h2>"#);
     b.push_str(&format!(
-        r#"<p class="empty">{} signup(s) queued. Generating rolls a new seed, maps slots + auto-claims, deploys it (the game restarts), and closes signups.</p>"#,
+        r#"<p class="empty"><b>Generate a season</b> stages the {} queued signup(s), rolls a new seed, maps slots + auto-claims, deploys it (the game restarts), and closes signups — use it for a fresh signup round.<br><b>Regenerate</b> re-rolls the <em>current</em> lineup: it reuses the staged YAMLs + installed apworlds, produces a new world + fresh save (applying the current host.yaml), and keeps everyone's claims. Signups are left as they are.</p>"#,
         subs.len()
     ));
     let cls = if running { "banner" } else { "banner ok" };
@@ -569,13 +569,20 @@ pub fn admin_page(
         b.push_str(r#"<script>setTimeout(function(){location.reload()},4000)</script>"#);
     } else {
         b.push_str(&format!(
-            r#"<div class="btnrow">{}</div>"#,
+            r#"<div class="btnrow">{}{}</div>"#,
             action_btn(
                 "/admin/generate",
                 &[],
                 "Generate the season",
                 false,
-                "Generate a new season now? This restarts the game."
+                "Generate a NEW season from the signups now? This restarts the game and closes signups."
+            ),
+            action_btn(
+                "/admin/regenerate",
+                &[],
+                "Regenerate (re-roll current)",
+                false,
+                "Re-roll the current lineup into a new world with a fresh save? Claims are kept; the game restarts."
             )
         ));
     }
