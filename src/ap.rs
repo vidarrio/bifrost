@@ -677,16 +677,18 @@ pub async fn send_admin(
                             .map_err(|e| format!("send login: {e}"))?;
                         login_sent = true;
                     }
-                    "PrintJSON"
-                        if pkt.get("type").and_then(Value::as_str) == Some("CommandResult") =>
-                    {
+                    "PrintJSON" => {
+                        let ty = pkt.get("type").and_then(Value::as_str).unwrap_or("");
                         let Some(data) = pkt.get("data").and_then(Value::as_array) else {
                             continue;
                         };
                         if collecting {
-                            out.push(data.clone());
-                        } else {
-                            // First CommandResult is the login reply.
+                            // Server command output comes back as AdminCommandResult.
+                            if ty == "AdminCommandResult" || ty == "CommandResult" {
+                                out.push(data.clone());
+                            }
+                        } else if ty == "CommandResult" {
+                            // The login reply (from the client command processor).
                             let txt: String = data
                                 .iter()
                                 .filter_map(|d| d.get("text").and_then(Value::as_str))
