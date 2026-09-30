@@ -81,10 +81,21 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .nav .back{background:transparent;border:1px solid var(--bd);color:var(--muted)}
 .inlinemsg{font-family:var(--mono);font-size:12.5px;margin-top:8px;min-height:1em;word-break:break-word}.inlinemsg.ok{color:var(--ok)}.inlinemsg.bad{color:var(--bad)}
 .chk{display:flex;gap:9px;align-items:center;font-size:14px;margin-bottom:8px}
+.btnrow{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+button.danger{background:var(--bad);color:#fff}
+.statline{font-family:var(--mono);font-size:12.5px;color:var(--muted);margin:2px 0 6px}.statline b{color:var(--fg)}
+.console{display:flex;gap:8px;margin:8px 0}
+.console input[type=text]{flex:1;min-width:0;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:8px 10px;font-family:var(--mono);font-size:13px}
+pre.out{background:#0b0f14;border:1px solid var(--bd);border-radius:8px;padding:12px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break:break-word;color:var(--fg)}
+.warnnote{color:var(--warn);font-size:12px;margin:4px 0}
 </style></head><body>
-<header><div class="hwrap"><a class="brand" href="/">Bifrost</a><span class="spacer"></span><span class="who" id="who"></span><a class="pill" href="https://home.example.org/">home</a></div></header>
+<header><div class="hwrap"><a class="brand" href="/">Bifrost</a><span class="spacer"></span><span class="who" id="who"></span><span id="adminslot"></span><a class="pill" href="https://home.example.org/">home</a></div></header>
 <script>
-fetch('/api/me').then(function(r){return r.json()}).then(function(m){var w=document.getElementById('who');if(!w)return;if(m&&m.user){w.innerHTML='signed in as <b></b>';w.querySelector('b').textContent=m.user}else{w.innerHTML='<a href="/signup">sign in</a>'}}).catch(function(){});
+fetch('/api/me').then(function(r){return r.json()}).then(function(m){
+ var w=document.getElementById('who');
+ if(w){if(m&&m.user){w.innerHTML='signed in as <b></b>';w.querySelector('b').textContent=m.user}else{w.innerHTML='<a href="/signup">sign in</a>'}}
+ if(m&&m.admin){var a=document.getElementById('adminslot');if(a)a.innerHTML='<a class="pill" href="/admin">admin</a>'}
+}).catch(function(){});
 </script>
 <main>"#;
 
@@ -258,11 +269,19 @@ pub fn claim_page(
     Html(out)
 }
 
-pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool) -> Html<String> {
+pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool, open: bool) -> Html<String> {
     let mut b = page_head(Some(me));
+    b.push_str(r#"<h1>Season signup</h1><div class="crumb"><a href="/board">← board</a></div>"#);
+    if !open {
+        b.push_str(
+            r#"<div class="banner bad">Signups are closed right now. They'll open again before the next season.</div>"#,
+        );
+        b.push_str(&roster(subs, me, is_admin));
+        b.push_str("</main></body></html>");
+        return Html(b);
+    }
     b.push_str(
-        r#"<h1>Season signup</h1><div class="crumb"><a href="/board">← board</a></div>
-<p class="empty">Three quick steps. We check everything against the server as you go, so the seed rolls clean when the season is generated.</p>
+        r#"<p class="empty">Three quick steps. We check everything against the server as you go, so the seed rolls clean when the season is generated.</p>
 <ol class="stepper">
   <li data-step="1"><span class="n">1</span> Game</li>
   <li data-step="2"><span class="n">2</span> YAML</li>
@@ -350,67 +369,275 @@ pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool) -> Html<Str
 </script>"#,
     );
 
-    b.push_str(r#"<h2>Signed up</h2>"#);
-    if subs.is_empty() {
-        b.push_str(r#"<div class="empty">Nobody yet.</div>"#);
-    } else {
-        b.push_str(r#"<div class="grid">"#);
-        for s in subs {
-            let custom = if s.is_custom {
-                r#" <span class="by free">custom</span>"#
-            } else {
-                ""
-            };
-            let coop = if s.coop_names.is_empty() {
-                String::new()
-            } else {
-                format!(r#"<div class="meta">+ {}</div>"#, esc(&s.coop_names))
-            };
-            let del = if is_admin || s.sso == me {
-                format!(
-                    r#"<form method="post" action="/signup/delete" style="display:inline">
-<input type="hidden" name="id" value="{}"><button class="ghost" type="submit">Remove</button></form>"#,
-                    s.id
-                )
-            } else {
-                String::new()
-            };
-            b.push_str(&format!(
-                r#"<div class="slot idle"><div class="game">{}{custom}</div>
-<div class="meta">{} · by {}</div>{coop}<div class="seat"><span></span>{del}</div></div>"#,
-                esc(&s.slot_name),
-                esc(&s.game),
-                esc(&s.sso),
-            ));
-        }
-        b.push_str("</div>");
-    }
+    b.push_str(&roster(subs, me, is_admin));
     b.push_str("</main></body></html>");
     Html(b)
 }
 
-pub fn generate_page(msg: &str, running: bool, count: usize, is_admin: bool) -> Html<String> {
+/// The "Signed up" roster of submissions, with a Remove control on your own (or,
+/// for an admin, any) entry — posts to `/signup/delete`.
+fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool) -> String {
+    let mut b = String::from(r#"<h2>Signed up</h2>"#);
+    if subs.is_empty() {
+        b.push_str(r#"<div class="empty">Nobody yet.</div>"#);
+        return b;
+    }
+    b.push_str(r#"<div class="grid">"#);
+    for s in subs {
+        let custom = if s.is_custom {
+            r#" <span class="by free">custom</span>"#
+        } else {
+            ""
+        };
+        let coop = if s.coop_names.is_empty() {
+            String::new()
+        } else {
+            format!(r#"<div class="meta">+ {}</div>"#, esc(&s.coop_names))
+        };
+        let del = if is_admin || s.sso == me {
+            format!(
+                r#"<form method="post" action="/signup/delete" style="display:inline">
+<input type="hidden" name="id" value="{}"><button class="ghost" type="submit">Remove</button></form>"#,
+                s.id
+            )
+        } else {
+            String::new()
+        };
+        b.push_str(&format!(
+            r#"<div class="slot idle"><div class="game">{}{custom}</div>
+<div class="meta">{} · by {}</div>{coop}<div class="seat"><span></span>{del}</div></div>"#,
+            esc(&s.slot_name),
+            esc(&s.game),
+            esc(&s.sso),
+        ));
+    }
+    b.push_str("</div>");
+    b
+}
+
+/// A one-field POST form rendered as a single button (optionally with a
+/// confirm() guard and a danger style).
+fn action_btn(
+    action: &str,
+    fields: &[(&str, &str)],
+    label: &str,
+    danger: bool,
+    confirm: &str,
+) -> String {
+    let hidden: String = fields
+        .iter()
+        .map(|(k, v)| {
+            format!(
+                r#"<input type="hidden" name="{}" value="{}">"#,
+                esc(k),
+                esc(v)
+            )
+        })
+        .collect();
+    let cls = if danger { "danger" } else { "ghost" };
+    let onclick = if confirm.is_empty() {
+        String::new()
+    } else {
+        format!(r#" onclick="return confirm('{}')""#, esc(confirm))
+    };
+    format!(
+        r#"<form method="post" action="{}" style="display:inline">{hidden}<button class="{cls}" type="submit"{onclick}>{}</button></form>"#,
+        esc(action),
+        esc(label)
+    )
+}
+
+/// The admin control centre: generate, open/close signups, manage the deployed
+/// players + apworlds, reset, and run server commands. Assumes the caller has
+/// already confirmed the viewer is an admin.
+#[allow(clippy::too_many_arguments)]
+pub fn admin_page(
+    connected: bool,
+    seed: Option<&str>,
+    signups_open: bool,
+    running: bool,
+    gen_msg: &str,
+    subs: &[SubmissionRow],
+    apworlds: &[String],
+    console: Option<(&str, &str)>,
+) -> Html<String> {
     let mut b = page_head(None);
     b.push_str(
-        r#"<h1>Generate season</h1><div class="crumb"><a href="/board">← board</a> · admin</div>"#,
+        r#"<h1>Season admin</h1><div class="crumb"><a href="/board">← board</a> · admin</div>"#,
     );
-    if !is_admin {
-        b.push_str(r#"<div class="banner bad">Admins only.</div></main></body></html>"#);
-        return Html(b);
-    }
+
+    let conn = if connected { "connected" } else { "waiting" };
+    let seed_txt = seed.filter(|s| !s.is_empty()).unwrap_or("—");
     b.push_str(&format!(
-        r#"<p class="empty">{count} submission(s) queued. Generating rolls a new seed from the signups, maps slots + auto-claims, and deploys it — the game then restarts on the new seed.</p>"#
+        r#"<div class="statline">server <b>{conn}</b> · seed <b>{}</b></div>"#,
+        esc(seed_txt)
+    ));
+
+    // Signups
+    b.push_str(r#"<h2>Signups</h2>"#);
+    if signups_open {
+        b.push_str(r#"<div class="statline">Signups are <b>open</b>.</div>"#);
+        b.push_str(&format!(
+            r#"<div class="btnrow">{}</div>"#,
+            action_btn(
+                "/admin/signups",
+                &[("open", "0")],
+                "Close signups",
+                false,
+                ""
+            )
+        ));
+    } else {
+        b.push_str(r#"<div class="statline">Signups are <b>closed</b>.</div>"#);
+        b.push_str(&format!(
+            r#"<div class="btnrow">{}</div>"#,
+            action_btn(
+                "/admin/signups",
+                &[("open", "1")],
+                "Open signups",
+                false,
+                ""
+            )
+        ));
+    }
+
+    // Generate
+    b.push_str(r#"<h2>Generate</h2>"#);
+    b.push_str(&format!(
+        r#"<p class="empty">{} signup(s) queued. Generating rolls a new seed, maps slots + auto-claims, deploys it (the game restarts), and closes signups.</p>"#,
+        subs.len()
     ));
     let cls = if running { "banner" } else { "banner ok" };
     let mark = if running { "⏳ " } else { "" };
-    b.push_str(&format!(r#"<div class="{cls}">{mark}{}</div>"#, esc(msg)));
+    b.push_str(&format!(
+        r#"<div class="{cls}">{mark}{}</div>"#,
+        esc(gen_msg)
+    ));
     if running {
         b.push_str(r#"<script>setTimeout(function(){location.reload()},4000)</script>"#);
     } else {
-        b.push_str(
-            r#"<form method="post" action="/generate"><button type="submit">Generate the season</button></form>"#,
-        );
+        b.push_str(&format!(
+            r#"<div class="btnrow">{}</div>"#,
+            action_btn(
+                "/admin/generate",
+                &[],
+                "Generate the season",
+                false,
+                "Generate a new season now? This restarts the game."
+            )
+        ));
     }
+
+    // Players (signups)
+    b.push_str(r#"<h2>Players (signups)</h2>"#);
+    if subs.is_empty() {
+        b.push_str(r#"<div class="empty">No signups.</div>"#);
+    } else {
+        for s in subs {
+            let custom = if s.is_custom { " · custom" } else { "" };
+            b.push_str(&format!(
+                r#"<div class="hintrow"><span>{} · {}{custom} · by {}</span>{}</div>"#,
+                esc(&s.slot_name),
+                esc(&s.game),
+                esc(&s.sso),
+                action_btn(
+                    "/admin/delete-player",
+                    &[("id", &s.id.to_string())],
+                    "delete",
+                    true,
+                    &format!("Delete {}'s signup?", s.slot_name)
+                )
+            ));
+        }
+    }
+    b.push_str(&format!(
+        r#"<div class="btnrow">{}</div>"#,
+        action_btn(
+            "/admin/clear",
+            &[("what", "players")],
+            "Clear all players",
+            true,
+            "Delete ALL signups, their YAMLs, and every Bifrost slot?"
+        )
+    ));
+
+    // Apworlds (installed)
+    b.push_str(r#"<h2>Installed apworlds</h2>"#);
+    if apworlds.is_empty() {
+        b.push_str(r#"<div class="empty">None installed.</div>"#);
+    } else {
+        for name in apworlds {
+            b.push_str(&format!(
+                r#"<div class="hintrow"><span>{}</span>{}</div>"#,
+                esc(name),
+                action_btn(
+                    "/admin/delete-apworld",
+                    &[("name", name)],
+                    "delete",
+                    true,
+                    &format!("Delete {name}?")
+                )
+            ));
+        }
+    }
+    b.push_str(&format!(
+        r#"<div class="btnrow">{}</div>"#,
+        action_btn(
+            "/admin/clear",
+            &[("what", "apworlds")],
+            "Clear all apworlds",
+            true,
+            "Delete every installed custom apworld?"
+        )
+    ));
+
+    // Maintenance + reset
+    b.push_str(r#"<h2>Maintenance</h2>"#);
+    b.push_str(&format!(
+        r#"<div class="btnrow">{}{}</div>"#,
+        action_btn(
+            "/admin/clear",
+            &[("what", "save")],
+            "Clear session save",
+            true,
+            "Delete the running session's save? Progress resets on next server load."
+        ),
+        action_btn(
+            "/admin/clear",
+            &[("what", "world")],
+            "Clear generated world",
+            true,
+            "Delete the generated world (current.zip + archives)?"
+        ),
+    ));
+    b.push_str(r#"<p class="warnnote">Full reset removes all apworlds, players, slots, the save, and the world, and closes signups — a clean slate for the next season.</p>"#);
+    b.push_str(&format!(
+        r#"<div class="btnrow">{}</div>"#,
+        action_btn(
+            "/admin/clear",
+            &[("what", "reset")],
+            "Full reset",
+            true,
+            "FULL RESET: wipe apworlds, players, slots, save, and world, and close signups. This cannot be undone. Continue?"
+        )
+    ));
+
+    // AP admin console
+    b.push_str(r#"<h2>Server console</h2>"#);
+    b.push_str(r#"<p class="empty">Run a server command as admin — e.g. <code>/send Player Item</code>, <code>/hint Player Item</code>, <code>/players</code>. The <code>!admin</code> prefix is added for you.</p>"#);
+    if let Some((cmd, output)) = console {
+        b.push_str(&format!(
+            r#"<div class="statline">$ {}</div><pre class="out">{}</pre>"#,
+            esc(cmd),
+            esc(output)
+        ));
+    }
+    b.push_str(
+        r#"<form class="console" method="post" action="/admin/console">
+<input type="text" name="cmd" placeholder="/players" autocomplete="off" required>
+<button type="submit">Run</button></form>"#,
+    );
+
     b.push_str("</main></body></html>");
     Html(b)
 }

@@ -88,6 +88,15 @@ impl Db {
         )
         .execute(&pool)
         .await?;
+        // Simple key/value settings (e.g. whether signups are open).
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS setting (
+                 key TEXT PRIMARY KEY,
+                 value TEXT NOT NULL
+               )"#,
+        )
+        .execute(&pool)
+        .await?;
         // Hints a player has flagged to surface on the board.
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS hint_priority (
@@ -101,6 +110,52 @@ impl Db {
         .execute(&pool)
         .await?;
         Ok(Self { pool })
+    }
+
+    async fn get_setting(&self, key: &str) -> Result<Option<String>, sqlx::Error> {
+        sqlx::query_scalar("SELECT value FROM setting WHERE key = ?")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await
+    }
+
+    async fn set_setting(&self, key: &str, value: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT OR REPLACE INTO setting (key, value) VALUES (?, ?)")
+            .bind(key)
+            .bind(value)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Whether the season signup form is open (defaults to open if unset).
+    pub async fn signups_open(&self) -> bool {
+        !matches!(self.get_setting("signups_open").await, Ok(Some(v)) if v == "0")
+    }
+
+    pub async fn set_signups_open(&self, open: bool) -> Result<(), sqlx::Error> {
+        self.set_setting("signups_open", if open { "1" } else { "0" })
+            .await
+    }
+
+    /// Delete every signup submission, returning their stored file paths so the
+    /// caller can remove the uploads.
+    pub async fn clear_submissions(&self) -> Result<Vec<String>, sqlx::Error> {
+        let files: Vec<String> = sqlx::query_scalar("SELECT yaml_file FROM submission")
+            .fetch_all(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM submission")
+            .execute(&self.pool)
+            .await?;
+        Ok(files)
+    }
+
+    /// Delete every Bifrost slot (claims cascade). Used by the admin reset.
+    pub async fn clear_all_slots(&self) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM bifrost_slot")
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     /// The set of prioritized hint keys (finding, location, item) for a season.

@@ -65,9 +65,13 @@
 </style>
 </head>
 <body>
-<header><div class="hwrap"><a class="hbrand" href="/">Bifrost</a><span class="spacer"></span><span class="who" id="who"></span><a class="pill" href="https://home.example.org/">home</a></div></header>
+<header><div class="hwrap"><a class="hbrand" href="/">Bifrost</a><span class="spacer"></span><span class="who" id="who"></span><span id="adminslot"></span><a class="pill" href="https://home.example.org/">home</a></div></header>
 <script>
-fetch('/api/me').then(function(r){return r.json()}).then(function(m){var w=document.getElementById('who');if(!w)return;if(m&&m.user){w.innerHTML='signed in as <b></b>';w.querySelector('b').textContent=m.user}}).catch(function(){});
+fetch('/api/me').then(function(r){return r.json()}).then(function(m){
+ var w=document.getElementById('who');
+ if(w&&m&&m.user){w.innerHTML='signed in as <b></b>';w.querySelector('b').textContent=m.user}
+ if(m&&m.admin){var a=document.getElementById('adminslot');if(a)a.innerHTML='<a class="pill" href="/admin">admin</a>'}
+}).catch(function(){});
 </script>
 <main>
   <div class="brand">

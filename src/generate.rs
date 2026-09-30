@@ -17,6 +17,7 @@ const AP_PYTHON: &str = "/srv/archipelago/venv/bin/python";
 const GEN_SCRIPT: &str = "/srv/archipelago/bifrost_generate.py";
 const META_SCRIPT: &str = "/srv/archipelago/bifrost_meta.py";
 const PLAYERS: &str = "/srv/archipelago/Players";
+const CUSTOM_WORLDS: &str = "/srv/archipelago/custom_worlds";
 const OUTPUT: &str = "/srv/archipelago/output";
 
 /// (running, last message).
@@ -98,6 +99,54 @@ async fn run_meta(seed_zip: &str) -> Result<Value, String> {
         .find(|l| !l.trim().is_empty())
         .unwrap_or("");
     serde_json::from_str(line.trim()).map_err(|e| format!("parse meta: {e}"))
+}
+
+// ---- admin maintenance actions (each writes only inside our ReadWritePaths) ----
+
+/// Remove every installed custom apworld from custom_worlds/.
+pub async fn clear_apworlds() -> Result<(), String> {
+    clear_ext(CUSTOM_WORLDS, "apworld").await
+}
+
+/// Remove every staged player YAML from Players/.
+pub async fn clear_player_yamls() -> Result<(), String> {
+    clear_ext(PLAYERS, "yaml").await
+}
+
+/// Delete the running session's save (a fresh start on the next server load).
+pub async fn clear_save() {
+    let _ = tokio::fs::remove_file(format!("{OUTPUT}/current.apsave")).await;
+}
+
+/// Delete the deployed world (current.zip) and archived seeds (AP_*.zip).
+pub async fn clear_world() {
+    let _ = tokio::fs::remove_file(format!("{OUTPUT}/current.zip")).await;
+    clear_old_seeds().await;
+}
+
+/// Remove one installed apworld by file name (no path separators allowed).
+pub async fn delete_apworld(name: &str) -> Result<(), String> {
+    if name.is_empty() || name.contains('/') || !name.ends_with(".apworld") {
+        return Err("invalid apworld name".into());
+    }
+    tokio::fs::remove_file(format!("{CUSTOM_WORLDS}/{name}"))
+        .await
+        .map_err(|e| format!("remove {name}: {e}"))
+}
+
+/// The installed custom apworlds, by file name.
+pub async fn list_apworlds() -> Vec<String> {
+    let mut out = Vec::new();
+    if let Ok(mut rd) = tokio::fs::read_dir(CUSTOM_WORLDS).await {
+        while let Ok(Some(entry)) = rd.next_entry().await {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".apworld") {
+                out.push(name);
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 /// Entry point: run the whole flow, updating `state` as it goes.
@@ -183,8 +232,12 @@ async fn run_inner(db: &Db, state: &GenState) -> Result<String, String> {
         .map_err(|e| format!("deploy: {e}"))?;
     let _ = tokio::fs::remove_file(format!("{OUTPUT}/current.apsave")).await;
 
+    // A clean generate closes signups for the season now under way; the admin
+    // reopens them for the next signup period.
+    let _ = db.set_signups_open(false).await;
+
     Ok(format!(
-        "Generated seed {seed_name} — {} AP slots. The game is restarting.",
+        "Generated seed {seed_name} — {} AP slots. The game is restarting. Signups are now closed.",
         ap_slots.len()
     ))
 }

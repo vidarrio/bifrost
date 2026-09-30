@@ -165,6 +165,8 @@ pub struct ApConfig {
     pub url: String,
     pub slot: String,
     pub password: String,
+    /// Server admin password (`server_password` in host.yaml) for `!admin`.
+    pub admin_password: String,
 }
 
 impl ApConfig {
@@ -176,6 +178,7 @@ impl ApConfig {
             url: std::env::var("BIFROST_AP_URL").unwrap_or_else(|_| "ws://127.0.0.1:38281".into()),
             slot,
             password: std::env::var("BIFROST_AP_PASSWORD").unwrap_or_default(),
+            admin_password: std::env::var("BIFROST_AP_ADMIN_PASSWORD").unwrap_or_default(),
         })
     }
 }
@@ -602,6 +605,113 @@ pub async fn send_hint(
     tokio::time::timeout(Duration::from_secs(8), fut)
         .await
         .map_err(|_| "hint timed out".to_string())?
+}
+
+/// Run a server command as an admin, over a short-lived connection: connect as
+/// `connect_name` (any valid slot), `!admin login <admin_password>`, then
+/// `!admin <command>` (e.g. `/send Player Item`, `/hint Player Item`). Returns
+/// each `CommandResult` line's message parts for the caller to render.
+pub async fn send_admin(
+    url: &str,
+    connect_name: &str,
+    password: &str,
+    admin_password: &str,
+    command: &str,
+) -> Result<Vec<Vec<Value>>, String> {
+    if admin_password.is_empty() {
+        return Err("no server admin password configured (BIFROST_AP_ADMIN_PASSWORD)".into());
+    }
+    let fut = async {
+        let (ws, _) = tokio_tungstenite::connect_async(url)
+            .await
+            .map_err(|e| format!("connect: {e}"))?;
+        let (mut tx, mut rx) = ws.split();
+        let mut login_sent = false;
+        let mut collecting = false;
+        let mut out: Vec<Vec<Value>> = Vec::new();
+        loop {
+            // Once the command is issued, gather its output until a short idle gap.
+            let next = if collecting {
+                match tokio::time::timeout(Duration::from_millis(1500), rx.next()).await {
+                    Ok(Some(m)) => m,
+                    _ => break,
+                }
+            } else {
+                match tokio::time::timeout(Duration::from_secs(8), rx.next()).await {
+                    Ok(Some(m)) => m,
+                    _ => return Err("admin timed out".to_string()),
+                }
+            };
+            let msg = next.map_err(|e| format!("recv: {e}"))?;
+            let text = match msg {
+                Message::Text(t) => t.to_string(),
+                Message::Ping(p) => {
+                    let _ = tx.send(Message::Pong(p)).await;
+                    continue;
+                }
+                Message::Close(_) => break,
+                _ => continue,
+            };
+            let packets: Vec<Value> = serde_json::from_str(&text).map_err(|_| "bad json")?;
+            for pkt in packets {
+                match pkt.get("cmd").and_then(Value::as_str).unwrap_or("") {
+                    "RoomInfo" => {
+                        let connect = json!([{
+                            "cmd": "Connect", "game": "", "name": connect_name, "uuid": "bifrost-admin",
+                            "version": {"class": "Version", "major": 0, "minor": 6, "build": 7},
+                            "items_handling": 0, "tags": ["TextOnly"], "slot_data": false,
+                            "password": password,
+                        }]);
+                        tx.send(Message::Text(connect.to_string()))
+                            .await
+                            .map_err(|e| format!("send Connect: {e}"))?;
+                    }
+                    "ConnectionRefused" => {
+                        let errs = pkt.get("errors").map(|e| e.to_string()).unwrap_or_default();
+                        return Err(format!("connection refused: {errs}"));
+                    }
+                    "Connected" if !login_sent => {
+                        let say = json!([{ "cmd": "Say", "text": format!("!admin login {admin_password}") }]);
+                        tx.send(Message::Text(say.to_string()))
+                            .await
+                            .map_err(|e| format!("send login: {e}"))?;
+                        login_sent = true;
+                    }
+                    "PrintJSON"
+                        if pkt.get("type").and_then(Value::as_str) == Some("CommandResult") =>
+                    {
+                        let Some(data) = pkt.get("data").and_then(Value::as_array) else {
+                            continue;
+                        };
+                        if collecting {
+                            out.push(data.clone());
+                        } else {
+                            // First CommandResult is the login reply.
+                            let txt: String = data
+                                .iter()
+                                .filter_map(|d| d.get("text").and_then(Value::as_str))
+                                .collect();
+                            if txt.to_lowercase().contains("successful") {
+                                let say =
+                                    json!([{ "cmd": "Say", "text": format!("!admin {command}") }]);
+                                tx.send(Message::Text(say.to_string()))
+                                    .await
+                                    .map_err(|e| format!("send command: {e}"))?;
+                                collecting = true;
+                            } else {
+                                return Err(format!("admin login failed: {txt}"));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(out)
+    };
+    tokio::time::timeout(Duration::from_secs(14), fut)
+        .await
+        .map_err(|_| "admin timed out".to_string())?
 }
 
 /// Resolve a PrintJSON `data` list into readable text, using the board's slot

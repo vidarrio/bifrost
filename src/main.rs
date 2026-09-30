@@ -90,7 +90,13 @@ async fn main() {
         .route("/signup/apworld", post(signup_apworld))
         .route("/signup/check", post(signup_check))
         .route("/signup/delete", post(signup_delete))
-        .route("/generate", get(generate_get).post(generate_post))
+        .route("/admin", get(admin_view))
+        .route("/admin/signups", post(admin_signups))
+        .route("/admin/generate", post(admin_generate))
+        .route("/admin/clear", post(admin_clear))
+        .route("/admin/delete-player", post(admin_delete_player))
+        .route("/admin/delete-apworld", post(admin_delete_apworld))
+        .route("/admin/console", post(admin_console))
         .route("/api/me", get(api_me))
         .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
@@ -388,7 +394,8 @@ fn slugify(s: &str) -> String {
 async fn signup_get(State(st): State<AppState>, headers: HeaderMap) -> Html<String> {
     let (me, is_admin) = identity(&headers);
     let subs = st.db.submissions().await.unwrap_or_default();
-    render::signup_page(&subs, &me, is_admin)
+    let open = st.db.signups_open().await;
+    render::signup_page(&subs, &me, is_admin, open)
 }
 
 /// Step 1 of signup: install an uploaded `.apworld` into the server's
@@ -464,6 +471,9 @@ async fn signup_post(
     mut mp: Multipart,
 ) -> Html<String> {
     let (me, _) = identity(&headers);
+    if !st.db.signups_open().await {
+        return render::signup_result("Signups are closed right now.", false);
+    }
     let mut yaml: Option<Vec<u8>> = None;
     let mut is_custom = false;
     let mut coop = String::new();
@@ -559,18 +569,60 @@ async fn signup_delete(
     Redirect::to("/signup")
 }
 
-async fn generate_get(State(st): State<AppState>, headers: HeaderMap) -> Html<String> {
-    let (_me, is_admin) = identity(&headers);
-    let (running, msg) = st
+/// Gather everything the admin page shows (optionally with the output of a
+/// just-run console command) and render it.
+async fn render_admin(st: &AppState, console: Option<(&str, &str)>) -> Html<String> {
+    let (connected, seed) = st
+        .board
+        .read()
+        .map(|b| (b.connected, b.seed.clone()))
+        .unwrap_or((false, None));
+    let signups_open = st.db.signups_open().await;
+    let (running, gen_msg) = st
         .genstate
         .lock()
         .map(|g| (g.0, g.1.clone()))
         .unwrap_or((false, "unknown".into()));
-    let count = st.db.submissions().await.map(|s| s.len()).unwrap_or(0);
-    render::generate_page(&msg, running, count, is_admin)
+    let subs = st.db.submissions().await.unwrap_or_default();
+    let apworlds = generate::list_apworlds().await;
+    render::admin_page(
+        connected,
+        seed.as_deref(),
+        signups_open,
+        running,
+        &gen_msg,
+        &subs,
+        &apworlds,
+        console,
+    )
 }
 
-async fn generate_post(State(st): State<AppState>, headers: HeaderMap) -> Redirect {
+async fn admin_view(State(st): State<AppState>, headers: HeaderMap) -> Response {
+    let (_me, is_admin) = identity(&headers);
+    if !is_admin {
+        return render::notice("Admins only.", false, "/board").into_response();
+    }
+    render_admin(&st, None).await.into_response()
+}
+
+#[derive(Deserialize)]
+struct SignupsForm {
+    open: String,
+}
+
+async fn admin_signups(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<SignupsForm>,
+) -> Redirect {
+    let (_me, is_admin) = identity(&headers);
+    if is_admin {
+        let _ = st.db.set_signups_open(f.open == "1").await;
+    }
+    Redirect::to("/admin")
+}
+
+async fn admin_generate(State(st): State<AppState>, headers: HeaderMap) -> Redirect {
     let (_me, is_admin) = identity(&headers);
     if is_admin {
         let start = match st.genstate.lock() {
@@ -586,5 +638,133 @@ async fn generate_post(State(st): State<AppState>, headers: HeaderMap) -> Redire
             tokio::spawn(async move { generate::run(db, genstate).await });
         }
     }
-    Redirect::to("/generate")
+    Redirect::to("/admin")
+}
+
+/// Delete all signups (+ their files), all Bifrost slots, and staged YAMLs.
+async fn clear_players(st: &AppState) {
+    if let Ok(files) = st.db.clear_submissions().await {
+        for f in files {
+            let _ = tokio::fs::remove_file(&f).await;
+        }
+    }
+    let _ = st.db.clear_all_slots().await;
+    let _ = generate::clear_player_yamls().await;
+}
+
+#[derive(Deserialize)]
+struct ClearForm {
+    what: String,
+}
+
+async fn admin_clear(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<ClearForm>,
+) -> Response {
+    let (_me, is_admin) = identity(&headers);
+    if !is_admin {
+        return render::notice("Admins only.", false, "/board").into_response();
+    }
+    match f.what.as_str() {
+        "apworlds" => {
+            let _ = generate::clear_apworlds().await;
+        }
+        "players" => clear_players(&st).await,
+        "save" => generate::clear_save().await,
+        "world" => generate::clear_world().await,
+        "reset" => {
+            let _ = generate::clear_apworlds().await;
+            clear_players(&st).await;
+            generate::clear_save().await;
+            generate::clear_world().await;
+            let _ = st.db.set_signups_open(false).await;
+        }
+        _ => {}
+    }
+    Redirect::to("/admin").into_response()
+}
+
+async fn admin_delete_player(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<DelForm>,
+) -> Redirect {
+    let (me, is_admin) = identity(&headers);
+    if is_admin
+        && let Ok(Some((yaml_file, apworld_file))) = st.db.delete_submission(f.id, &me, true).await
+    {
+        let _ = tokio::fs::remove_file(&yaml_file).await;
+        if let Some(a) = apworld_file {
+            let _ = tokio::fs::remove_file(&a).await;
+        }
+    }
+    Redirect::to("/admin")
+}
+
+#[derive(Deserialize)]
+struct ApworldForm {
+    name: String,
+}
+
+async fn admin_delete_apworld(headers: HeaderMap, Form(f): Form<ApworldForm>) -> Redirect {
+    let (_me, is_admin) = identity(&headers);
+    if is_admin {
+        let _ = generate::delete_apworld(&f.name).await;
+    }
+    Redirect::to("/admin")
+}
+
+#[derive(Deserialize)]
+struct ConsoleForm {
+    cmd: String,
+}
+
+async fn admin_console(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<ConsoleForm>,
+) -> Response {
+    let (_me, is_admin) = identity(&headers);
+    if !is_admin {
+        return render::notice("Admins only.", false, "/board").into_response();
+    }
+    let cmd = f.cmd.trim().to_string();
+    let output = match st.ap_cfg.as_ref() {
+        Some(cfg) => {
+            match ap::send_admin(
+                &cfg.url,
+                &cfg.slot,
+                &cfg.password,
+                &cfg.admin_password,
+                &cmd,
+            )
+            .await
+            {
+                Ok(lists) => {
+                    let text = st
+                        .board
+                        .read()
+                        .map(|b| {
+                            lists
+                                .iter()
+                                .map(|p| ap::resolve_parts(&b, p))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        })
+                        .unwrap_or_default();
+                    if text.trim().is_empty() {
+                        "(command ran; no output)".to_string()
+                    } else {
+                        text
+                    }
+                }
+                Err(e) => format!("error: {e}"),
+            }
+        }
+        None => "AP connection not configured.".to_string(),
+    };
+    render_admin(&st, Some((&cmd, &output)))
+        .await
+        .into_response()
 }
