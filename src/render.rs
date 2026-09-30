@@ -987,8 +987,20 @@ pub fn hint_rows(
     }
     // Found items sink to the bottom, into a collapsed section, and are never
     // prioritizable (there's nothing left to prioritize).
-    let (found, active): (Vec<&crate::ap::HintView>, Vec<&crate::ap::HintView>) =
+    let (mut found, mut active): (Vec<&crate::ap::HintView>, Vec<&crate::ap::HintView>) =
         views.iter().partition(|h| h.found);
+
+    // Sort by item name (the `text` starts with it), case-insensitively.
+    let name_key = |h: &&crate::ap::HintView| {
+        h.text
+            .split_once(" @ ")
+            .map_or(h.text.as_str(), |(item, _)| item)
+            .to_ascii_lowercase()
+    };
+    let is_prio = |h: &&crate::ap::HintView| prios.contains(&(h.finding, h.location, h.item));
+    // Active: prioritized first (false < true, so negate), then alphabetical.
+    active.sort_by_key(|h| (!is_prio(h), name_key(h)));
+    found.sort_by_key(name_key);
 
     let mut out = String::new();
     if active.is_empty() {
