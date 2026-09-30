@@ -682,6 +682,25 @@ q.addEventListener('keydown',function(e){
  else if(e.key==='ArrowUp'){e.preventDefault();hsel=(hsel-1+hits.length)%hits.length;hrender();}
  else if(e.key==='Tab'){e.preventDefault();if(hsel>=0){q.value=hits[hsel];hits=[];box.innerHTML='';}}
  else if(e.key==='Escape'){hits=[];box.innerHTML='';}
+});
+var hform=document.getElementById('hintform'),hstatus=document.getElementById('hintstatus');
+var hback=hform.querySelector('input[name=back]').value,hbtn=hform.querySelector('button');
+function refreshHints(){
+ var el=document.getElementById('worldhints');if(!el)return;
+ [0,1200,2800].forEach(function(d){setTimeout(function(){
+  fetch(hback+'/hints').then(function(r){return r.text()}).then(function(h){el.innerHTML=h;}).catch(function(){});
+ },d);});
+}
+hform.addEventListener('submit',function(e){
+ e.preventDefault();
+ var item=q.value.trim();if(!item)return;
+ hits=[];box.innerHTML='';hbtn.disabled=true;hstatus.className='inlinemsg';hstatus.textContent='Hinting…';
+ fetch('/hint',{method:'POST',body:new FormData(hform)}).then(function(r){return r.json()}).then(function(j){
+  hbtn.disabled=false;
+  hstatus.className='inlinemsg '+(j&&j.ok?'ok':'bad');
+  hstatus.textContent=(j&&j.message)?j.message:(j&&j.ok?'Hinted.':'Hint failed.');
+  if(j&&j.ok){q.value='';refreshHints();}
+ }).catch(function(){hbtn.disabled=false;hstatus.className='inlinemsg bad';hstatus.textContent='Request failed.';});
 });"#;
 
 /// The admin console's client-side command completer. Expects `ACDATA` (from
@@ -753,19 +772,6 @@ pub fn signup_result(text: &str, ok: bool) -> Html<String> {
     b.push_str(&format!(
         r#"<h1>Signup</h1><div class="crumb"><a href="/signup">← signup</a></div>
 <div class="{cls}">{}</div>"#,
-        esc(text)
-    ));
-    b.push_str("</main></body></html>");
-    Html(b)
-}
-
-pub fn hint_result(text: &str, ok: bool, back: &str) -> Html<String> {
-    let mut b = page_head(None);
-    let cls = if ok { "banner ok" } else { "banner bad" };
-    b.push_str(&format!(
-        r#"<h1>Hint</h1><div class="crumb"><a href="{}">← back</a></div>
-<div class="{cls}">{}</div><div><a href="/board">see the board →</a></div>"#,
-        esc(back),
         esc(text)
     ));
     b.push_str("</main></body></html>");
@@ -870,11 +876,12 @@ pub fn game_page(
         out.push_str(&format!(
             r#"<h2>Send a hint</h2>
 <p class="empty">{have}Each hint in this world costs <b>{cost}</b> points. Search your pool and hint one.</p>
-<form method="post" action="/hint" class="hintform">
+<form method="post" action="/hint" class="hintform" id="hintform">
 <input type="hidden" name="slot_id" value="{sid}"><input type="hidden" name="back" value="{back}">
 <input id="hintq" name="item" placeholder="search your items…" autocomplete="off" required>
 <button type="submit">Hint</button></form>
-<div id="hintmatches" class="matches"></div>"#
+<div id="hintmatches" class="matches"></div>
+<div id="hintstatus" class="inlinemsg"></div>"#
         ));
         out.push_str("<script>\nvar ITEMS=");
         out.push_str(&items_json);
@@ -883,33 +890,47 @@ pub fn game_page(
         out.push_str("\n</script>");
     }
 
-    // All hints in this world, with prioritize toggles
-    out.push_str(r#"<h2>Hints in this world</h2>"#);
-    if live.hint_views.is_empty() {
-        out.push_str(r#"<div class="empty">No hints here yet.</div>"#);
-    } else {
-        for h in &live.hint_views {
-            let on = prios.contains(&(h.finding, h.location, h.item));
-            let (cls, label) = if on {
-                ("", "★ prioritized")
-            } else {
-                ("ghost", "☆ prioritize")
-            };
-            out.push_str(&format!(
-                r#"<div class="hintrow"><span>{}</span><form method="post" action="/prioritize" style="display:inline">
-<input type="hidden" name="finding" value="{}"><input type="hidden" name="location" value="{}">
-<input type="hidden" name="item" value="{}"><input type="hidden" name="back" value="{back}">
-<button class="{cls}" type="submit">{label}</button></form></div>"#,
-                esc(&h.text),
-                h.finding,
-                h.location,
-                h.item,
-            ));
-        }
-    }
+    // All hints in this world, with prioritize toggles. Wrapped in #worldhints
+    // so a successful hint can live-refresh just this list (see /game/{}/hints).
+    out.push_str(r#"<h2>Hints in this world</h2><div id="worldhints">"#);
+    out.push_str(&hint_rows(&live.hint_views, prios, &back));
+    out.push_str("</div>");
 
     out.push_str("</main></body></html>");
     Html(out)
+}
+
+/// The rows of the "Hints in this world" list (also served as a fragment for
+/// live refresh after a hint).
+pub fn hint_rows(
+    views: &[crate::ap::HintView],
+    prios: &std::collections::HashSet<(i64, i64, i64)>,
+    back: &str,
+) -> String {
+    if views.is_empty() {
+        return r#"<div class="empty">No hints here yet.</div>"#.to_string();
+    }
+    let mut out = String::new();
+    for h in views {
+        let on = prios.contains(&(h.finding, h.location, h.item));
+        let (cls, label) = if on {
+            ("", "★ prioritized")
+        } else {
+            ("ghost", "☆ prioritize")
+        };
+        out.push_str(&format!(
+            r#"<div class="hintrow"><span>{}</span><form method="post" action="/prioritize" style="display:inline">
+<input type="hidden" name="finding" value="{}"><input type="hidden" name="location" value="{}">
+<input type="hidden" name="item" value="{}"><input type="hidden" name="back" value="{}">
+<button class="{cls}" type="submit">{label}</button></form></div>"#,
+            esc(&h.text),
+            h.finding,
+            h.location,
+            h.item,
+            esc(back),
+        ));
+    }
+    out
 }
 
 /// Page shell. The header bar (brand · "signed in as …" · home) lives in `HEAD`

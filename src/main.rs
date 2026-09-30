@@ -83,6 +83,7 @@ async fn main() {
         .route("/check", get(check_form).post(check_run))
         .route("/board", get(board_view))
         .route("/game/{ap_slot}", get(game_view))
+        .route("/game/{ap_slot}/hints", get(game_hints))
         .route("/claim", get(claim_get).post(claim_post))
         .route("/hint", post(hint_post))
         .route("/prioritize", post(prioritize_post))
@@ -339,26 +340,37 @@ async fn claim_post(
 struct HintForm {
     slot_id: i64,
     item: String,
-    back: Option<String>,
+}
+
+/// The server's `!hint` reply is informational text, so infer whether the hint
+/// was actually placed (vs. rejected for points / not found) to drive the UI.
+fn hint_rejected(text: &str) -> bool {
+    let t = text.to_lowercase();
+    [
+        "not enough",
+        "do not have",
+        "unable to find",
+        "did you mean",
+        "cannot afford",
+        "sorry",
+    ]
+    .iter()
+    .any(|k| t.contains(k))
 }
 
 async fn hint_post(
     State(st): State<AppState>,
     headers: HeaderMap,
     Form(f): Form<HintForm>,
-) -> Html<String> {
+) -> Json<serde_json::Value> {
     let (me, _is_admin) = identity(&headers);
-    let back = safe_back(f.back.as_deref(), "/board");
+    let reject = |msg: &str| Json(serde_json::json!({"ok": false, "message": msg}));
     let detail = st.db.slot_detail(f.slot_id).await.ok().flatten();
     let Some((ap_slot, claimant)) = detail else {
-        return render::hint_result("Unknown slot.", false, &back);
+        return reject("Unknown slot.");
     };
     if claimant.as_deref() != Some(me.as_str()) {
-        return render::hint_result(
-            "Only the player who claimed this slot can hint on it.",
-            false,
-            &back,
-        );
+        return reject("Only the player who claimed this slot can hint on it.");
     }
     let connect_name = st
         .board
@@ -366,10 +378,10 @@ async fn hint_post(
         .ok()
         .and_then(|b| b.slots.get(&ap_slot).map(|s| s.name.clone()));
     let Some(name) = connect_name else {
-        return render::hint_result("That slot isn't live right now.", false, &back);
+        return reject("That slot isn't live right now.");
     };
     let Some(cfg) = st.ap_cfg.as_ref() else {
-        return render::hint_result("Hinting isn't configured.", false, &back);
+        return reject("Hinting isn't configured.");
     };
     match ap::send_hint(&cfg.url, &cfg.password, &name, f.item.trim()).await {
         Ok(parts) => {
@@ -378,10 +390,31 @@ async fn hint_post(
                 .read()
                 .map(|b| ap::resolve_parts(&b, &parts))
                 .unwrap_or_default();
-            render::hint_result(&text, true, &back)
+            let ok = !hint_rejected(&text);
+            Json(serde_json::json!({"ok": ok, "message": text}))
         }
-        Err(e) => render::hint_result(&format!("Hint failed: {e}"), false, &back),
+        Err(e) => reject(&format!("Hint failed: {e}")),
     }
+}
+
+/// The "Hints in this world" rows for one AP slot, as an HTML fragment — used by
+/// the game page to live-refresh the list after a hint (no full reload).
+async fn game_hints(Path(ap_slot): Path<i64>, State(st): State<AppState>) -> Html<String> {
+    let (snap, season) = match st.board.read() {
+        Ok(b) => (b.snapshot(), b.seed.clone().unwrap_or_default()),
+        Err(_) => return Html(String::new()),
+    };
+    let prios = st.db.priorities(&season).await.unwrap_or_default();
+    let views = snap
+        .ap
+        .get(&ap_slot)
+        .map(|a| a.hint_views.clone())
+        .unwrap_or_default();
+    Html(render::hint_rows(
+        &views,
+        &prios,
+        &format!("/game/{ap_slot}"),
+    ))
 }
 
 const UPLOAD_DIR: &str = "/var/lib/bifrost/uploads";
