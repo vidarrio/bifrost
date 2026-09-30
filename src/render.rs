@@ -467,6 +467,7 @@ pub fn admin_page(
     seed: Option<&str>,
     signups_open: bool,
     minesweeper_on: bool,
+    connect_pw: &str,
     running: bool,
     gen_msg: &str,
     subs: &[SubmissionRow],
@@ -540,6 +541,17 @@ pub fn admin_page(
             )
         ));
     }
+
+    // Connect password (what players use to join the server)
+    b.push_str(r#"<h2>Connect password</h2>"#);
+    b.push_str(&format!(
+        r#"<div class="statline">Players join with <b>{}</b> — share it in Discord.</div>"#,
+        esc(connect_pw)
+    ));
+    b.push_str(
+        r#"<form class="console" method="post" action="/admin/connect-password" autocomplete="off" onsubmit="return confirm('Change the connect password? Bifrost will restart briefly to apply it.')"><input type="text" name="password" placeholder="new connect password" style="flex:1;min-width:0" autocomplete="off" required><button type="submit">Set</button></form>
+<p class="warnnote">Letters, numbers, - or _ (3–64 chars). Sets it on the running server and in host.yaml; Bifrost restarts to reconnect.</p>"#,
+    );
 
     // Generate
     b.push_str(r#"<h2>Generate</h2>"#);

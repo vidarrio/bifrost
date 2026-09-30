@@ -108,6 +108,7 @@ async fn main() {
         .route("/admin/delete-player", post(admin_delete_player))
         .route("/admin/delete-apworld", post(admin_delete_apworld))
         .route("/admin/console", post(admin_console))
+        .route("/admin/connect-password", post(admin_connect_password))
         .route("/admin/minesweeper", post(admin_minesweeper))
         .route("/minesweeper", get(minesweeper_page))
         .route("/minesweeper/new", post(mine_new))
@@ -520,6 +521,9 @@ async fn game_hints(
 
 const UPLOAD_DIR: &str = "/var/lib/bifrost/uploads";
 const CUSTOM_WORLDS: &str = "/srv/archipelago/custom_worlds";
+/// Bifrost writes the requested connect password here; a root `bifrost-connpw`
+/// path unit persists it to host.yaml + the service env and restarts bifrost.
+const CONNPW_REQUEST: &str = "/var/lib/bifrost/connect_password.request";
 
 fn slugify(s: &str) -> String {
     let out: String = s
@@ -722,6 +726,11 @@ async fn render_admin(st: &AppState) -> Html<String> {
         .unwrap_or((false, None, "{}".into()));
     let signups_open = st.db.signups_open().await;
     let minesweeper_on = st.db.minesweeper_enabled().await;
+    let connect_pw = st
+        .ap_cfg
+        .as_ref()
+        .map(|c| c.password.clone())
+        .unwrap_or_default();
     let (running, gen_msg) = st
         .genstate
         .lock()
@@ -734,6 +743,7 @@ async fn render_admin(st: &AppState) -> Html<String> {
         seed.as_deref(),
         signups_open,
         minesweeper_on,
+        &connect_pw,
         running,
         &gen_msg,
         &subs,
@@ -919,6 +929,68 @@ async fn admin_console(
         None => "AP connection not configured.".to_string(),
     };
     Json(serde_json::json!({"ok": true, "cmd": cmd, "output": output}))
+}
+
+#[derive(Deserialize)]
+struct ConnPwForm {
+    password: String,
+}
+
+async fn admin_connect_password(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<ConnPwForm>,
+) -> Response {
+    let (_me, is_admin) = identity(&headers);
+    if !is_admin {
+        return render::notice("Admins only.", false, "/board").into_response();
+    }
+    let pw = f.password.trim().to_string();
+    if !(3..=64).contains(&pw.len())
+        || !pw
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return render::notice(
+            "Password must be 3–64 characters: letters, numbers, - or _ only.",
+            false,
+            "/admin",
+        )
+        .into_response();
+    }
+    let Some(cfg) = st.ap_cfg.as_ref() else {
+        return render::notice("AP connection isn't configured.", false, "/admin").into_response();
+    };
+    // Set it on the running server first (bifrost's env is still the old one, so
+    // this connection still authenticates).
+    if let Err(e) = ap::send_admin(
+        &cfg.url,
+        &cfg.slot,
+        &cfg.password,
+        &cfg.admin_password,
+        &format!("/option password {pw}"),
+    )
+    .await
+    {
+        return render::notice(
+            &format!("Couldn't set it on the running server: {e}"),
+            false,
+            "/admin",
+        )
+        .into_response();
+    }
+    // Persist after a short delay so this response reaches the browser before the
+    // root helper restarts bifrost (writing the request file triggers it).
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        let _ = tokio::fs::write(CONNPW_REQUEST, format!("{pw}\n")).await;
+    });
+    render::notice(
+        "Connect password updated. Bifrost is restarting to apply it everywhere — give it a few seconds, then reload.",
+        true,
+        "/admin",
+    )
+    .into_response()
 }
 
 async fn admin_minesweeper(
