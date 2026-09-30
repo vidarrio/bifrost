@@ -573,9 +573,8 @@ async fn signup_delete(
     Redirect::to("/signup")
 }
 
-/// Gather everything the admin page shows (optionally with the output of a
-/// just-run console command) and render it.
-async fn render_admin(st: &AppState, console: Option<(&str, &str)>) -> Html<String> {
+/// Gather everything the admin page shows and render it.
+async fn render_admin(st: &AppState) -> Html<String> {
     let (connected, seed, acdata) = st
         .board
         .read()
@@ -604,7 +603,6 @@ async fn render_admin(st: &AppState, console: Option<(&str, &str)>) -> Html<Stri
         &subs,
         &apworlds,
         &acdata,
-        console,
     )
 }
 
@@ -613,7 +611,7 @@ async fn admin_view(State(st): State<AppState>, headers: HeaderMap) -> Response 
     if !is_admin {
         return render::notice("Admins only.", false, "/board").into_response();
     }
-    render_admin(&st, None).await.into_response()
+    render_admin(&st).await.into_response()
 }
 
 #[derive(Deserialize)]
@@ -738,14 +736,16 @@ struct ConsoleForm {
     cmd: String,
 }
 
+/// Run a server command as admin and return its output as JSON, so the admin
+/// page can append it to a live log without a page reload.
 async fn admin_console(
     State(st): State<AppState>,
     headers: HeaderMap,
     Form(f): Form<ConsoleForm>,
-) -> Response {
+) -> Json<serde_json::Value> {
     let (_me, is_admin) = identity(&headers);
     if !is_admin {
-        return render::notice("Admins only.", false, "/board").into_response();
+        return Json(serde_json::json!({"ok": false, "output": "Admins only."}));
     }
     let cmd = f.cmd.trim().to_string();
     let output = match st.ap_cfg.as_ref() {
@@ -782,7 +782,5 @@ async fn admin_console(
         }
         None => "AP connection not configured.".to_string(),
     };
-    render_admin(&st, Some((&cmd, &output)))
-        .await
-        .into_response()
+    Json(serde_json::json!({"ok": true, "cmd": cmd, "output": output}))
 }

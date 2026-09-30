@@ -96,6 +96,7 @@ button.danger{background:var(--bad);color:#fff}
 .acmenu .m{padding:7px 10px;font-family:var(--mono);font-size:12.5px;cursor:pointer;border-bottom:1px solid var(--bd)}
 .acmenu .m:last-child{border-bottom:0}.acmenu .m:hover,.acmenu .m.sel{background:var(--bd)}
 pre.out{background:#0b0f14;border:1px solid var(--bd);border-radius:8px;padding:12px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break:break-word;color:var(--fg)}
+#conlog{max-height:320px;overflow:auto;margin-bottom:8px}
 .warnnote{color:var(--warn);font-size:12px;margin:4px 0}
 </style></head><body>
 <header><div class="hwrap"><a class="brand" href="/">Bifrost</a><span class="spacer"></span><span class="who" id="who"></span><span id="adminslot"></span><a class="pill" href="https://home.example.org/">home</a></div></header>
@@ -469,7 +470,6 @@ pub fn admin_page(
     subs: &[SubmissionRow],
     apworlds: &[String],
     acdata: &str,
-    console: Option<(&str, &str)>,
 ) -> Html<String> {
     let mut b = page_head(None);
     b.push_str(
@@ -639,18 +639,13 @@ pub fn admin_page(
         )
     ));
 
-    // AP admin console
+    // AP admin console — commands run over fetch and append to a live log, no
+    // page reload (see CONSOLE_JS).
     b.push_str(r#"<h2>Server console</h2>"#);
     b.push_str(r#"<p class="empty">Run a server command as admin — e.g. <code>/send Player Item</code>, <code>/hint Player Item</code>, <code>/players</code>. The <code>!admin</code> prefix is added for you.</p>"#);
-    if let Some((cmd, output)) = console {
-        b.push_str(&format!(
-            r#"<div class="statline">$ {}</div><pre class="out">{}</pre>"#,
-            esc(cmd),
-            esc(output)
-        ));
-    }
+    b.push_str(r#"<pre class="out" id="conlog" hidden></pre>"#);
     b.push_str(
-        r#"<form class="console" method="post" action="/admin/console" autocomplete="off"><div class="acwrap"><input type="text" name="cmd" id="concmd" placeholder="/players" autocomplete="off" required><div class="acmenu" id="accands" hidden></div></div><button type="submit">Run</button></form>"#,
+        r#"<form class="console" id="conform" method="post" action="/admin/console" autocomplete="off"><div class="acwrap"><input type="text" name="cmd" id="concmd" placeholder="/players" autocomplete="off" required><div class="acmenu" id="accands" hidden></div></div><button type="submit">Run</button></form>"#,
     );
     // Command autocomplete: ACDATA (players/games/items/locations) is embedded,
     // then CONSOLE_JS reads it. Split so the JS's braces don't fight format!.
@@ -713,6 +708,17 @@ inp.addEventListener('keydown',function(e){
  else if(e.key==='ArrowUp'){e.preventDefault();sel=(sel-1+cands.length)%cands.length;render();}
  else if(e.key==='Tab'){e.preventDefault();pick(sel<0?0:sel);}
  else if(e.key==='Escape'){menu.hidden=true;}
+});
+var form=document.getElementById('conform'),log=document.getElementById('conlog'),run=form.querySelector('button');
+function append(t){log.hidden=false;log.textContent+=(log.textContent?'\n':'')+t;log.scrollTop=log.scrollHeight;}
+form.addEventListener('submit',function(e){
+ e.preventDefault();
+ var cmd=inp.value.trim();if(!cmd)return;
+ menu.hidden=true;append('$ '+cmd);run.disabled=true;
+ var fd=new FormData();fd.append('cmd',cmd);
+ fetch('/admin/console',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(j){
+  append(j&&j.output?j.output:'(no output)');run.disabled=false;inp.value='';inp.focus();cands=[];render();
+ }).catch(function(){append('error: request failed');run.disabled=false;});
 });"#;
 
 pub fn signup_result(text: &str, ok: bool) -> Html<String> {
