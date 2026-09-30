@@ -339,7 +339,7 @@ pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool, open: bool)
     <h2>Players</h2>
     <label class="chk"><input type="checkbox" id="coopchk"> Sharing this game between people (co-op, e.g. Don't Starve Together)</label>
     <div id="coopbox" hidden>
-      <label class="hint">Extra player names, comma-separated<input type="text" name="coop" placeholder="e.g. Awoo, Abi"></label>
+      <label class="hint">Extra player names, comma-separated<input type="text" name="coop" placeholder="e.g. Robin, Sam"></label>
     </div>
     <input type="hidden" name="is_custom" id="iscustom" value="">
     <div class="nav"><button type="button" class="back" data-goto="2">← Back</button><button type="submit">Sign me up</button></div>
