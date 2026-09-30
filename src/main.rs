@@ -276,17 +276,21 @@ async fn prioritize_post(
     headers: HeaderMap,
     Form(f): Form<PrioForm>,
 ) -> Redirect {
-    let (_me, _is_admin) = identity(&headers);
+    let (me, is_admin) = identity(&headers);
     let season = st
         .board
         .read()
         .ok()
         .and_then(|b| b.seed.clone())
         .unwrap_or_default();
-    let _ = st
-        .db
-        .toggle_priority(&season, f.finding, f.location, f.item)
-        .await;
+    // Only a claimant of the world the hint lives in (finding), or an admin, may
+    // (re)prioritize it.
+    if is_admin || st.db.claims_ap_slot(&season, &me, f.finding).await {
+        let _ = st
+            .db
+            .toggle_priority(&season, f.finding, f.location, f.item)
+            .await;
+    }
     Redirect::to(&safe_back(f.back.as_deref(), "/board"))
 }
 
@@ -391,7 +395,14 @@ async fn hint_post(
                 .map(|b| ap::resolve_parts(&b, &parts))
                 .unwrap_or_default();
             let ok = !hint_rejected(&text);
-            Json(serde_json::json!({"ok": ok, "message": text}))
+            // On success the points changed — read them back so the page can
+            // update the "you have N points" figure without a reload.
+            let points = if ok {
+                ap::slot_points(&cfg.url, &cfg.password, &name).await
+            } else {
+                None
+            };
+            Json(serde_json::json!({"ok": ok, "message": text, "points": points}))
         }
         Err(e) => reject(&format!("Hint failed: {e}")),
     }
@@ -399,12 +410,18 @@ async fn hint_post(
 
 /// The "Hints in this world" rows for one AP slot, as an HTML fragment — used by
 /// the game page to live-refresh the list after a hint (no full reload).
-async fn game_hints(Path(ap_slot): Path<i64>, State(st): State<AppState>) -> Html<String> {
+async fn game_hints(
+    Path(ap_slot): Path<i64>,
+    State(st): State<AppState>,
+    headers: HeaderMap,
+) -> Html<String> {
+    let (me, is_admin) = identity(&headers);
     let (snap, season) = match st.board.read() {
         Ok(b) => (b.snapshot(), b.seed.clone().unwrap_or_default()),
         Err(_) => return Html(String::new()),
     };
     let prios = st.db.priorities(&season).await.unwrap_or_default();
+    let can_prioritize = is_admin || st.db.claims_ap_slot(&season, &me, ap_slot).await;
     let views = snap
         .ap
         .get(&ap_slot)
@@ -414,6 +431,7 @@ async fn game_hints(Path(ap_slot): Path<i64>, State(st): State<AppState>) -> Htm
         &views,
         &prios,
         &format!("/game/{ap_slot}"),
+        can_prioritize,
     ))
 }
 

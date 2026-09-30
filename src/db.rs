@@ -430,6 +430,21 @@ impl Db {
         Ok(Some((yaml_file, apworld_file)))
     }
 
+    /// Whether `sso` claims any Bifrost slot mapping to `ap_slot` this season.
+    pub async fn claims_ap_slot(&self, season: &str, sso: &str, ap_slot: i64) -> bool {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM bifrost_slot s JOIN claim c ON c.bifrost_slot_id = s.id
+             WHERE s.season = ? AND s.ap_slot = ? AND c.sso = ?",
+        )
+        .bind(season)
+        .bind(ap_slot)
+        .bind(sso)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0);
+        n > 0
+    }
+
     /// (ap_slot, current claimant) for a Bifrost slot, or None if it doesn't exist.
     pub async fn slot_detail(&self, id: i64) -> Result<Option<(i64, Option<String>)>, sqlx::Error> {
         sqlx::query_as::<_, (i64, Option<String>)>(

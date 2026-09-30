@@ -695,11 +695,11 @@ hform.addEventListener('submit',function(e){
  e.preventDefault();
  var item=q.value.trim();if(!item)return;
  hits=[];box.innerHTML='';hbtn.disabled=true;hstatus.className='inlinemsg';hstatus.textContent='Hinting…';
- fetch('/hint',{method:'POST',body:new FormData(hform)}).then(function(r){return r.json()}).then(function(j){
+ fetch('/hint',{method:'POST',body:new URLSearchParams(new FormData(hform))}).then(function(r){return r.json()}).then(function(j){
   hbtn.disabled=false;
   hstatus.className='inlinemsg '+(j&&j.ok?'ok':'bad');
   hstatus.textContent=(j&&j.message)?j.message:(j&&j.ok?'Hinted.':'Hint failed.');
-  if(j&&j.ok){q.value='';refreshHints();}
+  if(j&&j.ok){q.value='';refreshHints();var pe=document.getElementById('hintpts');if(pe&&j.points!=null)pe.textContent=j.points;var ce=document.getElementById('bonushints');if(ce&&j.credits!=null)ce.textContent=j.credits;}
  }).catch(function(){hbtn.disabled=false;hstatus.className='inlinemsg bad';hstatus.textContent='Request failed.';});
 });"#;
 
@@ -760,8 +760,7 @@ form.addEventListener('submit',function(e){
  e.preventDefault();
  var cmd=inp.value.trim();if(!cmd)return;
  menu.hidden=true;append('$ '+cmd);run.disabled=true;
- var fd=new FormData();fd.append('cmd',cmd);
- fetch('/admin/console',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(j){
+ fetch('/admin/console',{method:'POST',body:new URLSearchParams({cmd:cmd})}).then(function(r){return r.json()}).then(function(j){
   append(j&&j.output?j.output:'(no output)');run.disabled=false;inp.value='';inp.focus();cands=[];render();
  }).catch(function(){append('error: request failed');run.disabled=false;});
 });"#;
@@ -870,7 +869,7 @@ pub fn game_page(
     if let Some(sid) = hint_slot {
         let items_json = serde_json::to_string(item_names).unwrap_or_else(|_| "[]".into());
         let have = match points {
-            Some(p) => format!("You have <b>{p}</b> hint points. "),
+            Some(p) => format!(r#"You have <b id="hintpts">{p}</b> hint points. "#),
             None => String::new(),
         };
         out.push_str(&format!(
@@ -890,10 +889,12 @@ pub fn game_page(
         out.push_str("\n</script>");
     }
 
-    // All hints in this world, with prioritize toggles. Wrapped in #worldhints
-    // so a successful hint can live-refresh just this list (see /game/{}/hints).
+    // All hints in this world. Only a claimant of this game (or an admin) gets
+    // the prioritize toggles. Wrapped in #worldhints so a successful hint can
+    // live-refresh just this list (see /game/{}/hints).
+    let can_prioritize = hint_slot.is_some() || is_admin;
     out.push_str(r#"<h2>Hints in this world</h2><div id="worldhints">"#);
-    out.push_str(&hint_rows(&live.hint_views, prios, &back));
+    out.push_str(&hint_rows(&live.hint_views, prios, &back, can_prioritize));
     out.push_str("</div>");
 
     out.push_str("</main></body></html>");
@@ -906,6 +907,7 @@ pub fn hint_rows(
     views: &[crate::ap::HintView],
     prios: &std::collections::HashSet<(i64, i64, i64)>,
     back: &str,
+    can_prioritize: bool,
 ) -> String {
     if views.is_empty() {
         return r#"<div class="empty">No hints here yet.</div>"#.to_string();
@@ -913,6 +915,16 @@ pub fn hint_rows(
     let mut out = String::new();
     for h in views {
         let on = prios.contains(&(h.finding, h.location, h.item));
+        if !can_prioritize {
+            // Non-claimants see the hints but can't reprioritize them; a
+            // prioritized one is still marked.
+            let star = if on { " ★" } else { "" };
+            out.push_str(&format!(
+                r#"<div class="hintrow"><span>{}{star}</span></div>"#,
+                esc(&h.text)
+            ));
+            continue;
+        }
         let (cls, label) = if on {
             ("", "★ prioritized")
         } else {
