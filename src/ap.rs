@@ -74,13 +74,15 @@ impl Board {
     }
 }
 
-/// A resolved hint about an item *in this slot's world*, carrying both the
-/// display text and the identity used to prioritize it.
+/// A resolved hint for one of a slot's items, carrying the display text, the
+/// (finding, location, item) identity used to prioritize it, and the receiving
+/// slot (the item's owner) used to authorize who may prioritize it.
 #[derive(Clone)]
 pub struct HintView {
     pub finding: i64,
     pub location: i64,
     pub item: i64,
+    pub receiving: i64,
     pub text: String,
 }
 
@@ -167,6 +169,7 @@ impl Board {
                             finding: h.finding,
                             location: h.location,
                             item: h.item,
+                            receiving: h.receiving,
                             text: format!("{item} @ {loc} · {finder}{mark}"),
                         });
                     }

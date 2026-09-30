@@ -1000,12 +1000,14 @@ pub fn hint_rows(
         out.push_str(&format!(
             r#"<div class="hintrow"><span>{}</span><form method="post" action="/prioritize" style="display:inline">
 <input type="hidden" name="finding" value="{}"><input type="hidden" name="location" value="{}">
-<input type="hidden" name="item" value="{}"><input type="hidden" name="back" value="{}">
+<input type="hidden" name="item" value="{}"><input type="hidden" name="receiving" value="{}">
+<input type="hidden" name="back" value="{}">
 <button class="{cls}" type="submit">{label}</button></form></div>"#,
             esc(&h.text),
             h.finding,
             h.location,
             h.item,
+            h.receiving,
             esc(back),
         ));
     }

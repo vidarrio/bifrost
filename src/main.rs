@@ -298,6 +298,7 @@ struct PrioForm {
     finding: i64,
     location: i64,
     item: i64,
+    receiving: i64,
     back: Option<String>,
 }
 
@@ -313,9 +314,10 @@ async fn prioritize_post(
         .ok()
         .and_then(|b| b.seed.clone())
         .unwrap_or_default();
-    // Only a claimant of the world the hint lives in (finding), or an admin, may
-    // (re)prioritize it.
-    if is_admin || st.db.claims_ap_slot(&season, &me, f.finding).await {
+    // A hint is prioritized by the item's owner: a claimant of the receiving
+    // slot (whose items the hint is about), or an admin. The finder's world can
+    // be someone else's, so we gate on `receiving`, not `finding`.
+    if is_admin || st.db.claims_ap_slot(&season, &me, f.receiving).await {
         let _ = st
             .db
             .toggle_priority(&season, f.finding, f.location, f.item)
