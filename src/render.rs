@@ -995,10 +995,10 @@ pub fn minesweeper_page(enabled: bool, credits: i64) -> Html<String> {
         return Html(b);
     }
     b.push_str(&format!(
-        r#"<p class="empty">Clear the board without hitting a mine to earn a bonus hint. Every board is solvable by logic alone — no guessing needed. Left-click reveals, right-click flags. Bonus hints are spent automatically when you hint without enough points.</p>
+        r#"<p class="empty">Clear the board without hitting a mine to earn a bonus hint. Every board is solvable by logic alone — no guessing needed. Left-click a cell to reveal, right-click to flag. On a revealed number: left-click chord-reveals its neighbours once you've flagged that many mines, right-click flags all remaining neighbours when they must all be mines. Bonus hints are spent automatically when you hint without enough points.</p>
 <div class="statline">Bonus hints: <b id="credits">{credits}</b> · <span id="minesleft"></span></div>
 <div id="msg" class="inlinemsg"></div>
-<div id="grid" class="msgrid"></div>
+<div class="msscroll"><div id="grid" class="msgrid"></div></div>
 <div class="btnrow"><button id="newgame" class="ghost">New game</button></div>"#
     ));
     b.push_str(MINE_STYLE);
@@ -1008,7 +1008,8 @@ pub fn minesweeper_page(enabled: bool, credits: i64) -> Html<String> {
 }
 
 const MINE_STYLE: &str = r#"<style>
-.msgrid{display:grid;gap:2px;margin:14px 0;width:max-content;max-width:100%}
+.msscroll{overflow:auto;max-width:100%;margin:14px 0}
+.msgrid{display:grid;gap:2px;width:max-content}
 .cell{width:28px;height:28px;padding:0;background:var(--panel);border:1px solid var(--bd);border-radius:4px;color:var(--fg);font-family:var(--mono);font-size:14px;font-weight:700;cursor:pointer;line-height:1;text-align:center}
 .cell:hover:not(.open){border-color:var(--accent)}
 .cell.open{background:var(--bg);cursor:default}
@@ -1024,15 +1025,19 @@ const MINE_JS: &str = r#"<script>
 var W,H,ID,minesN,over=false,flags=0,cells=[];
 var grid=document.getElementById('grid'),msg=document.getElementById('msg'),
     minesleft=document.getElementById('minesleft'),creditsEl=document.getElementById('credits');
-function post(url,body){return fetch(url,{method:'POST',body:body?new URLSearchParams(body):undefined,headers:{}}).then(function(r){return r.json()});}
+function post(url,body){return fetch(url,{method:'POST',body:body?new URLSearchParams(body):undefined}).then(function(r){return r.json()});}
 function updateMines(){if(minesleft)minesleft.textContent=(minesN-flags)+' mines';}
+function inb(r,c){return r>=0&&r<H&&c>=0&&c<W;}
+function nbrs(r,c){var out=[];for(var dr=-1;dr<=1;dr++)for(var dc=-1;dc<=1;dc++){if((dr||dc)&&inb(r+dr,c+dc))out.push([r+dr,c+dc]);}return out;}
+function numOf(btn){return btn.classList.contains('open')?(parseInt(btn.textContent,10)||0):-1;}
+function surround(r,c){var flagged=0,hidden=[];nbrs(r,c).forEach(function(p){var b=cells[p[0]][p[1]];if(b.classList.contains('flag'))flagged++;else if(!b.classList.contains('open'))hidden.push(p);});return{flagged:flagged,hidden:hidden};}
 function buildGrid(){
  grid.innerHTML='';grid.style.gridTemplateColumns='repeat('+W+',28px)';cells=[];
  for(var r=0;r<H;r++){var row=[];for(var c=0;c<W;c++){
   var btn=document.createElement('button');btn.className='cell';
   (function(r,c,btn){
-   btn.addEventListener('click',function(){reveal(r,c);});
-   btn.addEventListener('contextmenu',function(e){e.preventDefault();toggleFlag(btn);});
+   btn.addEventListener('click',function(){if(btn.classList.contains('open'))chordReveal(r,c);else reveal(r,c);});
+   btn.addEventListener('contextmenu',function(e){e.preventDefault();if(btn.classList.contains('open'))chordFlag(r,c);else toggleFlag(btn);});
   })(r,c,btn);
   grid.appendChild(btn);row.push(btn);
  }cells.push(row);}
@@ -1043,15 +1048,38 @@ function toggleFlag(btn){
  else{btn.classList.add('flag');btn.textContent='⚑';flags++;}
  updateMines();
 }
+// Right-click a number: if the remaining hidden neighbours must all be mines, flag them.
+function chordFlag(r,c){
+ if(over)return;var n=numOf(cells[r][c]);if(n<=0)return;
+ var s=surround(r,c);
+ if(s.hidden.length>0&&s.hidden.length===n-s.flagged){
+  s.hidden.forEach(function(p){var b=cells[p[0]][p[1]];if(!b.classList.contains('flag')){b.classList.add('flag');b.textContent='⚑';flags++;}});
+  updateMines();
+ }
+}
+// Left-click a number: once you've flagged exactly that many, reveal the rest.
+function chordReveal(r,c){
+ if(over)return;var n=numOf(cells[r][c]);if(n<=0)return;
+ var s=surround(r,c);
+ if(s.flagged!==n)return;
+ var q=s.hidden.slice();
+ (function step(){
+  if(over||!q.length)return;
+  var p=q.shift();
+  if(cells[p[0]][p[1]].classList.contains('open')){step();return;}
+  reveal(p[0],p[1]).then(step);
+ })();
+}
 function reveal(r,c){
- if(over)return;var btn=cells[r][c];
- if(btn.classList.contains('open')||btn.classList.contains('flag'))return;
- post('/minesweeper/reveal',{id:ID,r:r,c:c}).then(function(j){
+ if(over)return Promise.resolve();var btn=cells[r][c];
+ if(btn.classList.contains('open')||btn.classList.contains('flag'))return Promise.resolve();
+ return post('/minesweeper/reveal',{id:ID,r:r,c:c}).then(function(j){
+  if(over)return;
   if(!j.ok){msg.className='inlinemsg bad';msg.textContent=j.error||'Invalid.';return;}
   if(j.state==='lost'){over=true;(j.mines||[]).forEach(function(m){var mb=cells[m.r][m.c];mb.classList.add('open','mine');mb.textContent='✱';});msg.className='inlinemsg bad';msg.textContent='Boom — try again.';return;}
   (j.cells||[]).forEach(function(cell){var cb=cells[cell.r][cell.c];cb.classList.remove('flag');cb.classList.add('open');if(cell.n>0){cb.textContent=cell.n;cb.setAttribute('data-n',cell.n);}else{cb.textContent='';}});
   if(j.state==='won'){over=true;msg.className='inlinemsg ok';msg.textContent='Cleared! You earned a bonus hint.';if(j.credits!=null&&creditsEl)creditsEl.textContent=j.credits;}
- }).catch(function(){msg.className='inlinemsg bad';msg.textContent='Request failed.';});
+ }).catch(function(){if(!over){msg.className='inlinemsg bad';msg.textContent='Request failed.';}});
 }
 function newGame(){
  msg.textContent='';msg.className='inlinemsg';over=false;flags=0;

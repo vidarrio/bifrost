@@ -12,13 +12,13 @@
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const W: usize = 9;
-pub const H: usize = 9;
-pub const MINES: usize = 10;
+pub const W: usize = 16;
+pub const H: usize = 16;
+pub const MINES: usize = 40;
 /// Frontier components larger than this aren't enumerated (treated as
-/// unprovable → the board is regenerated). Small for a 9×9/10 board.
-const ENUM_CAP: usize = 20;
-const GEN_ATTEMPTS: usize = 400;
+/// unprovable → the board is regenerated). Bounds enumeration cost.
+const ENUM_CAP: usize = 22;
+const GEN_ATTEMPTS: usize = 1200;
 
 /// splitmix64 — a tiny PRNG so we don't pull in a dependency.
 struct Rng(u64);
@@ -463,23 +463,24 @@ mod tests {
 
     #[test]
     fn boards_are_no_guess_and_fast() {
+        let n = 30;
         let t = Instant::now();
-        let mut wins = 0;
-        for k in 0..40 {
+        for k in 0..n {
             let mut g = Game::new("t".into());
             // First click somewhere varied but interior-ish.
-            let first = (k % 9) + 9 * ((k / 9) % 9);
+            let first = (2 + k % (W - 4)) + W * (2 + (k / (W - 4)) % (H - 4));
             let _ = g.reveal(first / W, first % W);
             // The generated board must be solvable from that first click.
             assert!(
                 solvable(g.w, g.h, &g.mines, &g.counts, first),
                 "generated board {k} required a guess"
             );
-            wins += 1;
         }
         let ms = t.elapsed().as_millis();
-        assert_eq!(wins, 40);
-        assert!(ms < 8000, "generation too slow: {ms}ms for 40 boards");
-        eprintln!("40 no-guess boards in {ms}ms");
+        assert!(
+            ms < 20000,
+            "generation too slow: {ms}ms for {n} {W}x{H}/{MINES} boards"
+        );
+        eprintln!("{n} no-guess {W}x{H}/{MINES} boards in {ms}ms");
     }
 }
