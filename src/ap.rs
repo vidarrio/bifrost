@@ -566,8 +566,9 @@ fn on_bounced(board: &Arc<RwLock<Board>>, pkt: &Value) {
 // ---- hinting (a short-lived connection AS the target AP slot) ----
 
 /// Connect as `name` (the AP slot's connect name), run `!hint <item>`, and
-/// return the CommandResult's message parts. The hint spends *that* slot's
-/// points, which is why we connect as it rather than acting as admin.
+/// return the reply's message parts — a `Hint` PrintJSON on success, a
+/// `CommandResult` on rejection. The hint spends *that* slot's points, which is
+/// why we connect as it rather than acting as admin.
 pub async fn send_hint(
     url: &str,
     password: &str,
@@ -616,8 +617,15 @@ pub async fn send_hint(
                             .map_err(|e| format!("send Say: {e}"))?;
                         said = true;
                     }
+                    // A rejection comes back as CommandResult ("can't afford",
+                    // "did you mean"); a *successful* hint comes back as a Hint
+                    // PrintJSON (no CommandResult) — accept either, or we hang
+                    // until the timeout on every hint that actually lands.
                     "PrintJSON"
-                        if pkt.get("type").and_then(Value::as_str) == Some("CommandResult") =>
+                        if matches!(
+                            pkt.get("type").and_then(Value::as_str),
+                            Some("CommandResult") | Some("Hint")
+                        ) =>
                     {
                         if let Some(data) = pkt.get("data").and_then(Value::as_array) {
                             return Ok(data.clone());
