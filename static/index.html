@@ -32,8 +32,9 @@
   header .hbrand:hover{text-decoration:none}
   header .spacer{flex:1}
   .who{font-family:var(--mono); font-size:12px; color:var(--muted)}.who b{color:var(--fg)}.who a{color:var(--accent)}
-  .pill{font-family:var(--mono); font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); text-decoration:none; border:1px solid var(--bd); border-radius:999px; padding:3px 11px}
+  .pill{display:inline-flex; align-items:center; font-family:var(--mono); font-size:11px; line-height:1; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); text-decoration:none; border:1px solid var(--bd); border-radius:999px; padding:4px 11px}
   .pill:hover{border-color:var(--accent); color:var(--accent); text-decoration:none}
+  #adminslot{display:contents}
   .seasonhdr{display:flex; align-items:baseline; justify-content:space-between; gap:12px}
   .signup-link{font-size:13px; text-transform:none; letter-spacing:0; color:var(--accent); text-decoration:none; white-space:nowrap}
   .signup-link:hover{text-decoration:underline}
@@ -78,7 +79,7 @@ fetch('/api/me').then(function(r){return r.json()}).then(function(m){
     <h1>Bifrost</h1>
     <span class="tag">archipelago</span>
   </div>
-  <p class="lede">The bridge between the worlds — our home for Archipelago multiworlds. How to connect, who's playing what, where to track your run, and the servers to hang out in.</p>
+  <p class="lede">The bridge between the worlds — our home for Archipelago multiworlds. How to connect, who's playing what, where to track your run, and the relevant discord servers.</p>
 
   <h2 class="sec">Join the current game</h2>
   <div class="card join">
@@ -89,7 +90,7 @@ fetch('/api/me').then(function(r){return r.json()}).then(function(m){
     </div>
     <ol class="steps">
       <li>Install the <strong>Archipelago 0.6.7</strong> client and your game's AP mod/patch.</li>
-      <li>Grab your slot's files (patch / spoiler) from whoever generated the seed.</li>
+      <li>If required, grab your slot's files (patch / spoiler) from whoever generated the seed.</li>
       <li>Connect the client to the address above with your slot name.</li>
     </ol>
   </div>

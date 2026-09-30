@@ -106,6 +106,37 @@ pub struct BoardSnapshot {
 }
 
 impl Board {
+    /// Data for the admin console's command autocomplete: the connected player
+    /// names, each player's game, and the item/location name pools per game.
+    pub fn autocomplete_data(&self) -> Value {
+        let mut players: Vec<String> = Vec::new();
+        let mut game = serde_json::Map::new();
+        for s in self.slots.values() {
+            if s.name.is_empty() {
+                continue;
+            }
+            players.push(s.name.clone());
+            game.insert(s.name.clone(), Value::String(s.game.clone()));
+        }
+        let mut items = serde_json::Map::new();
+        let mut locations = serde_json::Map::new();
+        if let Some(m) = self.meta.as_ref() {
+            for (g, names) in &m.item_names {
+                let mut v: Vec<String> = names.values().cloned().collect();
+                v.sort();
+                v.dedup();
+                items.insert(g.clone(), json!(v));
+            }
+            for (g, names) in &m.location_names {
+                let mut v: Vec<String> = names.values().cloned().collect();
+                v.sort();
+                v.dedup();
+                locations.insert(g.clone(), json!(v));
+            }
+        }
+        json!({"players": players, "game": game, "items": items, "locations": locations})
+    }
+
     pub fn snapshot(&self) -> BoardSnapshot {
         let ap = self
             .slots

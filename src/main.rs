@@ -572,11 +572,17 @@ async fn signup_delete(
 /// Gather everything the admin page shows (optionally with the output of a
 /// just-run console command) and render it.
 async fn render_admin(st: &AppState, console: Option<(&str, &str)>) -> Html<String> {
-    let (connected, seed) = st
+    let (connected, seed, acdata) = st
         .board
         .read()
-        .map(|b| (b.connected, b.seed.clone()))
-        .unwrap_or((false, None));
+        .map(|b| {
+            (
+                b.connected,
+                b.seed.clone(),
+                b.autocomplete_data().to_string(),
+            )
+        })
+        .unwrap_or((false, None, "{}".into()));
     let signups_open = st.db.signups_open().await;
     let (running, gen_msg) = st
         .genstate
@@ -593,6 +599,7 @@ async fn render_admin(st: &AppState, console: Option<(&str, &str)>) -> Html<Stri
         &gen_msg,
         &subs,
         &apworlds,
+        &acdata,
         console,
     )
 }

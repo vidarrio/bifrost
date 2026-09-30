@@ -56,7 +56,8 @@ header .hwrap{max-width:900px;margin:0 auto;padding:0 16px;height:52px;display:f
 header .brand{font-weight:700;font-size:16px;color:var(--fg);text-decoration:none}header .brand:hover{text-decoration:none}
 header .spacer{flex:1}
 .who{font-family:var(--mono);font-size:12px;color:var(--muted)}.who b{color:var(--fg)}.who a{color:var(--accent)}
-.pill{font-family:var(--mono);font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);text-decoration:none;border:1px solid var(--bd);border-radius:999px;padding:3px 11px}.pill:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
+.pill{display:inline-flex;align-items:center;font-family:var(--mono);font-size:11px;line-height:1;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);text-decoration:none;border:1px solid var(--bd);border-radius:999px;padding:4px 11px}.pill:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
+#adminslot{display:contents}
 .matches{max-width:460px;margin:-4px 0 12px;display:grid}.matches .match{font-family:var(--mono);font-size:12px;padding:5px 8px;border:1px solid var(--bd);border-top:0;cursor:pointer;background:var(--panel)}.matches .match:hover{background:var(--bd)}
 .hintrow{display:flex;justify-content:space-between;align-items:center;gap:10px;font-family:var(--mono);font-size:12.5px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px;margin:6px 0}
 button{background:var(--accent);color:#0d1117;border:0;border-radius:7px;padding:5px 12px;font-weight:600;font-size:12px;cursor:pointer}
@@ -76,7 +77,11 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .choice{display:grid;gap:10px;margin-bottom:6px}
 .choice label{display:flex;gap:10px;align-items:flex-start;background:var(--bg);border:1px solid var(--bd);border-radius:9px;padding:11px 13px;cursor:pointer;font-size:14px}
 .choice label:has(input:checked){border-color:var(--accent)}
-.wstep input[type=file],.wstep input[type=text]{width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:8px 10px;font-size:13px;margin:2px 0}
+.wstep input[type=file],.wstep input[type=text]{width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:9px 11px;font-size:13px;margin:2px 0}
+.wstep input[type=file]{cursor:pointer}
+.wstep input[type=file]::file-selector-button{background:transparent;border:1px solid var(--bd);color:var(--muted);border-radius:6px;padding:5px 11px;margin-right:12px;font-family:var(--font);font-size:12px;font-weight:600;cursor:pointer}
+.wstep input[type=file]::file-selector-button:hover{border-color:var(--accent);color:var(--accent)}
+#apbtn,#checkbtn{margin-top:12px}
 .nav{display:flex;justify-content:space-between;gap:10px;margin-top:18px}.nav:has(>:only-child){justify-content:flex-end}
 .nav .back{background:transparent;border:1px solid var(--bd);color:var(--muted)}
 .inlinemsg{font-family:var(--mono);font-size:12.5px;margin-top:8px;min-height:1em;word-break:break-word}.inlinemsg.ok{color:var(--ok)}.inlinemsg.bad{color:var(--bad)}
@@ -85,7 +90,11 @@ button:disabled{opacity:.45;cursor:not-allowed}
 button.danger{background:var(--bad);color:#fff}
 .statline{font-family:var(--mono);font-size:12.5px;color:var(--muted);margin:2px 0 6px}.statline b{color:var(--fg)}
 .console{display:flex;gap:8px;margin:8px 0}
-.console input[type=text]{flex:1;min-width:0;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:8px 10px;font-family:var(--mono);font-size:13px}
+.console .acwrap{position:relative;flex:1;min-width:0}
+.console input[type=text]{width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:8px 10px;font-family:var(--mono);font-size:13px}
+.acmenu{position:absolute;left:0;right:0;top:100%;z-index:6;margin-top:4px;max-height:260px;overflow:auto;background:var(--panel);border:1px solid var(--bd);border-radius:8px}
+.acmenu .m{padding:7px 10px;font-family:var(--mono);font-size:12.5px;cursor:pointer;border-bottom:1px solid var(--bd)}
+.acmenu .m:last-child{border-bottom:0}.acmenu .m:hover,.acmenu .m.sel{background:var(--bd)}
 pre.out{background:#0b0f14;border:1px solid var(--bd);border-radius:8px;padding:12px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break:break-word;color:var(--fg)}
 .warnnote{color:var(--warn);font-size:12px;margin:4px 0}
 </style></head><body>
@@ -291,8 +300,8 @@ pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool, open: bool)
   <section class="wstep" data-step="1">
     <h2>Your game</h2>
     <div class="choice">
-      <label><input type="radio" name="gtype" value="core" checked> A core / officially supported game</label>
-      <label><input type="radio" name="gtype" value="custom"> A custom (unofficial) game — I have its <code>.apworld</code></label>
+      <label><input type="radio" name="gtype" value="core" checked> <span>A core / officially supported game</span></label>
+      <label><input type="radio" name="gtype" value="custom"> <span>A custom (unofficial) game — I have its <code>.apworld</code></span></label>
     </div>
     <div id="apbox" hidden>
       <p class="hint">Upload the world's <code>.apworld</code>. It installs on the server right away so we can validate your YAML next.</p>
@@ -459,6 +468,7 @@ pub fn admin_page(
     gen_msg: &str,
     subs: &[SubmissionRow],
     apworlds: &[String],
+    acdata: &str,
     console: Option<(&str, &str)>,
 ) -> Html<String> {
     let mut b = page_head(None);
@@ -633,14 +643,70 @@ pub fn admin_page(
         ));
     }
     b.push_str(
-        r#"<form class="console" method="post" action="/admin/console">
-<input type="text" name="cmd" placeholder="/players" autocomplete="off" required>
-<button type="submit">Run</button></form>"#,
+        r#"<form class="console" method="post" action="/admin/console" autocomplete="off"><div class="acwrap"><input type="text" name="cmd" id="concmd" placeholder="/players" autocomplete="off" required><div class="acmenu" id="accands" hidden></div></div><button type="submit">Run</button></form>"#,
     );
+    // Command autocomplete: ACDATA (players/games/items/locations) is embedded,
+    // then CONSOLE_JS reads it. Split so the JS's braces don't fight format!.
+    b.push_str("<script>\n(function(){\nvar ACDATA=");
+    b.push_str(&acdata.replace("</", "<\\/"));
+    b.push_str(";\n");
+    b.push_str(CONSOLE_JS);
+    b.push_str("\n})();\n</script>");
 
     b.push_str("</main></body></html>");
     Html(b)
 }
+
+/// The admin console's client-side command completer. Expects `ACDATA` (from
+/// `Board::autocomplete_data`) to be defined just above it. Suggests commands,
+/// then player names, then item/location names for the target player's game —
+/// the trailing name arg is matched against the whole remainder (names have
+/// spaces). Tab accepts the highlighted suggestion; Enter submits.
+const CONSOLE_JS: &str = r#"var SPEC={
+ '/help':{},'/license':{},'/options':{},'/save':{},'/players':{},'/status':{},'/exit':{},'/datastore':{},'/countdown':{},'/option':{},
+ '/collect':{f:['player']},'/release':{f:['player']},'/allow_release':{f:['player']},'/forbid_release':{f:['player']},'/alias':{f:['player']},
+ '/send':{f:['player'],t:'item'},'/send_multiple':{f:['num','player'],t:'item'},'/hint':{f:['player'],t:'item'},
+ '/send_location':{f:['player'],t:'location'},'/hint_location':{f:['player'],t:'location'}
+};
+var CMDS=Object.keys(SPEC);
+var inp=document.getElementById('concmd'),menu=document.getElementById('accands');
+var cands=[],sel=-1;
+function has(q){q=q.toLowerCase();return function(s){return s.toLowerCase().indexOf(q)>=0}}
+function analyze(val){
+ if(!/\s/.test(val)){var q=val.toLowerCase();return CMDS.filter(function(c){return c.indexOf(q)===0}).slice(0,12).map(function(c){return {label:c,full:c+' '}});}
+ var toks=val.trim().split(/\s+/),cmd=toks[0],spec=SPEC[cmd];
+ if(!spec)return [];
+ var fixed=spec.f||[],tail=spec.t,args=toks.slice(1),trail=/\s$/.test(val);
+ var idx=trail?args.length:args.length-1,cur=trail?'':(args[idx]||'');
+ if(idx<fixed.length){
+  if(fixed[idx]!=='player')return [];
+  return ACDATA.players.filter(has(cur)).slice(0,15).map(function(p){var k=args.slice(0,idx);k.push(p);return {label:p,full:[cmd].concat(k).join(' ')+' '}});
+ }
+ if(!tail)return [];
+ var pIdx=fixed.indexOf('player'),pName=pIdx>=0?args[pIdx]:null,g=pName?ACDATA.game[pName]:null;
+ var pool=(tail==='item'?ACDATA.items[g]:ACDATA.locations[g])||[];
+ var q=args.slice(fixed.length).join(' ').trim().toLowerCase();
+ var lead=[cmd].concat(args.slice(0,fixed.length)).join(' ');
+ return pool.filter(function(x){return x.toLowerCase().indexOf(q)>=0}).slice(0,20).map(function(x){return {label:x,full:lead+' '+x}});
+}
+function render(){
+ if(!cands.length){menu.hidden=true;menu.innerHTML='';return;}
+ menu.innerHTML='';
+ cands.forEach(function(c,i){var d=document.createElement('div');d.className='m'+(i===sel?' sel':'');d.textContent=c.label;d.addEventListener('mousedown',function(e){e.preventDefault();pick(i);});menu.appendChild(d);});
+ menu.hidden=false;
+}
+function refresh(){cands=analyze(inp.value);sel=cands.length?0:-1;render();}
+function pick(i){if(i<0||i>=cands.length)return;inp.value=cands[i].full;inp.focus();refresh();}
+inp.addEventListener('input',refresh);
+inp.addEventListener('focus',refresh);
+inp.addEventListener('blur',function(){setTimeout(function(){menu.hidden=true;},150);});
+inp.addEventListener('keydown',function(e){
+ if(menu.hidden||!cands.length)return;
+ if(e.key==='ArrowDown'){e.preventDefault();sel=(sel+1)%cands.length;render();}
+ else if(e.key==='ArrowUp'){e.preventDefault();sel=(sel-1+cands.length)%cands.length;render();}
+ else if(e.key==='Tab'){e.preventDefault();pick(sel<0?0:sel);}
+ else if(e.key==='Escape'){menu.hidden=true;}
+});"#;
 
 pub fn signup_result(text: &str, ok: bool) -> Html<String> {
     let mut b = page_head(None);
