@@ -58,7 +58,7 @@ header .spacer{flex:1}
 .who{font-family:var(--mono);font-size:12px;color:var(--muted)}.who b{color:var(--fg)}.who a{color:var(--accent)}
 .pill{display:inline-flex;align-items:center;font-family:var(--mono);font-size:11px;line-height:1;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);text-decoration:none;border:1px solid var(--bd);border-radius:999px;padding:4px 11px}.pill:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
 #adminslot{display:contents}
-.matches{max-width:460px;margin:-4px 0 12px;display:grid}.matches .match{font-family:var(--mono);font-size:12px;padding:5px 8px;border:1px solid var(--bd);border-top:0;cursor:pointer;background:var(--panel)}.matches .match:hover{background:var(--bd)}
+.matches{max-width:460px;margin:-4px 0 12px;display:grid;max-height:240px;overflow:auto}.matches .match{font-family:var(--mono);font-size:12px;padding:5px 8px;border:1px solid var(--bd);border-top:0;cursor:pointer;background:var(--panel)}.matches .match:hover,.matches .match.sel{background:var(--bd)}
 .hintrow{display:flex;justify-content:space-between;align-items:center;gap:10px;font-family:var(--mono);font-size:12.5px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px;margin:6px 0}
 button{background:var(--accent);color:#0d1117;border:0;border-radius:7px;padding:5px 12px;font-weight:600;font-size:12px;cursor:pointer}
 button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted)}
@@ -660,6 +660,30 @@ pub fn admin_page(
     Html(b)
 }
 
+/// The per-game hint search. Expects `ITEMS` (this world's item names) defined
+/// just above it. Substring filter with a live dropdown; ↑/↓ highlight (and
+/// scroll into view), Tab accepts, Enter submits the form.
+const HINT_JS: &str = r#"var q=document.getElementById('hintq'),box=document.getElementById('hintmatches');
+var hits=[],hsel=-1;
+function hrender(){
+ box.innerHTML='';
+ hits.forEach(function(n,i){var d=document.createElement('div');d.className='match'+(i===hsel?' sel':'');d.textContent=n;d.addEventListener('mousedown',function(e){e.preventDefault();q.value=n;hits=[];box.innerHTML='';q.focus();});box.appendChild(d);});
+ var s=box.querySelector('.sel');if(s)s.scrollIntoView({block:'nearest'});
+}
+q.addEventListener('input',function(){
+ var v=q.value.toLowerCase().trim();if(!v){hits=[];box.innerHTML='';return;}
+ var w=v.split(/\s+/);
+ hits=ITEMS.filter(function(n){var l=n.toLowerCase();return w.every(function(x){return l.indexOf(x)>=0})}).slice(0,15);
+ hsel=hits.length?0:-1;hrender();
+});
+q.addEventListener('keydown',function(e){
+ if(!hits.length)return;
+ if(e.key==='ArrowDown'){e.preventDefault();hsel=(hsel+1)%hits.length;hrender();}
+ else if(e.key==='ArrowUp'){e.preventDefault();hsel=(hsel-1+hits.length)%hits.length;hrender();}
+ else if(e.key==='Tab'){e.preventDefault();if(hsel>=0){q.value=hits[hsel];hits=[];box.innerHTML='';}}
+ else if(e.key==='Escape'){hits=[];box.innerHTML='';}
+});"#;
+
 /// The admin console's client-side command completer. Expects `ACDATA` (from
 /// `Board::autocomplete_data`) to be defined just above it. Suggests commands,
 /// then player names, then item/location names for the target player's game —
@@ -697,6 +721,7 @@ function render(){
  menu.innerHTML='';
  cands.forEach(function(c,i){var d=document.createElement('div');d.className='m'+(i===sel?' sel':'');d.textContent=c.label;d.addEventListener('mousedown',function(e){e.preventDefault();pick(i);});menu.appendChild(d);});
  menu.hidden=false;
+ var s=menu.querySelector('.sel');if(s)s.scrollIntoView({block:'nearest'});
 }
 function refresh(){cands=analyze(inp.value);sel=cands.length?0:-1;render();}
 function pick(i){if(i<0||i>=cands.length)return;inp.value=cands[i].full;inp.focus();refresh();}
@@ -849,19 +874,13 @@ pub fn game_page(
 <input type="hidden" name="slot_id" value="{sid}"><input type="hidden" name="back" value="{back}">
 <input id="hintq" name="item" placeholder="search your items…" autocomplete="off" required>
 <button type="submit">Hint</button></form>
-<div id="hintmatches" class="matches"></div>
-<script>
-const ITEMS={items_json};
-const q=document.getElementById('hintq'),box=document.getElementById('hintmatches');
-q.addEventListener('input',function(){{
-  const v=q.value.toLowerCase().trim();box.innerHTML='';
-  if(!v)return;const w=v.split(/\s+/);
-  ITEMS.filter(function(n){{const l=n.toLowerCase();return w.every(function(x){{return l.includes(x)}})}}).slice(0,15).forEach(function(n){{
-    const d=document.createElement('div');d.className='match';d.textContent=n;
-    d.onclick=function(){{q.value=n;box.innerHTML=''}};box.appendChild(d);}});
-}});
-</script>"#
+<div id="hintmatches" class="matches"></div>"#
         ));
+        out.push_str("<script>\nvar ITEMS=");
+        out.push_str(&items_json);
+        out.push_str(";\n");
+        out.push_str(HINT_JS);
+        out.push_str("\n</script>");
     }
 
     // All hints in this world, with prioritize toggles
