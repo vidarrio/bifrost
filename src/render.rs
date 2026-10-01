@@ -1175,7 +1175,7 @@ pub fn minesweeper_page(enabled: bool, credits: i64, stats: &crate::db::MineStat
 <div class="minewrap">
   <div class="mineboard">
     <div class="msscroll"><div id="grid" class="msgrid"></div></div>
-    <div class="btnrow"><button id="newgame" class="ghost">New game</button></div>
+    <div class="btnrow"><button id="newgame" class="ghost" style="display:none">New game</button></div>
   </div>
   <aside class="minestats-panel">
     <h3>Your stats</h3>
@@ -1219,7 +1219,11 @@ const MINE_JS: &str = r#"<script>
 var W,H,minesN,over=false,flags=0,cells=[];
 var grid=document.getElementById('grid'),msg=document.getElementById('msg'),
     minesleft=document.getElementById('minesleft'),creditsEl=document.getElementById('credits'),
-    statsEl=document.getElementById('minestats'),timerEl=document.getElementById('mstimer');
+    statsEl=document.getElementById('minestats'),timerEl=document.getElementById('mstimer'),
+    newBtn=document.getElementById('newgame');
+// The "New game" button only appears once a game ends — while one's in progress
+// it auto-resumes on reopen, so a manual new-game would just abandon the board.
+function showNewBtn(s){if(newBtn)newBtn.style.display=s?'':'none';}
 // Timer: mirrors the server's active-play clock (which excludes time while the
 // tab is hidden/closed). baseMs is the last value the server reported; while
 // running we add the wall-clock time since that sync.
@@ -1281,26 +1285,29 @@ function reveal(r,c){
  return post('/minesweeper/reveal',{r:r,c:c}).then(function(j){
   if(over)return;
   if(!j.ok){msg.className='inlinemsg bad';msg.textContent=j.error||'Invalid.';return;}
-  if(j.state==='lost'){over=true;(j.mines||[]).forEach(function(m){var mb=cells[m.r][m.c];mb.classList.add('open','mine');mb.textContent='✱';});msg.className='inlinemsg bad';msg.textContent='Boom — try again.';setStats(j.stats);setTimer(j.elapsed_ms,false);return;}
+  if(j.state==='lost'){over=true;(j.mines||[]).forEach(function(m){var mb=cells[m.r][m.c];mb.classList.add('open','mine');mb.textContent='✱';});msg.className='inlinemsg bad';msg.textContent='Boom — try again.';setStats(j.stats);setTimer(j.elapsed_ms,false);showNewBtn(true);return;}
   (j.cells||[]).forEach(openCell);
   setTimer(j.elapsed_ms,j.running);
-  if(j.state==='won'){over=true;msg.className='inlinemsg ok';msg.textContent='Cleared! You earned a bonus hint.';if(j.credits!=null&&creditsEl)creditsEl.textContent=j.credits;setStats(j.stats);}
+  if(j.state==='won'){over=true;msg.className='inlinemsg ok';msg.textContent='Cleared! You earned a bonus hint.';if(j.credits!=null&&creditsEl)creditsEl.textContent=j.credits;setStats(j.stats);showNewBtn(true);}
  }).catch(function(){if(!over){msg.className='inlinemsg bad';msg.textContent='Request failed.';}});
 }
 function startBoard(w,h,mn){W=w;H=h;minesN=mn;over=false;flags=0;buildGrid();updateMines();}
 function newGame(){
- msg.textContent='';msg.className='inlinemsg';
+ msg.textContent='';msg.className='inlinemsg';showNewBtn(false);
  post('/minesweeper/new').then(function(j){
   if(!j.ok){msg.className='inlinemsg bad';msg.textContent=j.error||'Could not start.';grid.innerHTML='';return;}
   startBoard(j.w,j.h,j.mines);setTimer(0,false);
  }).catch(function(){msg.className='inlinemsg bad';msg.textContent='Could not start.';});
 }
 // On load, resume the player's in-progress board (survives tab close/reopen);
-// the timer comes back paused and resumes on the next reveal.
+// the timer comes back paused and resumes on the next reveal. A board that was
+// started but never touched is just shown fresh (no "resumed" notice).
 function loadGame(){
  fetch('/minesweeper/state').then(function(r){return r.json()}).then(function(j){
-  if(j&&j.active){startBoard(j.w,j.h,j.mines);(j.cells||[]).forEach(openCell);setTimer(j.elapsed_ms,false);msg.className='inlinemsg';msg.textContent='Resumed your board — click to continue.';}
-  else newGame();
+  if(!j||!j.active){newGame();return;}
+  startBoard(j.w,j.h,j.mines);showNewBtn(false);
+  var cells=j.cells||[];cells.forEach(openCell);setTimer(j.elapsed_ms,false);
+  msg.className='inlinemsg';msg.textContent=cells.length?'Resumed your board — click to continue.':'';
  }).catch(newGame);
 }
 // Pause the clock when the tab is hidden or closed; it resumes on the next reveal.
