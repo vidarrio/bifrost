@@ -56,8 +56,10 @@ pub async fn load_counts() -> Result<HashMap<i64, SlotCounts>, String> {
 pub struct SlotMeta {
     #[serde(default)]
     pub world_size: u32,
+    /// Total items destined for this slot anywhere in the multiworld. Minus how
+    /// many it has received so far, this gives "still to be found".
     #[serde(default)]
-    pub items_for_elsewhere: u32,
+    pub items_for: u32,
 }
 
 #[derive(Debug, Deserialize)]

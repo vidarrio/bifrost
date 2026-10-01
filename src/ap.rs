@@ -100,7 +100,9 @@ pub struct ApLive {
     pub sent: u64,
     pub received: u64,
     pub world_size: u32,
-    pub items_elsewhere: u32,
+    /// This slot's items that no one has found yet (items_for − received);
+    /// decreases toward 0 as the run completes.
+    pub still_to_find: u32,
     /// Hints for items hinted to be in this slot's world (with identity).
     pub hint_views: Vec<HintView>,
     /// Every item this slot has received, as found HintViews (item @ location ·
@@ -154,12 +156,14 @@ impl Board {
             .slots
             .iter()
             .map(|(n, s)| {
-                let (world_size, items_elsewhere) = self
+                let (world_size, items_for) = self
                     .meta
                     .as_ref()
                     .and_then(|m| m.totals(*n))
-                    .map(|t| (t.world_size, t.items_for_elsewhere))
+                    .map(|t| (t.world_size, t.items_for))
                     .unwrap_or((0, 0));
+                // Items of this slot that nobody has found yet.
+                let still_to_find = items_for.saturating_sub(s.received as u32);
                 // Hints for THIS slot's own items — "where is my item", the way
                 // hints are normally read. Filter by receiving == this slot; the
                 // item is ours, the location is in whichever world is finding it.
@@ -216,7 +220,7 @@ impl Board {
                         sent: s.sent,
                         received: s.received,
                         world_size,
-                        items_elsewhere,
+                        still_to_find,
                         hint_views,
                         found_items,
                     },
