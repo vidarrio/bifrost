@@ -8,7 +8,7 @@
 //! a rolling feed. Item/location *names* need the data package and are deferred;
 //! events render at the slot level.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -67,7 +67,7 @@ impl Board {
             self.events.pop_back();
         }
     }
-    fn name_of(&self, slot: i64) -> String {
+    pub fn name_of(&self, slot: i64) -> String {
         if slot == 0 {
             return "Server".into();
         }
@@ -149,6 +149,54 @@ impl Board {
             }
         }
         json!({"players": players, "game": game, "items": items, "locations": locations})
+    }
+
+    /// Locations of this slot's items that are already "done" — hinted (in the
+    /// slot's own hints) or found (received). Keyed by (finder, location) since a
+    /// location id is only unique within its finder's world.
+    fn accounted_locs(&self, ap_slot: i64) -> HashSet<(i64, i64)> {
+        let mut set = HashSet::new();
+        if let Some(s) = self.slots.get(&ap_slot) {
+            for h in s.hint_list.iter().filter(|h| h.receiving == ap_slot) {
+                set.insert((h.finding, h.location));
+            }
+            for (_item, loc, finder) in &s.received_items {
+                set.insert((*finder, *loc));
+            }
+        }
+        set
+    }
+
+    /// Item names to offer in the slot's hint search: the slot's own items that
+    /// still have at least one copy neither hinted nor found. A name whose every
+    /// copy is accounted for drops off the list.
+    pub fn hint_suggestions(&self, ap_slot: i64, game: &str) -> Vec<String> {
+        let Some(m) = self.meta.as_ref() else {
+            return Vec::new();
+        };
+        let Some(placements) = m.placements(ap_slot) else {
+            return Vec::new();
+        };
+        let acc = self.accounted_locs(ap_slot);
+        let mut names: Vec<String> = placements
+            .iter()
+            .filter(|(_, locs)| locs.iter().any(|a| !acc.contains(&(a[0], a[1]))))
+            .filter_map(|(item_id, _)| m.item_name(game, *item_id).map(str::to_string))
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    /// The first copy of `item_id` (in placement order) that hasn't been hinted
+    /// or found — as (finder_slot, location_id). Used to hint exactly one copy.
+    pub fn first_unhinted_location(&self, ap_slot: i64, item_id: i64) -> Option<(i64, i64)> {
+        let m = self.meta.as_ref()?;
+        let locs = m.placements(ap_slot)?.get(&item_id)?;
+        let acc = self.accounted_locs(ap_slot);
+        locs.iter()
+            .map(|a| (a[0], a[1]))
+            .find(|p| !acc.contains(p))
     }
 
     pub fn snapshot(&self) -> BoardSnapshot {

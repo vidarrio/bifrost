@@ -807,9 +807,11 @@ q.addEventListener('keydown',function(e){
 var hform=document.getElementById('hintform'),hstatus=document.getElementById('hintstatus');
 var hback=hform.querySelector('input[name=back]').value,hbtn=hform.querySelector('button');
 function refreshHints(){
- var el=document.getElementById('worldhints');if(!el)return;
+ var el=document.getElementById('worldhints');
  [0,1200,2800].forEach(function(d){setTimeout(function(){
-  fetch(hback+'/hints').then(function(r){return r.text()}).then(function(h){el.innerHTML=h;}).catch(function(){});
+  if(el)fetch(hback+'/hints').then(function(r){return r.text()}).then(function(h){el.innerHTML=h;}).catch(function(){});
+  // Refresh the search pool too: a name whose last copy was just hinted drops out.
+  fetch(hback+'/items').then(function(r){return r.json()}).then(function(a){if(Array.isArray(a))ITEMS=a;}).catch(function(){});
  },d);});
 }
 hform.addEventListener('submit',function(e){

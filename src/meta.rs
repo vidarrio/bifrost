@@ -60,6 +60,10 @@ pub struct SlotMeta {
     /// many it has received so far, this gives "still to be found".
     #[serde(default)]
     pub items_for: u32,
+    /// Where each of this slot's items is placed: item id -> list of
+    /// [finder_slot, location_id]. Powers the hint box's per-item copy counting.
+    #[serde(default)]
+    pub placements: HashMap<i64, Vec<[i64; 2]>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,6 +88,18 @@ impl Meta {
     }
     pub fn totals(&self, ap_slot: i64) -> Option<&SlotMeta> {
         self.slots.get(&ap_slot)
+    }
+    /// Where this slot's items sit: item id -> [[finder_slot, location_id], …].
+    pub fn placements(&self, ap_slot: i64) -> Option<&HashMap<i64, Vec<[i64; 2]>>> {
+        self.slots.get(&ap_slot).map(|s| &s.placements)
+    }
+    /// Look up an item id by its exact name in a game (inverse of item_name).
+    pub fn item_id_by_name(&self, game: &str, name: &str) -> Option<i64> {
+        self.item_names
+            .get(game)?
+            .iter()
+            .find(|(_, n)| n.as_str() == name)
+            .map(|(id, _)| *id)
     }
 }
 

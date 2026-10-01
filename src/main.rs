@@ -94,6 +94,7 @@ async fn main() {
         .route("/board", get(board_view))
         .route("/game/{ap_slot}", get(game_view))
         .route("/game/{ap_slot}/hints", get(game_hints))
+        .route("/game/{ap_slot}/items", get(game_items))
         .route("/claim", get(claim_get).post(claim_post))
         .route("/hint", post(hint_post))
         .route("/prioritize", post(prioritize_post))
@@ -276,17 +277,8 @@ async fn game_view(
                 .get(&ap_slot)
                 .map(|s| (s.game.clone(), s.name.clone()))
                 .unwrap_or_default();
-            let items = b
-                .meta
-                .as_ref()
-                .and_then(|m| m.item_names.get(&game))
-                .map(|nm| {
-                    let mut v: Vec<String> = nm.values().cloned().collect();
-                    v.sort();
-                    v.dedup();
-                    v
-                })
-                .unwrap_or_default();
+            // Only the slot's own items that still have an unhinted/unfound copy.
+            let items = b.hint_suggestions(ap_slot, &game);
             (b.snapshot(), game, items, cn)
         }
         Err(_) => return Html("board unavailable".into()),
@@ -494,7 +486,24 @@ async fn hint_post(
             // Rejected. If it was only a points shortfall and the player holds a
             // bonus-hint credit, place the hint as admin (free) and spend one.
             if rejected_for_points(&text) && creds > 0 {
-                let admin_cmd = format!("/hint {name} {}", f.item.trim());
+                // Hint exactly ONE copy — the first unhinted location of this
+                // item — via /hint_location, so a multi-copy item doesn't reveal
+                // every copy for a single credit. Fall back to /hint by name if
+                // we can't resolve a specific location.
+                let admin_cmd = st
+                    .board
+                    .read()
+                    .ok()
+                    .and_then(|b| {
+                        let game = b.slots.get(&ap_slot)?.game.clone();
+                        let m = b.meta.as_ref()?;
+                        let item_id = m.item_id_by_name(&game, f.item.trim())?;
+                        let (finder, loc) = b.first_unhinted_location(ap_slot, item_id)?;
+                        let finder_game = b.slots.get(&finder)?.game.clone();
+                        let loc_name = m.location_name(&finder_game, loc)?.to_string();
+                        Some(format!("/hint_location {} {}", b.name_of(finder), loc_name))
+                    })
+                    .unwrap_or_else(|| format!("/hint {name} {}", f.item.trim()));
                 match ap::send_admin(
                     &cfg.url,
                     &cfg.slot,
@@ -586,6 +595,20 @@ async fn game_hints(
         &format!("/game/{ap_slot}"),
         can_prioritize,
     ))
+}
+
+/// The hint-search suggestion list for one slot, as JSON — the game page polls
+/// this after a hint so a name whose last copy was just hinted drops out.
+async fn game_items(Path(ap_slot): Path<i64>, State(st): State<AppState>) -> Json<Vec<String>> {
+    let items = st
+        .board
+        .read()
+        .map(|b| {
+            let game = b.slots.get(&ap_slot).map(|s| s.game.clone()).unwrap_or_default();
+            b.hint_suggestions(ap_slot, &game)
+        })
+        .unwrap_or_default();
+    Json(items)
 }
 
 const UPLOAD_DIR: &str = "/var/lib/bifrost/uploads";

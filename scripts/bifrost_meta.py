@@ -42,12 +42,16 @@ def main() -> None:
     world_size = {s: len(locs) for s, locs in locations.items()}
     items_for = {}
     items_for_own = {}
+    # Per receiving slot, where each of its items sits: {slot: {item_id: [[finder, loc_id], ...]}}.
+    # Lets the hint box count copies of same-named items and drop fully-hinted ones.
+    placements = {}
     for finder, locs in locations.items():
-        for _loc_id, tup in locs.items():
-            recv = tup[1]
+        for loc_id, tup in locs.items():
+            item_id, recv = tup[0], tup[1]
             items_for[recv] = items_for.get(recv, 0) + 1
             if recv == finder:
                 items_for_own[recv] = items_for_own.get(recv, 0) + 1
+            placements.setdefault(recv, {}).setdefault(item_id, []).append([finder, loc_id])
 
     games = sorted({si.game for si in slot_info.values()})
     item_names = {}
@@ -72,6 +76,9 @@ def main() -> None:
             "world_size": world_size.get(s, 0),
             "items_for": items_for.get(s, 0),
             "items_for_elsewhere": items_for.get(s, 0) - items_for_own.get(s, 0),
+            "placements": {
+                str(item_id): locs for item_id, locs in placements.get(s, {}).items()
+            },
         }
     print(json.dumps(out))
 
