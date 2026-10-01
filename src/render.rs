@@ -1189,11 +1189,12 @@ pub fn minesweeper_page(
 <div id="msg" class="inlinemsg"></div>
 <div class="minewrap">
   <div class="mineboard">
-    <div class="msscroll"><div id="grid" class="msgrid"></div></div>
-    <div class="btnrow" id="choices" style="display:none">
-      <button class="ghost" data-kind="standard">Standard <small>16×16 · 40</small></button>
-      <button class="ghost" data-kind="expert">Expert <small>30×16 · 99</small></button>
+    <div class="mstabs">
+      <button class="mstab active" data-tab="standard">Standard <small>16×16 · 40</small></button>
+      <button class="mstab" data-tab="expert">Expert <small>30×16 · 99</small></button>
     </div>
+    <div class="msscroll"><div id="grid" class="msgrid"></div></div>
+    <div class="btnrow"><button id="newgame" class="ghost" style="display:none">New game</button></div>
   </div>
   <aside class="minestats-panel">
     <h3>Your stats</h3>
@@ -1223,7 +1224,11 @@ const MINE_STYLE: &str = r#"<style>
 .mstat.sep{border-top:1px solid var(--bd);padding-top:9px;margin-top:2px}
 .mstatnote{color:var(--muted);font-size:11px;margin:14px 0 0;line-height:1.4}
 .btnrow{display:flex;gap:10px;flex-wrap:wrap}
-.btnrow button small{font-weight:400;opacity:.7;margin-left:6px;font-size:11px}
+.mstabs{display:flex;gap:6px;margin:0 0 12px;flex-wrap:wrap}
+.mstab{background:transparent;border:1px solid var(--bd);border-radius:8px;color:var(--muted);font-weight:600;padding:7px 13px;cursor:pointer;font-size:13px}
+.mstab small{font-weight:400;opacity:.7;margin-left:6px;font-size:11px}
+.mstab:hover{color:var(--fg);border-color:var(--accent)}
+.mstab.active{color:#0d1117;background:var(--accent);border-color:var(--accent)}
 .msscroll{overflow:auto;max-width:100%;margin:0 0 10px}
 .msgrid{display:grid;gap:2px;width:max-content}
 .cell{width:28px;height:28px;padding:0;background:var(--panel);border:1px solid var(--bd);border-radius:4px;color:var(--fg);font-family:var(--mono);font-size:14px;font-weight:700;cursor:pointer;line-height:1;text-align:center}
@@ -1238,15 +1243,16 @@ const MINE_STYLE: &str = r#"<style>
 
 const MINE_JS: &str = r#"<script>
 (function(){
-var W,H,minesN,over=false,flags=0,cells=[];
+var W,H,minesN,over=false,flags=0,cells=[],activeKind='standard';
 var grid=document.getElementById('grid'),msg=document.getElementById('msg'),
     minesleft=document.getElementById('minesleft'),creditsEl=document.getElementById('credits'),
     statsEl=document.getElementById('minestats'),timerEl=document.getElementById('mstimer'),
-    choices=document.getElementById('choices');
-// The difficulty buttons only show when there's no game in progress (a fresh
-// start or after one ends) — during play the board auto-resumes on reopen, so a
-// manual new game would just abandon it.
-function showChoices(s){if(choices)choices.style.display=s?'':'none';}
+    newBtn=document.getElementById('newgame'),tabs=document.querySelectorAll('.mstab');
+// Each difficulty is its own persistent board (keyed server-side by player+kind),
+// so switching tabs keeps each game + timer alive. The "New game" button only
+// shows once the current board ends (to replay the same difficulty).
+function showNewBtn(s){if(newBtn)newBtn.style.display=s?'':'none';}
+function updateTabUI(){tabs.forEach(function(t){t.classList.toggle('active',t.getAttribute('data-tab')===activeKind);});}
 // Timer: mirrors the server's active-play clock (which excludes time while the
 // tab is hidden/closed). baseMs is the last value the server reported; while
 // running we add the wall-clock time since that sync.
@@ -1305,46 +1311,56 @@ function chordReveal(r,c){
 function reveal(r,c){
  if(over)return Promise.resolve();var btn=cells[r][c];
  if(btn.classList.contains('open')||btn.classList.contains('flag'))return Promise.resolve();
- return post('/minesweeper/reveal',{r:r,c:c}).then(function(j){
+ return post('/minesweeper/reveal',{r:r,c:c,kind:activeKind}).then(function(j){
   if(over)return;
   if(!j.ok){msg.className='inlinemsg bad';msg.textContent=j.error||'Invalid.';return;}
-  if(j.state==='lost'){over=true;(j.mines||[]).forEach(function(m){var mb=cells[m.r][m.c];mb.classList.add('open','mine');mb.textContent='✱';});msg.className='inlinemsg bad';msg.textContent='Boom — try again.';setStats(j.stats);setTimer(j.elapsed_ms,false);showChoices(true);return;}
+  if(j.state==='lost'){over=true;(j.mines||[]).forEach(function(m){var mb=cells[m.r][m.c];mb.classList.add('open','mine');mb.textContent='✱';});msg.className='inlinemsg bad';msg.textContent='Boom — try again.';setStats(j.stats);setTimer(j.elapsed_ms,false);showNewBtn(true);return;}
   (j.cells||[]).forEach(openCell);
   setTimer(j.elapsed_ms,j.running);
-  if(j.state==='won'){over=true;msg.className='inlinemsg ok';msg.textContent='Cleared! You earned a bonus hint.';if(j.credits!=null&&creditsEl)creditsEl.textContent=j.credits;setStats(j.stats);showChoices(true);}
+  if(j.state==='won'){over=true;msg.className='inlinemsg ok';msg.textContent='Cleared! You earned a bonus hint.';if(j.credits!=null&&creditsEl)creditsEl.textContent=j.credits;setStats(j.stats);showNewBtn(true);}
  }).catch(function(){if(!over){msg.className='inlinemsg bad';msg.textContent='Request failed.';}});
 }
 function startBoard(w,h,mn){W=w;H=h;minesN=mn;over=false;flags=0;buildGrid();updateMines();}
-function newGame(kind){
- msg.textContent='';msg.className='inlinemsg';showChoices(false);
- post('/minesweeper/new',{kind:kind}).then(function(j){
-  if(!j.ok){msg.className='inlinemsg bad';msg.textContent=j.error||'Could not start.';grid.innerHTML='';showChoices(true);return;}
+// Start a fresh board for the active difficulty.
+function newGame(){
+ msg.textContent='';msg.className='inlinemsg';showNewBtn(false);
+ post('/minesweeper/new',{kind:activeKind}).then(function(j){
+  if(!j.ok){msg.className='inlinemsg bad';msg.textContent=j.error||'Could not start.';grid.innerHTML='';return;}
   startBoard(j.w,j.h,j.mines);setTimer(0,false);
- }).catch(function(){msg.className='inlinemsg bad';msg.textContent='Could not start.';showChoices(true);});
+ }).catch(function(){msg.className='inlinemsg bad';msg.textContent='Could not start.';});
 }
-// On load, resume the player's in-progress board (survives tab close/reopen);
-// the timer comes back paused and resumes on the next reveal. A board that was
-// started but never touched is just shown fresh (no "resumed" notice). With no
-// game at all, offer the difficulty choice rather than auto-starting.
+// Show the active difficulty's board: resume the in-progress one (survives tab
+// close/reopen and difficulty switches) or auto-start a fresh one. The timer
+// comes back paused and resumes on the next reveal; an untouched board shows no
+// "resumed" notice.
 function loadGame(){
- fetch('/minesweeper/state').then(function(r){return r.json()}).then(function(j){
-  if(!j||!j.active){showChoices(true);msg.className='inlinemsg';msg.textContent='Pick a difficulty to start.';return;}
-  startBoard(j.w,j.h,j.mines);showChoices(false);
-  var cells=j.cells||[];cells.forEach(openCell);setTimer(j.elapsed_ms,false);
-  msg.className='inlinemsg';msg.textContent=cells.length?'Resumed your board — click to continue.':'';
- }).catch(function(){showChoices(true);});
+ fetch('/minesweeper/state?kind='+activeKind).then(function(r){return r.json()}).then(function(j){
+  if(!j||!j.active){newGame();return;}
+  startBoard(j.w,j.h,j.mines);showNewBtn(false);
+  var cs=j.cells||[];cs.forEach(openCell);setTimer(j.elapsed_ms,false);
+  msg.className='inlinemsg';msg.textContent=cs.length?'Resumed your board — click to continue.':'';
+ }).catch(function(){newGame();});
 }
-// Pause the clock when the tab is hidden or closed; it resumes on the next reveal.
+// Pause the active difficulty's clock (tab hidden/closed, or leaving for the
+// other difficulty); it resumes on the next reveal of that board.
+function pauseKind(kind){
+ try{if(!navigator.sendBeacon('/minesweeper/pause?kind='+kind))post('/minesweeper/pause?kind='+kind);}catch(e){post('/minesweeper/pause?kind='+kind);}
+}
 function pauseNow(){
  if(over)return;
  setTimer(baseMs+(running?(Date.now()-syncAt):0),false);
- try{if(!navigator.sendBeacon('/minesweeper/pause'))post('/minesweeper/pause');}catch(e){post('/minesweeper/pause');}
+ pauseKind(activeKind);
+}
+function selectTab(kind){
+ if(kind===activeKind){if(over)newGame();return;}
+ if(!over)pauseKind(activeKind); // bank the board we're leaving
+ activeKind=kind;updateTabUI();showNewBtn(false);loadGame();
 }
 document.addEventListener('visibilitychange',function(){if(document.visibilityState==='hidden')pauseNow();});
 window.addEventListener('pagehide',pauseNow);
-if(choices)choices.querySelectorAll('button[data-kind]').forEach(function(btn){
- btn.addEventListener('click',function(){newGame(btn.getAttribute('data-kind'));});
-});
+if(newBtn)newBtn.addEventListener('click',newGame);
+tabs.forEach(function(t){t.addEventListener('click',function(){selectTab(t.getAttribute('data-tab'));});});
+updateTabUI();
 loadGame();
 })();
 </script>"#;

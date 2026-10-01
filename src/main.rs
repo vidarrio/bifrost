@@ -12,7 +12,7 @@ use std::sync::{Arc, RwLock};
 
 use axum::{
     Json, Router,
-    extract::{Form, Multipart, Path, State},
+    extract::{Form, Multipart, Path, Query, State},
     http::HeaderMap,
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
@@ -39,9 +39,10 @@ struct AppState {
     db: db::Db,
     ap_cfg: Option<ap::ApConfig>,
     genstate: generate::GenState,
-    /// Active minesweeper games keyed by player (sso). One in-progress board per
-    /// player, held server-side so it survives a tab close/reopen.
-    mine_games: Arc<Mutex<HashMap<String, mine::Game>>>,
+    /// Active minesweeper games keyed by (player sso, board kind). One
+    /// in-progress board per player *per difficulty*, held server-side so each
+    /// difficulty tab survives a tab close/reopen and difficulty switches.
+    mine_games: Arc<Mutex<HashMap<(String, String), mine::Game>>>,
 }
 
 const LANDING: &str = include_str!("../static/index.html");
@@ -1136,6 +1137,17 @@ fn now_nanos() -> u64 {
 }
 
 #[derive(Deserialize)]
+struct KindQuery {
+    #[serde(default)]
+    kind: String,
+}
+
+/// Map key for a player's game of a given difficulty.
+fn mine_key(me: &str, kind: mine::Kind) -> (String, String) {
+    (me.to_string(), kind.id().to_string())
+}
+
+#[derive(Deserialize)]
 struct NewForm {
     #[serde(default)]
     kind: String,
@@ -1156,23 +1168,28 @@ async fn mine_new(
     if let Ok(mut games) = st.mine_games.lock() {
         let now = now_nanos();
         // Drop stale games (>12h old) so the map stays small, then replace this
-        // player's game with the fresh one.
+        // player's game of this difficulty with the fresh one.
         games.retain(|_, g| now.saturating_sub(g.created) < 12 * 3600 * 1_000_000_000);
-        games.insert(me, game);
+        games.insert(mine_key(&me, kind), game);
     }
     Json(serde_json::json!({"ok": true, "w": w, "h": h, "mines": mines, "kind": kind.id()}))
 }
 
-/// The player's in-progress game (if any), so the board + timer survive closing
-/// and reopening the tab. Reopening pauses the clock (`repose`); it resumes on
-/// the next reveal.
-async fn mine_state(State(st): State<AppState>, headers: HeaderMap) -> Json<serde_json::Value> {
+/// The player's in-progress game for a difficulty (if any), so the board + timer
+/// survive closing/reopening the tab and switching difficulty tabs. Loading it
+/// pauses the clock (`repose`); it resumes on the next reveal.
+async fn mine_state(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<KindQuery>,
+) -> Json<serde_json::Value> {
     let (me, _) = identity(&headers);
+    let kind = mine::Kind::parse(&q.kind);
     let mut games = match st.mine_games.lock() {
         Ok(g) => g,
         Err(p) => p.into_inner(),
     };
-    match games.get_mut(&me) {
+    match games.get_mut(&mine_key(&me, kind)) {
         Some(g) if !g.over => {
             g.repose();
             let cells: Vec<_> = g
@@ -1189,11 +1206,17 @@ async fn mine_state(State(st): State<AppState>, headers: HeaderMap) -> Json<serd
     }
 }
 
-/// Pause the player's timer (called when the tab is hidden/closed). Idempotent.
-async fn mine_pause(State(st): State<AppState>, headers: HeaderMap) -> Json<serde_json::Value> {
+/// Pause a difficulty's timer (called when the tab is hidden/closed or when
+/// switching to the other difficulty). Idempotent.
+async fn mine_pause(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<KindQuery>,
+) -> Json<serde_json::Value> {
     let (me, _) = identity(&headers);
+    let kind = mine::Kind::parse(&q.kind);
     if let Ok(mut games) = st.mine_games.lock() {
-        if let Some(g) = games.get_mut(&me) {
+        if let Some(g) = games.get_mut(&mine_key(&me, kind)) {
             g.pause();
         }
     }
@@ -1204,6 +1227,8 @@ async fn mine_pause(State(st): State<AppState>, headers: HeaderMap) -> Json<serd
 struct RevealForm {
     r: usize,
     c: usize,
+    #[serde(default)]
+    kind: String,
 }
 
 async fn mine_reveal(
@@ -1212,20 +1237,21 @@ async fn mine_reveal(
     Form(f): Form<RevealForm>,
 ) -> Json<serde_json::Value> {
     let (me, _) = identity(&headers);
+    let key = mine_key(&me, mine::Kind::parse(&f.kind));
     // Reveal under the lock, then release it before any await.
     let outcome = {
         let mut games = match st.mine_games.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        match games.get_mut(&me) {
+        match games.get_mut(&key) {
             Some(g) => {
                 let rv = g.reveal(f.r, f.c);
                 let (won, over) = (g.won, g.over);
                 let (elapsed_ms, running) = (g.active_ms(), g.running);
                 let kind = g.kind;
                 if over {
-                    games.remove(&me);
+                    games.remove(&key);
                 }
                 Some((rv, won, over, elapsed_ms, running, kind))
             }
