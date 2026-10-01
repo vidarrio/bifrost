@@ -76,14 +76,17 @@ fn counts_of(w: usize, h: usize, mines: &[bool]) -> Vec<u8> {
 
 /// A single player's game. The board is generated lazily on the first reveal.
 pub struct Game {
-    pub sso: String,
     pub w: usize,
     pub h: usize,
     pub mines_n: usize,
     pub created: u64,
-    /// When the first cell was revealed (the board generated) — the timer start.
-    /// 0 until the first reveal. Game end − this = the clear/fail duration.
-    pub started: u64,
+    // --- Active-play timer (excludes time while the tab is closed/hidden) ---
+    /// Active play time banked so far, in ms.
+    accumulated_ms: i64,
+    /// Whether the clock is currently running (tab open + playing).
+    pub running: bool,
+    /// Nanos at the start of the current running segment.
+    last_resume: u64,
     mines: Vec<bool>,
     counts: Vec<u8>,
     revealed: Vec<bool>,
@@ -103,15 +106,16 @@ pub enum Reveal {
 }
 
 impl Game {
-    pub fn new(sso: String) -> Self {
+    pub fn new() -> Self {
         let n = W * H;
         Game {
-            sso,
             w: W,
             h: H,
             mines_n: MINES,
             created: now_nanos(),
-            started: 0,
+            accumulated_ms: 0,
+            running: false,
+            last_resume: 0,
             mines: vec![false; n],
             counts: vec![0; n],
             revealed: vec![false; n],
@@ -121,12 +125,50 @@ impl Game {
         }
     }
 
-    /// Milliseconds since the first reveal (0 if the board hasn't been touched).
-    pub fn elapsed_ms(&self) -> i64 {
-        if self.started == 0 {
-            return 0;
+    /// Active play time so far, in ms (banked segments plus the live one if the
+    /// clock is running). Time while paused — tab closed/hidden — isn't counted.
+    pub fn active_ms(&self) -> i64 {
+        self.accumulated_ms + self.live_segment()
+    }
+
+    fn live_segment(&self) -> i64 {
+        if self.running && self.last_resume > 0 {
+            (now_nanos().saturating_sub(self.last_resume) / 1_000_000) as i64
+        } else {
+            0
         }
-        (now_nanos().saturating_sub(self.started) / 1_000_000) as i64
+    }
+
+    /// Bank the running segment into `accumulated_ms` and restart it at now.
+    fn bank(&mut self) {
+        self.accumulated_ms += self.live_segment();
+        self.last_resume = now_nanos();
+    }
+
+    /// Pause the clock, banking the current segment (called when the tab hides).
+    pub fn pause(&mut self) {
+        if !self.over && self.running {
+            self.accumulated_ms += self.live_segment();
+            self.running = false;
+        }
+    }
+
+    /// Stop the clock on reopen WITHOUT banking the trailing segment: if the
+    /// pause beacon was missed (tab closed abruptly), that trailing time is the
+    /// closed-tab gap and must not count. The next reveal resumes the clock.
+    pub fn repose(&mut self) {
+        if !self.over {
+            self.running = false;
+        }
+    }
+
+    /// Every revealed cell as (row, col, adjacent-mine count) — to rebuild the
+    /// board after a reopen.
+    pub fn revealed_cells(&self) -> Vec<(usize, usize, u8)> {
+        (0..self.w * self.h)
+            .filter(|&i| self.revealed[i])
+            .map(|i| (i / self.w, i % self.w, self.counts[i]))
+            .collect()
     }
 
     fn idx(&self, r: usize, c: usize) -> Option<usize> {
@@ -147,14 +189,25 @@ impl Game {
         if self.revealed[i] {
             return Reveal::Invalid;
         }
+        // Timer: first reveal starts it; a reveal after a pause resumes it (the
+        // paused gap isn't counted); otherwise bank the elapsed active time.
         if !self.generated {
             self.generate(i);
             self.generated = true;
-            self.started = now_nanos();
+            self.accumulated_ms = 0;
+            self.running = true;
+            self.last_resume = now_nanos();
+        } else if self.running {
+            self.bank();
+        } else {
+            self.running = true;
+            self.last_resume = now_nanos();
         }
         if self.mines[i] {
             self.over = true;
             self.won = false;
+            self.bank();
+            self.running = false;
             let ms = (0..self.w * self.h)
                 .filter(|&j| self.mines[j])
                 .map(|j| (j / self.w, j % self.w))
@@ -183,6 +236,8 @@ impl Game {
         if revealed_n >= safe_total {
             self.over = true;
             self.won = true;
+            self.bank();
+            self.running = false;
             Reveal::Won(out)
         } else {
             Reveal::Play(out)
@@ -479,7 +534,7 @@ mod tests {
         let n = 30;
         let t = Instant::now();
         for k in 0..n {
-            let mut g = Game::new("t".into());
+            let mut g = Game::new();
             // First click somewhere varied but interior-ish.
             let first = (2 + k % (W - 4)) + W * (2 + (k / (W - 4)) % (H - 4));
             let _ = g.reveal(first / W, first % W);

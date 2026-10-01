@@ -30,7 +30,6 @@ mod render;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 type Shared = Arc<RwLock<ap::Board>>;
 
@@ -40,9 +39,9 @@ struct AppState {
     db: db::Db,
     ap_cfg: Option<ap::ApConfig>,
     genstate: generate::GenState,
-    /// Active minesweeper games by id (server holds the board).
-    mine_games: Arc<Mutex<HashMap<u64, mine::Game>>>,
-    mine_next: Arc<AtomicU64>,
+    /// Active minesweeper games keyed by player (sso). One in-progress board per
+    /// player, held server-side so it survives a tab close/reopen.
+    mine_games: Arc<Mutex<HashMap<String, mine::Game>>>,
 }
 
 const LANDING: &str = include_str!("../static/index.html");
@@ -85,7 +84,6 @@ async fn main() {
         ap_cfg,
         genstate,
         mine_games: Arc::new(Mutex::new(HashMap::new())),
-        mine_next: Arc::new(AtomicU64::new(1)),
     };
     let app = Router::new()
         .route("/health", get(health))
@@ -115,6 +113,8 @@ async fn main() {
         .route("/minesweeper", get(minesweeper_page))
         .route("/minesweeper/new", post(mine_new))
         .route("/minesweeper/reveal", post(mine_reveal))
+        .route("/minesweeper/state", get(mine_state))
+        .route("/minesweeper/pause", post(mine_pause))
         .route("/api/me", get(api_me))
         .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
@@ -1139,21 +1139,57 @@ async fn mine_new(State(st): State<AppState>, headers: HeaderMap) -> Json<serde_
     if !st.db.minesweeper_enabled().await {
         return Json(serde_json::json!({"ok": false, "error": "Minesweeper is disabled."}));
     }
-    let id = st.mine_next.fetch_add(1, Ordering::Relaxed);
-    let game = mine::Game::new(me);
+    let game = mine::Game::new();
     let (w, h, mines) = (game.w, game.h, game.mines_n);
     if let Ok(mut games) = st.mine_games.lock() {
         let now = now_nanos();
-        // Drop finished games and anything older than ~2h so the map stays small.
-        games.retain(|_, g| !g.over && now.saturating_sub(g.created) < 2 * 3600 * 1_000_000_000);
-        games.insert(id, game);
+        // Drop stale games (>12h old) so the map stays small, then replace this
+        // player's game with the fresh one.
+        games.retain(|_, g| now.saturating_sub(g.created) < 12 * 3600 * 1_000_000_000);
+        games.insert(me, game);
     }
-    Json(serde_json::json!({"ok": true, "id": id, "w": w, "h": h, "mines": mines}))
+    Json(serde_json::json!({"ok": true, "w": w, "h": h, "mines": mines}))
+}
+
+/// The player's in-progress game (if any), so the board + timer survive closing
+/// and reopening the tab. Reopening pauses the clock (`repose`); it resumes on
+/// the next reveal.
+async fn mine_state(State(st): State<AppState>, headers: HeaderMap) -> Json<serde_json::Value> {
+    let (me, _) = identity(&headers);
+    let mut games = match st.mine_games.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    match games.get_mut(&me) {
+        Some(g) if !g.over => {
+            g.repose();
+            let cells: Vec<_> = g
+                .revealed_cells()
+                .iter()
+                .map(|(r, c, n)| serde_json::json!({"r": r, "c": c, "n": n}))
+                .collect();
+            Json(serde_json::json!({
+                "active": true, "w": g.w, "h": g.h, "mines": g.mines_n,
+                "cells": cells, "elapsed_ms": g.active_ms(), "running": g.running
+            }))
+        }
+        _ => Json(serde_json::json!({"active": false})),
+    }
+}
+
+/// Pause the player's timer (called when the tab is hidden/closed). Idempotent.
+async fn mine_pause(State(st): State<AppState>, headers: HeaderMap) -> Json<serde_json::Value> {
+    let (me, _) = identity(&headers);
+    if let Ok(mut games) = st.mine_games.lock() {
+        if let Some(g) = games.get_mut(&me) {
+            g.pause();
+        }
+    }
+    Json(serde_json::json!({"ok": true}))
 }
 
 #[derive(Deserialize)]
 struct RevealForm {
-    id: u64,
     r: usize,
     c: usize,
 }
@@ -1170,22 +1206,21 @@ async fn mine_reveal(
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        match games.get_mut(&f.id) {
-            Some(g) if g.sso == me => {
+        match games.get_mut(&me) {
+            Some(g) => {
                 let rv = g.reveal(f.r, f.c);
                 let (won, over) = (g.won, g.over);
-                let duration_ms = if over { g.elapsed_ms() } else { 0 };
+                let (elapsed_ms, running) = (g.active_ms(), g.running);
                 if over {
-                    games.remove(&f.id);
+                    games.remove(&me);
                 }
-                Some((rv, won, over, duration_ms))
+                Some((rv, won, over, elapsed_ms, running))
             }
-            Some(_) => return Json(serde_json::json!({"ok": false, "error": "Not your game."})),
-            None => return Json(serde_json::json!({"ok": false, "error": "No such game."})),
+            None => return Json(serde_json::json!({"ok": false, "error": "No active game."})),
         }
     };
-    let Some((rv, won, over, duration_ms)) = outcome else {
-        return Json(serde_json::json!({"ok": false, "error": "No such game."}));
+    let Some((rv, won, over, elapsed_ms, running)) = outcome else {
+        return Json(serde_json::json!({"ok": false, "error": "No active game."}));
     };
     let mut credits: Option<i64> = None;
     // On a finished game (win or loss), record the result and return fresh stats.
@@ -1197,7 +1232,7 @@ async fn mine_reveal(
             .and_then(|b| b.seed.clone())
             .unwrap_or_default();
         st.db
-            .record_mine_result(&season, &me, won, duration_ms)
+            .record_mine_result(&season, &me, won, elapsed_ms)
             .await;
         if won {
             credits = st.db.add_credits(&season, &me, 1).await.ok();
@@ -1214,19 +1249,23 @@ async fn mine_reveal(
             .collect::<Vec<_>>()
     };
     match rv {
-        mine::Reveal::Play(cells) => {
-            Json(serde_json::json!({"ok": true, "state": "play", "cells": cells_json(&cells)}))
-        }
+        mine::Reveal::Play(cells) => Json(serde_json::json!({
+            "ok": true, "state": "play", "cells": cells_json(&cells),
+            "elapsed_ms": elapsed_ms, "running": running
+        })),
         mine::Reveal::Won(cells) => Json(serde_json::json!({
             "ok": true, "state": "won", "cells": cells_json(&cells),
-            "credits": credits, "stats": stats_html
+            "credits": credits, "stats": stats_html, "elapsed_ms": elapsed_ms, "running": running
         })),
         mine::Reveal::Lost(mines) => {
             let ms: Vec<_> = mines
                 .iter()
                 .map(|(r, c)| serde_json::json!({"r": r, "c": c}))
                 .collect();
-            Json(serde_json::json!({"ok": true, "state": "lost", "mines": ms, "stats": stats_html}))
+            Json(serde_json::json!({
+                "ok": true, "state": "lost", "mines": ms, "stats": stats_html,
+                "elapsed_ms": elapsed_ms, "running": running
+            }))
         }
         mine::Reveal::Invalid => Json(serde_json::json!({"ok": false, "error": "Invalid move."})),
     }

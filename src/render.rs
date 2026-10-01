@@ -1170,7 +1170,7 @@ pub fn minesweeper_page(enabled: bool, credits: i64, stats: &crate::db::MineStat
     }
     b.push_str(&format!(
         r#"<p class="empty">Clear the board without hitting a mine to earn a bonus hint. Every board is solvable by logic alone — no guessing needed. Left-click a cell to reveal, right-click to flag. On a revealed number: left-click chord-reveals its neighbours once you've flagged that many mines, right-click flags all remaining neighbours when they must all be mines. Bonus hints are spent automatically when you hint without enough points.</p>
-<div class="statline">Bonus hints: <b id="credits">{credits}</b> · <span id="minesleft"></span></div>
+<div class="statline">Bonus hints: <b id="credits">{credits}</b> · <span id="minesleft"></span> · ⏱ <b id="mstimer">0:00</b></div>
 <div id="msg" class="inlinemsg"></div>
 <div class="minewrap">
   <div class="mineboard">
@@ -1216,12 +1216,21 @@ const MINE_STYLE: &str = r#"<style>
 
 const MINE_JS: &str = r#"<script>
 (function(){
-var W,H,ID,minesN,over=false,flags=0,cells=[];
+var W,H,minesN,over=false,flags=0,cells=[];
 var grid=document.getElementById('grid'),msg=document.getElementById('msg'),
     minesleft=document.getElementById('minesleft'),creditsEl=document.getElementById('credits'),
-    statsEl=document.getElementById('minestats');
+    statsEl=document.getElementById('minestats'),timerEl=document.getElementById('mstimer');
+// Timer: mirrors the server's active-play clock (which excludes time while the
+// tab is hidden/closed). baseMs is the last value the server reported; while
+// running we add the wall-clock time since that sync.
+var baseMs=0,running=false,syncAt=0;
+function fmtTime(ms){var s=Math.max(0,Math.floor(ms/1000));return Math.floor(s/60)+':'+('0'+(s%60)).slice(-2);}
+function renderTimer(){if(timerEl)timerEl.textContent=fmtTime(baseMs+(running?(Date.now()-syncAt):0));}
+function setTimer(ms,isRunning){if(ms!=null)baseMs=ms;running=!!isRunning;syncAt=Date.now();renderTimer();}
+setInterval(renderTimer,250);
 function post(url,body){return fetch(url,{method:'POST',body:body?new URLSearchParams(body):undefined}).then(function(r){return r.json()});}
 function setStats(h){if(h!=null&&statsEl)statsEl.innerHTML=h;}
+function openCell(cell){var cb=cells[cell.r][cell.c];cb.classList.remove('flag');cb.classList.add('open');if(cell.n>0){cb.textContent=cell.n;cb.setAttribute('data-n',cell.n);}else{cb.textContent='';}}
 function updateMines(){if(minesleft)minesleft.textContent=(minesN-flags)+' mines';}
 function inb(r,c){return r>=0&&r<H&&c>=0&&c<W;}
 function nbrs(r,c){var out=[];for(var dr=-1;dr<=1;dr++)for(var dc=-1;dc<=1;dc++){if((dr||dc)&&inb(r+dr,c+dc))out.push([r+dr,c+dc]);}return out;}
@@ -1269,23 +1278,41 @@ function chordReveal(r,c){
 function reveal(r,c){
  if(over)return Promise.resolve();var btn=cells[r][c];
  if(btn.classList.contains('open')||btn.classList.contains('flag'))return Promise.resolve();
- return post('/minesweeper/reveal',{id:ID,r:r,c:c}).then(function(j){
+ return post('/minesweeper/reveal',{r:r,c:c}).then(function(j){
   if(over)return;
   if(!j.ok){msg.className='inlinemsg bad';msg.textContent=j.error||'Invalid.';return;}
-  if(j.state==='lost'){over=true;(j.mines||[]).forEach(function(m){var mb=cells[m.r][m.c];mb.classList.add('open','mine');mb.textContent='✱';});msg.className='inlinemsg bad';msg.textContent='Boom — try again.';setStats(j.stats);return;}
-  (j.cells||[]).forEach(function(cell){var cb=cells[cell.r][cell.c];cb.classList.remove('flag');cb.classList.add('open');if(cell.n>0){cb.textContent=cell.n;cb.setAttribute('data-n',cell.n);}else{cb.textContent='';}});
+  if(j.state==='lost'){over=true;(j.mines||[]).forEach(function(m){var mb=cells[m.r][m.c];mb.classList.add('open','mine');mb.textContent='✱';});msg.className='inlinemsg bad';msg.textContent='Boom — try again.';setStats(j.stats);setTimer(j.elapsed_ms,false);return;}
+  (j.cells||[]).forEach(openCell);
+  setTimer(j.elapsed_ms,j.running);
   if(j.state==='won'){over=true;msg.className='inlinemsg ok';msg.textContent='Cleared! You earned a bonus hint.';if(j.credits!=null&&creditsEl)creditsEl.textContent=j.credits;setStats(j.stats);}
  }).catch(function(){if(!over){msg.className='inlinemsg bad';msg.textContent='Request failed.';}});
 }
+function startBoard(w,h,mn){W=w;H=h;minesN=mn;over=false;flags=0;buildGrid();updateMines();}
 function newGame(){
- msg.textContent='';msg.className='inlinemsg';over=false;flags=0;
+ msg.textContent='';msg.className='inlinemsg';
  post('/minesweeper/new').then(function(j){
   if(!j.ok){msg.className='inlinemsg bad';msg.textContent=j.error||'Could not start.';grid.innerHTML='';return;}
-  W=j.w;H=j.h;ID=j.id;minesN=j.mines;buildGrid();updateMines();
+  startBoard(j.w,j.h,j.mines);setTimer(0,false);
  }).catch(function(){msg.className='inlinemsg bad';msg.textContent='Could not start.';});
 }
+// On load, resume the player's in-progress board (survives tab close/reopen);
+// the timer comes back paused and resumes on the next reveal.
+function loadGame(){
+ fetch('/minesweeper/state').then(function(r){return r.json()}).then(function(j){
+  if(j&&j.active){startBoard(j.w,j.h,j.mines);(j.cells||[]).forEach(openCell);setTimer(j.elapsed_ms,false);msg.className='inlinemsg';msg.textContent='Resumed your board — click to continue.';}
+  else newGame();
+ }).catch(newGame);
+}
+// Pause the clock when the tab is hidden or closed; it resumes on the next reveal.
+function pauseNow(){
+ if(over)return;
+ setTimer(baseMs+(running?(Date.now()-syncAt):0),false);
+ try{if(!navigator.sendBeacon('/minesweeper/pause'))post('/minesweeper/pause');}catch(e){post('/minesweeper/pause');}
+}
+document.addEventListener('visibilitychange',function(){if(document.visibilityState==='hidden')pauseNow();});
+window.addEventListener('pagehide',pauseNow);
 document.getElementById('newgame').addEventListener('click',newGame);
-newGame();
+loadGame();
 })();
 </script>"#;
 
