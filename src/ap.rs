@@ -694,18 +694,43 @@ pub async fn send_hint(
     name: &str,
     item: &str,
 ) -> Result<Vec<Value>, String> {
+    // (finding_player, location) of a hint, from a stored-hint value (object or
+    // NamedTuple array) or a Hint PrintJSON's NetworkItem `item` field.
+    fn hint_fl(v: &Value) -> Option<(i64, i64)> {
+        if let Some(o) = v.as_object() {
+            Some((o.get("finding_player")?.as_i64()?, o.get("location")?.as_i64()?))
+        } else if let Some(a) = v.as_array() {
+            Some((a.get(1)?.as_i64()?, a.get(2)?.as_i64()?))
+        } else {
+            None
+        }
+    }
+    fn packet_fl(pkt: &Value) -> Option<(i64, i64)> {
+        let it = pkt.get("item")?;
+        if let Some(o) = it.as_object() {
+            Some((o.get("player")?.as_i64()?, o.get("location")?.as_i64()?))
+        } else if let Some(a) = it.as_array() {
+            Some((a.get(2)?.as_i64()?, a.get(1)?.as_i64()?))
+        } else {
+            None
+        }
+    }
+
     let fut = async {
         let (ws, _) = tokio_tungstenite::connect_async(url)
             .await
             .map_err(|e| format!("connect: {e}"))?;
         let (mut tx, mut rx) = ws.split();
         let mut said = false;
-        // For a multi-copy item, AP's `!hint` places the already-FOUND copies too
-        // and broadcasts them first (sorted found-first), then the one unfound
-        // copy it bought. We want to report the useful *unfound* hint, so prefer
-        // it; keep a found hint only as a fallback, and once a hint has arrived
-        // bound the wait briefly to collect the unfound one that follows.
-        let mut found_fallback: Option<Vec<Value>> = None;
+        // Before hinting, snapshot which (finder, location) hints already exist so
+        // we can tell AP's newly-placed copy from the ones it re-broadcasts. AP's
+        // `!hint` re-notifies the existing hints *and* the already-found copies
+        // alongside the one new copy it buys, so without this a repeat of the same
+        // item name would report an old/found copy instead of the fresh one.
+        let mut before: Option<HashSet<(i64, i64)>> = None;
+        let mut hints_key = String::new();
+        // A newly-placed *found* copy, kept only as a last resort.
+        let mut new_found_fallback: Option<Vec<Value>> = None;
         let mut collecting = false;
         loop {
             let next = if collecting {
@@ -746,29 +771,52 @@ pub async fn send_hint(
                         return Err(format!("connection refused: {errs}"));
                     }
                     "Connected" if !said => {
+                        // Fetch our current hints first; hint only after the reply.
+                        let slot = pkt.get("slot").and_then(Value::as_i64).unwrap_or(0);
+                        hints_key = format!("_read_hints_0_{slot}");
+                        let get = json!([{ "cmd": "Get", "keys": [hints_key] }]);
+                        tx.send(Message::Text(get.to_string()))
+                            .await
+                            .map_err(|e| format!("send Get: {e}"))?;
+                    }
+                    "Retrieved" if !said => {
+                        let set: HashSet<(i64, i64)> = pkt
+                            .get("keys")
+                            .and_then(|k| k.get(&hints_key))
+                            .and_then(Value::as_array)
+                            .map(|hs| hs.iter().filter_map(hint_fl).collect())
+                            .unwrap_or_default();
+                        before = Some(set);
                         let say = json!([{ "cmd": "Say", "text": format!("!hint {item}") }]);
                         tx.send(Message::Text(say.to_string()))
                             .await
                             .map_err(|e| format!("send Say: {e}"))?;
                         said = true;
+                        collecting = true;
                     }
                     "PrintJSON" if pkt.get("type").and_then(Value::as_str) == Some("Hint") => {
-                        collecting = true;
                         let Some(data) = pkt.get("data").and_then(Value::as_array) else {
                             continue;
                         };
+                        // Skip hints AP merely re-broadcast (already placed before).
+                        let is_new = match (before.as_ref(), packet_fl(&pkt)) {
+                            (Some(b), Some(fl)) => !b.contains(&fl),
+                            _ => true,
+                        };
+                        if !is_new {
+                            continue;
+                        }
                         if pkt.get("found").and_then(Value::as_bool) == Some(true) {
-                            // A found copy — keep as fallback, wait for an unfound.
-                            found_fallback.get_or_insert_with(|| data.clone());
+                            new_found_fallback.get_or_insert_with(|| data.clone());
                         } else {
-                            return Ok(data.clone()); // the unfound copy — the useful hint
+                            return Ok(data.clone()); // the freshly revealed copy
                         }
                     }
-                    // A CommandResult is the end-of-hint info ("there may be
-                    // more") or a rejection ("can't afford", "did you mean"). A
-                    // points shortfall must be surfaced so the bonus-hint fallback
-                    // can run, even if a found copy was shown; otherwise, if we
-                    // only saw found copies, report one of those.
+                    // CommandResult = end-of-hint info ("there may be more"),
+                    // "previously used" (nothing new — already fully hinted), or a
+                    // rejection. Surface a points shortfall verbatim so the
+                    // bonus-hint fallback can run; otherwise prefer a new found copy
+                    // if that's all we got, else the message itself.
                     "PrintJSON"
                         if pkt.get("type").and_then(Value::as_str) == Some("CommandResult") =>
                     {
@@ -783,87 +831,20 @@ pub async fn send_hint(
                         let shortfall = raw.contains("afford")
                             || raw.contains("not enough")
                             || raw.contains("do not have");
-                        if shortfall || found_fallback.is_none() {
+                        if shortfall || new_found_fallback.is_none() {
                             return Ok(data.clone());
                         }
-                        return Ok(found_fallback.take().unwrap());
+                        return Ok(new_found_fallback.take().unwrap());
                     }
                     _ => {}
                 }
             }
         }
-        found_fallback.ok_or_else(|| "no response".to_string())
+        new_found_fallback.ok_or_else(|| "no response".to_string())
     };
     tokio::time::timeout(Duration::from_secs(8), fut)
         .await
         .map_err(|_| "hint timed out".to_string())?
-}
-
-/// Mark a hint "priority" (the status a normal `!hint` auto-assigns). Used after
-/// a bonus-credit hint, which goes through `/hint_location` and so is tagged
-/// "unspecified" by default — this keeps both paths' hints labelled the same.
-/// Connects AS the receiving slot (only it may update the hint's status) and
-/// sends an `UpdateHint`. Best-effort: cosmetic, so it never fails the hint.
-pub async fn set_hint_priority(
-    url: &str,
-    password: &str,
-    name: &str,
-    finder: i64,
-    location: i64,
-) -> Result<(), String> {
-    const HINT_PRIORITY: i64 = 30;
-    let fut = async {
-        let (ws, _) = tokio_tungstenite::connect_async(url)
-            .await
-            .map_err(|e| format!("connect: {e}"))?;
-        let (mut tx, mut rx) = ws.split();
-        while let Some(msg) = rx.next().await {
-            let msg = msg.map_err(|e| format!("recv: {e}"))?;
-            let text = match msg {
-                Message::Text(t) => t.to_string(),
-                Message::Ping(p) => {
-                    let _ = tx.send(Message::Pong(p)).await;
-                    continue;
-                }
-                Message::Close(_) => return Ok(()),
-                _ => continue,
-            };
-            let packets: Vec<Value> = serde_json::from_str(&text).map_err(|_| "bad json")?;
-            for pkt in packets {
-                match pkt.get("cmd").and_then(Value::as_str).unwrap_or("") {
-                    "RoomInfo" => {
-                        let connect = json!([{
-                            "cmd": "Connect", "game": "", "name": name, "uuid": "bifrost-prio",
-                            "version": {"class": "Version", "major": 0, "minor": 6, "build": 7},
-                            "items_handling": 0, "tags": ["TextOnly"], "slot_data": false,
-                            "password": password,
-                        }]);
-                        tx.send(Message::Text(connect.to_string()))
-                            .await
-                            .map_err(|e| format!("send Connect: {e}"))?;
-                    }
-                    "ConnectionRefused" => return Ok(()),
-                    "Connected" => {
-                        let upd = json!([{
-                            "cmd": "UpdateHint", "location": location,
-                            "player": finder, "status": HINT_PRIORITY,
-                        }]);
-                        tx.send(Message::Text(upd.to_string()))
-                            .await
-                            .map_err(|e| format!("send UpdateHint: {e}"))?;
-                        // Let the server apply it before we drop the connection.
-                        tokio::time::sleep(Duration::from_millis(300)).await;
-                        return Ok(());
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Ok(())
-    };
-    tokio::time::timeout(Duration::from_secs(5), fut)
-        .await
-        .unwrap_or(Ok(()))
 }
 
 /// Run a server command as an admin, over a short-lived connection: connect as
