@@ -799,6 +799,73 @@ pub async fn send_hint(
         .map_err(|_| "hint timed out".to_string())?
 }
 
+/// Mark a hint "priority" (the status a normal `!hint` auto-assigns). Used after
+/// a bonus-credit hint, which goes through `/hint_location` and so is tagged
+/// "unspecified" by default — this keeps both paths' hints labelled the same.
+/// Connects AS the receiving slot (only it may update the hint's status) and
+/// sends an `UpdateHint`. Best-effort: cosmetic, so it never fails the hint.
+pub async fn set_hint_priority(
+    url: &str,
+    password: &str,
+    name: &str,
+    finder: i64,
+    location: i64,
+) -> Result<(), String> {
+    const HINT_PRIORITY: i64 = 30;
+    let fut = async {
+        let (ws, _) = tokio_tungstenite::connect_async(url)
+            .await
+            .map_err(|e| format!("connect: {e}"))?;
+        let (mut tx, mut rx) = ws.split();
+        while let Some(msg) = rx.next().await {
+            let msg = msg.map_err(|e| format!("recv: {e}"))?;
+            let text = match msg {
+                Message::Text(t) => t.to_string(),
+                Message::Ping(p) => {
+                    let _ = tx.send(Message::Pong(p)).await;
+                    continue;
+                }
+                Message::Close(_) => return Ok(()),
+                _ => continue,
+            };
+            let packets: Vec<Value> = serde_json::from_str(&text).map_err(|_| "bad json")?;
+            for pkt in packets {
+                match pkt.get("cmd").and_then(Value::as_str).unwrap_or("") {
+                    "RoomInfo" => {
+                        let connect = json!([{
+                            "cmd": "Connect", "game": "", "name": name, "uuid": "bifrost-prio",
+                            "version": {"class": "Version", "major": 0, "minor": 6, "build": 7},
+                            "items_handling": 0, "tags": ["TextOnly"], "slot_data": false,
+                            "password": password,
+                        }]);
+                        tx.send(Message::Text(connect.to_string()))
+                            .await
+                            .map_err(|e| format!("send Connect: {e}"))?;
+                    }
+                    "ConnectionRefused" => return Ok(()),
+                    "Connected" => {
+                        let upd = json!([{
+                            "cmd": "UpdateHint", "location": location,
+                            "player": finder, "status": HINT_PRIORITY,
+                        }]);
+                        tx.send(Message::Text(upd.to_string()))
+                            .await
+                            .map_err(|e| format!("send UpdateHint: {e}"))?;
+                        // Let the server apply it before we drop the connection.
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    };
+    tokio::time::timeout(Duration::from_secs(5), fut)
+        .await
+        .unwrap_or(Ok(()))
+}
+
 /// Run a server command as an admin, over a short-lived connection: connect as
 /// `connect_name` (any valid slot), `!admin login <admin_password>`, then
 /// `!admin <command>` (e.g. `/send Player Item`, `/hint Player Item`). Returns

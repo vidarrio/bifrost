@@ -490,7 +490,7 @@ async fn hint_post(
                 // item — via /hint_location, so a multi-copy item doesn't reveal
                 // every copy for a single credit. Fall back to /hint by name if
                 // we can't resolve a specific location.
-                let admin_cmd = st
+                let (admin_cmd, target) = st
                     .board
                     .read()
                     .ok()
@@ -501,9 +501,12 @@ async fn hint_post(
                         let (finder, loc) = b.first_unhinted_location(ap_slot, item_id)?;
                         let finder_game = b.slots.get(&finder)?.game.clone();
                         let loc_name = m.location_name(&finder_game, loc)?.to_string();
-                        Some(format!("/hint_location {} {}", b.name_of(finder), loc_name))
+                        Some((
+                            format!("/hint_location {} {}", b.name_of(finder), loc_name),
+                            Some((finder, loc)),
+                        ))
                     })
-                    .unwrap_or_else(|| format!("/hint {name} {}", f.item.trim()));
+                    .unwrap_or_else(|| (format!("/hint {name} {}", f.item.trim()), None));
                 match ap::send_admin(
                     &cfg.url,
                     &cfg.slot,
@@ -531,6 +534,13 @@ async fn hint_post(
                             }));
                         }
                         st.db.spend_credit(&season, &me).await;
+                        // A /hint_location hint defaults to "unspecified"; mark it
+                        // "priority" so it matches a normal points hint's label.
+                        if let Some((finder, loc)) = target {
+                            let _ =
+                                ap::set_hint_priority(&cfg.url, &cfg.password, &name, finder, loc)
+                                    .await;
+                        }
                         let newc = st.db.credits(&season, &me).await;
                         let points = ap::slot_points(&cfg.url, &cfg.password, &name).await;
                         // The admin /hint returns no text on success, so confirm
