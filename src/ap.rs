@@ -232,6 +232,34 @@ pub fn spawn(
     db: crate::db::Db,
     coop: Vec<(String, String)>,
 ) {
+    // Refresh authoritative sent/received totals from the server savefile. An
+    // external tracker only sees live item events, so these counts would reset
+    // on every reconnect and undercount a mid-season board; the savefile holds
+    // the true tallies (location_checks / received_items). Runs independently of
+    // the tracker connection so it survives reconnects.
+    {
+        let board = board.clone();
+        tokio::spawn(async move {
+            loop {
+                match crate::meta::load_counts().await {
+                    Ok(counts) if !counts.is_empty() => {
+                        if let Ok(mut b) = board.write() {
+                            for (slot, c) in &counts {
+                                if let Some(s) = b.slots.get_mut(slot) {
+                                    s.sent = c.sent;
+                                    s.received = c.received;
+                                }
+                            }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("counts refresh failed: {e}"),
+                }
+                tokio::time::sleep(Duration::from_secs(15)).await;
+            }
+        });
+    }
+
     tokio::spawn(async move {
         loop {
             if let Err(e) = run_once(&board, &cfg, &db, &coop).await {
@@ -492,12 +520,10 @@ fn on_printjson(board: &Arc<RwLock<Board>>, pkt: &Value) {
                 .and_then(|i| i.get("item"))
                 .and_then(Value::as_i64)
                 .unwrap_or(0);
-            if let Some(s) = b.slots.get_mut(&src) {
-                s.sent += 1;
-            }
-            if let Some(s) = b.slots.get_mut(&dst) {
-                s.received += 1;
-            }
+            // NB: sent/received totals are set authoritatively from the savefile
+            // (see the counts refresher in `spawn`), not tallied from live events
+            // here — a tracker only sees events while connected, so counting them
+            // would undercount a mid-season or freshly-restarted board.
             // Only surface progression/useful/trap items in the feed to keep it
             // meaningful (filler floods otherwise).
             if flags != 0 {

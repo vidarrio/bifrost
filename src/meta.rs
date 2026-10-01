@@ -12,6 +12,44 @@ const AP_PYTHON: &str = "/srv/archipelago/venv/bin/python";
 const AP_DIR: &str = "/srv/archipelago";
 const META_SCRIPT: &str = "/srv/archipelago/bifrost_meta.py";
 const SEED_ZIP: &str = "/srv/archipelago/output/current.zip";
+const COUNTS_SCRIPT: &str = "/srv/archipelago/bifrost_counts.py";
+
+/// Authoritative sent (checked locations) + received (granted items) for one
+/// AP slot, decoded from the server savefile.
+#[derive(Debug, Default, Deserialize)]
+pub struct SlotCounts {
+    #[serde(default)]
+    pub sent: u64,
+    #[serde(default)]
+    pub received: u64,
+}
+
+/// Read every slot's true sent/received totals from `output/current.apsave`
+/// (blocks on a Python subprocess). Returns an empty map before the server has
+/// written a save.
+pub async fn load_counts() -> Result<HashMap<i64, SlotCounts>, String> {
+    let output = Command::new(AP_PYTHON)
+        .arg(COUNTS_SCRIPT)
+        .current_dir(AP_DIR)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .map_err(|e| format!("spawn counts: {e}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("{}");
+    // Keys are stringified slot numbers; collect into an i64-keyed map.
+    let raw: HashMap<String, SlotCounts> =
+        serde_json::from_str(line.trim()).map_err(|e| format!("parse counts: {e}"))?;
+    Ok(raw
+        .into_iter()
+        .filter_map(|(k, v)| k.parse::<i64>().ok().map(|n| (n, v)))
+        .collect())
+}
 
 #[derive(Debug, Deserialize)]
 pub struct SlotMeta {
