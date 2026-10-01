@@ -1184,7 +1184,7 @@ pub fn minesweeper_page(
         return Html(b);
     }
     b.push_str(&format!(
-        r#"<p class="empty">Clear the board without hitting a mine to earn a bonus hint — worth 1 either way. Every board is solvable by logic alone, no guessing needed, on both difficulties. Left-click a cell to reveal, right-click to flag. On a revealed number: left-click chord-reveals its neighbours once you've flagged that many mines, right-click flags all remaining neighbours when they must all be mines. Bonus hints are spent automatically when you hint without enough points.</p>
+        r#"<p class="empty mineintro">Clear the board without hitting a mine to earn a bonus hint — worth 1 either way. Every board is solvable by logic alone, no guessing needed, on both difficulties. Left-click a cell to reveal, right-click to flag. On a revealed number: left-click chord-reveals its neighbours once you've flagged that many mines, right-click flags all remaining neighbours when they must all be mines. Bonus hints are spent automatically when you hint without enough points.</p>
 <div class="statline">Bonus hints: <b id="credits">{credits}</b> · <span id="minesleft"></span> · ⏱ <b id="mstimer">0:00</b></div>
 <div id="msg" class="inlinemsg"></div>
 <div class="minewrap">
@@ -1211,6 +1211,11 @@ pub fn minesweeper_page(
 }
 
 const MINE_STYLE: &str = r#"<style>
+/* Widen this page (and match the header) so the full expert board fits beside
+   the stats instead of scrolling inside the 900px default column. */
+main{max-width:1180px}
+header .hwrap{max-width:1180px}
+.mineintro{max-width:860px}
 .minewrap{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;margin-top:14px}
 .mineboard{min-width:0}
 .minestats-panel{flex:0 1 220px;min-width:190px;background:var(--panel);border:1px solid var(--bd);border-radius:12px;padding:14px 16px}
@@ -1232,6 +1237,7 @@ const MINE_STYLE: &str = r#"<style>
 .msscroll{overflow:auto;max-width:100%;margin:0 0 10px}
 .msgrid{display:grid;gap:2px;width:max-content}
 .cell{width:28px;height:28px;padding:0;background:var(--panel);border:1px solid var(--bd);border-radius:4px;color:var(--fg);font-family:var(--mono);font-size:14px;font-weight:700;cursor:pointer;line-height:1;text-align:center}
+.msgrid.exp .cell{width:24px;height:24px;font-size:12px;border-radius:3px}
 .cell:hover:not(.open){border-color:var(--accent)}
 .cell.open{background:var(--bg);cursor:default}
 .cell.mine{background:var(--bad);color:#fff;border-color:var(--bad)}
@@ -1270,7 +1276,9 @@ function nbrs(r,c){var out=[];for(var dr=-1;dr<=1;dr++)for(var dc=-1;dc<=1;dc++)
 function numOf(btn){return btn.classList.contains('open')?(parseInt(btn.textContent,10)||0):-1;}
 function surround(r,c){var flagged=0,hidden=[];nbrs(r,c).forEach(function(p){var b=cells[p[0]][p[1]];if(b.classList.contains('flag'))flagged++;else if(!b.classList.contains('open'))hidden.push(p);});return{flagged:flagged,hidden:hidden};}
 function buildGrid(){
- grid.innerHTML='';grid.style.gridTemplateColumns='repeat('+W+',28px)';cells=[];
+ var exp=activeKind==='expert',cs=exp?24:28;
+ grid.className='msgrid'+(exp?' exp':'');
+ grid.innerHTML='';grid.style.gridTemplateColumns='repeat('+W+','+cs+'px)';cells=[];
  for(var r=0;r<H;r++){var row=[];for(var c=0;c<W;c++){
   var btn=document.createElement('button');btn.className='cell';
   (function(r,c,btn){
