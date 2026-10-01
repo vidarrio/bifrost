@@ -1123,8 +1123,9 @@ async fn minesweeper_page(State(st): State<AppState>, headers: HeaderMap) -> Htm
         .and_then(|b| b.seed.clone())
         .unwrap_or_default();
     let credits = st.db.credits(&season, &me).await;
-    let stats = st.db.mine_stats(&season, &me).await;
-    render::minesweeper_page(enabled, credits, &stats)
+    let standard = st.db.mine_stats(&season, &me, "standard").await;
+    let expert = st.db.mine_stats(&season, &me, "expert").await;
+    render::minesweeper_page(enabled, credits, &standard, &expert)
 }
 
 fn now_nanos() -> u64 {
@@ -1134,12 +1135,23 @@ fn now_nanos() -> u64 {
         .unwrap_or(0)
 }
 
-async fn mine_new(State(st): State<AppState>, headers: HeaderMap) -> Json<serde_json::Value> {
+#[derive(Deserialize)]
+struct NewForm {
+    #[serde(default)]
+    kind: String,
+}
+
+async fn mine_new(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<NewForm>,
+) -> Json<serde_json::Value> {
     let (me, _) = identity(&headers);
     if !st.db.minesweeper_enabled().await {
         return Json(serde_json::json!({"ok": false, "error": "Minesweeper is disabled."}));
     }
-    let game = mine::Game::new();
+    let kind = mine::Kind::parse(&f.kind);
+    let game = mine::Game::new(kind);
     let (w, h, mines) = (game.w, game.h, game.mines_n);
     if let Ok(mut games) = st.mine_games.lock() {
         let now = now_nanos();
@@ -1148,7 +1160,7 @@ async fn mine_new(State(st): State<AppState>, headers: HeaderMap) -> Json<serde_
         games.retain(|_, g| now.saturating_sub(g.created) < 12 * 3600 * 1_000_000_000);
         games.insert(me, game);
     }
-    Json(serde_json::json!({"ok": true, "w": w, "h": h, "mines": mines}))
+    Json(serde_json::json!({"ok": true, "w": w, "h": h, "mines": mines, "kind": kind.id()}))
 }
 
 /// The player's in-progress game (if any), so the board + timer survive closing
@@ -1211,19 +1223,22 @@ async fn mine_reveal(
                 let rv = g.reveal(f.r, f.c);
                 let (won, over) = (g.won, g.over);
                 let (elapsed_ms, running) = (g.active_ms(), g.running);
+                let kind = g.kind;
                 if over {
                     games.remove(&me);
                 }
-                Some((rv, won, over, elapsed_ms, running))
+                Some((rv, won, over, elapsed_ms, running, kind))
             }
             None => return Json(serde_json::json!({"ok": false, "error": "No active game."})),
         }
     };
-    let Some((rv, won, over, elapsed_ms, running)) = outcome else {
+    let Some((rv, won, over, elapsed_ms, running, kind)) = outcome else {
         return Json(serde_json::json!({"ok": false, "error": "No active game."}));
     };
     let mut credits: Option<i64> = None;
-    // On a finished game (win or loss), record the result and return fresh stats.
+    // On a finished game (win or loss), record the result (for this board kind)
+    // and return fresh stats for both kinds. A win is worth 1 bonus hint on
+    // either difficulty.
     let stats_html = if over {
         let season = st
             .board
@@ -1232,13 +1247,14 @@ async fn mine_reveal(
             .and_then(|b| b.seed.clone())
             .unwrap_or_default();
         st.db
-            .record_mine_result(&season, &me, won, elapsed_ms)
+            .record_mine_result(&season, &me, kind, won, elapsed_ms)
             .await;
         if won {
             credits = st.db.add_credits(&season, &me, 1).await.ok();
         }
-        let stats = st.db.mine_stats(&season, &me).await;
-        Some(render::mine_stats_html(&stats))
+        let standard = st.db.mine_stats(&season, &me, "standard").await;
+        let expert = st.db.mine_stats(&season, &me, "expert").await;
+        Some(render::mine_stats_html(&standard, &expert))
     } else {
         None
     };

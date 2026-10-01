@@ -154,13 +154,19 @@ impl Db {
                  sso TEXT NOT NULL,
                  won INTEGER NOT NULL,
                  duration_ms INTEGER NOT NULL,
-                 ts INTEGER NOT NULL
+                 ts INTEGER NOT NULL,
+                 kind TEXT NOT NULL DEFAULT 'standard'
                )"#,
         )
         .execute(&pool)
         .await?;
+        // Add `kind` to databases created before board types existed (rows from
+        // back then were all the standard board). Ignore the error if present.
+        let _ = sqlx::query("ALTER TABLE mine_result ADD COLUMN kind TEXT NOT NULL DEFAULT 'standard'")
+            .execute(&pool)
+            .await;
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_mine_result ON mine_result (season, sso)",
+            "CREATE INDEX IF NOT EXISTS idx_mine_result ON mine_result (season, sso, kind)",
         )
         .execute(&pool)
         .await?;
@@ -242,23 +248,32 @@ impl Db {
         matches!(res, Ok(r) if r.rows_affected() > 0)
     }
 
-    /// Record a finished minesweeper game (win or loss, with its duration).
-    pub async fn record_mine_result(&self, season: &str, sso: &str, won: bool, duration_ms: i64) {
+    /// Record a finished minesweeper game (win or loss, with its duration) for a
+    /// given board kind ("standard" / "expert").
+    pub async fn record_mine_result(
+        &self,
+        season: &str,
+        sso: &str,
+        kind: &str,
+        won: bool,
+        duration_ms: i64,
+    ) {
         let _ = sqlx::query(
-            "INSERT INTO mine_result (season, sso, won, duration_ms, ts)
-             VALUES (?, ?, ?, ?, strftime('%s','now'))",
+            "INSERT INTO mine_result (season, sso, kind, won, duration_ms, ts)
+             VALUES (?, ?, ?, ?, ?, strftime('%s','now'))",
         )
         .bind(season)
         .bind(sso)
+        .bind(kind)
         .bind(won as i64)
         .bind(duration_ms)
         .execute(&self.pool)
         .await;
     }
 
-    /// Per-slot/per-season minesweeper stats. Time stats are over wins only (a
-    /// loss has no meaningful clear time); `None` means no wins yet.
-    pub async fn mine_stats(&self, season: &str, sso: &str) -> MineStats {
+    /// Per-slot/per-season/per-kind minesweeper stats. Time stats are over wins
+    /// only (a loss has no meaningful clear time); `None` means no wins yet.
+    pub async fn mine_stats(&self, season: &str, sso: &str, kind: &str) -> MineStats {
         sqlx::query_as::<_, MineStats>(
             r#"SELECT
                  COALESCE(SUM(won), 0)                                    AS wins,
@@ -266,10 +281,11 @@ impl Db {
                  CAST(AVG(CASE WHEN won = 1 THEN duration_ms END) AS INTEGER) AS avg_ms,
                  MIN(CASE WHEN won = 1 THEN duration_ms END)              AS best_ms,
                  MAX(CASE WHEN won = 1 THEN duration_ms END)              AS worst_ms
-               FROM mine_result WHERE season = ? AND sso = ?"#,
+               FROM mine_result WHERE season = ? AND sso = ? AND kind = ?"#,
         )
         .bind(season)
         .bind(sso)
+        .bind(kind)
         .fetch_one(&self.pool)
         .await
         .unwrap_or_default()

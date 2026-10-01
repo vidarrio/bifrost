@@ -17,8 +17,39 @@ pub const H: usize = 16;
 pub const MINES: usize = 40;
 /// Frontier components larger than this aren't enumerated (treated as
 /// unprovable → the board is regenerated). Bounds enumeration cost.
-const ENUM_CAP: usize = 22;
-const GEN_ATTEMPTS: usize = 1200;
+const ENUM_CAP: usize = 24;
+const GEN_ATTEMPTS: usize = 6000;
+
+/// Board difficulty. Dimensions/mine counts follow the classic Minesweeper
+/// presets: standard = intermediate (16×16/40), expert = 30×16/99.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Standard,
+    Expert,
+}
+
+impl Kind {
+    pub fn parse(s: &str) -> Kind {
+        if s == "expert" {
+            Kind::Expert
+        } else {
+            Kind::Standard
+        }
+    }
+    pub fn id(self) -> &'static str {
+        match self {
+            Kind::Standard => "standard",
+            Kind::Expert => "expert",
+        }
+    }
+    /// (width, height, mines).
+    pub fn dims(self) -> (usize, usize, usize) {
+        match self {
+            Kind::Standard => (W, H, MINES),
+            Kind::Expert => (30, 16, 99),
+        }
+    }
+}
 
 /// splitmix64 — a tiny PRNG so we don't pull in a dependency.
 struct Rng(u64);
@@ -76,6 +107,8 @@ fn counts_of(w: usize, h: usize, mines: &[bool]) -> Vec<u8> {
 
 /// A single player's game. The board is generated lazily on the first reveal.
 pub struct Game {
+    /// Board difficulty id ("standard" / "expert"), recorded with each result.
+    pub kind: &'static str,
     pub w: usize,
     pub h: usize,
     pub mines_n: usize,
@@ -106,12 +139,14 @@ pub enum Reveal {
 }
 
 impl Game {
-    pub fn new() -> Self {
-        let n = W * H;
+    pub fn new(kind: Kind) -> Self {
+        let (w, h, mines_n) = kind.dims();
+        let n = w * h;
         Game {
-            w: W,
-            h: H,
-            mines_n: MINES,
+            kind: kind.id(),
+            w,
+            h,
+            mines_n,
             created: now_nanos(),
             accumulated_ms: 0,
             running: false,
@@ -529,26 +564,37 @@ mod tests {
     use super::*;
     use std::time::Instant;
 
-    #[test]
-    fn boards_are_no_guess_and_fast() {
-        let n = 30;
+    fn check_kind(kind: Kind, n: usize, budget_ms: u128) {
+        let (w, h, mines) = kind.dims();
         let t = Instant::now();
         for k in 0..n {
-            let mut g = Game::new();
+            let mut g = Game::new(kind);
             // First click somewhere varied but interior-ish.
-            let first = (2 + k % (W - 4)) + W * (2 + (k / (W - 4)) % (H - 4));
-            let _ = g.reveal(first / W, first % W);
+            let first = (2 + k % (w - 4)) + w * (2 + (k / (w - 4)) % (h - 4));
+            let _ = g.reveal(first / w, first % w);
             // The generated board must be solvable from that first click.
             assert!(
                 solvable(g.w, g.h, &g.mines, &g.counts, first),
-                "generated board {k} required a guess"
+                "generated {} board {k} required a guess",
+                kind.id()
             );
         }
         let ms = t.elapsed().as_millis();
         assert!(
-            ms < 20000,
-            "generation too slow: {ms}ms for {n} {W}x{H}/{MINES} boards"
+            ms < budget_ms,
+            "{} generation too slow: {ms}ms for {n} {w}x{h}/{mines} boards",
+            kind.id()
         );
-        eprintln!("{n} no-guess {W}x{H}/{MINES} boards in {ms}ms");
+        eprintln!("{n} no-guess {w}x{h}/{mines} ({}) boards in {ms}ms", kind.id());
+    }
+
+    #[test]
+    fn standard_boards_are_no_guess_and_fast() {
+        check_kind(Kind::Standard, 30, 20000);
+    }
+
+    #[test]
+    fn expert_boards_are_no_guess() {
+        check_kind(Kind::Expert, 15, 60000);
     }
 }
