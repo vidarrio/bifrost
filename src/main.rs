@@ -1022,6 +1022,21 @@ async fn admin_console(
         return Json(serde_json::json!({"ok": false, "output": "Admins only."}));
     }
     let cmd = f.cmd.trim().to_string();
+    // A plain `/send <player> <item>` grants a duplicate and leaves the item's
+    // location (and any hint) untouched. If that item has an active hint, deliver
+    // it from its real location instead (`/send_location`), which also marks the
+    // hint found — matching the expectation that sending an item resolves it.
+    let effective = st
+        .board
+        .read()
+        .ok()
+        .and_then(|b| {
+            let rest = cmd.strip_prefix("/send ")?.trim();
+            let (player, item) = rest.split_once(char::is_whitespace)?;
+            let (finder, loc) = b.send_to_location(player.trim(), item.trim())?;
+            Some(format!("/send_location {finder} {loc}"))
+        })
+        .unwrap_or_else(|| cmd.clone());
     let output = match st.ap_cfg.as_ref() {
         Some(cfg) => {
             match ap::send_admin(
@@ -1029,7 +1044,7 @@ async fn admin_console(
                 &cfg.slot,
                 &cfg.password,
                 &cfg.admin_password,
-                &cmd,
+                &effective,
             )
             .await
             {

@@ -188,6 +188,37 @@ impl Board {
         names
     }
 
+    /// For an admin `/send <player> <item>` of an item that has an active
+    /// (unfound) hint, the `/send_location <finder> <location>` that delivers it
+    /// from its real spot — which also checks that location, so the hint resolves
+    /// to "found". Returns the (finder connect-name, location name). Plain `/send`
+    /// instead grants a duplicate and leaves the location (and hint) untouched.
+    pub fn send_to_location(&self, player_arg: &str, item_arg: &str) -> Option<(String, String)> {
+        let m = self.meta.as_ref()?;
+        // Resolve the player to a slot by connect name (exact, case-insensitive).
+        let (&pslot, pstate) = self
+            .slots
+            .iter()
+            .find(|(_, s)| s.name.eq_ignore_ascii_case(player_arg))?;
+        // Resolve the item id within that player's game (exact, case-insensitive).
+        let item_id = m.item_id_by_name(&pstate.game, item_arg).or_else(|| {
+            m.item_names
+                .get(&pstate.game)?
+                .iter()
+                .find(|(_, n)| n.eq_ignore_ascii_case(item_arg))
+                .map(|(id, _)| *id)
+        })?;
+        // First active (unfound) hint for this item going to this player.
+        let h = pstate
+            .hint_list
+            .iter()
+            .find(|h| h.receiving == pslot && h.item == item_id && !h.found)?;
+        let finder_name = self.slots.get(&h.finding)?.name.clone();
+        let finder_game = &self.slots.get(&h.finding)?.game;
+        let loc_name = m.location_name(finder_game, h.location)?.to_string();
+        Some((finder_name, loc_name))
+    }
+
     /// The first copy of `item_id` (in placement order) that hasn't been hinted
     /// or found — as (finder_slot, location_id). Used to hint exactly one copy.
     pub fn first_unhinted_location(&self, ap_slot: i64, item_id: i64) -> Option<(i64, i64)> {
@@ -923,8 +954,13 @@ pub async fn send_admin(
                             continue;
                         };
                         if collecting {
-                            // Server command output comes back as AdminCommandResult.
-                            if ty == "AdminCommandResult" || ty == "CommandResult" {
+                            // Command output comes back as AdminCommandResult, but
+                            // many commands instead *broadcast* their effect: /send a
+                            // plain text PrintJSON ("Cheat console: sending …"),
+                            // /send_location an ItemSend, /hint a Hint, etc. Capture
+                            // every broadcast except plain player Chat so the console
+                            // shows what happened. (`!admin …` isn't echoed to chat.)
+                            if ty != "Chat" {
                                 out.push(data.clone());
                             }
                         } else if ty == "CommandResult" {
