@@ -700,7 +700,23 @@ pub async fn send_hint(
             .map_err(|e| format!("connect: {e}"))?;
         let (mut tx, mut rx) = ws.split();
         let mut said = false;
-        while let Some(msg) = rx.next().await {
+        // For a multi-copy item, AP's `!hint` places the already-FOUND copies too
+        // and broadcasts them first (sorted found-first), then the one unfound
+        // copy it bought. We want to report the useful *unfound* hint, so prefer
+        // it; keep a found hint only as a fallback, and once a hint has arrived
+        // bound the wait briefly to collect the unfound one that follows.
+        let mut found_fallback: Option<Vec<Value>> = None;
+        let mut collecting = false;
+        loop {
+            let next = if collecting {
+                match tokio::time::timeout(Duration::from_millis(1200), rx.next()).await {
+                    Ok(x) => x,
+                    Err(_) => break, // nothing more coming soon
+                }
+            } else {
+                rx.next().await
+            };
+            let Some(msg) = next else { break };
             let msg = msg.map_err(|e| format!("recv: {e}"))?;
             let text = match msg {
                 Message::Text(t) => t.to_string(),
@@ -736,25 +752,47 @@ pub async fn send_hint(
                             .map_err(|e| format!("send Say: {e}"))?;
                         said = true;
                     }
-                    // A rejection comes back as CommandResult ("can't afford",
-                    // "did you mean"); a *successful* hint comes back as a Hint
-                    // PrintJSON (no CommandResult) — accept either, or we hang
-                    // until the timeout on every hint that actually lands.
+                    "PrintJSON" if pkt.get("type").and_then(Value::as_str) == Some("Hint") => {
+                        collecting = true;
+                        let Some(data) = pkt.get("data").and_then(Value::as_array) else {
+                            continue;
+                        };
+                        if pkt.get("found").and_then(Value::as_bool) == Some(true) {
+                            // A found copy — keep as fallback, wait for an unfound.
+                            found_fallback.get_or_insert_with(|| data.clone());
+                        } else {
+                            return Ok(data.clone()); // the unfound copy — the useful hint
+                        }
+                    }
+                    // A CommandResult is the end-of-hint info ("there may be
+                    // more") or a rejection ("can't afford", "did you mean"). A
+                    // points shortfall must be surfaced so the bonus-hint fallback
+                    // can run, even if a found copy was shown; otherwise, if we
+                    // only saw found copies, report one of those.
                     "PrintJSON"
-                        if matches!(
-                            pkt.get("type").and_then(Value::as_str),
-                            Some("CommandResult") | Some("Hint")
-                        ) =>
+                        if pkt.get("type").and_then(Value::as_str) == Some("CommandResult") =>
                     {
-                        if let Some(data) = pkt.get("data").and_then(Value::as_array) {
+                        let Some(data) = pkt.get("data").and_then(Value::as_array) else {
+                            continue;
+                        };
+                        let raw: String = data
+                            .iter()
+                            .filter_map(|p| p.get("text").and_then(Value::as_str))
+                            .collect::<String>()
+                            .to_lowercase();
+                        let shortfall = raw.contains("afford")
+                            || raw.contains("not enough")
+                            || raw.contains("do not have");
+                        if shortfall || found_fallback.is_none() {
                             return Ok(data.clone());
                         }
+                        return Ok(found_fallback.take().unwrap());
                     }
                     _ => {}
                 }
             }
         }
-        Err("no response".to_string())
+        found_fallback.ok_or_else(|| "no response".to_string())
     };
     tokio::time::timeout(Duration::from_secs(8), fut)
         .await
