@@ -81,6 +81,9 @@ pub struct Game {
     pub h: usize,
     pub mines_n: usize,
     pub created: u64,
+    /// When the first cell was revealed (the board generated) — the timer start.
+    /// 0 until the first reveal. Game end − this = the clear/fail duration.
+    pub started: u64,
     mines: Vec<bool>,
     counts: Vec<u8>,
     revealed: Vec<bool>,
@@ -108,6 +111,7 @@ impl Game {
             h: H,
             mines_n: MINES,
             created: now_nanos(),
+            started: 0,
             mines: vec![false; n],
             counts: vec![0; n],
             revealed: vec![false; n],
@@ -115,6 +119,14 @@ impl Game {
             over: false,
             won: false,
         }
+    }
+
+    /// Milliseconds since the first reveal (0 if the board hasn't been touched).
+    pub fn elapsed_ms(&self) -> i64 {
+        if self.started == 0 {
+            return 0;
+        }
+        (now_nanos().saturating_sub(self.started) / 1_000_000) as i64
     }
 
     fn idx(&self, r: usize, c: usize) -> Option<usize> {
@@ -138,6 +150,7 @@ impl Game {
         if !self.generated {
             self.generate(i);
             self.generated = true;
+            self.started = now_nanos();
         }
         if self.mines[i] {
             self.over = true;

@@ -1126,9 +1126,40 @@ pub fn hint_rows(
     out
 }
 
+/// A duration in milliseconds as `M:SS`.
+fn fmt_ms(ms: i64) -> String {
+    let s = ms / 1000;
+    format!("{}:{:02}", s / 60, s % 60)
+}
+
+/// The stats panel body — reused for the initial page and the live refresh the
+/// reveal endpoint returns when a game ends.
+pub fn mine_stats_html(st: &crate::db::MineStats) -> String {
+    let time = |o: Option<i64>| o.map(fmt_ms).unwrap_or_else(|| "—".to_string());
+    let rate = if st.total() == 0 {
+        "—".to_string()
+    } else {
+        format!("{}%", st.success_pct())
+    };
+    format!(
+        r#"<div class="mstat"><span>Completed</span><b>{}</b></div>
+<div class="mstat"><span>Failures</span><b>{}</b></div>
+<div class="mstat"><span>Success rate</span><b>{}</b></div>
+<div class="mstat sep"><span>Best time</span><b>{}</b></div>
+<div class="mstat"><span>Average time</span><b>{}</b></div>
+<div class="mstat"><span>Worst time</span><b>{}</b></div>"#,
+        st.wins,
+        st.losses,
+        rate,
+        time(st.best_ms),
+        time(st.avg_ms),
+        time(st.worst_ms),
+    )
+}
+
 /// The minesweeper minigame page: a server-authoritative board that awards a
 /// bonus-hint credit on a full clear.
-pub fn minesweeper_page(enabled: bool, credits: i64) -> Html<String> {
+pub fn minesweeper_page(enabled: bool, credits: i64, stats: &crate::db::MineStats) -> Html<String> {
     let mut b = page_head(None);
     b.push_str(r#"<h1>Minesweeper</h1><div class="crumb"><a href="/board">← board</a></div>"#);
     if !enabled {
@@ -1141,8 +1172,18 @@ pub fn minesweeper_page(enabled: bool, credits: i64) -> Html<String> {
         r#"<p class="empty">Clear the board without hitting a mine to earn a bonus hint. Every board is solvable by logic alone — no guessing needed. Left-click a cell to reveal, right-click to flag. On a revealed number: left-click chord-reveals its neighbours once you've flagged that many mines, right-click flags all remaining neighbours when they must all be mines. Bonus hints are spent automatically when you hint without enough points.</p>
 <div class="statline">Bonus hints: <b id="credits">{credits}</b> · <span id="minesleft"></span></div>
 <div id="msg" class="inlinemsg"></div>
-<div class="msscroll"><div id="grid" class="msgrid"></div></div>
-<div class="btnrow"><button id="newgame" class="ghost">New game</button></div>"#
+<div class="minewrap">
+  <div class="mineboard">
+    <div class="msscroll"><div id="grid" class="msgrid"></div></div>
+    <div class="btnrow"><button id="newgame" class="ghost">New game</button></div>
+  </div>
+  <aside class="minestats-panel">
+    <h3>Your stats</h3>
+    <div id="minestats" class="minestats">{stats}</div>
+    <p class="mstatnote">This season. Times are for cleared boards.</p>
+  </aside>
+</div>"#,
+        stats = mine_stats_html(stats),
     ));
     b.push_str(MINE_STYLE);
     b.push_str(MINE_JS);
@@ -1151,7 +1192,17 @@ pub fn minesweeper_page(enabled: bool, credits: i64) -> Html<String> {
 }
 
 const MINE_STYLE: &str = r#"<style>
-.msscroll{overflow:auto;max-width:100%;margin:14px 0}
+.minewrap{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;margin-top:14px}
+.mineboard{min-width:0}
+.minestats-panel{flex:0 1 220px;min-width:190px;background:var(--panel);border:1px solid var(--bd);border-radius:12px;padding:14px 16px}
+.minestats-panel h3{margin:0 0 12px;font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+.minestats{display:grid;gap:9px}
+.mstat{display:flex;justify-content:space-between;align-items:baseline;gap:16px;font-size:13.5px}
+.mstat>span{color:var(--muted)}
+.mstat>b{font-family:var(--mono);font-size:14px}
+.mstat.sep{border-top:1px solid var(--bd);padding-top:9px;margin-top:2px}
+.mstatnote{color:var(--muted);font-size:11px;margin:14px 0 0;line-height:1.4}
+.msscroll{overflow:auto;max-width:100%;margin:0 0 10px}
 .msgrid{display:grid;gap:2px;width:max-content}
 .cell{width:28px;height:28px;padding:0;background:var(--panel);border:1px solid var(--bd);border-radius:4px;color:var(--fg);font-family:var(--mono);font-size:14px;font-weight:700;cursor:pointer;line-height:1;text-align:center}
 .cell:hover:not(.open){border-color:var(--accent)}
@@ -1167,8 +1218,10 @@ const MINE_JS: &str = r#"<script>
 (function(){
 var W,H,ID,minesN,over=false,flags=0,cells=[];
 var grid=document.getElementById('grid'),msg=document.getElementById('msg'),
-    minesleft=document.getElementById('minesleft'),creditsEl=document.getElementById('credits');
+    minesleft=document.getElementById('minesleft'),creditsEl=document.getElementById('credits'),
+    statsEl=document.getElementById('minestats');
 function post(url,body){return fetch(url,{method:'POST',body:body?new URLSearchParams(body):undefined}).then(function(r){return r.json()});}
+function setStats(h){if(h!=null&&statsEl)statsEl.innerHTML=h;}
 function updateMines(){if(minesleft)minesleft.textContent=(minesN-flags)+' mines';}
 function inb(r,c){return r>=0&&r<H&&c>=0&&c<W;}
 function nbrs(r,c){var out=[];for(var dr=-1;dr<=1;dr++)for(var dc=-1;dc<=1;dc++){if((dr||dc)&&inb(r+dr,c+dc))out.push([r+dr,c+dc]);}return out;}
@@ -1219,9 +1272,9 @@ function reveal(r,c){
  return post('/minesweeper/reveal',{id:ID,r:r,c:c}).then(function(j){
   if(over)return;
   if(!j.ok){msg.className='inlinemsg bad';msg.textContent=j.error||'Invalid.';return;}
-  if(j.state==='lost'){over=true;(j.mines||[]).forEach(function(m){var mb=cells[m.r][m.c];mb.classList.add('open','mine');mb.textContent='✱';});msg.className='inlinemsg bad';msg.textContent='Boom — try again.';return;}
+  if(j.state==='lost'){over=true;(j.mines||[]).forEach(function(m){var mb=cells[m.r][m.c];mb.classList.add('open','mine');mb.textContent='✱';});msg.className='inlinemsg bad';msg.textContent='Boom — try again.';setStats(j.stats);return;}
   (j.cells||[]).forEach(function(cell){var cb=cells[cell.r][cell.c];cb.classList.remove('flag');cb.classList.add('open');if(cell.n>0){cb.textContent=cell.n;cb.setAttribute('data-n',cell.n);}else{cb.textContent='';}});
-  if(j.state==='won'){over=true;msg.className='inlinemsg ok';msg.textContent='Cleared! You earned a bonus hint.';if(j.credits!=null&&creditsEl)creditsEl.textContent=j.credits;}
+  if(j.state==='won'){over=true;msg.className='inlinemsg ok';msg.textContent='Cleared! You earned a bonus hint.';if(j.credits!=null&&creditsEl)creditsEl.textContent=j.credits;setStats(j.stats);}
  }).catch(function(){if(!over){msg.className='inlinemsg bad';msg.textContent='Request failed.';}});
 }
 function newGame(){

@@ -1123,7 +1123,8 @@ async fn minesweeper_page(State(st): State<AppState>, headers: HeaderMap) -> Htm
         .and_then(|b| b.seed.clone())
         .unwrap_or_default();
     let credits = st.db.credits(&season, &me).await;
-    render::minesweeper_page(enabled, credits)
+    let stats = st.db.mine_stats(&season, &me).await;
+    render::minesweeper_page(enabled, credits, &stats)
 }
 
 fn now_nanos() -> u64 {
@@ -1173,28 +1174,39 @@ async fn mine_reveal(
             Some(g) if g.sso == me => {
                 let rv = g.reveal(f.r, f.c);
                 let (won, over) = (g.won, g.over);
+                let duration_ms = if over { g.elapsed_ms() } else { 0 };
                 if over {
                     games.remove(&f.id);
                 }
-                Some((rv, won))
+                Some((rv, won, over, duration_ms))
             }
             Some(_) => return Json(serde_json::json!({"ok": false, "error": "Not your game."})),
             None => return Json(serde_json::json!({"ok": false, "error": "No such game."})),
         }
     };
-    let Some((rv, won)) = outcome else {
+    let Some((rv, won, over, duration_ms)) = outcome else {
         return Json(serde_json::json!({"ok": false, "error": "No such game."}));
     };
     let mut credits: Option<i64> = None;
-    if won {
+    // On a finished game (win or loss), record the result and return fresh stats.
+    let stats_html = if over {
         let season = st
             .board
             .read()
             .ok()
             .and_then(|b| b.seed.clone())
             .unwrap_or_default();
-        credits = st.db.add_credits(&season, &me, 1).await.ok();
-    }
+        st.db
+            .record_mine_result(&season, &me, won, duration_ms)
+            .await;
+        if won {
+            credits = st.db.add_credits(&season, &me, 1).await.ok();
+        }
+        let stats = st.db.mine_stats(&season, &me).await;
+        Some(render::mine_stats_html(&stats))
+    } else {
+        None
+    };
     let cells_json = |cells: &[(usize, usize, u8)]| {
         cells
             .iter()
@@ -1206,14 +1218,15 @@ async fn mine_reveal(
             Json(serde_json::json!({"ok": true, "state": "play", "cells": cells_json(&cells)}))
         }
         mine::Reveal::Won(cells) => Json(serde_json::json!({
-            "ok": true, "state": "won", "cells": cells_json(&cells), "credits": credits
+            "ok": true, "state": "won", "cells": cells_json(&cells),
+            "credits": credits, "stats": stats_html
         })),
         mine::Reveal::Lost(mines) => {
             let ms: Vec<_> = mines
                 .iter()
                 .map(|(r, c)| serde_json::json!({"r": r, "c": c}))
                 .collect();
-            Json(serde_json::json!({"ok": true, "state": "lost", "mines": ms}))
+            Json(serde_json::json!({"ok": true, "state": "lost", "mines": ms, "stats": stats_html}))
         }
         mine::Reveal::Invalid => Json(serde_json::json!({"ok": false, "error": "Invalid move."})),
     }

@@ -22,6 +22,32 @@ pub struct SlotRow {
     pub claimed_by: Option<String>,
 }
 
+/// Aggregated minesweeper stats for one player in one season. Time fields are
+/// over wins only and are `None` until there's a win.
+#[derive(Debug, Default, FromRow, Clone)]
+pub struct MineStats {
+    pub wins: i64,
+    pub losses: i64,
+    pub avg_ms: Option<i64>,
+    pub best_ms: Option<i64>,
+    pub worst_ms: Option<i64>,
+}
+
+impl MineStats {
+    pub fn total(&self) -> i64 {
+        self.wins + self.losses
+    }
+    /// Success rate as a whole-number percentage (0 when nothing played).
+    pub fn success_pct(&self) -> i64 {
+        let t = self.total();
+        if t == 0 {
+            0
+        } else {
+            (self.wins * 100) / t
+        }
+    }
+}
+
 /// Result of an attempted claim under the one-slot-per-player rule.
 pub enum ClaimOutcome {
     Ok,
@@ -120,6 +146,24 @@ impl Db {
         )
         .execute(&pool)
         .await?;
+        // One row per finished minesweeper game, for per-slot/per-season stats.
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS mine_result (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 season TEXT NOT NULL,
+                 sso TEXT NOT NULL,
+                 won INTEGER NOT NULL,
+                 duration_ms INTEGER NOT NULL,
+                 ts INTEGER NOT NULL
+               )"#,
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_mine_result ON mine_result (season, sso)",
+        )
+        .execute(&pool)
+        .await?;
         Ok(Self { pool })
     }
 
@@ -196,6 +240,39 @@ impl Db {
         .execute(&self.pool)
         .await;
         matches!(res, Ok(r) if r.rows_affected() > 0)
+    }
+
+    /// Record a finished minesweeper game (win or loss, with its duration).
+    pub async fn record_mine_result(&self, season: &str, sso: &str, won: bool, duration_ms: i64) {
+        let _ = sqlx::query(
+            "INSERT INTO mine_result (season, sso, won, duration_ms, ts)
+             VALUES (?, ?, ?, ?, strftime('%s','now'))",
+        )
+        .bind(season)
+        .bind(sso)
+        .bind(won as i64)
+        .bind(duration_ms)
+        .execute(&self.pool)
+        .await;
+    }
+
+    /// Per-slot/per-season minesweeper stats. Time stats are over wins only (a
+    /// loss has no meaningful clear time); `None` means no wins yet.
+    pub async fn mine_stats(&self, season: &str, sso: &str) -> MineStats {
+        sqlx::query_as::<_, MineStats>(
+            r#"SELECT
+                 COALESCE(SUM(won), 0)                                    AS wins,
+                 COALESCE(SUM(1 - won), 0)                                AS losses,
+                 CAST(AVG(CASE WHEN won = 1 THEN duration_ms END) AS INTEGER) AS avg_ms,
+                 MIN(CASE WHEN won = 1 THEN duration_ms END)              AS best_ms,
+                 MAX(CASE WHEN won = 1 THEN duration_ms END)              AS worst_ms
+               FROM mine_result WHERE season = ? AND sso = ?"#,
+        )
+        .bind(season)
+        .bind(sso)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or_default()
     }
 
     /// Delete every signup submission, returning their stored file paths so the
