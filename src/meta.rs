@@ -14,14 +14,15 @@ const META_SCRIPT: &str = "/srv/archipelago/bifrost_meta.py";
 const SEED_ZIP: &str = "/srv/archipelago/output/current.zip";
 const COUNTS_SCRIPT: &str = "/srv/archipelago/bifrost_counts.py";
 
-/// Authoritative sent (checked locations) + received (granted items) for one
-/// AP slot, decoded from the server savefile.
+/// Authoritative save state for one AP slot: how many locations it has checked
+/// (`sent`) and the items it has been granted (`items`, each `[item, location,
+/// finder]`). The received count is `items.len()`.
 #[derive(Debug, Default, Deserialize)]
 pub struct SlotCounts {
     #[serde(default)]
     pub sent: u64,
     #[serde(default)]
-    pub received: u64,
+    pub items: Vec<[i64; 3]>,
 }
 
 /// Read every slot's true sent/received totals from `output/current.apsave`

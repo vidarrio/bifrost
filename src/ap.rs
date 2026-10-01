@@ -36,6 +36,10 @@ pub struct SlotState {
     pub hint_list: Vec<HintRaw>,
     pub sent: u64,
     pub received: u64,
+    /// Every item this slot has been granted, as (item, location, finder) —
+    /// from the savefile (see the counts refresher). Rendered as the game
+    /// page's "found items" list in the same format as hints.
+    pub received_items: Vec<(i64, i64, i64)>,
 }
 
 #[derive(Clone)]
@@ -99,6 +103,9 @@ pub struct ApLive {
     pub items_elsewhere: u32,
     /// Hints for items hinted to be in this slot's world (with identity).
     pub hint_views: Vec<HintView>,
+    /// Every item this slot has received, as found HintViews (item @ location ·
+    /// finder ✓) — the complete "found" log, a superset of the found hints.
+    pub found_items: Vec<HintView>,
 }
 
 /// An owned copy of what the pages need to render, taken under one short lock.
@@ -178,6 +185,30 @@ impl Board {
                         });
                     }
                 }
+                // Every item this slot has received, rendered like a found hint
+                // ("item @ location · finder ✓"): item named in this slot's game,
+                // location in the finder's game.
+                let mut found_items = Vec::new();
+                if let Some(m) = self.meta.as_ref() {
+                    for (item, location, finder) in &s.received_items {
+                        let item_name = m.item_name(&s.game, *item).unwrap_or("?");
+                        let find_game = self
+                            .slots
+                            .get(finder)
+                            .map(|x| x.game.as_str())
+                            .unwrap_or("");
+                        let loc = m.location_name(find_game, *location).unwrap_or("?");
+                        let finder_name = self.name_of(*finder);
+                        found_items.push(HintView {
+                            finding: *finder,
+                            location: *location,
+                            item: *item,
+                            receiving: *n,
+                            found: true,
+                            text: format!("{item_name} @ {loc} · {finder_name} ✓"),
+                        });
+                    }
+                }
                 (
                     *n,
                     ApLive {
@@ -187,6 +218,7 @@ impl Board {
                         world_size,
                         items_elsewhere,
                         hint_views,
+                        found_items,
                     },
                 )
             })
@@ -244,10 +276,15 @@ pub fn spawn(
                 match crate::meta::load_counts().await {
                     Ok(counts) if !counts.is_empty() => {
                         if let Ok(mut b) = board.write() {
-                            for (slot, c) in &counts {
-                                if let Some(s) = b.slots.get_mut(slot) {
+                            for (slot, c) in counts {
+                                if let Some(s) = b.slots.get_mut(&slot) {
                                     s.sent = c.sent;
-                                    s.received = c.received;
+                                    s.received = c.items.len() as u64;
+                                    s.received_items = c
+                                        .items
+                                        .iter()
+                                        .map(|a| (a[0], a[1], a[2]))
+                                        .collect();
                                 }
                             }
                         }

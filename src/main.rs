@@ -573,13 +573,14 @@ async fn game_hints(
     };
     let prios = live_priorities(&st, &snap, &season).await;
     let can_prioritize = is_admin || st.db.claims_ap_slot(&season, &me, ap_slot).await;
-    let views = snap
+    let (views, found_items) = snap
         .ap
         .get(&ap_slot)
-        .map(|a| a.hint_views.clone())
+        .map(|a| (a.hint_views.clone(), a.found_items.clone()))
         .unwrap_or_default();
     Html(render::hint_rows(
         &views,
+        &found_items,
         &prios,
         &format!("/game/{ap_slot}"),
         can_prioritize,

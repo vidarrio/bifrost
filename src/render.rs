@@ -1026,7 +1026,13 @@ pub fn game_page(
     out.push_str(
         r#"<h2>Hints for this game's items</h2><p class="empty" style="margin-top:-4px">Where this slot's items are — in its own or others' worlds.</p><div id="worldhints">"#,
     );
-    out.push_str(&hint_rows(&live.hint_views, prios, &back, can_prioritize));
+    out.push_str(&hint_rows(
+        &live.hint_views,
+        &live.found_items,
+        prios,
+        &back,
+        can_prioritize,
+    ));
     out.push_str("</div>");
 
     out.push_str("</main></body></html>");
@@ -1037,17 +1043,25 @@ pub fn game_page(
 /// served as a fragment for live refresh after a hint.
 pub fn hint_rows(
     views: &[crate::ap::HintView],
+    found_items: &[crate::ap::HintView],
     prios: &std::collections::HashSet<(i64, i64, i64)>,
     back: &str,
     can_prioritize: bool,
 ) -> String {
-    if views.is_empty() {
+    // Active list = hints whose item is not yet found (these carry the
+    // prioritize toggle). The Found section = every item the slot has received
+    // (`found_items`), rendered like a found hint; it's a superset of the found
+    // hints. Before the savefile has been read `found_items` is empty, so fall
+    // back to the found hints from the live tracker.
+    let mut active: Vec<&crate::ap::HintView> = views.iter().filter(|h| !h.found).collect();
+    let mut found: Vec<&crate::ap::HintView> = if found_items.is_empty() {
+        views.iter().filter(|h| h.found).collect()
+    } else {
+        found_items.iter().collect()
+    };
+    if active.is_empty() && found.is_empty() {
         return r#"<div class="empty">No hints here yet.</div>"#.to_string();
     }
-    // Found items sink to the bottom, into a collapsed section, and are never
-    // prioritizable (there's nothing left to prioritize).
-    let (mut found, mut active): (Vec<&crate::ap::HintView>, Vec<&crate::ap::HintView>) =
-        views.iter().partition(|h| h.found);
 
     // Sort by item name (the `text` starts with it), case-insensitively.
     let name_key = |h: &&crate::ap::HintView| {
