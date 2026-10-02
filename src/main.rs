@@ -117,6 +117,7 @@ async fn main() {
         .route("/minesweeper/reveal", post(mine_reveal))
         .route("/minesweeper/state", get(mine_state))
         .route("/minesweeper/pause", post(mine_pause))
+        .route("/minesweeper/leaderboard", get(mine_leaderboard))
         .route("/api/me", get(api_me))
         .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
@@ -1242,6 +1243,42 @@ async fn mine_state(
         }
         _ => Json(serde_json::json!({"active": false})),
     }
+}
+
+/// Minimum games to qualify for the completion-rate leaderboard.
+const LEADERBOARD_MIN_GAMES: i64 = 5;
+/// Rows shown on each leaderboard.
+const LEADERBOARD_TOP: i64 = 10;
+
+/// The season leaderboards for a difficulty (best time + best completion rate),
+/// as an HTML fragment the minesweeper page loads when a 🏆 tab is opened.
+async fn mine_leaderboard(
+    State(st): State<AppState>,
+    Query(q): Query<KindQuery>,
+) -> Html<String> {
+    let kind = mine::Kind::parse(&q.kind);
+    let season = st
+        .board
+        .read()
+        .ok()
+        .and_then(|b| b.seed.clone())
+        .unwrap_or_default();
+    let time = st.db.mine_leaders_time(&season, kind.id(), LEADERBOARD_TOP).await;
+    let rate = st
+        .db
+        .mine_leaders_rate(&season, kind.id(), LEADERBOARD_MIN_GAMES, LEADERBOARD_TOP)
+        .await;
+    let label = if kind == mine::Kind::Expert {
+        "Expert"
+    } else {
+        "Standard"
+    };
+    Html(render::mine_leaderboard_html(
+        label,
+        &time,
+        &rate,
+        LEADERBOARD_MIN_GAMES,
+    ))
 }
 
 /// Pause a difficulty's timer (called when the tab is hidden/closed or when

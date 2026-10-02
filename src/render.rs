@@ -1159,6 +1159,56 @@ fn mine_stats_block(label: &str, st: &crate::db::MineStats) -> String {
     )
 }
 
+/// The minesweeper leaderboards for one board kind: best time and best
+/// completion rate (min-games gated), top N each. `min_games` is shown as a note.
+pub fn mine_leaderboard_html(
+    kind_label: &str,
+    time: &[(String, i64)],
+    rate: &[(String, i64, i64)],
+    min_games: i64,
+) -> String {
+    let mut out = format!(r#"<h2 class="lbhead">{kind_label} leaderboard</h2>"#);
+
+    out.push_str(r#"<h3 class="lbsub">Best time</h3>"#);
+    if time.is_empty() {
+        out.push_str(r#"<p class="empty">No cleared boards yet.</p>"#);
+    } else {
+        out.push_str(r#"<table class="lb"><thead><tr><th>#</th><th>Player</th><th>Time</th></tr></thead><tbody>"#);
+        for (i, (sso, ms)) in time.iter().enumerate() {
+            out.push_str(&format!(
+                r#"<tr><td class="rank">{}</td><td>{}</td><td class="num">{}</td></tr>"#,
+                i + 1,
+                esc(sso),
+                fmt_ms(*ms),
+            ));
+        }
+        out.push_str("</tbody></table>");
+    }
+
+    out.push_str(&format!(
+        r#"<h3 class="lbsub">Best completion rate <small>(min {min_games} games)</small></h3>"#
+    ));
+    if rate.is_empty() {
+        out.push_str(&format!(
+            r#"<p class="empty">No one has played {min_games} games yet.</p>"#
+        ));
+    } else {
+        out.push_str(r#"<table class="lb"><thead><tr><th>#</th><th>Player</th><th>Rate</th><th>Games</th></tr></thead><tbody>"#);
+        for (i, (sso, wins, total)) in rate.iter().enumerate() {
+            let pct = if *total > 0 { wins * 100 / total } else { 0 };
+            out.push_str(&format!(
+                r#"<tr><td class="rank">{}</td><td>{}</td><td class="num">{}%</td><td class="num">{}</td></tr>"#,
+                i + 1,
+                esc(sso),
+                pct,
+                total,
+            ));
+        }
+        out.push_str("</tbody></table>");
+    }
+    out
+}
+
 /// The stats panel body, per board kind — reused for the initial page and the
 /// live refresh the reveal endpoint returns when a game ends.
 pub fn mine_stats_html(standard: &crate::db::MineStats, expert: &crate::db::MineStats) -> String {
@@ -1187,23 +1237,29 @@ pub fn minesweeper_page(
     }
     b.push_str(&format!(
         r#"<p class="empty mineintro">Clear the board without hitting a mine to earn a bonus hint — worth 1 either way. Every board is solvable by logic alone, no guessing needed, on both difficulties. Left-click a cell to reveal, right-click to flag. On a revealed number: left-click chord-reveals its neighbours once you've flagged that many mines, right-click flags all remaining neighbours when they must all be mines. Bonus hints are spent automatically when you hint without enough points.</p>
-<div class="statline">Bonus hints: <b id="credits">{credits}</b> · <span id="minesleft"></span> · ⏱ <b id="mstimer">0:00</b></div>
-<div id="msg" class="inlinemsg"></div>
-<div class="minewrap">
-  <div class="mineboard">
-    <div class="mstabs">
-      <button class="mstab active" data-tab="standard">Standard <small>16×16 · 40</small></button>
-      <button class="mstab" data-tab="expert">Expert <small>30×16 · 99</small></button>
+<div class="mstabs">
+  <button class="mstab active" data-tab="standard">Standard <small>16×16 · 40</small></button>
+  <button class="mstab" data-tab="expert">Expert <small>30×16 · 99</small></button>
+  <span class="mstabgap"></span>
+  <button class="mstab" data-lb="standard">🏆 Standard</button>
+  <button class="mstab" data-lb="expert">🏆 Expert</button>
+</div>
+<div id="playview">
+  <div class="statline">Bonus hints: <b id="credits">{credits}</b> · <span id="minesleft"></span> · ⏱ <b id="mstimer">0:00</b></div>
+  <div id="msg" class="inlinemsg"></div>
+  <div class="minewrap">
+    <div class="mineboard">
+      <div class="msscroll"><div id="grid" class="msgrid"></div></div>
+      <div class="btnrow"><button id="newgame" class="ghost" style="display:none">New game</button></div>
     </div>
-    <div class="msscroll"><div id="grid" class="msgrid"></div></div>
-    <div class="btnrow"><button id="newgame" class="ghost" style="display:none">New game</button></div>
+    <aside class="minestats-panel">
+      <h3>Your stats</h3>
+      <div id="minestats" class="minestats">{stats}</div>
+      <p class="mstatnote">This season. Times are for cleared boards.</p>
+    </aside>
   </div>
-  <aside class="minestats-panel">
-    <h3>Your stats</h3>
-    <div id="minestats" class="minestats">{stats}</div>
-    <p class="mstatnote">This season. Times are for cleared boards.</p>
-  </aside>
-</div>"#,
+</div>
+<div id="lbview" class="lbview" style="display:none"></div>"#,
         stats = mine_stats_html(standard, expert),
     ));
     b.push_str(MINE_STYLE);
@@ -1231,11 +1287,23 @@ header .hwrap{max-width:1180px}
 .mstat.sep{border-top:1px solid var(--bd);padding-top:9px;margin-top:2px}
 .mstatnote{color:var(--muted);font-size:11px;margin:14px 0 0;line-height:1.4}
 .btnrow{display:flex;gap:10px;flex-wrap:wrap}
-.mstabs{display:flex;gap:6px;margin:0 0 12px;flex-wrap:wrap}
+.mstabs{display:flex;gap:6px;margin:0 0 12px;flex-wrap:wrap;align-items:center}
 .mstab{background:transparent;border:1px solid var(--bd);border-radius:8px;color:var(--muted);font-weight:600;padding:7px 13px;cursor:pointer;font-size:13px}
 .mstab small{font-weight:400;opacity:.7;margin-left:6px;font-size:11px}
 .mstab:hover{color:var(--fg);border-color:var(--accent)}
 .mstab.active{color:#0d1117;background:var(--accent);border-color:var(--accent)}
+.mstabgap{width:1px;align-self:stretch;background:var(--bd);margin:2px 4px}
+.lbview{margin-top:14px;max-width:560px}
+.lbhead{font-size:15px;margin:0 0 6px}
+.lbsub{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:18px 0 8px}
+.lbsub small{text-transform:none;letter-spacing:0;font-weight:400}
+table.lb{width:100%;border-collapse:collapse;font-size:13.5px}
+table.lb th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;padding:4px 10px;border-bottom:1px solid var(--bd)}
+table.lb td{padding:6px 10px;border-bottom:1px solid var(--bd)}
+table.lb td.rank{color:var(--muted);font-family:var(--mono);width:1%;white-space:nowrap}
+table.lb td.num{font-family:var(--mono);text-align:right}
+table.lb th:last-child{text-align:right}
+table.lb tr:first-child td.rank{color:var(--accent);font-weight:700}
 .msscroll{overflow:auto;max-width:100%;margin:0 0 10px}
 .msgrid{display:grid;gap:2px;width:max-content}
 .cell{width:28px;height:28px;padding:0;background:var(--panel);border:1px solid var(--bd);border-radius:4px;color:var(--fg);font-family:var(--mono);font-size:14px;font-weight:700;cursor:pointer;line-height:1;text-align:center}
@@ -1251,16 +1319,29 @@ header .hwrap{max-width:1180px}
 
 const MINE_JS: &str = r#"<script>
 (function(){
-var W,H,minesN,over=false,flags=0,cells=[],activeKind='standard';
+var W,H,minesN,over=false,flags=0,cells=[],activeKind='standard',view='board',lbKind='standard';
 var grid=document.getElementById('grid'),msg=document.getElementById('msg'),
     minesleft=document.getElementById('minesleft'),creditsEl=document.getElementById('credits'),
     statsEl=document.getElementById('minestats'),timerEl=document.getElementById('mstimer'),
-    newBtn=document.getElementById('newgame'),tabs=document.querySelectorAll('.mstab');
+    newBtn=document.getElementById('newgame'),tabs=document.querySelectorAll('.mstab'),
+    playview=document.getElementById('playview'),lbview=document.getElementById('lbview');
 // Each difficulty is its own persistent board (keyed server-side by player+kind),
 // so switching tabs keeps each game + timer alive. The "New game" button only
 // shows once the current board ends (to replay the same difficulty).
 function showNewBtn(s){if(newBtn)newBtn.style.display=s?'':'none';}
-function updateTabUI(){tabs.forEach(function(t){t.classList.toggle('active',t.getAttribute('data-tab')===activeKind);});}
+function updateTabUI(){tabs.forEach(function(t){
+ var on=view==='board'?(t.getAttribute('data-tab')===activeKind):(t.getAttribute('data-lb')===lbKind);
+ t.classList.toggle('active',on);
+});}
+// Show a season leaderboard tab (pausing the live board we're leaving).
+function showLb(kind){
+ if(view==='board'&&!over)pauseKind(activeKind);
+ view='lb';lbKind=kind;playview.style.display='none';lbview.style.display='';updateTabUI();
+ lbview.innerHTML='<p class="empty">Loading…</p>';
+ fetch('/minesweeper/leaderboard?kind='+kind).then(function(r){return r.text()}).then(function(h){
+  if(view==='lb'&&lbKind===kind)lbview.innerHTML=h;
+ }).catch(function(){lbview.innerHTML='<p class="empty">Could not load leaderboard.</p>';});
+}
 // Timer: mirrors the server's active-play clock (which excludes time while the
 // tab is hidden/closed). baseMs is the last value the server reported; while
 // running we add the wall-clock time since that sync.
@@ -1357,19 +1438,23 @@ function pauseKind(kind){
  try{if(!navigator.sendBeacon('/minesweeper/pause?kind='+kind))post('/minesweeper/pause?kind='+kind);}catch(e){post('/minesweeper/pause?kind='+kind);}
 }
 function pauseNow(){
- if(over)return;
+ if(view!=='board'||over)return;
  setTimer(baseMs+(running?(Date.now()-syncAt):0),false);
  pauseKind(activeKind);
 }
 function selectTab(kind){
- if(kind===activeKind){if(over)newGame();return;}
- if(!over)pauseKind(activeKind); // bank the board we're leaving
- activeKind=kind;updateTabUI();showNewBtn(false);loadGame();
+ if(view==='board'&&kind===activeKind){if(over)newGame();return;}
+ if(view==='board'&&!over)pauseKind(activeKind); // bank the board we're leaving
+ view='board';activeKind=kind;lbview.style.display='none';playview.style.display='';
+ updateTabUI();showNewBtn(false);loadGame();
 }
 document.addEventListener('visibilitychange',function(){if(document.visibilityState==='hidden')pauseNow();});
 window.addEventListener('pagehide',pauseNow);
 if(newBtn)newBtn.addEventListener('click',newGame);
-tabs.forEach(function(t){t.addEventListener('click',function(){selectTab(t.getAttribute('data-tab'));});});
+tabs.forEach(function(t){t.addEventListener('click',function(){
+ var lk=t.getAttribute('data-lb');
+ if(lk)showLb(lk);else selectTab(t.getAttribute('data-tab'));
+});});
 updateTabUI();
 loadGame();
 })();

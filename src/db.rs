@@ -291,6 +291,52 @@ impl Db {
         .unwrap_or_default()
     }
 
+    /// Best-time minesweeper leaderboard for a season/kind: (player, best_ms)
+    /// over won games, fastest first, top `limit`.
+    pub async fn mine_leaders_time(
+        &self,
+        season: &str,
+        kind: &str,
+        limit: i64,
+    ) -> Vec<(String, i64)> {
+        sqlx::query_as::<_, (String, i64)>(
+            "SELECT sso, MIN(duration_ms) AS best FROM mine_result
+             WHERE season = ? AND kind = ? AND won = 1
+             GROUP BY sso ORDER BY best ASC LIMIT ?",
+        )
+        .bind(season)
+        .bind(kind)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default()
+    }
+
+    /// Best completion-rate leaderboard for a season/kind: (player, wins, total)
+    /// for players with at least `min_games`, highest rate first (more games
+    /// breaks ties), top `limit`.
+    pub async fn mine_leaders_rate(
+        &self,
+        season: &str,
+        kind: &str,
+        min_games: i64,
+        limit: i64,
+    ) -> Vec<(String, i64, i64)> {
+        sqlx::query_as::<_, (String, i64, i64)>(
+            "SELECT sso, SUM(won) AS wins, COUNT(*) AS total FROM mine_result
+             WHERE season = ? AND kind = ?
+             GROUP BY sso HAVING total >= ?
+             ORDER BY (CAST(SUM(won) AS REAL) / COUNT(*)) DESC, total DESC LIMIT ?",
+        )
+        .bind(season)
+        .bind(kind)
+        .bind(min_games)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default()
+    }
+
     /// Delete every signup submission, returning their stored file paths so the
     /// caller can remove the uploads.
     pub async fn clear_submissions(&self) -> Result<Vec<String>, sqlx::Error> {
