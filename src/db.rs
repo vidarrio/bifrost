@@ -271,70 +271,75 @@ impl Db {
         .await;
     }
 
-    /// Per-slot/per-season/per-kind minesweeper stats. Time stats are over wins
-    /// only (a loss has no meaningful clear time); `None` means no wins yet.
-    pub async fn mine_stats(&self, season: &str, sso: &str, kind: &str) -> MineStats {
-        sqlx::query_as::<_, MineStats>(
-            r#"SELECT
-                 COALESCE(SUM(won), 0)                                    AS wins,
-                 COALESCE(SUM(1 - won), 0)                                AS losses,
-                 CAST(AVG(CASE WHEN won = 1 THEN duration_ms END) AS INTEGER) AS avg_ms,
-                 MIN(CASE WHEN won = 1 THEN duration_ms END)              AS best_ms,
-                 MAX(CASE WHEN won = 1 THEN duration_ms END)              AS worst_ms
-               FROM mine_result WHERE season = ? AND sso = ? AND kind = ?"#,
-        )
-        .bind(season)
-        .bind(sso)
-        .bind(kind)
-        .fetch_one(&self.pool)
-        .await
-        .unwrap_or_default()
+    /// Per-kind minesweeper stats for a player. `season = Some(s)` scopes to one
+    /// season; `None` is all-time (across every season + freeplay) — the
+    /// "permanent" view. Time stats are over wins only; `None` = no wins yet.
+    pub async fn mine_stats(&self, season: Option<&str>, sso: &str, kind: &str) -> MineStats {
+        let mut sql = String::from(
+            "SELECT COALESCE(SUM(won),0) AS wins, COALESCE(SUM(1-won),0) AS losses, \
+             CAST(AVG(CASE WHEN won=1 THEN duration_ms END) AS INTEGER) AS avg_ms, \
+             MIN(CASE WHEN won=1 THEN duration_ms END) AS best_ms, \
+             MAX(CASE WHEN won=1 THEN duration_ms END) AS worst_ms \
+             FROM mine_result WHERE sso=? AND kind=?",
+        );
+        if season.is_some() {
+            sql.push_str(" AND season=?");
+        }
+        let mut q = sqlx::query_as::<_, MineStats>(&sql).bind(sso).bind(kind);
+        if let Some(s) = season {
+            q = q.bind(s);
+        }
+        q.fetch_one(&self.pool).await.unwrap_or_default()
     }
 
-    /// Best-time minesweeper leaderboard for a season/kind: (player, best_ms)
-    /// over won games, fastest first, top `limit`.
+    /// Best-time leaderboard: (player, best_ms) over won games, fastest first,
+    /// top `limit`. `season = None` is the all-time (permanent) board.
     pub async fn mine_leaders_time(
         &self,
-        season: &str,
+        season: Option<&str>,
         kind: &str,
         limit: i64,
     ) -> Vec<(String, i64)> {
-        sqlx::query_as::<_, (String, i64)>(
-            "SELECT sso, MIN(duration_ms) AS best FROM mine_result
-             WHERE season = ? AND kind = ? AND won = 1
-             GROUP BY sso ORDER BY best ASC LIMIT ?",
-        )
-        .bind(season)
-        .bind(kind)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .unwrap_or_default()
+        let mut sql =
+            String::from("SELECT sso, MIN(duration_ms) AS best FROM mine_result WHERE kind=? AND won=1");
+        if season.is_some() {
+            sql.push_str(" AND season=?");
+        }
+        sql.push_str(" GROUP BY sso ORDER BY best ASC LIMIT ?");
+        let mut q = sqlx::query_as::<_, (String, i64)>(&sql).bind(kind);
+        if let Some(s) = season {
+            q = q.bind(s);
+        }
+        q.bind(limit).fetch_all(&self.pool).await.unwrap_or_default()
     }
 
-    /// Best completion-rate leaderboard for a season/kind: (player, wins, total)
-    /// for players with at least `min_games`, highest rate first (more games
-    /// breaks ties), top `limit`.
+    /// Best completion-rate leaderboard: (player, wins, total) for players with
+    /// at least `min_games`, highest rate first (more games breaks ties), top
+    /// `limit`. `season = None` is the all-time (permanent) board.
     pub async fn mine_leaders_rate(
         &self,
-        season: &str,
+        season: Option<&str>,
         kind: &str,
         min_games: i64,
         limit: i64,
     ) -> Vec<(String, i64, i64)> {
-        sqlx::query_as::<_, (String, i64, i64)>(
-            "SELECT sso, SUM(won) AS wins, COUNT(*) AS total FROM mine_result
-             WHERE season = ? AND kind = ?
-             GROUP BY sso HAVING total >= ?
-             ORDER BY (CAST(SUM(won) AS REAL) / COUNT(*)) DESC, total DESC LIMIT ?",
-        )
-        .bind(season)
-        .bind(kind)
-        .bind(min_games)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .unwrap_or_default()
+        let mut sql =
+            String::from("SELECT sso, SUM(won) AS wins, COUNT(*) AS total FROM mine_result WHERE kind=?");
+        if season.is_some() {
+            sql.push_str(" AND season=?");
+        }
+        sql.push_str(
+            " GROUP BY sso HAVING total>=? ORDER BY (CAST(SUM(won) AS REAL)/COUNT(*)) DESC, total DESC LIMIT ?",
+        );
+        let mut q = sqlx::query_as::<_, (String, i64, i64)>(&sql).bind(kind);
+        if let Some(s) = season {
+            q = q.bind(s);
+        }
+        q.bind(min_games)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default()
     }
 
     /// Delete every signup submission, returning their stored file paths so the

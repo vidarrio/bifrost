@@ -1153,19 +1153,28 @@ async fn admin_minesweeper(
     Redirect::to("/admin")
 }
 
-async fn minesweeper_page(State(st): State<AppState>, headers: HeaderMap) -> Html<String> {
+async fn minesweeper_page(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<KindQuery>,
+) -> Html<String> {
     let (me, _is_admin) = identity(&headers);
-    let enabled = st.db.minesweeper_enabled().await;
+    let free = q.free;
+    // Freeplay (minigame section) is always available and ignores the admin
+    // toggle, which only gates the seasonal bonus-hint board.
+    let enabled = free || st.db.minesweeper_enabled().await;
     let season = st
         .board
         .read()
         .ok()
         .and_then(|b| b.seed.clone())
         .unwrap_or_default();
-    let credits = st.db.credits(&season, &me).await;
-    let standard = st.db.mine_stats(&season, &me, "standard").await;
-    let expert = st.db.mine_stats(&season, &me, "expert").await;
-    render::minesweeper_page(enabled, credits, &standard, &expert)
+    // Freeplay: no bonus hints; stats are all-time. Seasonal: credits + seasonal.
+    let credits = if free { 0 } else { st.db.credits(&season, &me).await };
+    let stat_scope: Option<&str> = if free { None } else { Some(&season) };
+    let standard = st.db.mine_stats(stat_scope, &me, "standard").await;
+    let expert = st.db.mine_stats(stat_scope, &me, "expert").await;
+    render::minesweeper_page(enabled, free, credits, &standard, &expert)
 }
 
 fn now_nanos() -> u64 {
@@ -1175,21 +1184,34 @@ fn now_nanos() -> u64 {
         .unwrap_or(0)
 }
 
+/// Season value recorded for freeplay (minigame-section) games: a sentinel that
+/// can never be a real seed name, so freeplay stays out of the seasonal
+/// leaderboard/stats but still counts toward the all-time (permanent) board.
+const FREEPLAY_SEASON: &str = "__freeplay__";
+
 #[derive(Deserialize)]
 struct KindQuery {
     #[serde(default)]
     kind: String,
+    /// Freeplay (minigame section) vs seasonal (game board).
+    #[serde(default)]
+    free: bool,
 }
 
-/// Map key for a player's game of a given difficulty.
-fn mine_key(me: &str, kind: mine::Kind) -> (String, String) {
-    (me.to_string(), kind.id().to_string())
+/// Map key for a player's in-progress game: separate per difficulty AND per mode
+/// (freeplay vs seasonal), so the two can be in progress at once without
+/// clobbering each other.
+fn mine_key(me: &str, free: bool, kind: mine::Kind) -> (String, String) {
+    let mode = if free { "free:" } else { "" };
+    (me.to_string(), format!("{mode}{}", kind.id()))
 }
 
 #[derive(Deserialize)]
 struct NewForm {
     #[serde(default)]
     kind: String,
+    #[serde(default)]
+    free: bool,
 }
 
 async fn mine_new(
@@ -1198,7 +1220,9 @@ async fn mine_new(
     Form(f): Form<NewForm>,
 ) -> Json<serde_json::Value> {
     let (me, _) = identity(&headers);
-    if !st.db.minesweeper_enabled().await {
+    // Freeplay (the standalone minigame) is always available; the admin toggle
+    // only gates the seasonal, bonus-hint-earning board.
+    if !f.free && !st.db.minesweeper_enabled().await {
         return Json(serde_json::json!({"ok": false, "error": "Minesweeper is disabled."}));
     }
     let kind = mine::Kind::parse(&f.kind);
@@ -1207,9 +1231,9 @@ async fn mine_new(
     if let Ok(mut games) = st.mine_games.lock() {
         let now = now_nanos();
         // Drop stale games (>12h old) so the map stays small, then replace this
-        // player's game of this difficulty with the fresh one.
+        // player's game of this difficulty+mode with the fresh one.
         games.retain(|_, g| now.saturating_sub(g.created) < 12 * 3600 * 1_000_000_000);
-        games.insert(mine_key(&me, kind), game);
+        games.insert(mine_key(&me, f.free, kind), game);
     }
     Json(serde_json::json!({"ok": true, "w": w, "h": h, "mines": mines, "kind": kind.id()}))
 }
@@ -1228,7 +1252,7 @@ async fn mine_state(
         Ok(g) => g,
         Err(p) => p.into_inner(),
     };
-    match games.get_mut(&mine_key(&me, kind)) {
+    match games.get_mut(&mine_key(&me, q.free, kind)) {
         Some(g) if !g.over => {
             g.repose();
             let cells: Vec<_> = g
@@ -1257,24 +1281,31 @@ async fn mine_leaderboard(
     Query(q): Query<KindQuery>,
 ) -> Html<String> {
     let kind = mine::Kind::parse(&q.kind);
-    let season = st
-        .board
-        .read()
-        .ok()
-        .and_then(|b| b.seed.clone())
-        .unwrap_or_default();
-    let time = st.db.mine_leaders_time(&season, kind.id(), LEADERBOARD_TOP).await;
+    // Freeplay shows the all-time (permanent) board; the seasonal board scopes to
+    // the current seed.
+    let season = st.board.read().ok().and_then(|b| b.seed.clone());
+    let scope: Option<&str> = if q.free {
+        None
+    } else {
+        Some(season.as_deref().unwrap_or(""))
+    };
+    let time = st.db.mine_leaders_time(scope, kind.id(), LEADERBOARD_TOP).await;
     let rate = st
         .db
-        .mine_leaders_rate(&season, kind.id(), LEADERBOARD_MIN_GAMES, LEADERBOARD_TOP)
+        .mine_leaders_rate(scope, kind.id(), LEADERBOARD_MIN_GAMES, LEADERBOARD_TOP)
         .await;
-    let label = if kind == mine::Kind::Expert {
+    let kind_label = if kind == mine::Kind::Expert {
         "Expert"
     } else {
         "Standard"
     };
+    let label = if q.free {
+        format!("All-time {kind_label}")
+    } else {
+        kind_label.to_string()
+    };
     Html(render::mine_leaderboard_html(
-        label,
+        &label,
         &time,
         &rate,
         LEADERBOARD_MIN_GAMES,
@@ -1291,7 +1322,7 @@ async fn mine_pause(
     let (me, _) = identity(&headers);
     let kind = mine::Kind::parse(&q.kind);
     if let Ok(mut games) = st.mine_games.lock() {
-        if let Some(g) = games.get_mut(&mine_key(&me, kind)) {
+        if let Some(g) = games.get_mut(&mine_key(&me, q.free, kind)) {
             g.pause();
         }
     }
@@ -1304,6 +1335,8 @@ struct RevealForm {
     c: usize,
     #[serde(default)]
     kind: String,
+    #[serde(default)]
+    free: bool,
 }
 
 async fn mine_reveal(
@@ -1312,7 +1345,7 @@ async fn mine_reveal(
     Form(f): Form<RevealForm>,
 ) -> Json<serde_json::Value> {
     let (me, _) = identity(&headers);
-    let key = mine_key(&me, mine::Kind::parse(&f.kind));
+    let key = mine_key(&me, f.free, mine::Kind::parse(&f.kind));
     // Reveal under the lock, then release it before any await.
     let outcome = {
         let mut games = match st.mine_games.lock() {
@@ -1337,24 +1370,32 @@ async fn mine_reveal(
         return Json(serde_json::json!({"ok": false, "error": "No active game."}));
     };
     let mut credits: Option<i64> = None;
-    // On a finished game (win or loss), record the result (for this board kind)
-    // and return fresh stats for both kinds. A win is worth 1 bonus hint on
-    // either difficulty.
+    // On a finished game (win or loss), record the result and return fresh stats.
+    // Seasonal games record under the current seed, count toward the seasonal
+    // leaderboard/stats, and a win earns a bonus hint. Freeplay (minigame section)
+    // records under a sentinel season, earns no hint, and stays out of the
+    // seasonal board — but both feed the all-time (permanent) board, and the
+    // stats panel shows the matching scope.
     let stats_html = if over {
-        let season = st
-            .board
-            .read()
-            .ok()
-            .and_then(|b| b.seed.clone())
-            .unwrap_or_default();
+        let scope = if f.free {
+            FREEPLAY_SEASON.to_string()
+        } else {
+            st.board
+                .read()
+                .ok()
+                .and_then(|b| b.seed.clone())
+                .unwrap_or_default()
+        };
         st.db
-            .record_mine_result(&season, &me, kind, won, elapsed_ms)
+            .record_mine_result(&scope, &me, kind, won, elapsed_ms)
             .await;
-        if won {
-            credits = st.db.add_credits(&season, &me, 1).await.ok();
+        if won && !f.free {
+            credits = st.db.add_credits(&scope, &me, 1).await.ok();
         }
-        let standard = st.db.mine_stats(&season, &me, "standard").await;
-        let expert = st.db.mine_stats(&season, &me, "expert").await;
+        // Freeplay stats are all-time; seasonal stats scope to the current seed.
+        let stat_scope: Option<&str> = if f.free { None } else { Some(&scope) };
+        let standard = st.db.mine_stats(stat_scope, &me, "standard").await;
+        let expert = st.db.mine_stats(stat_scope, &me, "expert").await;
         Some(render::mine_stats_html(&standard, &expert))
     } else {
         None

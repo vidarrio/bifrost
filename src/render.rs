@@ -1219,24 +1219,47 @@ pub fn mine_stats_html(standard: &crate::db::MineStats, expert: &crate::db::Mine
     )
 }
 
-/// The minesweeper minigame page: a server-authoritative board that awards a
-/// bonus-hint credit on a full clear.
+/// The minesweeper minigame page: a server-authoritative board. `free` is the
+/// standalone minigame mode (from the home Minigames section) — no bonus hints,
+/// all-time leaderboard/stats; otherwise it's the seasonal, board-linked mode.
 pub fn minesweeper_page(
     enabled: bool,
+    free: bool,
     credits: i64,
     standard: &crate::db::MineStats,
     expert: &crate::db::MineStats,
 ) -> Html<String> {
     let mut b = page_head(None);
-    b.push_str(r#"<h1>Minesweeper</h1><div class="crumb"><a href="/board">← board</a></div>"#);
+    let crumb = if free {
+        r#"<div class="crumb"><a href="/">← Bifrost</a></div>"#
+    } else {
+        r#"<div class="crumb"><a href="/board">← board</a></div>"#
+    };
+    b.push_str(&format!(r#"<h1>Minesweeper</h1>{crumb}"#));
     if !enabled {
         b.push_str(
             r#"<div class="banner bad">The minesweeper minigame is disabled right now.</div></main></body></html>"#,
         );
         return Html(b);
     }
+    // Intro + stat scope differ by mode; freeplay drops the "Bonus hints:" tally.
+    let intro = if free {
+        "Just for fun — results count toward the all-time leaderboards (no bonus hints here). Every board is solvable by logic alone, no guessing needed, on both difficulties. Left-click a cell to reveal, right-click to flag. On a revealed number: left-click chord-reveals its neighbours once you've flagged that many mines, right-click flags all remaining neighbours when they must all be mines."
+    } else {
+        "Clear the board without hitting a mine to earn a bonus hint — worth 1 either way. Every board is solvable by logic alone, no guessing needed, on both difficulties. Left-click a cell to reveal, right-click to flag. On a revealed number: left-click chord-reveals its neighbours once you've flagged that many mines, right-click flags all remaining neighbours when they must all be mines. Bonus hints are spent automatically when you hint without enough points."
+    };
+    let statline = if free {
+        r#"<div class="statline"><span id="minesleft"></span> · ⏱ <b id="mstimer">0:00</b></div>"#.to_string()
+    } else {
+        format!(r#"<div class="statline">Bonus hints: <b id="credits">{credits}</b> · <span id="minesleft"></span> · ⏱ <b id="mstimer">0:00</b></div>"#)
+    };
+    let statnote = if free {
+        "All-time, across every season. Times are for cleared boards."
+    } else {
+        "This season. Times are for cleared boards."
+    };
     b.push_str(&format!(
-        r#"<p class="empty mineintro">Clear the board without hitting a mine to earn a bonus hint — worth 1 either way. Every board is solvable by logic alone, no guessing needed, on both difficulties. Left-click a cell to reveal, right-click to flag. On a revealed number: left-click chord-reveals its neighbours once you've flagged that many mines, right-click flags all remaining neighbours when they must all be mines. Bonus hints are spent automatically when you hint without enough points.</p>
+        r#"<p class="empty mineintro">{intro}</p>
 <div class="mstabs">
   <button class="mstab active" data-tab="standard">Standard <small>16×16 · 40</small></button>
   <button class="mstab" data-tab="expert">Expert <small>30×16 · 99</small></button>
@@ -1245,7 +1268,7 @@ pub fn minesweeper_page(
   <button class="mstab" data-lb="expert">🏆 Expert</button>
 </div>
 <div id="playview">
-  <div class="statline">Bonus hints: <b id="credits">{credits}</b> · <span id="minesleft"></span> · ⏱ <b id="mstimer">0:00</b></div>
+  {statline}
   <div id="msg" class="inlinemsg"></div>
   <div class="minewrap">
     <div class="mineboard">
@@ -1255,11 +1278,12 @@ pub fn minesweeper_page(
     <aside class="minestats-panel">
       <h3>Your stats</h3>
       <div id="minestats" class="minestats">{stats}</div>
-      <p class="mstatnote">This season. Times are for cleared boards.</p>
+      <p class="mstatnote">{statnote}</p>
     </aside>
   </div>
 </div>
-<div id="lbview" class="lbview" style="display:none"></div>"#,
+<div id="lbview" class="lbview" style="display:none"></div>
+<script>var FREE={free};</script>"#,
         stats = mine_stats_html(standard, expert),
     ));
     b.push_str(MINE_STYLE);
@@ -1338,7 +1362,7 @@ function showLb(kind){
  if(view==='board'&&!over)pauseKind(activeKind);
  view='lb';lbKind=kind;playview.style.display='none';lbview.style.display='';updateTabUI();
  lbview.innerHTML='<p class="empty">Loading…</p>';
- fetch('/minesweeper/leaderboard?kind='+kind).then(function(r){return r.text()}).then(function(h){
+ fetch('/minesweeper/leaderboard?kind='+kind+FB).then(function(r){return r.text()}).then(function(h){
   if(view==='lb'&&lbKind===kind)lbview.innerHTML=h;
  }).catch(function(){lbview.innerHTML='<p class="empty">Could not load leaderboard.</p>';});
 }
@@ -1350,6 +1374,12 @@ function fmtTime(ms){var s=Math.max(0,Math.floor(ms/1000));return Math.floor(s/6
 function renderTimer(){if(timerEl)timerEl.textContent=fmtTime(baseMs+(running?(Date.now()-syncAt):0));}
 function setTimer(ms,isRunning){if(ms!=null)baseMs=ms;running=!!isRunning;syncAt=Date.now();renderTimer();}
 setInterval(renderTimer,250);
+// Freeplay (minigame section) vs seasonal (board) — thread the mode through
+// every request so the server records to the right scope and skips bonus hints.
+// `FREE` is the page-level global set just above this script.
+var IS_FREE=(typeof FREE!=='undefined')&&FREE===true;
+var FB=IS_FREE?'&free=true':'';
+function wf(o){if(IS_FREE)o.free='true';return o;}
 function post(url,body){return fetch(url,{method:'POST',body:body?new URLSearchParams(body):undefined}).then(function(r){return r.json()});}
 function setStats(h){if(h!=null&&statsEl)statsEl.innerHTML=h;}
 function openCell(cell){var cb=cells[cell.r][cell.c];cb.classList.remove('flag');cb.classList.add('open');if(cell.n>0){cb.textContent=cell.n;cb.setAttribute('data-n',cell.n);}else{cb.textContent='';}}
@@ -1402,7 +1432,7 @@ function chordReveal(r,c){
 function reveal(r,c){
  if(over)return Promise.resolve();var btn=cells[r][c];
  if(btn.classList.contains('open')||btn.classList.contains('flag'))return Promise.resolve();
- return post('/minesweeper/reveal',{r:r,c:c,kind:activeKind}).then(function(j){
+ return post('/minesweeper/reveal',wf({r:r,c:c,kind:activeKind})).then(function(j){
   if(over)return;
   if(!j.ok){msg.className='inlinemsg bad';msg.textContent=j.error||'Invalid.';return;}
   if(j.state==='lost'){over=true;(j.mines||[]).forEach(function(m){var mb=cells[m.r][m.c];mb.classList.add('open','mine');mb.textContent='✱';});msg.className='inlinemsg bad';msg.textContent='Boom — try again.';setStats(j.stats);setTimer(j.elapsed_ms,false);showNewBtn(true);return;}
@@ -1415,7 +1445,7 @@ function startBoard(w,h,mn){W=w;H=h;minesN=mn;over=false;flags=0;buildGrid();upd
 // Start a fresh board for the active difficulty.
 function newGame(){
  msg.textContent='';msg.className='inlinemsg';showNewBtn(false);
- post('/minesweeper/new',{kind:activeKind}).then(function(j){
+ post('/minesweeper/new',wf({kind:activeKind})).then(function(j){
   if(!j.ok){msg.className='inlinemsg bad';msg.textContent=j.error||'Could not start.';grid.innerHTML='';return;}
   startBoard(j.w,j.h,j.mines);setTimer(0,false);
  }).catch(function(){msg.className='inlinemsg bad';msg.textContent='Could not start.';});
@@ -1425,7 +1455,7 @@ function newGame(){
 // comes back paused and resumes on the next reveal; an untouched board shows no
 // "resumed" notice.
 function loadGame(){
- fetch('/minesweeper/state?kind='+activeKind).then(function(r){return r.json()}).then(function(j){
+ fetch('/minesweeper/state?kind='+activeKind+FB).then(function(r){return r.json()}).then(function(j){
   if(!j||!j.active){newGame();return;}
   startBoard(j.w,j.h,j.mines);showNewBtn(false);
   var cs=j.cells||[];cs.forEach(openCell);setTimer(j.elapsed_ms,false);
@@ -1435,7 +1465,7 @@ function loadGame(){
 // Pause the active difficulty's clock (tab hidden/closed, or leaving for the
 // other difficulty); it resumes on the next reveal of that board.
 function pauseKind(kind){
- try{if(!navigator.sendBeacon('/minesweeper/pause?kind='+kind))post('/minesweeper/pause?kind='+kind);}catch(e){post('/minesweeper/pause?kind='+kind);}
+ try{if(!navigator.sendBeacon('/minesweeper/pause?kind='+kind+FB))post('/minesweeper/pause?kind='+kind+FB);}catch(e){post('/minesweeper/pause?kind='+kind+FB);}
 }
 function pauseNow(){
  if(view!=='board'||over)return;
