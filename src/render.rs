@@ -145,6 +145,7 @@ struct Group<'a> {
     ap_slot: i64,
     game: &'a str,
     rows: Vec<&'a SlotRow>,
+    is_common: bool,
 }
 
 /// Group Bifrost slots under their shared AP slot, then order the groups
@@ -155,11 +156,15 @@ fn group_by_ap(slots: &[SlotRow]) -> Vec<Group<'_>> {
     let mut groups: Vec<Group> = Vec::new();
     for r in slots {
         match groups.last_mut() {
-            Some(g) if g.ap_slot == r.ap_slot => g.rows.push(r),
+            Some(g) if g.ap_slot == r.ap_slot => {
+                g.is_common |= r.is_common;
+                g.rows.push(r);
+            }
             _ => groups.push(Group {
                 ap_slot: r.ap_slot,
                 game: &r.game,
                 rows: vec![r],
+                is_common: r.is_common,
             }),
         }
     }
@@ -188,6 +193,14 @@ pub fn landing_roster(
     let mut entries: Vec<Entry> = group_by_ap(slots)
         .into_iter()
         .map(|g| {
+            // The common game is shared — show it as everyone's, sorted first.
+            if g.is_common {
+                return Entry {
+                    key: String::new(),
+                    game: g.game.to_string(),
+                    who: "Everyone".to_string(),
+                };
+            }
             let mut names: Vec<String> = g.rows.iter().map(|r| r.name.clone()).collect();
             names.sort_by_key(|n| n.to_ascii_lowercase());
             // Put the AP slot's own player (the primary) first, rest alphabetical.
@@ -370,6 +383,7 @@ pub fn board_page(
     snap: &BoardSnapshot,
     slots: &[SlotRow],
     prios: &std::collections::HashSet<(i64, i64, i64)>,
+    mc_addr: Option<&str>,
 ) -> Html<String> {
     let mut out = page_head(None);
     out.push_str(&format!(
@@ -395,15 +409,25 @@ pub fn board_page(
                 live.received,
                 live.still_to_find,
             ));
-            for r in &g.rows {
-                let by = match &r.claimed_by {
-                    Some(who) => format!(r#"<span class="by">{}</span>"#, esc(who)),
-                    None => r#"<span class="by free">unclaimed</span>"#.to_string(),
-                };
-                out.push_str(&format!(
-                    r#"<div class="seat"><span class="who">{}</span>{by}</div>"#,
-                    esc(&r.name)
-                ));
+            if g.is_common {
+                out.push_str(r#"<div class="seat"><span class="who">Everyone</span><span class="by free">shared game</span></div>"#);
+                if let Some(addr) = mc_addr {
+                    out.push_str(&format!(
+                        r#"<div class="seat"><span class="who">join at</span><span class="by">{}</span></div>"#,
+                        esc(addr)
+                    ));
+                }
+            } else {
+                for r in &g.rows {
+                    let by = match &r.claimed_by {
+                        Some(who) => format!(r#"<span class="by">{}</span>"#, esc(who)),
+                        None => r#"<span class="by free">unclaimed</span>"#.to_string(),
+                    };
+                    out.push_str(&format!(
+                        r#"<div class="seat"><span class="who">{}</span>{by}</div>"#,
+                        esc(&r.name)
+                    ));
+                }
             }
             for h in live
                 .hint_views
@@ -457,6 +481,10 @@ pub fn claim_page(
 
     out.push_str(r#"<div class="grid">"#);
     for g in group_by_ap(slots) {
+        // The common game is shared by everyone — it isn't claimed.
+        if g.is_common {
+            continue;
+        }
         let live = snap.ap.get(&g.ap_slot).cloned().unwrap_or_default();
         let (cls, _) = card_status(&live);
         out.push_str(&format!(
@@ -1123,10 +1151,12 @@ pub fn game_page(
     cost: i64,
     points: Option<i64>,
     credits: i64,
+    mc_addr: Option<&str>,
 ) -> Html<String> {
     let live = snap.ap.get(&ap_slot).cloned().unwrap_or_default();
     let back = format!("/game/{ap_slot}");
     let here: Vec<&SlotRow> = slots.iter().filter(|r| r.ap_slot == ap_slot).collect();
+    let is_common = here.iter().any(|r| r.is_common);
     let mut out = page_head(Some(me));
     out.push_str(&format!(
         r#"<h1>{}</h1><div class="crumb"><a href="/board">← board</a>{}</div>
@@ -1151,6 +1181,22 @@ pub fn game_page(
 <button type="submit" class="finish">Mark finished</button></form>"#
             ));
         }
+    }
+
+    // The common game: shared by everyone, no per-person claim. Show how to join
+    // the Minecraft server instead of claim/hint controls.
+    if is_common {
+        out.push_str(r#"<h2>Common game</h2>"#);
+        out.push_str(r#"<p class="empty">A shared Minecraft world, open to everyone this season — drop in when you're softlocked, taking a break, or done with your own game. Its checks feed the common pool, so playing here releases items to the rest of the group.</p>"#);
+        match mc_addr {
+            Some(addr) => out.push_str(&format!(
+                r#"<div class="statline">Join the server at <b>{}</b> — no whitelist, just connect.</div>"#,
+                esc(addr)
+            )),
+            None => out.push_str(r#"<div class="statline">Server address: ask an admin.</div>"#),
+        }
+        out.push_str("</main></body></html>");
+        return Html(out);
     }
 
     // Players (claim / unclaim)

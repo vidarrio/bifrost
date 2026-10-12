@@ -20,6 +20,10 @@ pub struct SlotRow {
     pub ap_slot: i64,
     pub game: String,
     pub claimed_by: Option<String>,
+    /// A communal "common game" slot (the shared Minecraft server): one AP slot
+    /// everyone plays, no per-person claim. Rendered as a shared card.
+    #[sqlx(default)]
+    pub is_common: bool,
 }
 
 /// Aggregated minesweeper stats for one player in one season. Time fields are
@@ -89,6 +93,13 @@ impl Db {
         )
         .execute(&pool)
         .await?;
+        // `is_common` marks the shared "common game" slot (added after launch;
+        // ignore the error when the column already exists).
+        let _ = sqlx::query(
+            "ALTER TABLE bifrost_slot ADD COLUMN is_common INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(&pool)
+        .await;
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS claim (
                  bifrost_slot_id INTEGER PRIMARY KEY REFERENCES bifrost_slot(id) ON DELETE CASCADE,
@@ -539,6 +550,7 @@ impl Db {
         season: &str,
         ap_slots: &[(i64, String, String)],
         subs: &[SubmissionRow],
+        common_slot: Option<&str>,
     ) -> Result<(), sqlx::Error> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -587,6 +599,14 @@ impl Db {
                 }
             }
         }
+        // Mark the communal common-game slot (no claim; shared by everyone).
+        if let Some(common) = common_slot {
+            sqlx::query("UPDATE bifrost_slot SET is_common = 1 WHERE season = ? AND name = ?")
+                .bind(season)
+                .bind(common)
+                .execute(&self.pool)
+                .await?;
+        }
         Ok(())
     }
 
@@ -607,6 +627,9 @@ impl Db {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         let roster: HashSet<&str> = new_ap_slots.iter().map(|(_, n, _)| n.as_str()).collect();
+        // Names that were communal common-game slots last season stay communal.
+        let common_names: HashSet<&str> =
+            old.iter().filter(|s| s.is_common).map(|s| s.name.as_str()).collect();
         let new_ap_by_name: HashMap<&str, i64> = new_ap_slots
             .iter()
             .map(|(n, name, _)| (name.as_str(), *n))
@@ -623,12 +646,13 @@ impl Db {
         // 1:1 AP slots.
         for (num, name, game) in new_ap_slots {
             sqlx::query(
-                "INSERT OR IGNORE INTO bifrost_slot (season, name, ap_slot, game) VALUES (?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO bifrost_slot (season, name, ap_slot, game, is_common) VALUES (?, ?, ?, ?, ?)",
             )
             .bind(new_season)
             .bind(name)
             .bind(num)
             .bind(game)
+            .bind(common_names.contains(name.as_str()))
             .execute(&self.pool)
             .await?;
         }
@@ -678,7 +702,7 @@ impl Db {
 
     pub async fn slots(&self, season: &str) -> Result<Vec<SlotRow>, sqlx::Error> {
         sqlx::query_as::<_, SlotRow>(
-            r#"SELECT s.id, s.name, s.ap_slot, s.game, c.sso AS claimed_by
+            r#"SELECT s.id, s.name, s.ap_slot, s.game, c.sso AS claimed_by, s.is_common
                FROM bifrost_slot s LEFT JOIN claim c ON c.bifrost_slot_id = s.id
                WHERE s.season = ?
                ORDER BY s.ap_slot, s.name"#,

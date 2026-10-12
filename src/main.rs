@@ -270,6 +270,12 @@ async fn live_priorities(
     prios
 }
 
+/// The player-facing Minecraft common-game server address (host:port), shown on
+/// the communal slot's card. Override with `BIFROST_MC_ADDR`.
+fn mc_addr() -> String {
+    std::env::var("BIFROST_MC_ADDR").unwrap_or_else(|_| "ap.example.org:25565".into())
+}
+
 async fn board_view(State(st): State<AppState>) -> Html<String> {
     let snap = match st.board.read() {
         Ok(b) => b.snapshot(),
@@ -278,7 +284,8 @@ async fn board_view(State(st): State<AppState>) -> Html<String> {
     let season = snap.seed.clone().unwrap_or_default();
     let slots = st.db.slots(&season).await.unwrap_or_default();
     let prios = live_priorities(&st, &snap, &season).await;
-    render::board_page(&snap, &slots, &prios)
+    let addr = mc_addr();
+    render::board_page(&snap, &slots, &prios, Some(&addr))
 }
 
 /// A safe local redirect target (must be an absolute path, not protocol-relative).
@@ -351,6 +358,7 @@ async fn game_view(
         cost,
         points,
         credits,
+        Some(mc_addr().as_str()),
     )
 }
 

@@ -20,6 +20,16 @@ const PLAYERS: &str = "/srv/archipelago/Players";
 const CUSTOM_WORLDS: &str = "/srv/archipelago/custom_worlds";
 const OUTPUT: &str = "/srv/archipelago/output";
 
+/// Canonical assets for the shared Minecraft "common game", staged into the
+/// seed when the admin enables it (see `Db::mc_enabled`). The host-side
+/// `mc-deploy` step then ships the resulting `.apmc` to the Minecraft LXC.
+const COMMON_DIR: &str = "/srv/archipelago/common";
+const COMMON_APWORLD: &str = "minecraft.apworld";
+const COMMON_YAML: &str = "Commons.yaml";
+/// The AP slot name the common-game YAML declares — used to tag its Bifrost
+/// slot communal.
+pub const COMMON_SLOT_NAME: &str = "Commons";
+
 /// (running, last message).
 pub type GenState = Arc<Mutex<(bool, String)>>;
 
@@ -289,6 +299,26 @@ async fn run_inner(db: &Db, state: &GenState) -> Result<String, String> {
             .map_err(|e| format!("staging {}'s YAML: {e}", sub.slot_name))?;
     }
 
+    // Shared Minecraft common game: if the admin enabled it before generating,
+    // stage its apworld + YAML so the roll includes the communal slot. The
+    // resulting .apmc is shipped to the Minecraft LXC afterwards by `mc-deploy`.
+    let mc = db.mc_enabled().await;
+    if mc {
+        set(state, true, "Adding the Minecraft common game…");
+        tokio::fs::copy(
+            format!("{COMMON_DIR}/{COMMON_APWORLD}"),
+            format!("{CUSTOM_WORLDS}/{COMMON_APWORLD}"),
+        )
+        .await
+        .map_err(|e| format!("staging the Minecraft apworld: {e}"))?;
+        tokio::fs::copy(
+            format!("{COMMON_DIR}/{COMMON_YAML}"),
+            format!("{PLAYERS}/{COMMON_YAML}"),
+        )
+        .await
+        .map_err(|e| format!("staging the common-game YAML: {e}"))?;
+    }
+
     set(
         state,
         true,
@@ -318,9 +348,14 @@ async fn run_inner(db: &Db, state: &GenState) -> Result<String, String> {
         .ok_or("seed metadata missing its name")?
         .to_string();
     let ap_slots = parse_ap_slots(&meta);
-    db.seed_from_submissions(&seed_name, &ap_slots, &subs)
-        .await
-        .map_err(|e| e.to_string())?;
+    db.seed_from_submissions(
+        &seed_name,
+        &ap_slots,
+        &subs,
+        mc.then_some(COMMON_SLOT_NAME),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
 
     set(state, true, "Deploying…");
     deploy_seed(&seed_zip).await?;
@@ -329,8 +364,13 @@ async fn run_inner(db: &Db, state: &GenState) -> Result<String, String> {
     // reopens them for the next signup period.
     let _ = db.set_signups_open(false).await;
 
+    let common = if mc {
+        " The Minecraft common game is included — run “Deploy common game” (manage → archipelago) to ship it to the Minecraft server."
+    } else {
+        ""
+    };
     Ok(format!(
-        "Generated seed {seed_name} — {} AP slots. The game is restarting. Signups are now closed.",
+        "Generated seed {seed_name} — {} AP slots. The game is restarting. Signups are now closed.{common}",
         ap_slots.len()
     ))
 }
