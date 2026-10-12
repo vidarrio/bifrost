@@ -198,8 +198,23 @@ async fn landing(State(st): State<AppState>) -> Html<String> {
         Err(_) => (String::new(), std::collections::HashMap::new()),
     };
     let slots = st.db.slots(&season).await.unwrap_or_default();
-    let roster = render::landing_roster(&slots, &ap_names);
-    Html(LANDING.replace("<!--ROSTER-->", &roster))
+    // A live season shows who's playing what; between seasons (no slots yet) the
+    // section flips to the next-season sign-up queue so it fills in live as
+    // people register, until a new seed is generated.
+    let (label, roster) = if slots.is_empty() {
+        let subs = st.db.submissions().await.unwrap_or_default();
+        ("Next season — who's signed up", render::landing_signups(&subs))
+    } else {
+        (
+            "This season — who's playing what",
+            render::landing_roster(&slots, &ap_names),
+        )
+    };
+    Html(
+        LANDING
+            .replace("<!--SEASONLABEL-->", label)
+            .replace("<!--ROSTER-->", &roster),
+    )
 }
 
 #[derive(Deserialize)]

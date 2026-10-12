@@ -220,6 +220,52 @@ pub fn landing_roster(
     out
 }
 
+/// Frontpage roster for the gap between seasons (no live game yet): the people
+/// signed up for the *next* season, straight from the submission queue, so the
+/// section fills in live as they register. Mirrors `landing_roster`'s card style
+/// (who + game) so the section looks identical whether a season is live or not.
+pub fn landing_signups(subs: &[SubmissionRow]) -> String {
+    if subs.is_empty() {
+        return r#"<div class="empty" style="grid-column:1/-1">No sign-ups yet — be the first to <a href="/signup">claim a game for next season</a>.</div>"#
+            .to_string();
+    }
+    struct Entry {
+        key: String,
+        game: String,
+        who: String,
+    }
+    let mut entries: Vec<Entry> = subs
+        .iter()
+        .map(|s| {
+            // Primary player first, then any co-op seats, matching the live roster.
+            let mut names = vec![s.slot_name.clone()];
+            names.extend(
+                s.coop_names
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|n| !n.is_empty())
+                    .map(str::to_string),
+            );
+            Entry {
+                key: s.slot_name.to_ascii_lowercase(),
+                game: s.game.clone(),
+                who: names.join(" & "),
+            }
+        })
+        .collect();
+    entries.sort_by(|a, b| a.key.cmp(&b.key));
+
+    let mut out = String::new();
+    for e in &entries {
+        out.push_str(&format!(
+            r#"<div class="slot"><div class="who">{}</div><div class="game">{}</div></div>"#,
+            esc(&e.who),
+            esc(&e.game)
+        ));
+    }
+    out
+}
+
 fn conn_line(snap: &BoardSnapshot) -> String {
     let mut s = String::new();
     if snap.connected {
