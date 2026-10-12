@@ -30,6 +30,18 @@ fn status_label(status: i64) -> (&'static str, &'static str) {
     }
 }
 
+/// Status shown on a slot card. `/release` (and a natural 100%) checks every
+/// location in a world, so a non-goaled slot with all locations checked reads as
+/// "released" (done/out) rather than its stale connection status — mirroring how
+/// a goaled slot reads "goaled".
+fn card_status(live: &crate::ap::ApLive) -> (&'static str, &'static str) {
+    if live.status != 30 && live.world_size > 0 && live.sent >= live.world_size as u64 {
+        ("released", "released")
+    } else {
+        status_label(live.status)
+    }
+}
+
 const HEAD: &str = r#"<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Bifrost</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg"><style>
@@ -44,8 +56,10 @@ h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute
 .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}@media(max-width:560px){.grid{grid-template-columns:1fr}}
 .slot{background:var(--panel);border:1px solid var(--bd);border-left-width:4px;border-radius:10px;padding:11px 13px}
 .slot.goal{border-left-color:var(--ok)}.slot.playing{border-left-color:var(--accent)}.slot.idle{border-left-color:var(--bd)}
+.slot.released{border-left-color:var(--warn)}
 .slot .game{font-weight:600;font-size:14px}.slot .st{font-family:var(--mono);font-size:11px;color:var(--muted);float:right}
 .slot.goal .st{color:var(--ok)}
+.slot.released .st{color:var(--warn)}
 .slot .meta{font-family:var(--mono);font-size:11px;color:var(--muted);margin:4px 0 8px}
 .seat{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 0;border-top:1px solid var(--bd)}
 .seat .who{font-family:var(--mono);font-size:13px}.seat .by{font-family:var(--mono);font-size:11px;color:var(--muted)}
@@ -235,7 +249,7 @@ pub fn board_page(
         out.push_str(r#"<div class="grid">"#);
         for g in group_by_ap(slots) {
             let live = snap.ap.get(&g.ap_slot).cloned().unwrap_or_default();
-            let (cls, label) = status_label(live.status);
+            let (cls, label) = card_status(&live);
             out.push_str(&format!(
                 r#"<a class="slot cardlink {cls}" href="/game/{}"><span class="st">{label}</span><div class="game">{}</div>
 <div class="meta">{} locations · sent {} · recv {} · {} still to be found</div>"#,
@@ -309,7 +323,7 @@ pub fn claim_page(
     out.push_str(r#"<div class="grid">"#);
     for g in group_by_ap(slots) {
         let live = snap.ap.get(&g.ap_slot).cloned().unwrap_or_default();
-        let (cls, _) = status_label(live.status);
+        let (cls, _) = card_status(&live);
         out.push_str(&format!(
             r#"<div class="slot {cls}"><div class="game">{}</div>"#,
             esc(g.game)
