@@ -95,6 +95,7 @@ async fn main() {
         .route("/game/{ap_slot}", get(game_view))
         .route("/game/{ap_slot}/hints", get(game_hints))
         .route("/game/{ap_slot}/items", get(game_items))
+        .route("/game/{ap_slot}/finish", post(game_finish))
         .route("/claim", get(claim_get).post(claim_post))
         .route("/hint", post(hint_post))
         .route("/prioritize", post(prioritize_post))
@@ -610,6 +611,42 @@ async fn game_items(Path(ap_slot): Path<i64>, State(st): State<AppState>) -> Jso
         })
         .unwrap_or_default();
     Json(items)
+}
+
+#[derive(Deserialize)]
+struct FinishForm {
+    back: Option<String>,
+}
+
+/// Admin-only: mark a slot "finished" by registering its goal (collects/releases
+/// its items per the server modes), as its game client would have. Separate from
+/// a manual `/release` in the console.
+async fn game_finish(
+    Path(ap_slot): Path<i64>,
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<FinishForm>,
+) -> Response {
+    let (_me, is_admin) = identity(&headers);
+    let back = safe_back(f.back.as_deref(), &format!("/game/{ap_slot}"));
+    if !is_admin {
+        return render::notice("Admins only.", false, &back).into_response();
+    }
+    let slot = st
+        .board
+        .read()
+        .ok()
+        .and_then(|b| b.slots.get(&ap_slot).map(|s| (s.name.clone(), s.game.clone())));
+    let Some((name, game)) = slot.filter(|(n, _)| !n.is_empty()) else {
+        return render::notice("That slot isn't live right now.", false, &back).into_response();
+    };
+    let Some(cfg) = st.ap_cfg.as_ref() else {
+        return render::notice("AP connection not configured.", false, &back).into_response();
+    };
+    match ap::mark_goal(&cfg.url, &cfg.password, &name, &game).await {
+        Ok(()) => Redirect::to(&back).into_response(),
+        Err(e) => render::notice(&format!("Mark-finished failed: {e}"), false, &back).into_response(),
+    }
 }
 
 const UPLOAD_DIR: &str = "/var/lib/bifrost/uploads";

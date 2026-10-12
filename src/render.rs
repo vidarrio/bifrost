@@ -116,6 +116,8 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .chk{display:flex;gap:9px;align-items:center;font-size:14px;margin-bottom:8px}
 .btnrow{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
 button.danger{background:var(--bad);color:#fff}
+button.finish{background:var(--ok);color:#0d1117}
+.adminfin{margin:2px 0 16px}.adminfin .finnote{font-family:var(--mono);font-size:12px;color:var(--ok)}
 .statline{font-family:var(--mono);font-size:12.5px;color:var(--muted);margin:2px 0 6px}.statline b{color:var(--fg)}
 .console{display:flex;gap:8px;margin:8px 0}
 .console .acwrap{position:relative;flex:1;min-width:0}
@@ -968,6 +970,20 @@ pub fn game_page(
         live.received,
         live.still_to_find,
     ));
+
+    // Admin: mark this slot finished (registers its goal → collects/releases its
+    // items per server settings). Hidden once goaled; /release stays separate.
+    if is_admin {
+        if live.status == 30 {
+            out.push_str(r#"<div class="adminfin"><span class="finnote">✓ Marked finished (goaled).</span></div>"#);
+        } else {
+            out.push_str(&format!(
+                r#"<form class="adminfin" method="post" action="/game/{ap_slot}/finish" onsubmit="return confirm('Mark this game as finished? It registers their goal (announces it) and collects/releases their items per the server settings. This can\'t be undone from here.')">
+<input type="hidden" name="back" value="{back}">
+<button type="submit" class="finish">Mark finished</button></form>"#
+            ));
+        }
+    }
 
     // Players (claim / unclaim)
     out.push_str(r#"<h2>Players</h2><div class="grid">"#);

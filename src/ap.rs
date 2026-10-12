@@ -713,6 +713,73 @@ fn on_bounced(board: &Arc<RwLock<Board>>, pkt: &Value) {
     }
 }
 
+/// Register a slot's goal (mark it "finished") the way its game client would,
+/// over a short-lived connection AS that slot. Must connect with **empty tags**
+/// (a Tracker/TextOnly connection is refused "Trackers can't register Goal
+/// Complete") and the slot's real game. Sends `StatusUpdate{status:30}`; the
+/// server then announces the goal and runs auto-collect/release per its modes.
+/// Returns once the goal broadcast is seen (best-effort).
+pub async fn mark_goal(url: &str, password: &str, name: &str, game: &str) -> Result<(), String> {
+    const CLIENT_GOAL: i64 = 30;
+    let fut = async {
+        let (ws, _) = tokio_tungstenite::connect_async(url)
+            .await
+            .map_err(|e| format!("connect: {e}"))?;
+        let (mut tx, mut rx) = ws.split();
+        while let Some(msg) = rx.next().await {
+            let msg = msg.map_err(|e| format!("recv: {e}"))?;
+            let text = match msg {
+                Message::Text(t) => t.to_string(),
+                Message::Ping(p) => {
+                    let _ = tx.send(Message::Pong(p)).await;
+                    continue;
+                }
+                Message::Close(_) => return Err("server closed".to_string()),
+                _ => continue,
+            };
+            let packets: Vec<Value> = serde_json::from_str(&text).map_err(|_| "bad json")?;
+            for pkt in packets {
+                match pkt.get("cmd").and_then(Value::as_str).unwrap_or("") {
+                    "RoomInfo" => {
+                        let connect = json!([{
+                            "cmd": "Connect", "game": game, "name": name, "uuid": "bifrost-goal",
+                            "version": {"class": "Version", "major": 0, "minor": 6, "build": 7},
+                            "items_handling": 7, "tags": [], "slot_data": false,
+                            "password": password,
+                        }]);
+                        tx.send(Message::Text(connect.to_string()))
+                            .await
+                            .map_err(|e| format!("send Connect: {e}"))?;
+                    }
+                    "ConnectionRefused" => {
+                        let errs = pkt.get("errors").map(|e| e.to_string()).unwrap_or_default();
+                        return Err(format!("connection refused: {errs}"));
+                    }
+                    "Connected" => {
+                        let upd =
+                            json!([{ "cmd": "StatusUpdate", "status": CLIENT_GOAL }]);
+                        tx.send(Message::Text(upd.to_string()))
+                            .await
+                            .map_err(|e| format!("send StatusUpdate: {e}"))?;
+                    }
+                    "InvalidPacket" => {
+                        let t = pkt.get("text").and_then(Value::as_str).unwrap_or("");
+                        return Err(format!("rejected: {t}"));
+                    }
+                    "PrintJSON" if pkt.get("type").and_then(Value::as_str) == Some("Goal") => {
+                        return Ok(()); // goal registered + announced
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Err("no goal confirmation".to_string())
+    };
+    tokio::time::timeout(Duration::from_secs(10), fut)
+        .await
+        .map_err(|_| "mark-finished timed out".to_string())?
+}
+
 // ---- hinting (a short-lived connection AS the target AP slot) ----
 
 /// Connect as `name` (the AP slot's connect name), run `!hint <item>`, and
