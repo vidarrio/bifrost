@@ -334,7 +334,10 @@ async fn game_view(
     let i_claim = slots
         .iter()
         .any(|r| r.ap_slot == ap_slot && r.claimed_by.as_deref() == Some(me.as_str()));
-    let points = match (i_claim, &st.ap_cfg) {
+    // The common game shows its own shared points to everyone; personal slots
+    // only to their claimant.
+    let is_common_slot = slots.iter().any(|r| r.ap_slot == ap_slot && r.is_common);
+    let points = match (i_claim || is_common_slot, &st.ap_cfg) {
         (true, Some(cfg)) if !connect_name.is_empty() => {
             ap::slot_points(&cfg.url, &cfg.password, &connect_name).await
         }
@@ -478,10 +481,16 @@ async fn hint_post(
     let (me, _is_admin) = identity(&headers);
     let reject = |msg: &str| Json(serde_json::json!({"ok": false, "message": msg}));
     let detail = st.db.slot_detail(f.slot_id).await.ok().flatten();
-    let Some((ap_slot, claimant)) = detail else {
+    let Some((ap_slot, claimant, is_common)) = detail else {
         return reject("Unknown slot.");
     };
-    if claimant.as_deref() != Some(me.as_str()) {
+    // The common game is shared: any signed-in player may hint, spending the
+    // slot's own (communal) AP hint points. Every other slot is claimant-only.
+    if is_common {
+        if me == "unknown" {
+            return reject("Sign in to hint on the common game.");
+        }
+    } else if claimant.as_deref() != Some(me.as_str()) {
         return reject("Only the player who claimed this slot can hint on it.");
     }
     let connect_name = st
@@ -518,7 +527,9 @@ async fn hint_post(
             }
             // Rejected. If it was only a points shortfall and the player holds a
             // bonus-hint credit, place the hint as admin (free) and spend one.
-            if rejected_for_points(&text) && creds > 0 {
+            // Communal slots have no personal credits — they just use their own
+            // shared points, so skip the bonus fallback there.
+            if !is_common && rejected_for_points(&text) && creds > 0 {
                 // Hint exactly ONE copy — the first unhinted location of this
                 // item — via /hint_location, so a multi-copy item doesn't reveal
                 // every copy for a single credit. Fall back to /hint by name if

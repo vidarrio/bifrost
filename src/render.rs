@@ -1195,6 +1195,45 @@ pub fn game_page(
             )),
             None => out.push_str(r#"<div class="statline">Server address: ask an admin.</div>"#),
         }
+
+        // Communal hinting: anyone can hint, spending the common game's OWN
+        // (shared) AP hint points — no claim, no personal/bonus points involved.
+        if let Some(sid) = here.first().map(|r| r.id) {
+            let items_json = serde_json::to_string(item_names).unwrap_or_else(|_| "[]".into());
+            let have = match points {
+                Some(p) => format!(r#"The common game has <b id="hintpts">{p}</b> shared hint points. "#),
+                None => String::new(),
+            };
+            out.push_str(&format!(
+                r#"<h2>Send a hint</h2>
+<p class="empty">{have}Each hint in this world costs <b>{cost}</b> points. Anyone can spend them — they're the common game's own, earned as the group checks its locations. Search the pool and hint one.</p>
+<form method="post" action="/hint" class="hintform" id="hintform">
+<input type="hidden" name="slot_id" value="{sid}"><input type="hidden" name="back" value="{back}">
+<input id="hintq" name="item" placeholder="search the common game's items…" autocomplete="off" required>
+<button type="submit">Hint</button></form>
+<div id="hintmatches" class="matches"></div>
+<div id="hintstatus" class="inlinemsg"></div>"#
+            ));
+            out.push_str("<script>\nvar ITEMS=");
+            out.push_str(&items_json);
+            out.push_str(";\n");
+            out.push_str(HINT_JS);
+            out.push_str("\n</script>");
+        }
+
+        // Where the common game's items are. Admins get the prioritize toggles.
+        out.push_str(
+            r#"<h2>Hints for this game's items</h2><p class="empty" style="margin-top:-4px">Where the common game's items are — in its own or others' worlds.</p><div id="worldhints">"#,
+        );
+        out.push_str(&hint_rows(
+            &live.hint_views,
+            &live.found_items,
+            prios,
+            &back,
+            is_admin,
+        ));
+        out.push_str("</div>");
+
         out.push_str("</main></body></html>");
         return Html(out);
     }

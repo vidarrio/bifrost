@@ -848,9 +848,12 @@ impl Db {
     }
 
     /// (ap_slot, current claimant) for a Bifrost slot, or None if it doesn't exist.
-    pub async fn slot_detail(&self, id: i64) -> Result<Option<(i64, Option<String>)>, sqlx::Error> {
-        sqlx::query_as::<_, (i64, Option<String>)>(
-            "SELECT s.ap_slot, c.sso FROM bifrost_slot s
+    pub async fn slot_detail(
+        &self,
+        id: i64,
+    ) -> Result<Option<(i64, Option<String>, bool)>, sqlx::Error> {
+        sqlx::query_as::<_, (i64, Option<String>, bool)>(
+            "SELECT s.ap_slot, c.sso, s.is_common FROM bifrost_slot s
              LEFT JOIN claim c ON c.bifrost_slot_id = s.id WHERE s.id = ?",
         )
         .bind(id)
