@@ -34,7 +34,7 @@ fn status_label(status: i64) -> (&'static str, &'static str) {
 /// location in a world, so a non-goaled slot with all locations checked reads as
 /// "released" (done/out) rather than its stale connection status — mirroring how
 /// a goaled slot reads "goaled".
-fn card_status(live: &crate::ap::ApLive) -> (&'static str, &'static str) {
+pub fn card_status(live: &crate::ap::ApLive) -> (&'static str, &'static str) {
     if live.status != 30 && live.world_size > 0 && live.sent >= live.world_size as u64 {
         ("released", "released")
     } else {
@@ -323,14 +323,11 @@ pub fn season_page(s: &crate::season::SeasonSummary) -> Html<String> {
     } else {
         out.push_str(r#"<div class="grid">"#);
         for g in &s.games {
-            let (cls, label) = if g.goaled {
-                ("goal", "✓ goaled")
-            } else {
-                ("idle", "in progress")
-            };
             out.push_str(&format!(
-                r#"<div class="slot {cls}"><span class="st">{label}</span><div class="game">{}</div>
+                r#"<div class="slot {}"><span class="st">{}</span><div class="game">{}</div>
 <div class="meta">{} / {} checks · {}%</div><div class="seat"><span class="who">{}</span></div></div>"#,
+                esc(&g.status),
+                esc(&g.label),
                 esc(&g.game),
                 g.checks,
                 g.total,

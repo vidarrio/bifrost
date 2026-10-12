@@ -24,7 +24,11 @@ pub struct SeasonGame {
     pub game: String,
     /// The seat names (co-op games have several), primary player first.
     pub players: Vec<String>,
-    pub goaled: bool,
+    /// Status class + label, from the same `card_status` the live board uses
+    /// (e.g. "goal"/"goaled", "released"/"released", "idle"/"—") so a dropped
+    /// player reads "released" here too, not "in progress".
+    pub status: String,
+    pub label: String,
     /// Locations checked and the world's total, with the derived percentage.
     pub checks: u64,
     pub total: u32,

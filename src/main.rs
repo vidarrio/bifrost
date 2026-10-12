@@ -21,6 +21,7 @@ use serde::Deserialize;
 use tower_http::trace::TraceLayer;
 
 mod ap;
+mod archive;
 mod checker;
 mod db;
 mod generate;
@@ -1118,10 +1119,16 @@ async fn admin_archive_season(
         } else {
             0
         };
+        // Same three-way status the live board shows (goaled / released / —),
+        // so a dropped-out player reads "released" on the archive too.
+        let (status, label) = live
+            .map(render::card_status)
+            .unwrap_or(("idle", "—"));
         games.push(season::SeasonGame {
             game,
             players: names,
-            goaled: live.map(|a| a.status == 30).unwrap_or(false),
+            status: status.to_string(),
+            label: label.to_string(),
             checks,
             total,
             pct,
@@ -1163,12 +1170,54 @@ async fn admin_archive_season(
         minesweeper,
     };
     let json = serde_json::to_string(&summary).unwrap_or_default();
-    match st.db.archive_season(&seed, &name, &json).await {
-        Ok(()) => Redirect::to(&format!("/season/{seed}")).into_response(),
-        Err(e) => {
-            render::notice(&format!("Archive failed: {e}"), false, "/admin").into_response()
-        }
+    if let Err(e) = st.db.archive_season(&seed, &name, &json).await {
+        return render::notice(&format!("Archive failed: {e}"), false, "/admin").into_response();
     }
+
+    // Also produce the raw replayable bundle (multidata, save, YAMLs, apworlds,
+    // journal, roster) — Bifrost owns the dump; the host script only imports it
+    // to Nextcloud. Best-effort: the displayable archive already succeeded.
+    let season_txt = {
+        let mut t = format!(
+            "name: {}\nseed: {}\narchived_utc: {}\n\nroster (game — status — players):\n",
+            summary.name,
+            summary.seed,
+            fmt_utc(now),
+        );
+        for g in &summary.games {
+            t.push_str(&format!(
+                "  {} — {} — {}\n",
+                g.game,
+                g.label,
+                g.players.join(" & ")
+            ));
+        }
+        t
+    };
+    match archive::bundle_season(&seed, &season_txt).await {
+        Ok(path) => tracing::info!("season bundle written: {path}"),
+        Err(e) => tracing::warn!("season bundle failed (summary saved): {e}"),
+    }
+
+    Redirect::to(&format!("/season/{seed}")).into_response()
+}
+
+/// A unix timestamp (seconds) as an ISO-8601 UTC string, for season.txt.
+fn fmt_utc(secs: i64) -> String {
+    let days = secs.div_euclid(86_400);
+    let tod = secs.rem_euclid(86_400);
+    let (h, mi, s) = (tod / 3600, (tod % 3600) / 60, tod % 60);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    format!("{year:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
 }
 
 /// A season name for a blank form: "Season <Mon YYYY>" by day's date.
