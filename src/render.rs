@@ -102,6 +102,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .wstep{background:var(--panel);border:1px solid var(--bd);border-radius:14px;padding:20px 22px;max-width:520px}
 .wstep h2{margin:0 0 14px;color:var(--fg);font-size:16px;letter-spacing:0;text-transform:none}
 .wstep .hint{color:var(--muted);font-size:13px;margin:0 0 10px}
+.coopown{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--bd);border-radius:7px;padding:9px 11px;margin:0 0 12px;font-size:13px}.coopown b{color:var(--fg)}
 .choice{display:grid;gap:10px;margin-bottom:6px}
 .choice label{display:flex;gap:10px;align-items:flex-start;background:var(--bg);border:1px solid var(--bd);border-radius:9px;padding:11px 13px;cursor:pointer;font-size:14px}
 .choice label:has(input:checked){border-color:var(--accent)}
@@ -544,9 +545,10 @@ pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool, open: bool)
   </section>
   <section class="wstep" data-step="3" hidden>
     <h2>Players</h2>
+    <div class="coopown">You: <b id="myname">your slot</b> <span class="by free">from your YAML — already in</span></div>
     <label class="chk"><input type="checkbox" id="coopchk"> Sharing this game between people (co-op, e.g. Don't Starve Together)</label>
     <div id="coopbox" hidden>
-      <label class="hint">Extra player names, comma-separated<input type="text" name="coop" placeholder="e.g. Robin, Sam"></label>
+      <label class="hint">You're already included above — just list the <b>other</b> people sharing this game, comma-separated. They can claim their seat once the season is generated.<input type="text" name="coop" placeholder="e.g. Robin, Sam"></label>
     </div>
     <input type="hidden" name="is_custom" id="iscustom" value="">
     <div class="nav"><button type="button" class="back" data-goto="2">← Back</button><button type="submit">Sign me up</button></div>
@@ -590,7 +592,7 @@ pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool, open: bool)
    var fd=new FormData();fd.append('yaml',f);
    fetch('/signup/check',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(j){
      chkbtn.disabled=false;
-     if(j.ok){chkmsg.className='inlinemsg ok';chkmsg.textContent='✓ '+(j.name||'slot')+' — '+(j.game||'?')+' rolled cleanly.';next2.disabled=false;}
+     if(j.ok){chkmsg.className='inlinemsg ok';chkmsg.textContent='✓ '+(j.name||'slot')+' — '+(j.game||'?')+' rolled cleanly.';var mn=document.getElementById('myname');if(mn&&j.name)mn.textContent=j.name;next2.disabled=false;}
      else{next2.disabled=true;chkmsg.className='inlinemsg bad';chkmsg.textContent=(j.errors&&j.errors.length?j.errors.join('; '):(j.error||'Did not pass.'));}
    }).catch(function(){chkbtn.disabled=false;chkmsg.className='inlinemsg bad';chkmsg.textContent='Check failed (network).';});
  });
