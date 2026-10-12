@@ -690,6 +690,7 @@ pub fn admin_page(
     seed: Option<&str>,
     signups_open: bool,
     minesweeper_on: bool,
+    mc_on: bool,
     connect_pw: &str,
     running: bool,
     gen_msg: &str,
@@ -763,6 +764,23 @@ pub fn admin_page(
                 false,
                 ""
             )
+        ));
+    }
+
+    // Common game (shared Minecraft server) — read at generation time to decide
+    // whether the communal in-pool slot is included. Toggle it before generating.
+    b.push_str(r#"<h2>Common game (Minecraft)</h2>"#);
+    if mc_on {
+        b.push_str(r#"<div class="statline">The shared Minecraft common game is <b>enabled</b> — the next season generated will include the communal slot.</div>"#);
+        b.push_str(&format!(
+            r#"<div class="btnrow">{}</div>"#,
+            action_btn("/admin/mc", &[("open", "0")], "Disable common game", false, "")
+        ));
+    } else {
+        b.push_str(r#"<div class="statline">The shared Minecraft common game is <b>disabled</b> — toggle this <b>before generating</b> to include it in the season.</div>"#);
+        b.push_str(&format!(
+            r#"<div class="btnrow">{}</div>"#,
+            action_btn("/admin/mc", &[("open", "1")], "Enable common game", false, "")
         ));
     }
 

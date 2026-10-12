@@ -115,6 +115,7 @@ async fn main() {
         .route("/admin/console", post(admin_console))
         .route("/admin/connect-password", post(admin_connect_password))
         .route("/admin/minesweeper", post(admin_minesweeper))
+        .route("/admin/mc", post(admin_mc))
         .route("/admin/archive-season", post(admin_archive_season))
         .route("/season/{seed}", get(season_view))
         .route("/minesweeper", get(minesweeper_page))
@@ -878,6 +879,7 @@ async fn render_admin(st: &AppState) -> Html<String> {
         .unwrap_or((false, None, "{}".into()));
     let signups_open = st.db.signups_open().await;
     let minesweeper_on = st.db.minesweeper_enabled().await;
+    let mc_on = st.db.mc_enabled().await;
     let connect_pw = st
         .ap_cfg
         .as_ref()
@@ -906,6 +908,7 @@ async fn render_admin(st: &AppState) -> Html<String> {
         seed.as_deref(),
         signups_open,
         minesweeper_on,
+        mc_on,
         &connect_pw,
         running,
         &gen_msg,
@@ -1428,6 +1431,18 @@ async fn admin_minesweeper(
     let (_me, is_admin) = identity(&headers);
     if is_admin {
         let _ = st.db.set_minesweeper_enabled(f.open == "1").await;
+    }
+    Redirect::to("/admin")
+}
+
+async fn admin_mc(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<SignupsForm>,
+) -> Redirect {
+    let (_me, is_admin) = identity(&headers);
+    if is_admin {
+        let _ = st.db.set_mc_enabled(f.open == "1").await;
     }
     Redirect::to("/admin")
 }

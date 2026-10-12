@@ -222,6 +222,18 @@ impl Db {
             .await
     }
 
+    /// Whether the shared Minecraft common game is enabled for the season (read
+    /// at generation time to decide whether the common slot is included;
+    /// defaults to off).
+    pub async fn mc_enabled(&self) -> bool {
+        matches!(self.get_setting("mc_enabled").await, Ok(Some(v)) if v == "1")
+    }
+
+    pub async fn set_mc_enabled(&self, on: bool) -> Result<(), sqlx::Error> {
+        self.set_setting("mc_enabled", if on { "1" } else { "0" })
+            .await
+    }
+
     /// A player's bonus-hint credits for a season.
     pub async fn credits(&self, season: &str, sso: &str) -> i64 {
         sqlx::query_scalar("SELECT credits FROM hint_credit WHERE season = ? AND sso = ?")
