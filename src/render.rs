@@ -266,6 +266,95 @@ pub fn landing_signups(subs: &[SubmissionRow]) -> String {
     out
 }
 
+/// A unix timestamp (seconds) as `D Mon YYYY` in UTC (Howard Hinnant's civil
+/// calendar algorithm — no chrono dependency).
+fn fmt_date(secs: i64) -> String {
+    let days = secs.div_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    const MON: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    format!("{d} {} {year}", MON[((m - 1).clamp(0, 11)) as usize])
+}
+
+/// The frontpage "Past seasons" block — a card per archived season linking to
+/// its detail page. Empty string when there are none (so the section hides).
+pub fn past_seasons_section(seasons: &[(String, String, i64)]) -> String {
+    if seasons.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(r#"<h2 class="sec">Past seasons</h2><div class="grid roster">"#);
+    for (seed, name, ts) in seasons {
+        out.push_str(&format!(
+            r#"<a class="slot cardlink" href="/season/{}"><div class="game">{}</div><div class="who">{}</div></a>"#,
+            esc(seed),
+            esc(name),
+            fmt_date(*ts),
+        ));
+    }
+    out.push_str("</div>");
+    out
+}
+
+/// An archived season's detail page: final standings per game + this season's
+/// frozen minesweeper leaderboards.
+pub fn season_page(s: &crate::season::SeasonSummary) -> Html<String> {
+    let mut out = page_head(None);
+    out.push_str(&format!(
+        r#"<h1>{}</h1><div class="crumb"><a href="/">← Bifrost</a> · {} player{} · finalized {}</div>"#,
+        esc(&s.name),
+        s.player_count,
+        if s.player_count == 1 { "" } else { "s" },
+        fmt_date(s.finalized_at),
+    ));
+
+    out.push_str(r#"<h2>Final standings</h2>"#);
+    if s.games.is_empty() {
+        out.push_str(r#"<div class="empty">No games recorded.</div>"#);
+    } else {
+        out.push_str(r#"<div class="grid">"#);
+        for g in &s.games {
+            let (cls, label) = if g.goaled {
+                ("goal", "✓ goaled")
+            } else {
+                ("idle", "in progress")
+            };
+            out.push_str(&format!(
+                r#"<div class="slot {cls}"><span class="st">{label}</span><div class="game">{}</div>
+<div class="meta">{} / {} checks · {}%</div><div class="seat"><span class="who">{}</span></div></div>"#,
+                esc(&g.game),
+                g.checks,
+                g.total,
+                g.pct,
+                esc(&g.players.join(" & ")),
+            ));
+        }
+        out.push_str("</div>");
+    }
+
+    if s.minesweeper.iter().any(|m| !m.is_empty()) {
+        out.push_str(r#"<h2>Minesweeper — this season</h2>"#);
+        for m in &s.minesweeper {
+            if m.is_empty() {
+                continue;
+            }
+            out.push_str(&mine_leaderboard_html(&m.label, &m.time, &m.rate, 5));
+        }
+    }
+
+    out.push_str("</main></body></html>");
+    Html(out)
+}
+
 fn conn_line(snap: &BoardSnapshot) -> String {
     let mut s = String::new();
     if snap.connected {
@@ -608,6 +697,7 @@ pub fn admin_page(
     subs: &[SubmissionRow],
     apworlds: &[String],
     acdata: &str,
+    archived: Option<&str>,
 ) -> Html<String> {
     let mut b = page_head(None);
     b.push_str(
@@ -785,6 +875,21 @@ pub fn admin_page(
         )
     ));
 
+    // Archive this season (capture for the Past Seasons page before reset)
+    b.push_str(r#"<h2>Archive this season</h2>"#);
+    b.push_str(r#"<p class="empty">Freeze this season for <b>Past Seasons</b> — the roster, each game's final standing (goaled + checks), and this season's minesweeper leaderboards — <b>before</b> you reset, while the data is still live. Re-archiving just refreshes the snapshot.</p>"#);
+    if let Some(name) = archived {
+        b.push_str(&format!(
+            r#"<div class="statline">✓ Archived as <b>{}</b>. <a href="/season/{}">View</a></div>"#,
+            esc(name),
+            esc(seed.unwrap_or("")),
+        ));
+    }
+    b.push_str(
+        r#"<form class="console" method="post" action="/admin/archive-season" autocomplete="off"><input type="text" name="name" placeholder="Season name (e.g. Season Sept 2026)" style="flex:1;min-width:0"><button type="submit">Archive &amp; finalize season</button></form>
+<p class="warnnote">Also run the host season bundle (raw multidata, save, YAMLs, apworlds + log → Nextcloud) before reset — that's the replayable archive this snapshot can't hold.</p>"#,
+    );
+
     // Maintenance + reset
     b.push_str(r#"<h2>Maintenance</h2>"#);
     b.push_str(&format!(
@@ -811,7 +916,7 @@ pub fn admin_page(
             "Delete the generated world (current.zip + archives)?"
         ),
     ));
-    b.push_str(r#"<p class="warnnote">Full reset removes all apworlds, players, slots, the save, and the world, and closes signups — a clean slate for the next season.</p>"#);
+    b.push_str(r#"<p class="warnnote">Full reset removes all apworlds, players, slots, the save, and the world, and closes signups — a clean slate for the next season. <b>Archive the season first</b> (above); past-season snapshots and minesweeper history are kept.</p>"#);
     b.push_str(&format!(
         r#"<div class="btnrow">{}</div>"#,
         action_btn(

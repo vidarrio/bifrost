@@ -27,6 +27,7 @@ mod generate;
 mod meta;
 mod mine;
 mod render;
+mod season;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -113,6 +114,8 @@ async fn main() {
         .route("/admin/console", post(admin_console))
         .route("/admin/connect-password", post(admin_connect_password))
         .route("/admin/minesweeper", post(admin_minesweeper))
+        .route("/admin/archive-season", post(admin_archive_season))
+        .route("/season/{seed}", get(season_view))
         .route("/minesweeper", get(minesweeper_page))
         .route("/minesweeper/new", post(mine_new))
         .route("/minesweeper/reveal", post(mine_reveal))
@@ -210,10 +213,13 @@ async fn landing(State(st): State<AppState>) -> Html<String> {
             render::landing_roster(&slots, &ap_names),
         )
     };
+    let past = st.db.past_seasons().await;
+    let past_html = render::past_seasons_section(&past);
     Html(
         LANDING
             .replace("<!--SEASONLABEL-->", label)
-            .replace("<!--ROSTER-->", &roster),
+            .replace("<!--ROSTER-->", &roster)
+            .replace("<!--PASTSEASONS-->", &past_html),
     )
 }
 
@@ -883,6 +889,17 @@ async fn render_admin(st: &AppState) -> Html<String> {
         .unwrap_or((false, "unknown".into()));
     let subs = st.db.submissions().await.unwrap_or_default();
     let apworlds = generate::list_apworlds().await;
+    // If the live season is already archived, surface its name so the admin
+    // knows the capture is done (and re-archiving would just refresh it).
+    let archived = match seed.as_deref() {
+        Some(s) if !s.is_empty() => st
+            .db
+            .past_season(s)
+            .await
+            .and_then(|j| serde_json::from_str::<season::SeasonSummary>(&j).ok())
+            .map(|sm| sm.name),
+        _ => None,
+    };
     render::admin_page(
         connected,
         seed.as_deref(),
@@ -894,6 +911,7 @@ async fn render_admin(st: &AppState) -> Html<String> {
         &subs,
         &apworlds,
         &acdata,
+        archived.as_deref(),
     )
 }
 
@@ -1026,6 +1044,166 @@ async fn admin_clear(
         _ => {}
     }
     Redirect::to("/admin").into_response()
+}
+
+#[derive(Deserialize)]
+struct ArchiveForm {
+    name: Option<String>,
+}
+
+/// Capture the current (still-live) season into the Past Seasons archive:
+/// roster, per-game standings (goaled + checks), and this season's frozen
+/// minesweeper leaderboards. Must run before a Full reset wipes the live data.
+async fn admin_archive_season(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<ArchiveForm>,
+) -> Response {
+    let (_me, is_admin) = identity(&headers);
+    if !is_admin {
+        return render::notice("Admins only.", false, "/admin").into_response();
+    }
+    // Snapshot the live board under one lock: seed, per-slot figures, and the
+    // AP slot -> primary player name map (to put the lead seat first).
+    let Ok((seed, snap, ap_names)) = st.board.read().map(|b| {
+        let names: HashMap<i64, String> =
+            b.slots.iter().map(|(k, s)| (*k, s.name.clone())).collect();
+        (b.seed.clone().unwrap_or_default(), b.snapshot(), names)
+    }) else {
+        return render::notice("Board is busy — try again.", false, "/admin").into_response();
+    };
+    if seed.is_empty() {
+        return render::notice(
+            "No live season to archive — Bifrost must be connected to a running game.",
+            false,
+            "/admin",
+        )
+        .into_response();
+    }
+    let slots = st.db.slots(&seed).await.unwrap_or_default();
+    if slots.is_empty() {
+        return render::notice("No slots to archive for the current season.", false, "/admin")
+            .into_response();
+    }
+
+    // Group the season's Bifrost slots by AP slot (one game each; co-op slots
+    // share an ap_slot), gathering the seat names and final standing.
+    let mut games: Vec<season::SeasonGame> = Vec::new();
+    let mut order: Vec<i64> = Vec::new();
+    let mut by_slot: HashMap<i64, (String, Vec<String>)> = HashMap::new();
+    for s in &slots {
+        let e = by_slot.entry(s.ap_slot).or_insert_with(|| {
+            order.push(s.ap_slot);
+            (s.game.clone(), Vec::new())
+        });
+        e.1.push(s.name.clone());
+    }
+    let mut player_total = 0usize;
+    for ap_slot in &order {
+        let (game, mut names) = by_slot.remove(ap_slot).unwrap();
+        names.sort_by_key(|n| n.to_ascii_lowercase());
+        // Primary (the AP slot's own player) first.
+        if let Some(lead) = ap_names.get(ap_slot) {
+            if let Some(pos) = names.iter().position(|n| n.eq_ignore_ascii_case(lead)) {
+                let p = names.remove(pos);
+                names.insert(0, p);
+            }
+        }
+        player_total += names.len();
+        let live = snap.ap.get(ap_slot);
+        let checks = live.map(|a| a.sent).unwrap_or(0);
+        let total = live.map(|a| a.world_size).unwrap_or(0);
+        let pct = if total > 0 {
+            ((checks * 100) / total as u64) as u32
+        } else {
+            0
+        };
+        games.push(season::SeasonGame {
+            game,
+            players: names,
+            goaled: live.map(|a| a.status == 30).unwrap_or(false),
+            checks,
+            total,
+            pct,
+        });
+    }
+    games.sort_by(|a, b| a.game.to_ascii_lowercase().cmp(&b.game.to_ascii_lowercase()));
+
+    // Freeze this season's minesweeper leaderboards (same shape as the live
+    // seasonal board: top 10, rate needs ≥5 games).
+    let mut minesweeper = Vec::new();
+    for (kind, label) in [("standard", "Normal"), ("expert", "Expert")] {
+        let time = st.db.mine_leaders_time(Some(&seed), kind, 10).await;
+        let rate = st.db.mine_leaders_rate(Some(&seed), kind, 5, 10).await;
+        minesweeper.push(season::MineBoard {
+            kind: kind.to_string(),
+            label: label.to_string(),
+            time,
+            rate,
+        });
+    }
+
+    let name = f
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(default_season_name);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or_default();
+    let summary = season::SeasonSummary {
+        name: name.clone(),
+        seed: seed.clone(),
+        finalized_at: now,
+        player_count: player_total,
+        games,
+        minesweeper,
+    };
+    let json = serde_json::to_string(&summary).unwrap_or_default();
+    match st.db.archive_season(&seed, &name, &json).await {
+        Ok(()) => Redirect::to(&format!("/season/{seed}")).into_response(),
+        Err(e) => {
+            render::notice(&format!("Archive failed: {e}"), false, "/admin").into_response()
+        }
+    }
+}
+
+/// A season name for a blank form: "Season <Mon YYYY>" by day's date.
+fn default_season_name() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or_default();
+    // Civil date from unix seconds (UTC), Howard Hinnant's algorithm.
+    let days = secs.div_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    const MON: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let mon = MON[((m - 1).clamp(0, 11)) as usize];
+    format!("Season {mon} {year}")
+}
+
+/// Render an archived season's detail page.
+async fn season_view(Path(seed): Path<String>, State(st): State<AppState>) -> Response {
+    match st.db.past_season(&seed).await {
+        Some(json) => match serde_json::from_str::<season::SeasonSummary>(&json) {
+            Ok(summary) => render::season_page(&summary).into_response(),
+            Err(_) => render::notice("That season's archive is unreadable.", false, "/").into_response(),
+        },
+        None => render::notice("No such archived season.", false, "/").into_response(),
+    }
 }
 
 async fn admin_delete_player(

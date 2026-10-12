@@ -170,6 +170,19 @@ impl Db {
         )
         .execute(&pool)
         .await?;
+        // Frozen per-season summaries for the Past Seasons page. Keyed by the AP
+        // seed so each season is captured once; deliberately NOT touched by the
+        // admin reset, so finished seasons survive the clean slate.
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS season_archive (
+                 seed TEXT PRIMARY KEY,
+                 name TEXT NOT NULL,
+                 finalized_at INTEGER NOT NULL,
+                 summary TEXT NOT NULL
+               )"#,
+        )
+        .execute(&pool)
+        .await?;
         Ok(Self { pool })
     }
 
@@ -360,6 +373,53 @@ impl Db {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// Store (or overwrite) a season's frozen summary for the Past Seasons page.
+    pub async fn archive_season(
+        &self,
+        seed: &str,
+        name: &str,
+        summary: &str,
+    ) -> Result<(), sqlx::Error> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or_default();
+        sqlx::query(
+            "INSERT INTO season_archive (seed, name, finalized_at, summary) VALUES (?, ?, ?, ?)
+             ON CONFLICT(seed) DO UPDATE SET
+                 name = excluded.name,
+                 finalized_at = excluded.finalized_at,
+                 summary = excluded.summary",
+        )
+        .bind(seed)
+        .bind(name)
+        .bind(now)
+        .bind(summary)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Archived seasons as (seed, name, finalized_at), newest first.
+    pub async fn past_seasons(&self) -> Vec<(String, String, i64)> {
+        sqlx::query_as::<_, (String, String, i64)>(
+            "SELECT seed, name, finalized_at FROM season_archive ORDER BY finalized_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default()
+    }
+
+    /// One archived season's stored summary JSON, if present.
+    pub async fn past_season(&self, seed: &str) -> Option<String> {
+        sqlx::query_scalar::<_, String>("SELECT summary FROM season_archive WHERE seed = ?")
+            .bind(seed)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten()
     }
 
     /// The set of prioritized hint keys (finding, location, item) for a season.
