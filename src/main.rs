@@ -337,6 +337,11 @@ async fn game_view(
     // The common game shows its own shared points to everyone; personal slots
     // only to their claimant.
     let is_common_slot = slots.iter().any(|r| r.ap_slot == ap_slot && r.is_common);
+    // Communal hinting requires skin in the game: the viewer must own a regular
+    // (non-common) slot this season to spend the common game's shared points.
+    let i_have_claim = slots
+        .iter()
+        .any(|r| !r.is_common && r.claimed_by.as_deref() == Some(me.as_str()));
     let points = match (i_claim || is_common_slot, &st.ap_cfg) {
         (true, Some(cfg)) if !connect_name.is_empty() => {
             ap::slot_points(&cfg.url, &cfg.password, &connect_name).await
@@ -361,6 +366,7 @@ async fn game_view(
         cost,
         points,
         credits,
+        i_have_claim,
         Some(mc_addr().as_str()),
     )
 }
@@ -484,11 +490,22 @@ async fn hint_post(
     let Some((ap_slot, claimant, is_common)) = detail else {
         return reject("Unknown slot.");
     };
-    // The common game is shared: any signed-in player may hint, spending the
-    // slot's own (communal) AP hint points. Every other slot is claimant-only.
+    let season = st
+        .board
+        .read()
+        .ok()
+        .and_then(|b| b.seed.clone())
+        .unwrap_or_default();
+    // The common game is shared: any signed-in player who has CLAIMED a game this
+    // season may hint, spending the slot's own (communal) AP points — requiring a
+    // claim keeps the shared pool to players with skin in the game. Every other
+    // slot is claimant-only.
     if is_common {
         if me == "unknown" {
             return reject("Sign in to hint on the common game.");
+        }
+        if !st.db.has_claimed_slot(&season, &me).await {
+            return reject("Claim one of the season's games before hinting on the common game.");
         }
     } else if claimant.as_deref() != Some(me.as_str()) {
         return reject("Only the player who claimed this slot can hint on it.");
@@ -504,12 +521,6 @@ async fn hint_post(
     let Some(cfg) = st.ap_cfg.as_ref() else {
         return reject("Hinting isn't configured.");
     };
-    let season = st
-        .board
-        .read()
-        .ok()
-        .and_then(|b| b.seed.clone())
-        .unwrap_or_default();
     let creds = st.db.credits(&season, &me).await;
     match ap::send_hint(&cfg.url, &cfg.password, &name, f.item.trim()).await {
         Ok(parts) => {

@@ -257,6 +257,22 @@ impl Db {
             .unwrap_or(0)
     }
 
+    /// True if this SSO user has claimed a regular (non-common) slot this season.
+    /// Communal-hint gate: only players with a game of their own in the season may
+    /// spend the common game's shared hint points.
+    pub async fn has_claimed_slot(&self, season: &str, sso: &str) -> bool {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM claim c JOIN bifrost_slot s ON s.id = c.bifrost_slot_id
+             WHERE s.season = ? AND c.sso = ? AND s.is_common = 0",
+        )
+        .bind(season)
+        .bind(sso)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0);
+        n > 0
+    }
+
     /// Grant `n` bonus-hint credits, returning the new total.
     pub async fn add_credits(&self, season: &str, sso: &str, n: i64) -> Result<i64, sqlx::Error> {
         sqlx::query(
