@@ -430,7 +430,7 @@ async fn run_once(
                         "game": "",
                         "name": cfg.slot,
                         "uuid": "bifrost-tracker",
-                        "version": {"class": "Version", "major": 0, "minor": 6, "build": 7},
+                        "version": {"class": "Version", "major": 0, "minor": 6, "build": 8},
                         "items_handling": 0,
                         "tags": ["Tracker"],
                         "slot_data": false,
@@ -743,7 +743,7 @@ pub async fn mark_goal(url: &str, password: &str, name: &str, game: &str) -> Res
                     "RoomInfo" => {
                         let connect = json!([{
                             "cmd": "Connect", "game": game, "name": name, "uuid": "bifrost-goal",
-                            "version": {"class": "Version", "major": 0, "minor": 6, "build": 7},
+                            "version": {"class": "Version", "major": 0, "minor": 6, "build": 8},
                             "items_handling": 7, "tags": [], "slot_data": false,
                             "password": password,
                         }]);
@@ -856,7 +856,7 @@ pub async fn send_hint(
                     "RoomInfo" => {
                         let connect = json!([{
                             "cmd": "Connect", "game": "", "name": name, "uuid": "bifrost-hint",
-                            "version": {"class": "Version", "major": 0, "minor": 6, "build": 7},
+                            "version": {"class": "Version", "major": 0, "minor": 6, "build": 8},
                             "items_handling": 0, "tags": ["TextOnly"], "slot_data": false,
                             "password": password,
                         }]);
@@ -996,7 +996,7 @@ pub async fn send_admin(
                     "RoomInfo" => {
                         let connect = json!([{
                             "cmd": "Connect", "game": "", "name": connect_name, "uuid": "bifrost-admin",
-                            "version": {"class": "Version", "major": 0, "minor": 6, "build": 7},
+                            "version": {"class": "Version", "major": 0, "minor": 6, "build": 8},
                             "items_handling": 0, "tags": ["TextOnly"], "slot_data": false,
                             "password": password,
                         }]);
@@ -1109,7 +1109,7 @@ pub async fn slot_points(url: &str, password: &str, name: &str) -> Option<i64> {
                     "RoomInfo" => {
                         let connect = json!([{
                             "cmd": "Connect", "game": "", "name": name, "uuid": "bifrost-points",
-                            "version": {"class": "Version", "major": 0, "minor": 6, "build": 7},
+                            "version": {"class": "Version", "major": 0, "minor": 6, "build": 8},
                             "items_handling": 0, "tags": ["TextOnly"], "slot_data": false,
                             "password": password,
                         }]);
