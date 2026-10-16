@@ -532,7 +532,7 @@ pub fn claim_page(
 
 pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool, open: bool) -> Html<String> {
     let mut b = page_head(Some(me));
-    b.push_str(r#"<h1>Season signup</h1><div class="crumb"><a href="/board">← board</a></div>"#);
+    b.push_str(r#"<h1>Season signup</h1><div class="crumb"><a href="/">← Bifrost</a></div>"#);
     if !open {
         b.push_str(
             r#"<div class="banner bad">Signups are closed right now. They'll open again before the next season.</div>"#,
