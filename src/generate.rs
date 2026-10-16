@@ -150,6 +150,9 @@ pub struct OutputFile {
     pub ext: String,
     pub is_spoiler: bool,
     pub size: u64,
+    /// AP slot number parsed from `P<n>` — matches a file to its game page.
+    /// `None` for the spoiler.
+    pub player: Option<i64>,
 }
 
 /// List the player-facing files in the current seed zip: per-player output files
@@ -179,16 +182,18 @@ pub fn list_outputs() -> Vec<OutputFile> {
                 ext: "txt".into(),
                 is_spoiler: true,
                 size,
+                player: None,
             });
             continue;
         }
-        if let Some((slot, ext)) = parse_player_file(&name) {
+        if let Some((num, slot, ext)) = parse_player_file(&name) {
             out.push(OutputFile {
                 member: name,
                 label: slot,
                 ext,
                 is_spoiler: false,
                 size,
+                player: Some(num),
             });
         }
     }
@@ -204,14 +209,22 @@ pub fn list_outputs() -> Vec<OutputFile> {
 /// Parse `AP_<seed>_P<n>_<slot>.<ext>` into (slot, ext). The seed and player
 /// number are pure digits, so the boundaries are unambiguous even when the slot
 /// name itself contains underscores.
-fn parse_player_file(name: &str) -> Option<(String, String)> {
+fn parse_player_file(name: &str) -> Option<(i64, String, String)> {
     let s = name.strip_prefix("AP_")?;
     let seed_end = s.find(|c: char| !c.is_ascii_digit())?;
     let s = s[seed_end..].strip_prefix("_P")?;
     let num_end = s.find(|c: char| !c.is_ascii_digit())?;
+    let num: i64 = s[..num_end].parse().ok()?;
     let s = s[num_end..].strip_prefix('_')?;
     let dot = s.rfind('.')?;
-    Some((s[..dot].to_string(), s[dot + 1..].to_string()))
+    Some((num, s[..dot].to_string(), s[dot + 1..].to_string()))
+}
+
+/// The AP slot number a per-player output file belongs to (`P<n>` in the name),
+/// used to gate a claimant to only their own slot's files. `None` for the
+/// spoiler or anything that isn't a per-player file.
+pub fn member_player(name: &str) -> Option<i64> {
+    parse_player_file(name).map(|(n, _, _)| n)
 }
 
 /// Read one member's bytes out of the current seed zip, but only if `member` is

@@ -97,6 +97,7 @@ async fn main() {
         .route("/game/{ap_slot}", get(game_view))
         .route("/game/{ap_slot}/hints", get(game_hints))
         .route("/game/{ap_slot}/items", get(game_items))
+        .route("/game/{ap_slot}/output", get(game_output))
         .route("/game/{ap_slot}/finish", post(game_finish))
         .route("/claim", get(claim_get).post(claim_post))
         .route("/hint", post(hint_post))
@@ -354,6 +355,18 @@ async fn game_view(
     } else {
         0
     };
+    // Generated files for THIS slot, shown only to a claimant of it (or admin).
+    // Don't even read the zip for anyone else.
+    let my_files = if i_claim || is_admin {
+        tokio::task::spawn_blocking(generate::list_outputs)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|o| o.player == Some(ap_slot))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
 
     render::game_page(
         ap_slot,
@@ -369,6 +382,7 @@ async fn game_view(
         credits,
         i_have_claim,
         Some(mc_addr().as_str()),
+        &my_files,
     )
 }
 
@@ -1530,12 +1544,16 @@ async fn admin_output(
         return render::notice("No such output file in the current seed.", false, "/admin")
             .into_response();
     };
-    // Download filename = the bare member name, sanitised for the header.
-    let fname: String = q
-        .file
+    download_response(&q.file, data)
+}
+
+/// Build an attachment download for a seed member's bytes. The filename sent to
+/// the browser is the bare member name, sanitised for the header.
+fn download_response(member: &str, data: Vec<u8>) -> Response {
+    let fname: String = member
         .rsplit('/')
         .next()
-        .unwrap_or(&q.file)
+        .unwrap_or(member)
         .chars()
         .map(|c| if "\"\\\r\n".contains(c) { '_' } else { c })
         .collect();
@@ -1551,6 +1569,47 @@ async fn admin_output(
             .unwrap_or(axum::http::HeaderValue::from_static("attachment")),
     );
     resp
+}
+
+/// A claimant (or admin) downloading their own slot's generated file from the
+/// game page. Gated to someone who claims THIS `ap_slot` (or admin), and the
+/// requested file must actually belong to this slot (its `P<n>` == `ap_slot`),
+/// so a claimant can't pull another game's file.
+async fn game_output(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Path(ap_slot): Path<i64>,
+    Query(q): Query<OutputQuery>,
+) -> Response {
+    let (me, is_admin) = identity(&headers);
+    let season = st
+        .board
+        .read()
+        .ok()
+        .and_then(|b| b.seed.clone())
+        .unwrap_or_default();
+    let slots = st.db.slots(&season).await.unwrap_or_default();
+    let i_claim = slots
+        .iter()
+        .any(|r| r.ap_slot == ap_slot && r.claimed_by.as_deref() == Some(me.as_str()));
+    let back = format!("/game/{ap_slot}");
+    if !(i_claim || is_admin) {
+        return render::notice("Claim this game to download its files.", false, &back)
+            .into_response();
+    }
+    if generate::member_player(&q.file) != Some(ap_slot) {
+        return render::notice("That file isn't for this game.", false, &back).into_response();
+    }
+    let member = q.file.clone();
+    let bytes = tokio::task::spawn_blocking(move || generate::read_output(&member))
+        .await
+        .ok()
+        .flatten();
+    match bytes {
+        Some(data) => download_response(&q.file, data),
+        None => render::notice("No such output file in the current seed.", false, &back)
+            .into_response(),
+    }
 }
 
 async fn minesweeper_page(

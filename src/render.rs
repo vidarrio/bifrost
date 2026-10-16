@@ -1214,6 +1214,7 @@ pub fn game_page(
     credits: i64,
     can_hint_common: bool,
     mc_addr: Option<&str>,
+    files: &[crate::generate::OutputFile],
 ) -> Html<String> {
     let live = snap.ap.get(&ap_slot).cloned().unwrap_or_default();
     let back = format!("/game/{ap_slot}");
@@ -1337,6 +1338,24 @@ pub fn game_page(
         ));
     }
     out.push_str("</div>");
+
+    // Generated files for this slot — shown only to a claimant of it (or admin);
+    // the caller passes an empty list to everyone else. Downloaded through the
+    // claimant-gated /game/{ap_slot}/output route (not the admin one).
+    if !files.is_empty() {
+        out.push_str(r#"<h2>Your game files</h2>"#);
+        out.push_str(r#"<p class="empty">The generator produced these for your slot — download and use them with your client to play this seed.</p>"#);
+        out.push_str(r#"<div class="grid">"#);
+        for f in files {
+            out.push_str(&format!(
+                r#"<div class="slot idle"><div class="prow"><span class="who"><code>.{}</code> file · {}</span><a class="ghost" href="/game/{ap_slot}/output?file={}">download</a></div></div>"#,
+                esc(&f.ext),
+                human_size(f.size),
+                urlq(&f.member),
+            ));
+        }
+        out.push_str("</div>");
+    }
 
     // Hinting — shown only to a player who claims a seat on this slot. Admins do
     // not get it here; they hint via the server console instead.
