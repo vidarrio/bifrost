@@ -13,6 +13,31 @@ fn esc(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// Percent-encode a value for use in a query string (AP output filenames are
+/// usually already filename-safe, but slot names can carry spaces/punctuation).
+fn urlq(s: &str) -> String {
+    let mut o = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-') {
+            o.push(b as char);
+        } else {
+            o.push_str(&format!("%{b:02X}"));
+        }
+    }
+    o
+}
+
+/// Human-readable byte size for the admin file list.
+fn human_size(n: u64) -> String {
+    if n < 1024 {
+        format!("{n} B")
+    } else if n < 1024 * 1024 {
+        format!("{:.0} KB", n as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", n as f64 / (1024.0 * 1024.0))
+    }
+}
+
 /// The signature favicon — a dark rounded square with a gold `›` caret,
 /// matching the home launcher. Served at `/favicon.svg`.
 pub const FAVICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
@@ -726,6 +751,8 @@ pub fn admin_page(
     apworlds: &[String],
     acdata: &str,
     archived: Option<&str>,
+    outputs: &[crate::generate::OutputFile],
+    out_slots: &[SlotRow],
 ) -> Html<String> {
     let mut b = page_head(None);
     b.push_str(
@@ -855,6 +882,40 @@ pub fn admin_page(
                 "Re-roll the current lineup into a new world with a fresh save? Claims are kept; the game restarts."
             )
         ));
+    }
+
+    // Generated per-player files (extracted from the current seed) for handing out.
+    b.push_str(r#"<h2>Player files</h2>"#);
+    if outputs.is_empty() {
+        b.push_str(r#"<div class="empty">No per-player files in the current seed — most games connect directly and produce none; only patch/ROM-based games and a few others (BG3, Minecraft, …) emit one. (Nothing here until a season is generated.)</div>"#);
+    } else {
+        b.push_str(r#"<p class="empty">Files the generator produced for specific slots — give each to the right player (Discord, etc.). The slot name and game are taken straight from the filename, so there's no guessing which goes where.</p>"#);
+        for o in outputs {
+            let link = format!(
+                r#"<a class="ghost" href="/admin/output?file={}">download</a>"#,
+                urlq(&o.member)
+            );
+            if o.is_spoiler {
+                b.push_str(&format!(
+                    r#"<div class="hintrow"><span><b>Spoiler</b> · <code>.{}</code> · {} · admin reference, not for players</span>{link}</div>"#,
+                    esc(&o.ext),
+                    human_size(o.size),
+                ));
+            } else {
+                let game = out_slots
+                    .iter()
+                    .find(|s| s.name.eq_ignore_ascii_case(&o.label))
+                    .map(|s| s.game.as_str())
+                    .unwrap_or("—");
+                b.push_str(&format!(
+                    r#"<div class="hintrow"><span><b>{}</b> — {} · <code>.{}</code> · {}</span>{link}</div>"#,
+                    esc(&o.label),
+                    esc(game),
+                    esc(&o.ext),
+                    human_size(o.size),
+                ));
+            }
+        }
     }
 
     // Signups (the queue for the next season)

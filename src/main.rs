@@ -116,6 +116,7 @@ async fn main() {
         .route("/admin/connect-password", post(admin_connect_password))
         .route("/admin/minesweeper", post(admin_minesweeper))
         .route("/admin/mc", post(admin_mc))
+        .route("/admin/output", get(admin_output))
         .route("/admin/archive-season", post(admin_archive_season))
         .route("/season/{seed}", get(season_view))
         .route("/minesweeper", get(minesweeper_page))
@@ -922,6 +923,16 @@ async fn render_admin(st: &AppState) -> Html<String> {
         .unwrap_or((false, "unknown".into()));
     let subs = st.db.submissions().await.unwrap_or_default();
     let apworlds = generate::list_apworlds().await;
+    // Per-player files the generator produced, with each slot's game resolved
+    // from the Bifrost slots for the current seed (filename carries the slot
+    // name; db carries name→game).
+    let outputs = tokio::task::spawn_blocking(generate::list_outputs)
+        .await
+        .unwrap_or_default();
+    let out_slots = match seed.as_deref() {
+        Some(s) if !s.is_empty() => st.db.slots(s).await.unwrap_or_default(),
+        _ => Vec::new(),
+    };
     // If the live season is already archived, surface its name so the admin
     // knows the capture is done (and re-archiving would just refresh it).
     let archived = match seed.as_deref() {
@@ -946,6 +957,8 @@ async fn render_admin(st: &AppState) -> Html<String> {
         &apworlds,
         &acdata,
         archived.as_deref(),
+        &outputs,
+        &out_slots,
     )
 }
 
@@ -1489,6 +1502,55 @@ async fn admin_mc(
         let _ = st.db.set_mc_enabled(f.open == "1").await;
     }
     Redirect::to("/admin")
+}
+
+#[derive(Deserialize)]
+struct OutputQuery {
+    file: String,
+}
+
+/// Stream one generated per-player file (or the spoiler) out of the current
+/// seed zip as a download. Admin-only (also behind the admin-gated Traefik
+/// router); `generate::read_output` validates the member is really in the zip.
+async fn admin_output(
+    State(_st): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<OutputQuery>,
+) -> Response {
+    let (_me, is_admin) = identity(&headers);
+    if !is_admin {
+        return render::notice("Admins only.", false, "/board").into_response();
+    }
+    let member = q.file.clone();
+    let bytes = tokio::task::spawn_blocking(move || generate::read_output(&member))
+        .await
+        .ok()
+        .flatten();
+    let Some(data) = bytes else {
+        return render::notice("No such output file in the current seed.", false, "/admin")
+            .into_response();
+    };
+    // Download filename = the bare member name, sanitised for the header.
+    let fname: String = q
+        .file
+        .rsplit('/')
+        .next()
+        .unwrap_or(&q.file)
+        .chars()
+        .map(|c| if "\"\\\r\n".contains(c) { '_' } else { c })
+        .collect();
+    let mut resp = Response::new(axum::body::Body::from(data));
+    let h = resp.headers_mut();
+    h.insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/octet-stream"),
+    );
+    h.insert(
+        axum::http::header::CONTENT_DISPOSITION,
+        axum::http::HeaderValue::from_str(&format!("attachment; filename=\"{fname}\""))
+            .unwrap_or(axum::http::HeaderValue::from_static("attachment")),
+    );
+    resp
 }
 
 async fn minesweeper_page(

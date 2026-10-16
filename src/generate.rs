@@ -134,6 +134,101 @@ async fn run_meta(seed_zip: &str) -> Result<Value, String> {
     serde_json::from_str(line.trim()).map_err(|e| format!("parse meta: {e}"))
 }
 
+// ---- generated per-player output files (for the admin to hand out) ----
+
+const CURRENT_ZIP: &str = "/srv/archipelago/output/current.zip";
+
+/// A distributable file inside the generated seed (`output/current.zip`): either
+/// a per-player patch/output file or the spoiler. The `.archipelago` multidata
+/// (the server file) is never exposed.
+pub struct OutputFile {
+    /// Exact zip member name — the download key, validated on the way back out.
+    pub member: String,
+    /// Slot name parsed from the filename (for the spoiler: "Spoiler").
+    pub label: String,
+    /// File extension (world-specific, e.g. `apbg3`, `apmc`), or `txt`.
+    pub ext: String,
+    pub is_spoiler: bool,
+    pub size: u64,
+}
+
+/// List the player-facing files in the current seed zip: per-player output files
+/// named `AP_<seed>_P<n>_<slot>.<ext>` plus the spoiler. Excludes the
+/// `.archipelago` multidata (the server file). Blocking — call from
+/// `spawn_blocking`. Empty if no seed has been generated yet.
+pub fn list_outputs() -> Vec<OutputFile> {
+    let Ok(f) = std::fs::File::open(CURRENT_ZIP) else {
+        return Vec::new();
+    };
+    let Ok(mut zip) = zip::ZipArchive::new(f) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for i in 0..zip.len() {
+        let Ok(e) = zip.by_index(i) else { continue };
+        let Ok(name) = e.name() else { continue };
+        let name = name.to_string();
+        let size = e.size();
+        if name.ends_with(".archipelago") {
+            continue; // server multidata, not for players
+        }
+        if name.ends_with("_Spoiler.txt") {
+            out.push(OutputFile {
+                member: name,
+                label: "Spoiler".into(),
+                ext: "txt".into(),
+                is_spoiler: true,
+                size,
+            });
+            continue;
+        }
+        if let Some((slot, ext)) = parse_player_file(&name) {
+            out.push(OutputFile {
+                member: name,
+                label: slot,
+                ext,
+                is_spoiler: false,
+                size,
+            });
+        }
+    }
+    // Players first (A→Z), spoiler last.
+    out.sort_by(|a, b| {
+        a.is_spoiler
+            .cmp(&b.is_spoiler)
+            .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
+    });
+    out
+}
+
+/// Parse `AP_<seed>_P<n>_<slot>.<ext>` into (slot, ext). The seed and player
+/// number are pure digits, so the boundaries are unambiguous even when the slot
+/// name itself contains underscores.
+fn parse_player_file(name: &str) -> Option<(String, String)> {
+    let s = name.strip_prefix("AP_")?;
+    let seed_end = s.find(|c: char| !c.is_ascii_digit())?;
+    let s = s[seed_end..].strip_prefix("_P")?;
+    let num_end = s.find(|c: char| !c.is_ascii_digit())?;
+    let s = s[num_end..].strip_prefix('_')?;
+    let dot = s.rfind('.')?;
+    Some((s[..dot].to_string(), s[dot + 1..].to_string()))
+}
+
+/// Read one member's bytes out of the current seed zip, but only if `member` is
+/// actually a file in it (so a crafted query can't pull anything arbitrary), and
+/// never the `.archipelago` server file. Blocking — call from `spawn_blocking`.
+pub fn read_output(member: &str) -> Option<Vec<u8>> {
+    if member.ends_with(".archipelago") {
+        return None;
+    }
+    let f = std::fs::File::open(CURRENT_ZIP).ok()?;
+    let mut zip = zip::ZipArchive::new(f).ok()?;
+    let mut e = zip.by_name(member).ok()?; // errors if not a member
+    let mut buf = Vec::with_capacity(e.size() as usize);
+    std::io::Read::read_to_end(&mut e, &mut buf).ok()?;
+    Some(buf)
+}
+
 // ---- admin maintenance actions (each writes only inside our ReadWritePaths) ----
 
 /// Remove every installed custom apworld from custom_worlds/.
