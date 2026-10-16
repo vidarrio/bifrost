@@ -1421,8 +1421,20 @@ async fn admin_connect_password(
     let Some(cfg) = st.ap_cfg.as_ref() else {
         return render::notice("AP connection isn't configured.", false, "/admin").into_response();
     };
-    // Set it on the running server first (bifrost's env is still the old one, so
-    // this connection still authenticates).
+    // Is a season actually live right now (tracker connected to a running
+    // server)? Between seasons there's nothing to set the password ON — the
+    // value just needs persisting so the next generated/loaded season uses it.
+    let live = st
+        .board
+        .read()
+        .map(|b| b.snapshot().connected)
+        .unwrap_or(false);
+    // Best-effort set it on the running server first (bifrost's env is still the
+    // old one, so this connection still authenticates). If a season IS live and
+    // this fails, bail WITHOUT persisting — otherwise bifrost would restart with
+    // the new password in its env and be unable to reconnect to the still-running
+    // old-password server. If no season is live, a failure here is expected
+    // (nothing to connect to), so fall through and persist for the next season.
     if let Err(e) = ap::send_admin(
         &cfg.url,
         &cfg.slot,
@@ -1432,12 +1444,14 @@ async fn admin_connect_password(
     )
     .await
     {
-        return render::notice(
-            &format!("Couldn't set it on the running server: {e}"),
-            false,
-            "/admin",
-        )
-        .into_response();
+        if live {
+            return render::notice(
+                &format!("Couldn't set it on the running server: {e}"),
+                false,
+                "/admin",
+            )
+            .into_response();
+        }
     }
     // Persist after a short delay so this response reaches the browser before the
     // root helper restarts bifrost (writing the request file triggers it).
@@ -1445,12 +1459,12 @@ async fn admin_connect_password(
         tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
         let _ = tokio::fs::write(CONNPW_REQUEST, format!("{pw}\n")).await;
     });
-    render::notice(
-        "Connect password updated. Bifrost is restarting to apply it everywhere — give it a few seconds, then reload.",
-        true,
-        "/admin",
-    )
-    .into_response()
+    let msg = if live {
+        "Connect password updated. Bifrost is restarting to apply it everywhere — give it a few seconds, then reload."
+    } else {
+        "No season is live, so the connect password was saved to the server config — it'll apply to the next season you generate. Bifrost is restarting; give it a few seconds, then reload."
+    };
+    render::notice(msg, true, "/admin").into_response()
 }
 
 async fn admin_minesweeper(
