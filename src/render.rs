@@ -1278,6 +1278,9 @@ pub fn game_page(
         };
         // Bare address for the Prism steps (the full sentence above is addr_step).
         let addr = mc_addr.map(esc).unwrap_or_else(|| "ask an admin".to_string());
+        // Just the NeoForge version (MC_LOADER is "NeoForge 26.2.0.90") for the
+        // Prism "Install Loader → NeoForge → <version>" step.
+        let loader_ver = MC_LOADER.strip_prefix("NeoForge ").unwrap_or(MC_LOADER);
         out.push_str(&format!(
             r#"<h3>How to join</h3>
 <ol class="mcjoin">
@@ -1291,12 +1294,13 @@ pub fn game_page(
 <ol class="mcjoin">
 <li>Install <b>Prism Launcher</b> from <b>prismlauncher.org</b> and open it.</li>
 <li>Top-right accounts button → <b>Manage Accounts</b> → <b>Add Microsoft</b> and sign in (the server is online-mode, so a genuine account is required).</li>
-<li><b>Add Instance</b> → pick Minecraft <b>{ver}</b> → set the mod loader to <b>{loader}</b> → create. Prism downloads the matching Java (25) itself — accept if it offers.</li>
+<li><b>Add Instance</b> → pick Minecraft <b>{ver}</b>, then in the <b>Mod Loader</b> section below the version list choose <b>NeoForge</b> → <b>{loader_ver}</b> → create. Prism downloads the matching Java (25) itself — accept if it offers. <i>(Already made the instance? Instead: <b>Edit → Version → Install Loader</b> in the right panel → NeoForge → {loader_ver}.)</i></li>
 <li>Select the instance → <b>Edit</b> → <b>Mods</b> → <b>Add file…</b> and choose <code>{mod_jar}</code> (grab it from the <a href="/game/mc/mod">download</a> above). Nothing else goes in there.</li>
 <li><b>Launch</b> the instance → <b>Multiplayer</b> → <b>Add Server</b> → address <b>{addr}</b> → join.</li>
 </ol></details>"#,
             ver = MC_GAME_VERSION,
             loader = MC_LOADER,
+            loader_ver = loader_ver,
             mod_jar = crate::generate::MC_MOD_JAR,
             addr = addr,
         ));
