@@ -96,6 +96,13 @@ h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute
 .signup input[type=file],.signup input[type=text]{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:6px 8px;font-size:13px}
 code{font-family:var(--mono);font-size:12px;color:var(--accent)}
 .mcjoin{margin:4px 0 10px;padding-left:20px;font-size:13.5px;line-height:1.55}.mcjoin li{margin:4px 0}.mcjoin code{background:var(--bg);padding:1px 5px;border-radius:4px}
+details.prism{margin:6px 0 4px;border:1px solid var(--bd);border-radius:7px;padding:2px 12px;background:var(--bg)}
+details.prism summary{cursor:pointer;padding:9px 0;font-size:13px;font-weight:600;color:var(--fg);list-style:none}
+details.prism summary::-webkit-details-marker{display:none}
+details.prism summary::before{content:"\25B8  ";color:var(--accent)}
+details.prism[open] summary::before{content:"\25BE  "}
+details.prism[open] summary{border-bottom:1px solid var(--bd);margin-bottom:4px}
+details.prism .mcjoin{margin-bottom:8px}
 .cardlink{text-decoration:none;color:inherit;display:block;transition:border-color .1s}.cardlink:hover{border-color:var(--accent);text-decoration:none}
 .cardlink:hover .game{color:var(--accent)}
 .prow{display:flex;justify-content:space-between;align-items:center;gap:8px}
@@ -1269,6 +1276,8 @@ pub fn game_page(
             ),
             None => "Open <b>Multiplayer</b> and connect — ask an admin for the server address.".to_string(),
         };
+        // Bare address for the Prism steps (the full sentence above is addr_step).
+        let addr = mc_addr.map(esc).unwrap_or_else(|| "ask an admin".to_string());
         out.push_str(&format!(
             r#"<h3>How to join</h3>
 <ol class="mcjoin">
@@ -1277,10 +1286,19 @@ pub fn game_page(
 <li>Drop the mod <code>{mod_jar}</code> — <a href="/game/mc/mod">download</a> — into that profile's <code>mods/</code> folder. It's the <b>exact</b> jar the server runs; NeoForge drops you on any version mismatch.</li>
 <li>{addr_step}</li>
 </ol>
-<p class="statline">With the official Minecraft launcher you don't need to install Java yourself; a third-party launcher (Prism/MultiMC) needs a <b>Java 25</b> runtime.</p>"#,
+<p class="statline">The official Minecraft launcher and Prism both fetch the right Java for you; only a bare manual setup needs you to install <b>Java 25</b> yourself.</p>
+<details class="prism"><summary>Step-by-step with Prism Launcher (recommended)</summary>
+<ol class="mcjoin">
+<li>Install <b>Prism Launcher</b> from <b>prismlauncher.org</b> and open it.</li>
+<li>Top-right accounts button → <b>Manage Accounts</b> → <b>Add Microsoft</b> and sign in (the server is online-mode, so a genuine account is required).</li>
+<li><b>Add Instance</b> → pick Minecraft <b>{ver}</b> → set the mod loader to <b>{loader}</b> → create. Prism downloads the matching Java (25) itself — accept if it offers.</li>
+<li>Select the instance → <b>Edit</b> → <b>Mods</b> → <b>Add file…</b> and choose <code>{mod_jar}</code> (grab it from the <a href="/game/mc/mod">download</a> above). Nothing else goes in there.</li>
+<li><b>Launch</b> the instance → <b>Multiplayer</b> → <b>Add Server</b> → address <b>{addr}</b> → join.</li>
+</ol></details>"#,
             ver = MC_GAME_VERSION,
             loader = MC_LOADER,
             mod_jar = crate::generate::MC_MOD_JAR,
+            addr = addr,
         ));
 
         // Communal hinting: only players with a claimed game this season may spend
