@@ -95,6 +95,7 @@ h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute
 .signup{display:grid;gap:12px;max-width:460px;margin-bottom:10px}.signup label{display:grid;gap:4px;font-size:13px;color:var(--muted)}.signup label.chk{display:flex;flex-direction:row;align-items:center;gap:8px}
 .signup input[type=file],.signup input[type=text]{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:6px 8px;font-size:13px}
 code{font-family:var(--mono);font-size:12px;color:var(--accent)}
+.mcjoin{margin:4px 0 10px;padding-left:20px;font-size:13.5px;line-height:1.55}.mcjoin li{margin:4px 0}.mcjoin code{background:var(--bg);padding:1px 5px;border-radius:4px}
 .cardlink{text-decoration:none;color:inherit;display:block;transition:border-color .1s}.cardlink:hover{border-color:var(--accent);text-decoration:none}
 .cardlink:hover .game{color:var(--accent)}
 .prow{display:flex;justify-content:space-between;align-items:center;gap:8px}
@@ -1197,6 +1198,13 @@ fn claim_button(id: i64, op: &str, label: &str, ghost: bool, back: &str) -> Stri
     )
 }
 
+/// Client requirements for the shared Minecraft common game — these MUST match
+/// what's installed on the Minecraft LXC (120). Update all three together when
+/// the common game's versions change.
+const MC_GAME_VERSION: &str = "26.2"; // Minecraft Java Edition version
+const MC_LOADER: &str = "NeoForge 26.2.0.90"; // mod loader build
+const MC_MOD_JAR: &str = "aprandomizer-2.2.1-26.2.jar"; // the AP mod, client + server
+
 /// The per-game page: claim/unclaim its players, hint with live item search,
 /// and all hints in this world with a "prioritize" toggle.
 #[allow(clippy::too_many_arguments)]
@@ -1251,13 +1259,28 @@ pub fn game_page(
     if is_common {
         out.push_str(r#"<h2>Common game</h2>"#);
         out.push_str(r#"<p class="empty">A shared Minecraft world, open to everyone this season — drop in when you're softlocked, taking a break, or done with your own game. Its checks feed the common pool, so playing here releases items to the rest of the group.</p>"#);
-        match mc_addr {
-            Some(addr) => out.push_str(&format!(
-                r#"<div class="statline">Join the server at <b>{}</b> — no whitelist, just connect.</div>"#,
+        // How to join: the client must match the server exactly, or
+        // NeoForge refuses the connection. Address comes last as the final step.
+        let addr_step = match mc_addr {
+            Some(addr) => format!(
+                r#"Open <b>Multiplayer</b> and connect to <b>{}</b> — no whitelist, just join."#,
                 esc(addr)
-            )),
-            None => out.push_str(r#"<div class="statline">Server address: ask an admin.</div>"#),
-        }
+            ),
+            None => "Open <b>Multiplayer</b> and connect — ask an admin for the server address.".to_string(),
+        };
+        out.push_str(&format!(
+            r#"<h3>How to join</h3>
+<ol class="mcjoin">
+<li>Get <b>Minecraft: Java Edition {ver}</b> on a genuine Mojang/Microsoft account (the server runs online-mode).</li>
+<li>Install <b>{loader}</b> with its installer — it creates a launch profile set to the matching Minecraft version.</li>
+<li>Put the mod <code>{mod_jar}</code> into that profile's <code>mods/</code> folder. It's the <b>exact</b> jar the server runs — NeoForge drops you on any version mismatch.</li>
+<li>{addr_step}</li>
+</ol>
+<p class="statline">With the official Minecraft launcher you don't need to install Java yourself; a third-party launcher (Prism/MultiMC) needs a <b>Java 25</b> runtime.</p>"#,
+            ver = MC_GAME_VERSION,
+            loader = MC_LOADER,
+            mod_jar = MC_MOD_JAR,
+        ));
 
         // Communal hinting: only players with a claimed game this season may spend
         // the common game's OWN (shared) AP hint points — no personal/bonus points.
