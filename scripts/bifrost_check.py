@@ -23,6 +23,12 @@ try:
     Utils.local_path.cached_path = AP_DIR
     Utils.user_path.cached_path = AP_DIR
 
+    # Loading the worlds registers their setting keys, which AP would persist to
+    # host.yaml via an atexit autosave — a write the read-only sandbox refuses.
+    # The checker only reads settings, so disable the autosave.
+    import settings
+    settings.skip_autosave = True
+
     from Generate import roll_settings, PlandoOptions
     from Utils import parse_yamls
 except Exception as e:  # pragma: no cover

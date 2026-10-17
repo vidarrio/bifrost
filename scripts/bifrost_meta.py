@@ -22,6 +22,10 @@ try:
     import Utils
     Utils.local_path.cached_path = AP_DIR
     Utils.user_path.cached_path = AP_DIR
+    # Loading the world registry can register setting keys AP would then autosave
+    # into host.yaml at exit — a write the read-only sandbox refuses. Disable it.
+    import settings
+    settings.skip_autosave = True
     from Utils import restricted_loads
     from worlds import AutoWorldRegister
 except Exception as e:  # pragma: no cover

@@ -17,5 +17,13 @@ Utils.local_path.cached_path = AP
 Utils.user_path.cached_path = AP
 os.chdir(AP)
 
+# Generation only READS settings, but loading the worlds registers their setting
+# keys, which AP would then persist back into host.yaml via an atexit autosave
+# (an atomic host.yaml.tmp next to it). Bifrost's sandbox makes /srv/archipelago
+# read-only, so that write fails and aborts the run. Disable the autosave — the
+# in-memory defaults are all generation needs; host.yaml stays as the admin set it.
+import settings
+settings.skip_autosave = True
+
 sys.argv = ["Generate.py"] + sys.argv[1:]
 runpy.run_path(os.path.join(AP, "Generate.py"), run_name="__main__")
