@@ -98,6 +98,7 @@ async fn main() {
         .route("/game/{ap_slot}/hints", get(game_hints))
         .route("/game/{ap_slot}/items", get(game_items))
         .route("/game/{ap_slot}/output", get(game_output))
+        .route("/game/mc/{which}", get(mc_asset))
         .route("/game/{ap_slot}/finish", post(game_finish))
         .route("/claim", get(claim_get).post(claim_post))
         .route("/hint", post(hint_post))
@@ -1609,6 +1610,25 @@ async fn game_output(
         Some(data) => download_response(&q.file, data),
         None => render::notice("No such output file in the current seed.", false, &back)
             .into_response(),
+    }
+}
+
+/// Serve a staged Minecraft client asset (the NeoForge installer or the AP mod)
+/// for download from the common-game page. Lives under `/game`, so it's SSO-gated
+/// to archipelago_users like the rest. `which` is "neoforge" or "mod".
+async fn mc_asset(Path(which): Path<String>) -> Response {
+    match tokio::task::spawn_blocking(move || generate::read_client_asset(&which))
+        .await
+        .ok()
+        .flatten()
+    {
+        Some((name, data)) => download_response(name, data),
+        None => render::notice(
+            "That download isn't available yet — ask an admin to stage it.",
+            false,
+            "/board",
+        )
+        .into_response(),
     }
 }
 

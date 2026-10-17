@@ -1203,7 +1203,8 @@ fn claim_button(id: i64, op: &str, label: &str, ghost: bool, back: &str) -> Stri
 /// the common game's versions change.
 const MC_GAME_VERSION: &str = "26.2"; // Minecraft Java Edition version
 const MC_LOADER: &str = "NeoForge 26.2.0.90"; // mod loader build
-const MC_MOD_JAR: &str = "aprandomizer-2.2.1-26.2.jar"; // the AP mod, client + server
+// The AP mod jar name is `crate::generate::MC_MOD_JAR` (shared with the download
+// route that serves it), so the displayed name and the served file can't drift.
 
 /// The per-game page: claim/unclaim its players, hint with live item search,
 /// and all hints in this world with a "prioritize" toggle.
@@ -1272,14 +1273,14 @@ pub fn game_page(
             r#"<h3>How to join</h3>
 <ol class="mcjoin">
 <li>Get <b>Minecraft: Java Edition {ver}</b> on a genuine Mojang/Microsoft account (the server runs online-mode).</li>
-<li>Install <b>{loader}</b> with its installer — it creates a launch profile set to the matching Minecraft version.</li>
-<li>Put the mod <code>{mod_jar}</code> into that profile's <code>mods/</code> folder. It's the <b>exact</b> jar the server runs — NeoForge drops you on any version mismatch.</li>
+<li>Install <b>{loader}</b> — <a href="/game/mc/neoforge">download the installer</a>, run it, and it creates a launch profile set to the matching Minecraft version.</li>
+<li>Drop the mod <code>{mod_jar}</code> — <a href="/game/mc/mod">download</a> — into that profile's <code>mods/</code> folder. It's the <b>exact</b> jar the server runs; NeoForge drops you on any version mismatch.</li>
 <li>{addr_step}</li>
 </ol>
 <p class="statline">With the official Minecraft launcher you don't need to install Java yourself; a third-party launcher (Prism/MultiMC) needs a <b>Java 25</b> runtime.</p>"#,
             ver = MC_GAME_VERSION,
             loader = MC_LOADER,
-            mod_jar = MC_MOD_JAR,
+            mod_jar = crate::generate::MC_MOD_JAR,
         ));
 
         // Communal hinting: only players with a claimed game this season may spend

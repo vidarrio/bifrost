@@ -30,6 +30,14 @@ const COMMON_YAML: &str = "Commons.yaml";
 /// slot communal.
 pub const COMMON_SLOT_NAME: &str = "Commons";
 
+/// Client-side Minecraft assets staged under `common/client/` so Bifrost can
+/// serve them for download from the common-game page (read-only; bifrost is in
+/// the `archipelago` group and the files are world-readable). Keep these in sync
+/// with what's installed on the Minecraft host and the `MC_*` display strings in render.rs.
+const MC_CLIENT_DIR: &str = "/srv/archipelago/common/client";
+pub const MC_NEOFORGE_JAR: &str = "neoforge-26.2.0.90-installer.jar";
+pub const MC_MOD_JAR: &str = "aprandomizer-2.2.1-26.2.jar";
+
 /// (running, last message).
 pub type GenState = Arc<Mutex<(bool, String)>>;
 
@@ -254,6 +262,20 @@ fn strip_version_suffix(label: &str) -> &str {
 /// spoiler or anything that isn't a per-player file.
 pub fn member_player(name: &str) -> Option<i64> {
     parse_player_file(name).map(|(n, _, _)| n)
+}
+
+/// Read a staged Minecraft client asset for download: `which` is "neoforge" (the
+/// NeoForge installer) or "mod" (the AP mod jar). Returns (download filename,
+/// bytes), or `None` if unknown or not staged. Blocking — call from
+/// `spawn_blocking`.
+pub fn read_client_asset(which: &str) -> Option<(&'static str, Vec<u8>)> {
+    let name = match which {
+        "neoforge" => MC_NEOFORGE_JAR,
+        "mod" => MC_MOD_JAR,
+        _ => return None,
+    };
+    let bytes = std::fs::read(format!("{MC_CLIENT_DIR}/{name}")).ok()?;
+    Some((name, bytes))
 }
 
 /// Read one member's bytes out of the current seed zip, but only if `member` is
