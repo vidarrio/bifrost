@@ -2,3 +2,6 @@
 /data
 *.db
 *.db-*
+
+# commit-message scratch
+.cmsg
