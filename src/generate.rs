@@ -156,8 +156,8 @@ pub struct OutputFile {
 }
 
 /// List the player-facing files in the current seed zip: per-player output files
-/// named `AP_<seed>_P<n>_<slot>.<ext>` plus the spoiler. Excludes the
-/// `.archipelago` multidata (the server file). Blocking — call from
+/// (see [`parse_player_file`] for the naming schemes handled) plus the spoiler.
+/// Excludes the `.archipelago` multidata (the server file). Blocking — call from
 /// `spawn_blocking`. Empty if no seed has been generated yet.
 pub fn list_outputs() -> Vec<OutputFile> {
     let Ok(f) = std::fs::File::open(CURRENT_ZIP) else {
@@ -206,18 +206,47 @@ pub fn list_outputs() -> Vec<OutputFile> {
     out
 }
 
-/// Parse `AP_<seed>_P<n>_<slot>.<ext>` into (slot, ext). The seed and player
-/// number are pure digits, so the boundaries are unambiguous even when the slot
-/// name itself contains underscores.
+/// Parse an AP per-player output filename into (slot number, slot label, ext).
+/// Handles the standard `AP_<seed>_P<n>_<slot>.<ext>` AND world-specific variants
+/// that use `-` as the separator and/or append `_<apversion>` before the ext —
+/// e.g. shapez 2 writes `AP-<seed>-P<n>-<slot>_0.6.8.zip`. Seed and player number
+/// are pure digits, so the boundaries stay unambiguous even when the slot name
+/// itself contains underscores.
 fn parse_player_file(name: &str) -> Option<(i64, String, String)> {
-    let s = name.strip_prefix("AP_")?;
+    let s = name.strip_prefix("AP")?;
+    let s = strip_sep(s)?; // separator after the "AP" prefix
     let seed_end = s.find(|c: char| !c.is_ascii_digit())?;
-    let s = s[seed_end..].strip_prefix("_P")?;
+    if seed_end == 0 {
+        return None; // seed must be at least one digit
+    }
+    let s = strip_sep(&s[seed_end..])?; // separator after the seed
+    let s = s.strip_prefix('P')?;
     let num_end = s.find(|c: char| !c.is_ascii_digit())?;
     let num: i64 = s[..num_end].parse().ok()?;
-    let s = s[num_end..].strip_prefix('_')?;
+    let s = strip_sep(&s[num_end..])?; // separator after P<n>
     let dot = s.rfind('.')?;
-    Some((num, s[..dot].to_string(), s[dot + 1..].to_string()))
+    let ext = s[dot + 1..].to_string();
+    let label = strip_version_suffix(&s[..dot]).to_string();
+    Some((num, label, ext))
+}
+
+/// Strip a single leading `_` or `-` separator (AP output filenames use either).
+fn strip_sep(s: &str) -> Option<&str> {
+    let mut ch = s.chars();
+    matches!(ch.next(), Some('_' | '-')).then(|| ch.as_str())
+}
+
+/// Drop a trailing `_<version>` tag some worlds append to the slot name (e.g.
+/// shapez 2 adds `_0.6.8`). Only a tail of digits-and-dots containing a dot is
+/// treated as a version, so a slot like `Player_2` is left intact.
+fn strip_version_suffix(label: &str) -> &str {
+    if let Some(idx) = label.rfind('_') {
+        let tail = &label[idx + 1..];
+        if tail.contains('.') && tail.chars().all(|c| c.is_ascii_digit() || c == '.') {
+            return &label[..idx];
+        }
+    }
+    label
 }
 
 /// The AP slot number a per-player output file belongs to (`P<n>` in the name),
@@ -481,4 +510,52 @@ async fn run_inner(db: &Db, state: &GenState) -> Result<String, String> {
         "Generated seed {seed_name} — {} AP slots. The game is restarting. Signups are now closed.{common}",
         ap_slots.len()
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{member_player, parse_player_file};
+
+    #[test]
+    fn parses_the_standard_underscore_name() {
+        let (num, slot, ext) =
+            parse_player_file("AP_94805671998530581428_P12_MissMandalyn.apcivvi").unwrap();
+        assert_eq!((num, slot.as_str(), ext.as_str()), (12, "MissMandalyn", "apcivvi"));
+    }
+
+    #[test]
+    fn parses_the_common_game_apmc() {
+        let (num, slot, ext) =
+            parse_player_file("AP_94805671998530581428_P3_Commons.apmc").unwrap();
+        assert_eq!((num, slot.as_str(), ext.as_str()), (3, "Commons", "apmc"));
+    }
+
+    #[test]
+    fn parses_shapez2_dash_and_version_variant() {
+        // shapez 2: dash separators + a trailing `_<apversion>` before `.zip`.
+        let (num, slot, ext) =
+            parse_player_file("AP-94805671998530581428-P14-Nid_0.6.8.zip").unwrap();
+        assert_eq!((num, slot.as_str(), ext.as_str()), (14, "Nid", "zip"));
+        assert_eq!(member_player("AP-94805671998530581428-P14-Nid_0.6.8.zip"), Some(14));
+    }
+
+    #[test]
+    fn keeps_underscores_in_a_slot_name() {
+        let (num, slot, _) = parse_player_file("AP_123_P2_Some_Long_Name.apbg3").unwrap();
+        assert_eq!((num, slot.as_str()), (2, "Some_Long_Name"));
+    }
+
+    #[test]
+    fn does_not_strip_a_non_version_underscore_tail() {
+        // A trailing `_2` (no dot) is part of the name, not a version tag.
+        let (_, slot, _) = parse_player_file("AP_123_P2_Player_2.zip").unwrap();
+        assert_eq!(slot, "Player_2");
+    }
+
+    #[test]
+    fn rejects_non_player_files() {
+        assert_eq!(parse_player_file("AP_123_Spoiler.txt"), None);
+        assert_eq!(parse_player_file("AP_123.archipelago"), None);
+        assert_eq!(parse_player_file("random.txt"), None);
+    }
 }
