@@ -90,6 +90,7 @@ h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute
 .seat .who{font-family:var(--mono);font-size:13px}.seat .by{font-family:var(--mono);font-size:11px;color:var(--muted)}
 .seat .by.mine{color:var(--ok)}.seat .free{color:var(--warn)}
 .slot .hint{font-family:var(--mono);font-size:11px;color:var(--warn);margin-top:4px;padding-left:8px;border-left:2px solid var(--bd)}
+.slot .hintcap{font-size:10px;color:var(--muted);margin-top:9px;text-transform:uppercase;letter-spacing:.05em}
 .hintform{display:flex;gap:6px;margin:4px 0 8px}.hintform input{flex:1;min-width:0;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:5px 8px;font-size:12px}
 .banner{border-radius:10px;padding:12px 16px;margin:0 0 14px}.banner.ok{background:rgba(40,165,109,.15);border:1px solid var(--ok)}.banner.bad{background:rgba(226,77,95,.13);border:1px solid var(--bad)}
 .signup{display:grid;gap:12px;max-width:460px;margin-bottom:10px}.signup label{display:grid;gap:4px;font-size:13px;color:var(--muted)}.signup label.chk{display:flex;flex-direction:row;align-items:center;gap:8px}
@@ -465,13 +466,17 @@ pub fn board_page(
             // Prioritized hints showcase on the FINDER's card ("what others want
             // from you") — so you check your own card instead of skimming the
             // whole board. `prios` is keyed by (finding, location, item), the same
-            // identity in either orientation.
-            for h in live
+            // identity in either orientation. A caption makes the meaning explicit.
+            let wanted: Vec<&crate::ap::HintView> = live
                 .finder_views
                 .iter()
                 .filter(|h| !h.found && prios.contains(&(h.finding, h.location, h.item)))
-            {
-                out.push_str(&format!(r#"<div class="hint">★ {}</div>"#, esc(&h.text)));
+                .collect();
+            if !wanted.is_empty() {
+                out.push_str(r#"<div class="hintcap">★ wanted from you</div>"#);
+                for h in wanted {
+                    out.push_str(&format!(r#"<div class="hint">{}</div>"#, esc(&h.text)));
+                }
             }
             out.push_str("</a>");
         }
