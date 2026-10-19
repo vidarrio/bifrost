@@ -108,6 +108,11 @@ pub struct ApLive {
     /// Every item this slot has received, as found HintViews (item @ location ·
     /// finder ✓) — the complete "found" log, a superset of the found hints.
     pub found_items: Vec<HintView>,
+    /// Hints for items located in THIS slot's world that belong to someone else
+    /// (finding == this slot), oriented "item → receiver @ location". Used by the
+    /// board so a prioritized hint showcases on the FINDER's card — "what others
+    /// want from you" — rather than the receiver's.
+    pub finder_views: Vec<HintView>,
 }
 
 /// An owned copy of what the pages need to render, taken under one short lock.
@@ -292,6 +297,33 @@ impl Board {
                         });
                     }
                 }
+                // Finder-oriented: items located in THIS slot's world that belong
+                // to someone else (finding == this slot). Item is named in the
+                // RECEIVER's game, the location in this (the finder's) own game.
+                // Rendered "item → receiver @ location" so the board can showcase
+                // a prioritized hint on the finder's card.
+                let mut finder_views = Vec::new();
+                if let Some(m) = self.meta.as_ref() {
+                    for h in s.hint_list.iter().filter(|h| h.finding == *n) {
+                        let recv_game = self
+                            .slots
+                            .get(&h.receiving)
+                            .map(|x| x.game.as_str())
+                            .unwrap_or("");
+                        let item = m.item_name(recv_game, h.item).unwrap_or("?");
+                        let loc = m.location_name(&s.game, h.location).unwrap_or("?");
+                        let receiver = self.name_of(h.receiving);
+                        let mark = if h.found { " ✓" } else { "" };
+                        finder_views.push(HintView {
+                            finding: h.finding,
+                            location: h.location,
+                            item: h.item,
+                            receiving: h.receiving,
+                            found: h.found,
+                            text: format!("{item} → {receiver} @ {loc}{mark}"),
+                        });
+                    }
+                }
                 (
                     *n,
                     ApLive {
@@ -302,6 +334,7 @@ impl Board {
                         still_to_find,
                         hint_views,
                         found_items,
+                        finder_views,
                     },
                 )
             })

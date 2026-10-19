@@ -462,8 +462,12 @@ pub fn board_page(
                     ));
                 }
             }
+            // Prioritized hints showcase on the FINDER's card ("what others want
+            // from you") — so you check your own card instead of skimming the
+            // whole board. `prios` is keyed by (finding, location, item), the same
+            // identity in either orientation.
             for h in live
-                .hint_views
+                .finder_views
                 .iter()
                 .filter(|h| !h.found && prios.contains(&(h.finding, h.location, h.item)))
             {
