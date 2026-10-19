@@ -1229,6 +1229,7 @@ pub fn game_page(
     points: Option<i64>,
     credits: i64,
     can_hint_common: bool,
+    mc_username: Option<&str>,
     mc_addr: Option<&str>,
     files: &[crate::generate::OutputFile],
 ) -> Html<String> {
@@ -1271,7 +1272,7 @@ pub fn game_page(
         // NeoForge refuses the connection. Address comes last as the final step.
         let addr_step = match mc_addr {
             Some(addr) => format!(
-                r#"Open <b>Multiplayer</b> and connect to <b>{}</b> — no whitelist, just join."#,
+                r#"Set your Minecraft username below so you're whitelisted, then open <b>Multiplayer</b> and connect to <b>{}</b>."#,
                 esc(addr)
             ),
             None => "Open <b>Multiplayer</b> and connect — ask an admin for the server address.".to_string(),
@@ -1304,6 +1305,36 @@ pub fn game_page(
             mod_jar = crate::generate::MC_MOD_JAR,
             addr = addr,
         ));
+
+        // Whitelist self-service: the server is whitelisted, so a player with a
+        // claimed game this season registers the exact Minecraft username they'll
+        // join on; the host-side `mc-whitelist-sync` applies it to the server
+        // itself. Same "must own a slot" gate as hinting.
+        out.push_str(r#"<h3>Your Minecraft username</h3>"#);
+        if can_hint_common {
+            let cur = mc_username.unwrap_or("");
+            let status = if cur.is_empty() {
+                String::new()
+            } else {
+                format!(r#"<p class="statline">Whitelisted as <b>{}</b>.</p>"#, esc(cur))
+            };
+            let btn = if cur.is_empty() { "Whitelist me" } else { "Update" };
+            out.push_str(&format!(
+                r#"<p class="empty">The server is whitelisted. Set the exact username of the Mojang/Microsoft account you'll join on — you'll be let in within a minute or so.</p>
+{status}<form method="post" action="/mc/username" class="hintform">
+<input type="hidden" name="back" value="{back}">
+<input name="mc_username" value="{cur}" placeholder="YourMinecraftName" pattern="[A-Za-z0-9_]{{3,16}}" maxlength="16" autocomplete="off" required>
+<button type="submit">{btn}</button></form>"#,
+                status = status,
+                back = esc(&back),
+                cur = esc(cur),
+                btn = btn,
+            ));
+        } else {
+            out.push_str(
+                r#"<p class="empty">The server is whitelisted. <a href="/claim">Claim a game</a> this season, then come back here to register your Minecraft username and get let in.</p>"#,
+            );
+        }
 
         // Communal hinting: only players with a claimed game this season may spend
         // the common game's OWN (shared) AP hint points — no personal/bonus points.

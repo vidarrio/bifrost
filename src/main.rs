@@ -101,6 +101,7 @@ async fn main() {
         .route("/game/mc/{which}", get(mc_asset))
         .route("/game/{ap_slot}/finish", post(game_finish))
         .route("/claim", get(claim_get).post(claim_post))
+        .route("/mc/username", post(mc_username_post))
         .route("/hint", post(hint_post))
         .route("/prioritize", post(prioritize_post))
         .route("/signup", get(signup_get).post(signup_post))
@@ -279,6 +280,32 @@ fn mc_addr() -> String {
     std::env::var("BIFROST_MC_ADDR").unwrap_or_else(|_| "ap.example.org:25565".into())
 }
 
+/// Where Bifrost writes the desired Minecraft whitelist (the current season's
+/// claimant usernames, one JSON array). The host-side `mc-whitelist-sync`
+/// watches this file (over the Bifrost host's data dir) and reconciles it onto the
+/// Minecraft server — Bifrost itself has no reach across to it.
+/// `/var/lib/bifrost` is in the service's `ReadWritePaths` (same place as the DB
+/// and the connect-password request file).
+const MC_WHITELIST_FILE: &str = "/var/lib/bifrost/mc-whitelist.json";
+
+/// A valid Minecraft (Java) username: 3–16 of `[A-Za-z0-9_]`.
+fn valid_mc_username(s: &str) -> bool {
+    (3..=16).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+/// Recompute the season's whitelist and write it to `MC_WHITELIST_FILE`
+/// atomically (temp + rename). Best-effort: a failure is logged, not fatal —
+/// the next change (or the host timer) reconciles.
+async fn export_mc_whitelist(st: &AppState, season: &str) {
+    let names = st.db.mc_whitelist(season).await;
+    let json = serde_json::to_string(&names).unwrap_or_else(|_| "[]".into());
+    let tmp = format!("{MC_WHITELIST_FILE}.tmp");
+    if let Err(e) = std::fs::write(&tmp, &json).and_then(|_| std::fs::rename(&tmp, MC_WHITELIST_FILE))
+    {
+        tracing::warn!("mc whitelist export failed: {e}");
+    }
+}
+
 async fn board_view(State(st): State<AppState>) -> Html<String> {
     let snap = match st.board.read() {
         Ok(b) => b.snapshot(),
@@ -368,6 +395,9 @@ async fn game_view(
     } else {
         Vec::new()
     };
+    // The viewer's own registered Minecraft username, for the common-game page's
+    // whitelist form (only read/used there).
+    let my_mc = st.db.mc_username(&me).await;
 
     render::game_page(
         ap_slot,
@@ -382,6 +412,7 @@ async fn game_view(
         points,
         credits,
         i_have_claim,
+        my_mc.as_deref(),
         Some(mc_addr().as_str()),
         &my_files,
     )
@@ -452,6 +483,12 @@ async fn claim_post(
 ) -> Response {
     let (me, is_admin) = identity(&headers);
     let back = safe_back(f.back.as_deref(), "/claim");
+    let season = st
+        .board
+        .read()
+        .ok()
+        .and_then(|b| b.seed.clone())
+        .unwrap_or_default();
     match f.op.as_str() {
         "claim" => match st.db.claim_one(f.slot_id, &me).await {
             Ok(db::ClaimOutcome::AlreadyHave(name)) => render::notice(
@@ -463,13 +500,74 @@ async fn claim_post(
             Ok(db::ClaimOutcome::SlotTaken) => {
                 render::notice("That slot is already claimed.", false, &back).into_response()
             }
-            _ => Redirect::to(&back).into_response(),
+            _ => {
+                // Claimant set changed → refresh the MC whitelist export.
+                export_mc_whitelist(&st, &season).await;
+                Redirect::to(&back).into_response()
+            }
         },
         "unclaim" => {
             let _ = st.db.unclaim(f.slot_id, &me, is_admin).await;
+            export_mc_whitelist(&st, &season).await;
             Redirect::to(&back).into_response()
         }
         _ => Redirect::to(&back).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct McUsernameForm {
+    mc_username: String,
+    back: Option<String>,
+}
+
+/// A claimant registers/updates the Minecraft username to whitelist on the
+/// common-game server. Gated (defence-in-depth on top of the oauth2-proxy group
+/// gate) on holding a regular slot this season; the write is applied to the
+/// Minecraft server by the host-side syncer that watches the export.
+async fn mc_username_post(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<McUsernameForm>,
+) -> Response {
+    let (me, _is_admin) = identity(&headers);
+    let season = st
+        .board
+        .read()
+        .ok()
+        .and_then(|b| b.seed.clone())
+        .unwrap_or_default();
+    let back = safe_back(f.back.as_deref(), "/board");
+    let name = f.mc_username.trim();
+    if !st.db.has_claimed_slot(&season, &me).await {
+        return render::notice(
+            "Claim a game this season first — the whitelist is for players with a slot of their own.",
+            false,
+            &back,
+        )
+        .into_response();
+    }
+    if !valid_mc_username(name) {
+        return render::notice(
+            "That doesn't look like a Minecraft username (3–16 letters, digits or underscores).",
+            false,
+            &back,
+        )
+        .into_response();
+    }
+    match st.db.set_mc_username(&me, name).await {
+        Ok(db::SetMcOutcome::TakenByOther) => render::notice(
+            "Someone else already registered that Minecraft username. If it's really yours, ask an admin.",
+            false,
+            &back,
+        )
+        .into_response(),
+        Ok(db::SetMcOutcome::Ok) => {
+            export_mc_whitelist(&st, &season).await;
+            Redirect::to(&back).into_response()
+        }
+        Err(_) => render::notice("Couldn't save that right now — try again.", false, &back)
+            .into_response(),
     }
 }
 
@@ -1104,6 +1202,17 @@ async fn admin_clear(
             let _ = st.db.set_signups_open(false).await;
         }
         _ => {}
+    }
+    // Clearing players/claims empties the season's whitelist — refresh the export
+    // so the host syncer drops the old names.
+    if matches!(f.what.as_str(), "players" | "reset") {
+        let season = st
+            .board
+            .read()
+            .ok()
+            .and_then(|b| b.seed.clone())
+            .unwrap_or_default();
+        export_mc_whitelist(&st, &season).await;
     }
     Redirect::to("/admin").into_response()
 }

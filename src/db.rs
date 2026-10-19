@@ -61,6 +61,13 @@ pub enum ClaimOutcome {
     AlreadyHave(String),
 }
 
+/// Result of setting a Minecraft username for the whitelist.
+pub enum SetMcOutcome {
+    Ok,
+    /// Some other player has already registered that Minecraft username.
+    TakenByOther,
+}
+
 #[derive(Debug, FromRow, Clone)]
 pub struct SubmissionRow {
     pub id: i64,
@@ -194,6 +201,25 @@ impl Db {
         )
         .execute(&pool)
         .await?;
+        // A player's Minecraft username, for the common-game server's whitelist.
+        // Keyed by SSO identity (persists across seasons — a returning player
+        // keeps their name); the case-insensitive unique index stops two people
+        // claiming the same Minecraft account. The *whitelist* itself is scoped
+        // to the current season's claimants (see `mc_whitelist`).
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS mc_account (
+                 sso TEXT PRIMARY KEY,
+                 mc_username TEXT NOT NULL,
+                 updated_at INTEGER NOT NULL
+               )"#,
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_mc_account_name ON mc_account (mc_username COLLATE NOCASE)",
+        )
+        .execute(&pool)
+        .await?;
         Ok(Self { pool })
     }
 
@@ -271,6 +297,67 @@ impl Db {
         .await
         .unwrap_or(0);
         n > 0
+    }
+
+    /// This player's registered Minecraft username, if any.
+    pub async fn mc_username(&self, sso: &str) -> Option<String> {
+        sqlx::query_scalar("SELECT mc_username FROM mc_account WHERE sso = ?")
+            .bind(sso)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// Set (or update) this player's Minecraft username. Fails if another player
+    /// already registered it (case-insensitive). The caller is expected to have
+    /// already validated the name's shape.
+    pub async fn set_mc_username(
+        &self,
+        sso: &str,
+        name: &str,
+    ) -> Result<SetMcOutcome, sqlx::Error> {
+        // Taken by someone else? (Same user re-saving their own name is fine.)
+        let owner: Option<String> =
+            sqlx::query_scalar("SELECT sso FROM mc_account WHERE mc_username = ? COLLATE NOCASE")
+                .bind(name)
+                .fetch_optional(&self.pool)
+                .await?;
+        if matches!(owner, Some(o) if o != sso) {
+            return Ok(SetMcOutcome::TakenByOther);
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        sqlx::query(
+            "INSERT INTO mc_account (sso, mc_username, updated_at) VALUES (?, ?, ?)
+             ON CONFLICT(sso) DO UPDATE SET mc_username = excluded.mc_username, updated_at = excluded.updated_at",
+        )
+        .bind(sso)
+        .bind(name)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(SetMcOutcome::Ok)
+    }
+
+    /// The Minecraft whitelist for a season: the registered usernames of everyone
+    /// holding a regular (non-common) slot this season. Exported for the
+    /// host-side `mc-whitelist-sync` to apply to the Minecraft server.
+    pub async fn mc_whitelist(&self, season: &str) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT a.mc_username FROM mc_account a
+             WHERE EXISTS (
+                 SELECT 1 FROM claim c JOIN bifrost_slot s ON s.id = c.bifrost_slot_id
+                 WHERE s.season = ? AND c.sso = a.sso AND s.is_common = 0
+             )
+             ORDER BY a.mc_username COLLATE NOCASE",
+        )
+        .bind(season)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default()
     }
 
     /// Grant `n` bonus-hint credits, returning the new total.
