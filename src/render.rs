@@ -138,6 +138,7 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .pager .gap{display:inline-flex;align-items:center;justify-content:center;height:32px;color:var(--muted);padding:0 2px}
 .logfilter{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin:0 0 14px;padding:10px 12px;background:var(--panel);border:1px solid var(--bd);border-radius:10px;font-size:12.5px}
 .logfilter .ff{display:flex;align-items:center;gap:6px}
+.logfilter .ffbreak{flex-basis:100%;height:0;margin:0;padding:0;border:0}
 .logfilter .kinds{gap:6px;flex-wrap:wrap}
 .logfilter .kindchip{display:inline-flex;align-items:center;height:30px;box-sizing:border-box;margin:0;padding:0 12px;border:1px solid var(--bd);border-radius:7px;background:var(--bg);color:var(--muted);font-size:12.5px;cursor:pointer;user-select:none}
 .logfilter .kindchip:has(input:checked){border-color:var(--accent);color:var(--accent)}
@@ -804,6 +805,8 @@ fn filter_form(base: &str, f: &LogFilter) -> String {
         r#"<div class="ff"><span class="acwrap"><input type="text" name="receiver" placeholder="receiver" autocomplete="off" data-ac value="{}"><div class="acbox"></div></span></div>"#,
         esc(f.receiver)
     ));
+    // Force the time filters onto their own line, below type/sender/receiver.
+    out.push_str(r#"<div class="ffbreak"></div>"#);
     out.push_str(r#"<div class="ff"><select name="within">"#);
     for (val, label) in [
         (0, "any time"),
