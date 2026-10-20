@@ -67,11 +67,32 @@ def main() -> None:
         item_names[game] = {str(v): k for k, v in world.item_name_to_id.items()}
         location_names[game] = {str(v): k for k, v in world.location_name_to_id.items()}
 
+    # Per finder slot, the classification flags of the item at each of its
+    # locations, keyed by LOCATION NAME: {slot_name: {location_name: flags}}.
+    # Flags bits: 0b001 progression, 0b010 useful, 0b100 trap (0 = filler). The
+    # finder is the slot whose world the location is in — i.e. the sender of a
+    # "sent" log line — so the activity ingester can classify a sent item from
+    # (sender name, location name) with no id juggling.
+    loc_flags = {}
+    for finder, locs in locations.items():
+        si = slot_info.get(finder)
+        id2name = location_names.get(si.game) if si else None
+        if not id2name:
+            continue
+        m = {}
+        for loc_id, tup in locs.items():
+            name = id2name.get(str(loc_id))
+            if name is not None:
+                m[name] = tup[2] if len(tup) > 2 else 0
+        if m:
+            loc_flags[si.name] = m
+
     out = {
         "seed": decoded.get("seed_name"),
         "slots": {},
         "item_names": item_names,
         "location_names": location_names,
+        "loc_flags": loc_flags,
     }
     for s, si in slot_info.items():
         out["slots"][str(s)] = {

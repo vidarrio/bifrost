@@ -88,13 +88,17 @@ pub struct ActivityRow {
     pub ts: i64,
     pub kind: String,
     pub text: String,
+    /// Sent-item importance: progression/useful/trap/filler (sends only).
+    #[sqlx(rename = "item_class")]
+    pub class: Option<String>,
 }
 
-/// Filter for the activity log. Empty `kinds` = all kinds; `None` fields are
-/// unconstrained. `since`/`until` are epoch-second bounds (inclusive).
+/// Filter for the activity log. Empty `kinds`/`classes` = unconstrained; `None`
+/// fields are unconstrained. `since`/`until` are epoch-second bounds (inclusive).
 #[derive(Default)]
 pub struct ActFilter<'a> {
     pub kinds: &'a [&'a str],
+    pub classes: &'a [&'a str],
     pub sender: Option<&'a str>,
     pub receiver: Option<&'a str>,
     pub since: Option<i64>,
@@ -256,7 +260,8 @@ impl Db {
                  kind TEXT NOT NULL,
                  text TEXT NOT NULL,
                  sender TEXT,
-                 receiver TEXT
+                 receiver TEXT,
+                 item_class TEXT
                )"#,
         )
         .execute(&pool)
@@ -264,18 +269,18 @@ impl Db {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_activity ON activity (season, id)")
             .execute(&pool)
             .await?;
-        // Migrate pre-filter DBs: add sender/receiver. If the ADD succeeds the
-        // columns were absent (old rows lack them) — and since the whole log is
+        // Migrate older DBs: add sender/receiver/item_class. If any ADD succeeds
+        // the column was absent (old rows lack it) — and since the whole log is
         // derived from the AP journal, clear it + the cursor to re-backfill with
-        // the structured fields populated. A fresh DB already has the columns
-        // (CREATE above), so the ADD errors and nothing is wiped.
-        let added = sqlx::query("ALTER TABLE activity ADD COLUMN sender TEXT")
-            .execute(&pool)
-            .await
-            .is_ok();
-        let _ = sqlx::query("ALTER TABLE activity ADD COLUMN receiver TEXT")
-            .execute(&pool)
-            .await;
+        // the new fields populated. A fresh DB already has the columns (CREATE
+        // above), so the ADDs error and nothing is wiped.
+        let mut added = false;
+        for col in ["sender TEXT", "receiver TEXT", "item_class TEXT"] {
+            added |= sqlx::query(&format!("ALTER TABLE activity ADD COLUMN {col}"))
+                .execute(&pool)
+                .await
+                .is_ok();
+        }
         if added {
             let _ = sqlx::query("DELETE FROM activity").execute(&pool).await;
             let _ = sqlx::query("DELETE FROM setting WHERE key = 'journal_cursor'")
@@ -642,9 +647,11 @@ impl Db {
         text: &str,
         sender: Option<&str>,
         receiver: Option<&str>,
+        item_class: Option<&str>,
     ) {
         let _ = sqlx::query(
-            "INSERT INTO activity (season, ts, kind, text, sender, receiver) VALUES (?,?,?,?,?,?)",
+            "INSERT INTO activity (season, ts, kind, text, sender, receiver, item_class)
+             VALUES (?,?,?,?,?,?,?)",
         )
         .bind(season)
         .bind(ts)
@@ -652,6 +659,7 @@ impl Db {
         .bind(text)
         .bind(sender)
         .bind(receiver)
+        .bind(item_class)
         .execute(&self.pool)
         .await;
     }
@@ -669,7 +677,7 @@ impl Db {
     /// The newest `limit` activity rows for a season (board preview).
     pub async fn activity_latest(&self, season: &str, limit: i64) -> Vec<ActivityRow> {
         sqlx::query_as::<_, ActivityRow>(
-            "SELECT ts, kind, text FROM activity
+            "SELECT ts, kind, text, item_class FROM activity
              WHERE season = ? ORDER BY id DESC LIMIT ?",
         )
         .bind(season)
@@ -690,6 +698,14 @@ impl Db {
             let mut sep = qb.separated(", ");
             for k in f.kinds {
                 sep.push_bind(*k);
+            }
+            qb.push(")");
+        }
+        if !f.classes.is_empty() {
+            qb.push(" AND item_class IN (");
+            let mut sep = qb.separated(", ");
+            for c in f.classes {
+                sep.push_bind(*c);
             }
             qb.push(")");
         }
@@ -727,7 +743,8 @@ impl Db {
         offset: i64,
         limit: i64,
     ) -> Vec<ActivityRow> {
-        let mut qb = sqlx::QueryBuilder::new("SELECT ts, kind, text FROM activity WHERE season = ");
+        let mut qb =
+            sqlx::QueryBuilder::new("SELECT ts, kind, text, item_class FROM activity WHERE season = ");
         qb.push_bind(season);
         Self::apply_activity_filter(&mut qb, f);
         qb.push(" ORDER BY id DESC LIMIT ")

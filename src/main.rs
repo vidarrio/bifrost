@@ -348,6 +348,10 @@ struct LogQuery {
     kind_goal: Option<String>,
     kind_release: Option<String>,
     kind_collect: Option<String>,
+    class_prog: Option<String>,
+    class_useful: Option<String>,
+    class_trap: Option<String>,
+    class_filler: Option<String>,
     sender: Option<String>,
     receiver: Option<String>,
     within: Option<i64>,
@@ -387,6 +391,22 @@ fn selected_kinds(q: &LogQuery) -> Vec<&'static str> {
     v
 }
 
+/// Item-importance classes selected in the filter (empty = all).
+fn selected_classes(q: &LogQuery) -> Vec<&'static str> {
+    let mut v = Vec::new();
+    for (on, c) in [
+        (q.class_prog.is_some(), "progression"),
+        (q.class_useful.is_some(), "useful"),
+        (q.class_trap.is_some(), "trap"),
+        (q.class_filler.is_some(), "filler"),
+    ] {
+        if on {
+            v.push(c);
+        }
+    }
+    v
+}
+
 /// Effective lower time bound = later of absolute `since` and relative `within`.
 fn since_bound(q: &LogQuery) -> Option<i64> {
     let abs = parse_ts(&q.since);
@@ -418,6 +438,10 @@ fn filter_qs(q: &LogQuery) -> String {
         (q.kind_goal.is_some(), "kind_goal"),
         (q.kind_release.is_some(), "kind_release"),
         (q.kind_collect.is_some(), "kind_collect"),
+        (q.class_prog.is_some(), "class_prog"),
+        (q.class_useful.is_some(), "class_useful"),
+        (q.class_trap.is_some(), "class_trap"),
+        (q.class_filler.is_some(), "class_filler"),
     ] {
         if on {
             parts.push(format!("{key}=1"));
@@ -450,9 +474,14 @@ fn paginate(q: &LogQuery, total: i64) -> (i64, i64, i64, i64) {
 }
 
 /// The DB filter for a query.
-fn act_filter<'a>(q: &'a LogQuery, kinds: &'a [&'a str]) -> db::ActFilter<'a> {
+fn act_filter<'a>(
+    q: &'a LogQuery,
+    kinds: &'a [&'a str],
+    classes: &'a [&'a str],
+) -> db::ActFilter<'a> {
     db::ActFilter {
         kinds,
+        classes,
         sender: opt_ne(&q.sender),
         receiver: opt_ne(&q.receiver),
         since: since_bound(q),
@@ -468,6 +497,12 @@ fn log_filter<'a>(q: &'a LogQuery, participants: &'a [String], qs: &'a str) -> r
             q.kind_goal.is_some(),
             q.kind_release.is_some(),
             q.kind_collect.is_some(),
+        ],
+        classes_selected: [
+            q.class_prog.is_some(),
+            q.class_useful.is_some(),
+            q.class_trap.is_some(),
+            q.class_filler.is_some(),
         ],
         sender: opt_ne(&q.sender).unwrap_or(""),
         receiver: opt_ne(&q.receiver).unwrap_or(""),
@@ -488,7 +523,8 @@ async fn log_view(State(st): State<AppState>, Query(q): Query<LogQuery>) -> Html
         .and_then(|b| b.seed.clone())
         .unwrap_or_default();
     let kinds = selected_kinds(&q);
-    let filter = act_filter(&q, &kinds);
+    let classes = selected_classes(&q);
+    let filter = act_filter(&q, &kinds, &classes);
     let total = st.db.activity_count(&season, &filter).await;
     let (rpp, page, pages, offset) = paginate(&q, total);
     let rows = st.db.activity_page(&season, &filter, offset, rpp).await;
@@ -1606,7 +1642,8 @@ async fn season_view(
                 // The season's activity log, replayed with "x ago" frozen to the
                 // season-end time (finalized_at) rather than now.
                 let kinds = selected_kinds(&q);
-                let filter = act_filter(&q, &kinds);
+                let classes = selected_classes(&q);
+                let filter = act_filter(&q, &kinds, &classes);
                 let total = st.db.activity_count(&seed, &filter).await;
                 let (rpp, page, pages, offset) = paginate(&q, total);
                 let rows = st.db.activity_page(&seed, &filter, offset, rpp).await;

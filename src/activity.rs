@@ -50,6 +50,10 @@ async fn ingest(board: &Arc<RwLock<Board>>, db: &Db) -> Result<(), String> {
         _ => return Ok(()), // no season yet — nothing to scope events to
     };
 
+    // Season metadata (decoded seed) classifies a sent item's importance from
+    // its (sender, location). Loaded async on tracker connect.
+    let meta = board.read().ok().and_then(|b| b.meta.clone());
+
     let mode = match db.journal_cursor().await {
         Some(c) => Mode::Incremental(c),
         None if db.activity_any(&season).await => Mode::SeekEnd,
@@ -60,6 +64,13 @@ async fn ingest(board: &Arc<RwLock<Board>>, db: &Db) -> Result<(), String> {
         // earlier seasons still present in the journal.
         None => Mode::Backfill(db.last_finalized_at().await.max(current_zip_mtime())),
     };
+
+    // The one-time backfill waits for meta so historical sends get classified;
+    // steady-state incremental proceeds regardless (meta is loaded post-connect,
+    // and an unclassifiable send just gets no colour rather than blocking the log).
+    if matches!(mode, Mode::Backfill(_)) && meta.is_none() {
+        return Ok(());
+    }
 
     let mut cmd = Command::new("journalctl");
     cmd.args(["-u", UNIT, "-o", "json", "--no-pager"]);
@@ -120,9 +131,22 @@ async fn ingest(board: &Arc<RwLock<Board>>, db: &Db) -> Result<(), String> {
         if ts <= boundary {
             continue; // belt-and-suspenders with --since on backfill
         }
-        if let Some((kind, body, sender, receiver)) = classify(msg) {
-            db.activity_add(&season, ts, kind, &body, sender.as_deref(), receiver.as_deref())
-                .await;
+        if let Some((kind, body, sender, receiver, location)) = classify(msg) {
+            // Classify a sent item's importance from (sender, location) via meta.
+            let class = match (kind, &sender, &location, &meta) {
+                ("send", Some(s), Some(loc), Some(m)) => m.item_flags(s, loc).map(item_class),
+                _ => None,
+            };
+            db.activity_add(
+                &season,
+                ts,
+                kind,
+                &body,
+                sender.as_deref(),
+                receiver.as_deref(),
+                class,
+            )
+            .await;
         }
     }
 
@@ -142,17 +166,38 @@ fn current_zip_mtime() -> i64 {
         .unwrap_or(0)
 }
 
+/// Item classification from AP flag bits: trap (0b100) > progression (0b001) >
+/// useful (0b010) > filler (0).
+fn item_class(flags: i64) -> &'static str {
+    if flags & 0b100 != 0 {
+        "trap"
+    } else if flags & 0b001 != 0 {
+        "progression"
+    } else if flags & 0b010 != 0 {
+        "useful"
+    } else {
+        "filler"
+    }
+}
+
 /// Classify one AP server console line into a kept activity entry
-/// `(kind, display text, sender, receiver)`, or `None` to drop it (joins/leaves/
-/// connections/hints/command echoes/server chatter). `sender` is the actor;
-/// `receiver` is the item recipient (sends only, else `None`).
-type Classified = (&'static str, String, Option<String>, Option<String>);
+/// `(kind, display text, sender, receiver, location)`, or `None` to drop it
+/// (joins/leaves/connections/hints/command echoes/server chatter). `sender` is
+/// the actor; `receiver` is the item recipient and `location` the found spot
+/// (sends only, else `None` — the location feeds item-importance classification).
+type Classified = (
+    &'static str,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 fn classify(msg: &str) -> Option<Classified> {
     // Item send: "(Team #N) SENDER sent ITEM to RECEIVER (LOCATION)".
     if let Some(rest) = msg.strip_prefix("(Team #") {
         let after = rest.split_once(") ")?.1; // drop "N) "
         let (sender, tail) = after.split_once(" sent ")?; // tail = "ITEM to RECEIVER (LOC)"
-        let (item_recv, _loc) = split_trailing_paren(tail)?; // strip "(LOCATION)"
+        let (item_recv, loc) = split_trailing_paren(tail)?; // strip "(LOCATION)"
         let (item, receiver) = item_recv.rsplit_once(" to ")?;
         let (sender, receiver, item) = (sender.trim(), receiver.trim(), item.trim());
         return Some((
@@ -160,6 +205,7 @@ fn classify(msg: &str) -> Option<Classified> {
             format!("{sender} → {receiver}: {item}"),
             Some(sender.to_string()),
             Some(receiver.to_string()),
+            Some(loc.trim().to_string()),
         ));
     }
     // Goal / release / collect: "Notice (all): NAME (Team #N) has <...>."
@@ -169,13 +215,14 @@ fn classify(msg: &str) -> Option<Classified> {
         let name = name.trim();
         let actor = || Some(name.to_string());
         if what.starts_with("has completed their goal") {
-            return Some(("goal", format!("{name} reached their goal!"), actor(), None));
+            return Some(("goal", format!("{name} reached their goal!"), actor(), None, None));
         }
         if what.starts_with("has released all remaining items") {
             return Some((
                 "release",
                 format!("{name} released their remaining items"),
                 actor(),
+                None,
                 None,
             ));
         }
@@ -184,6 +231,7 @@ fn classify(msg: &str) -> Option<Classified> {
                 "collect",
                 format!("{name} collected their remaining items"),
                 actor(),
+                None,
                 None,
             ));
         }
@@ -223,31 +271,43 @@ mod tests {
 
     #[test]
     fn parses_item_send() {
-        let (k, t, s, r) =
+        let (k, t, s, r, loc) =
             classify("(Team #1) HunkOfJunk sent Floorings to Cam (Trade Location 8)").unwrap();
         assert_eq!(k, "send");
         assert_eq!(t, "HunkOfJunk → Cam: Floorings");
         assert_eq!(s.as_deref(), Some("HunkOfJunk"));
         assert_eq!(r.as_deref(), Some("Cam"));
+        assert_eq!(loc.as_deref(), Some("Trade Location 8"));
     }
 
     #[test]
     fn parses_send_with_nested_paren_location() {
-        let (k, t, s, r) =
+        let (k, t, s, r, loc) =
             classify("(Team #1) Cam sent Sniper Covert to Deh (Science (Durian))").unwrap();
         assert_eq!(k, "send");
         assert_eq!(t, "Cam → Deh: Sniper Covert");
         assert_eq!((s.as_deref(), r.as_deref()), (Some("Cam"), Some("Deh")));
+        assert_eq!(loc.as_deref(), Some("Science (Durian)"));
     }
 
     #[test]
     fn parses_goal_release_collect() {
-        let (k, t, s, r) = classify("Notice (all): Cam (Team #1) has completed their goal.").unwrap();
+        let (k, t, s, r, _) = classify("Notice (all): Cam (Team #1) has completed their goal.").unwrap();
         assert_eq!((k, t.as_str(), s.as_deref(), r), ("goal", "Cam reached their goal!", Some("Cam"), None));
         let g = classify("Notice (all): Elle (Team #1) has released all remaining items from their world.").unwrap();
         assert_eq!((g.0, g.2.as_deref(), g.3), ("release", Some("Elle"), None));
         let c = classify("Notice (all): Dustbiter (Team #1) has collected their items from other worlds.").unwrap();
         assert_eq!((c.0, c.2.as_deref()), ("collect", Some("Dustbiter")));
+    }
+
+    #[test]
+    fn item_classes() {
+        assert_eq!(item_class(0b001), "progression");
+        assert_eq!(item_class(0b010), "useful");
+        assert_eq!(item_class(0b100), "trap");
+        assert_eq!(item_class(0), "filler");
+        assert_eq!(item_class(0b101), "trap"); // trap bit wins
+        assert_eq!(item_class(0b1001), "progression"); // progression_skip_balancing
     }
 
     #[test]

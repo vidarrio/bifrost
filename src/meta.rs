@@ -77,6 +77,11 @@ pub struct Meta {
     /// game -> (location id -> name).
     #[serde(default)]
     pub location_names: HashMap<String, HashMap<i64, String>>,
+    /// finder slot NAME -> (location NAME -> item classification flags), for
+    /// classifying a sent item's importance (0b001 progression / 0b010 useful /
+    /// 0b100 trap / 0 filler) from a journal "sent" line's (sender, location).
+    #[serde(default)]
+    pub loc_flags: HashMap<String, HashMap<String, i64>>,
 }
 
 impl Meta {
@@ -93,6 +98,12 @@ impl Meta {
     pub fn placements(&self, ap_slot: i64) -> Option<&HashMap<i64, Vec<[i64; 2]>>> {
         self.slots.get(&ap_slot).map(|s| &s.placements)
     }
+    /// Classification flags of the item a finder has at a named location
+    /// (sender + location from a "sent" log line). None if unknown.
+    pub fn item_flags(&self, finder_name: &str, loc_name: &str) -> Option<i64> {
+        self.loc_flags.get(finder_name)?.get(loc_name).copied()
+    }
+
     /// Look up an item id by its exact name in a game (inverse of item_name).
     pub fn item_id_by_name(&self, game: &str, name: &str) -> Option<i64> {
         self.item_names

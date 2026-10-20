@@ -128,6 +128,8 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .ev .i{font-family:var(--mono);font-size:10px;color:var(--muted);min-width:52px}.ev.goal .i{color:var(--ok)}.ev.death .i{color:var(--bad)}.ev.trap .i{color:var(--warn)}.ev.send .i{color:var(--accent)}.ev.release .i{color:var(--warn)}.ev.collect .i{color:var(--muted)}
 .ev .txt{flex:1;min-width:0;word-break:break-word}
 .ev .ago{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap;cursor:help}
+.ic-progression{--c:#d18bff}.ic-useful{--c:#4dd0e1}.ic-trap{--c:#ff6b6b}.ic-filler{--c:#9aa5b1}
+.ev .itm{color:var(--c);font-weight:600}
 .loghdr{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.loghdr a{font-size:12px}
 .pager{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;margin:16px 0 4px;font-family:var(--mono);font-size:12.5px}
 .pager .pg{min-width:32px;height:32px;box-sizing:border-box;line-height:1;display:inline-flex;align-items:center;justify-content:center;padding:0 8px;border:1px solid var(--bd);border-radius:7px;color:var(--muted);text-decoration:none;background:var(--panel)}
@@ -143,6 +145,10 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .logfilter .kindchip{display:inline-flex;align-items:center;height:30px;box-sizing:border-box;margin:0;padding:0 12px;border:1px solid var(--bd);border-radius:7px;background:var(--bg);color:var(--muted);font-size:12.5px;cursor:pointer;user-select:none}
 .logfilter .kindchip:has(input:checked){border-color:var(--accent);color:var(--accent)}
 .logfilter .kindchip input{display:none}
+.logfilter .classchip{gap:7px}
+.logfilter .classchip .dotc{width:9px;height:9px;border-radius:50%;background:var(--c);flex:none}
+.logfilter .classchip:has(input:checked){border-color:var(--c);color:var(--fg)}
+.logfilter .classrow{gap:6px}
 .logfilter input[type=text],.logfilter select,.logfilter input[type=datetime-local],.logfilter .ffbtns button,.logfilter .ffbtns .pill{height:30px;box-sizing:border-box}
 .logfilter input[type=text],.logfilter select,.logfilter input[type=datetime-local]{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:0 8px;font-size:12.5px;font-family:var(--font)}
 .logfilter input[type=text]{width:120px}
@@ -497,18 +503,42 @@ fn ev_kind(kind: &str) -> (&'static str, &'static str) {
 /// against "now" (live); `Some(t)` freezes them to `t` (an archived season's end
 /// time) — emitted as `data-ref` so the client keeps the same frozen value. The
 /// exact timestamp rides along in `data-ts`; the client fills the title tooltip.
+/// Render a row's text, colouring the sent item by its importance class. The
+/// stored send text is "sender → receiver: item"; the item is wrapped in
+/// `.itm` so `.ev.ic-<class> .itm` colours just the item, not the names.
+fn ev_text_html(r: &crate::db::ActivityRow) -> String {
+    if r.kind == "send"
+        && r.class.is_some()
+        && let Some((pre, rest)) = r.text.split_once(" → ")
+        && let Some((recv, item)) = rest.split_once(": ")
+    {
+        return format!(
+            r#"{} → {}: <span class="itm">{}</span>"#,
+            esc(pre),
+            esc(recv),
+            esc(item)
+        );
+    }
+    esc(&r.text)
+}
+
 fn render_feed(out: &mut String, rows: &[crate::db::ActivityRow], ref_ts: Option<i64>) {
     let now = ref_ts.unwrap_or_else(now_secs);
     out.push_str(r#"<div class="feed">"#);
     for r in rows {
         let (cls, label) = ev_kind(&r.kind);
+        let ic = r
+            .class
+            .as_deref()
+            .map(|c| format!(" ic-{c}"))
+            .unwrap_or_default();
         let refattr = match ref_ts {
             Some(t) => format!(r#" data-ref="{t}""#),
             None => String::new(),
         };
         out.push_str(&format!(
-            r#"<div class="ev {cls}"><span class="i">{label}</span><span class="txt">{}</span><time class="ago" data-ts="{}"{refattr} title="{}">{}</time></div>"#,
-            esc(&r.text),
+            r#"<div class="ev {cls}{ic}"><span class="i">{label}</span><span class="txt">{}</span><time class="ago" data-ts="{}"{refattr} title="{}">{}</time></div>"#,
+            ev_text_html(r),
             r.ts,
             fmt_date(r.ts),
             fmt_ago(now - r.ts),
@@ -763,6 +793,8 @@ fn activity_pager(base: &str, qs: &str, page: i64, pages: i64, rpp: i64) -> Stri
 pub struct LogFilter<'a> {
     /// Checked kinds, in order: send, goal, release, collect.
     pub kinds_selected: [bool; 4],
+    /// Checked item classes, in order: progression, useful, trap, filler.
+    pub classes_selected: [bool; 4],
     pub sender: &'a str,
     pub receiver: &'a str,
     /// Relative window in seconds (0 = any time).
@@ -807,7 +839,25 @@ fn filter_form(base: &str, f: &LogFilter) -> String {
         r#"<div class="ff"><span class="acwrap"><input type="text" name="receiver" placeholder="receiver" autocomplete="off" data-ac value="{}"><div class="acbox"></div></span></div>"#,
         esc(f.receiver)
     ));
-    // Force the time filters onto their own line, below type/sender/receiver.
+    // Row 2: item-importance filter — the colour dots double as the legend for
+    // the colour-coded items in the feed.
+    out.push_str(r#"<div class="ffbreak"></div><div class="ff classrow"><span class="ffl">importance</span>"#);
+    for (i, (name, label)) in [
+        ("class_prog", "progression"),
+        ("class_useful", "useful"),
+        ("class_trap", "trap"),
+        ("class_filler", "filler"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let ck = if f.classes_selected[i] { " checked" } else { "" };
+        out.push_str(&format!(
+            r#"<label class="kindchip classchip ic-{label}"><input type="checkbox" name="{name}" value="1"{ck}><span class="dotc"></span>{label}</label>"#
+        ));
+    }
+    out.push_str("</div>");
+    // Row 3: time filters on their own line.
     out.push_str(r#"<div class="ffbreak"></div>"#);
     out.push_str(r#"<div class="ff"><select name="within">"#);
     for (val, label) in [
