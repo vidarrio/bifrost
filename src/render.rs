@@ -948,6 +948,14 @@ fn render_log_section(
     }
 }
 
+/// The full-log page is just the 760px log column, so narrow `main` + the
+/// header to match — otherwise the header's right-side info (home/admin/signed-
+/// in) sits at the 900px edge, out past where the content ends.
+const LOG_STYLE: &str = r#"<style>
+main{max-width:760px}
+header .hwrap{max-width:760px}
+</style>"#;
+
 /// The full, paginated, filterable activity log. `ref_ts = None` → relative
 /// times live; `Some(t)` → frozen (archived season).
 pub fn log_page(
@@ -960,6 +968,7 @@ pub fn log_page(
     f: &LogFilter,
 ) -> Html<String> {
     let mut out = page_head(None);
+    out.push_str(LOG_STYLE);
     out.push_str(
         r#"<h1>Activity log</h1><div class="crumb"><a href="/board">← board</a> · item sends, goals, releases</div>"#,
     );
