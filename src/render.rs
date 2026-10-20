@@ -666,6 +666,15 @@ fn conn_line(snap: &BoardSnapshot) -> String {
     s
 }
 
+/// Board-only overrides: widen the column (and header to match) and render the
+/// slot cards as a viewport-responsive grid (as many ~280px columns as fit) so
+/// widescreens show more games per row instead of the default two.
+const BOARD_STYLE: &str = r#"<style>
+main{max-width:1500px}
+header .hwrap{max-width:1500px}
+.grid.board{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
+</style>"#;
+
 pub fn board_page(
     snap: &BoardSnapshot,
     slots: &[SlotRow],
@@ -674,6 +683,7 @@ pub fn board_page(
     activity: &[crate::db::ActivityRow],
 ) -> Html<String> {
     let mut out = page_head(None);
+    out.push_str(BOARD_STYLE);
     out.push_str(&format!(
         r#"<h1>Live board</h1><div class="crumb"><a href="/">← Bifrost</a> · {}</div>"#,
         conn_line(snap)
@@ -683,7 +693,7 @@ pub fn board_page(
     if slots.is_empty() {
         out.push_str(r#"<div class="empty">No slots yet — the board fills once Bifrost connects to a running game.</div>"#);
     } else {
-        out.push_str(r#"<div class="grid">"#);
+        out.push_str(r#"<div class="grid board">"#);
         for g in group_by_ap(slots) {
             let live = snap.ap.get(&g.ap_slot).cloned().unwrap_or_default();
             let (cls, label) = card_status(&live);
