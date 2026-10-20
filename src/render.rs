@@ -130,6 +130,9 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .ev .ago{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap;cursor:help}
 .ic-progression{--c:#d18bff}.ic-useful{--c:#4dd0e1}.ic-trap{--c:#ff6b6b}.ic-filler{--c:#9aa5b1}
 .ev .itm{color:var(--c);font-weight:600}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin:-2px 0 10px;font-family:var(--mono);font-size:11px;color:var(--muted)}
+.legend .lg{display:inline-flex;align-items:center;gap:6px}
+.legend .dotc{width:9px;height:9px;border-radius:50%;background:var(--c);flex:none}
 .loghdr{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.loghdr a{font-size:12px}
 .pager{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;margin:16px 0 4px;font-family:var(--mono);font-size:12.5px}
 .pager .pg{min-width:32px;height:32px;box-sizing:border-box;line-height:1;display:inline-flex;align-items:center;justify-content:center;padding:0 8px;border:1px solid var(--bd);border-radius:7px;color:var(--muted);text-decoration:none;background:var(--panel)}
@@ -522,6 +525,19 @@ fn ev_text_html(r: &crate::db::ActivityRow) -> String {
     esc(&r.text)
 }
 
+/// A compact colour legend for sent-item importance (used on the board, where
+/// there are no filter chips to teach the colours).
+fn class_legend() -> String {
+    let mut s = String::from(r#"<div class="legend">"#);
+    for c in ["progression", "useful", "trap", "filler"] {
+        s.push_str(&format!(
+            r#"<span class="lg ic-{c}"><span class="dotc"></span>{c}</span>"#
+        ));
+    }
+    s.push_str("</div>");
+    s
+}
+
 fn render_feed(out: &mut String, rows: &[crate::db::ActivityRow], ref_ts: Option<i64>) {
     let now = ref_ts.unwrap_or_else(now_secs);
     out.push_str(r#"<div class="feed">"#);
@@ -725,6 +741,7 @@ pub fn board_page(
     if activity.is_empty() {
         out.push_str(r#"<div class="empty">Quiet so far. Item sends, goals, releases and collects show up here.</div>"#);
     } else {
+        out.push_str(&class_legend());
         render_feed(&mut out, activity, None);
     }
     out.push_str("</main></body></html>");
@@ -841,7 +858,7 @@ fn filter_form(base: &str, f: &LogFilter) -> String {
     ));
     // Row 2: item-importance filter — the colour dots double as the legend for
     // the colour-coded items in the feed.
-    out.push_str(r#"<div class="ffbreak"></div><div class="ff classrow"><span class="ffl">importance</span>"#);
+    out.push_str(r#"<div class="ffbreak"></div><div class="ff classrow">"#);
     for (i, (name, label)) in [
         ("class_prog", "progression"),
         ("class_useful", "useful"),
