@@ -129,7 +129,12 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .ev .txt{flex:1;min-width:0;word-break:break-word}
 .ev .ago{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap;cursor:help}
 .loghdr{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.loghdr a{font-size:12px}
-.pager{display:flex;justify-content:center;margin:14px 0 4px}.pager a{font-family:var(--mono);font-size:12.5px}
+.pager{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;margin:16px 0 4px;font-family:var(--mono);font-size:12.5px}
+.pager .pg{min-width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0 8px;border:1px solid var(--bd);border-radius:7px;color:var(--muted);text-decoration:none;background:var(--panel)}
+.pager a.pg:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
+.pager .pg.cur{background:var(--accent);color:#0d1117;border-color:var(--accent);font-weight:700}
+.pager .pg.nav{font-size:15px}.pager .pg.disabled{opacity:.4}
+.pager .gap{color:var(--muted);padding:0 2px}
 .empty{color:var(--muted);font-size:13px}
 button:disabled{opacity:.45;cursor:not-allowed}
 .stepper{display:flex;gap:8px;margin:0 0 22px;padding:0;list-style:none;font-family:var(--mono);font-size:12px;max-width:520px}
@@ -198,6 +203,28 @@ function bifTick(){
  }
 }
 document.addEventListener('DOMContentLoaded',function(){bifTick();setInterval(bifTick,30000);});
+// Size the activity log to the viewport: measure how many rows fit, and if the
+// current rows-per-page (rpp) differs, reload with the fitted value (preserving
+// the top item's position). Runs only on paginated log pages (those have .pager).
+function bifFitLog(){
+ var pager=document.querySelector('.pager');var feed=document.querySelector('.feed');
+ if(!pager||!feed)return;
+ var rows=feed.querySelectorAll('.ev');if(rows.length<1)return;
+ var stride=rows.length>=2
+  ?rows[1].getBoundingClientRect().top-rows[0].getBoundingClientRect().top
+  :rows[0].getBoundingClientRect().height+6;
+ if(!stride||stride<1)return;
+ var avail=window.innerHeight-feed.getBoundingClientRect().top-pager.getBoundingClientRect().height-24;
+ var fit=Math.floor(avail/stride);if(fit<5)fit=5;if(fit>300)fit=300;
+ var url=new URL(window.location.href);
+ var curR=parseInt(url.searchParams.get('rpp')||'0',10);
+ if(curR===fit)return;
+ var curPage=parseInt(url.searchParams.get('page')||'1',10);
+ var topIndex=(curPage-1)*(curR>0?curR:25);
+ url.searchParams.set('rpp',fit);url.searchParams.set('page',Math.floor(topIndex/fit)+1);
+ window.location.replace(url.toString());
+}
+window.addEventListener('load',bifFitLog);
 </script>
 <main>"#;
 
@@ -447,7 +474,9 @@ pub fn past_seasons_section(seasons: &[(String, String, i64)]) -> String {
 pub fn season_page(
     s: &crate::season::SeasonSummary,
     activity: &[crate::db::ActivityRow],
-    has_more: bool,
+    page: i64,
+    pages: i64,
+    rpp: i64,
 ) -> Html<String> {
     let mut out = page_head(None);
     out.push_str(&format!(
@@ -493,13 +522,12 @@ pub fn season_page(
     if !activity.is_empty() {
         out.push_str(r#"<h2>Activity log</h2>"#);
         render_feed(&mut out, activity, Some(s.finalized_at));
-        if has_more && let Some(last) = activity.last() {
-            out.push_str(&format!(
-                r#"<div class="pager"><a href="/season/{}?before={}">← older</a></div>"#,
-                esc(&s.seed),
-                last.id
-            ));
-        }
+        out.push_str(&activity_pager(
+            &format!("/season/{}", esc(&s.seed)),
+            page,
+            pages,
+            rpp,
+        ));
     }
 
     out.push_str("</main></body></html>");
@@ -600,12 +628,72 @@ pub fn board_page(
     Html(out)
 }
 
-/// The full, paginated activity log for the current (live) season. Older pages
-/// via `?before=<id>`; relative times run against "now".
+/// The windowed page numbers for a classic pager: 1 2 3 … x-1 x x+1 … n-2 n-1 n.
+/// `None` marks an ellipsis gap. Page 1 is newest, `n` is oldest.
+fn page_numbers(cur: i64, n: i64) -> Vec<Option<i64>> {
+    let mut set: std::collections::BTreeSet<i64> = std::collections::BTreeSet::new();
+    for p in [1, 2, 3, cur - 1, cur, cur + 1, n - 2, n - 1, n] {
+        if (1..=n).contains(&p) {
+            set.insert(p);
+        }
+    }
+    let mut out = Vec::new();
+    let mut prev = 0i64;
+    for p in set {
+        if prev != 0 && p > prev + 1 {
+            out.push(None);
+        }
+        out.push(Some(p));
+        prev = p;
+    }
+    out
+}
+
+/// A numbered pager (hidden when there's a single page). Links carry `rpp` so
+/// navigation keeps the viewer's fitted page size; `base` is the page path.
+fn activity_pager(base: &str, page: i64, pages: i64, rpp: i64) -> String {
+    if pages <= 1 {
+        return String::new();
+    }
+    let mut out = String::from(r#"<nav class="pager">"#);
+    if page > 1 {
+        out.push_str(&format!(
+            r#"<a class="pg nav" href="{base}?page={}&amp;rpp={rpp}" title="newer">‹</a>"#,
+            page - 1
+        ));
+    } else {
+        out.push_str(r#"<span class="pg nav disabled">‹</span>"#);
+    }
+    for item in page_numbers(page, pages) {
+        match item {
+            None => out.push_str(r#"<span class="gap">…</span>"#),
+            Some(p) if p == page => out.push_str(&format!(r#"<span class="pg cur">{p}</span>"#)),
+            Some(p) => out.push_str(&format!(
+                r#"<a class="pg" href="{base}?page={p}&amp;rpp={rpp}">{p}</a>"#
+            )),
+        }
+    }
+    if page < pages {
+        out.push_str(&format!(
+            r#"<a class="pg nav" href="{base}?page={}&amp;rpp={rpp}" title="older">›</a>"#,
+            page + 1
+        ));
+    } else {
+        out.push_str(r#"<span class="pg nav disabled">›</span>"#);
+    }
+    out.push_str("</nav>");
+    out
+}
+
+/// The full, paginated activity log. `ref_ts = None` → relative times live;
+/// `Some(t)` → frozen (archived season). Numbered pages via `?page=&rpp=`.
 pub fn log_page(
     rows: &[crate::db::ActivityRow],
-    has_more: bool,
-    _ref_ts: Option<i64>,
+    page: i64,
+    pages: i64,
+    rpp: i64,
+    ref_ts: Option<i64>,
+    base: &str,
 ) -> Html<String> {
     let mut out = page_head(None);
     out.push_str(
@@ -614,13 +702,8 @@ pub fn log_page(
     if rows.is_empty() {
         out.push_str(r#"<div class="empty">Nothing logged yet this season.</div>"#);
     } else {
-        render_feed(&mut out, rows, None);
-        if has_more && let Some(last) = rows.last() {
-            out.push_str(&format!(
-                r#"<div class="pager"><a href="/log?before={}">← older</a></div>"#,
-                last.id
-            ));
-        }
+        render_feed(&mut out, rows, ref_ts);
+        out.push_str(&activity_pager(base, page, pages, rpp));
     }
     out.push_str("</main></body></html>");
     Html(out)

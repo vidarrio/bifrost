@@ -322,22 +322,36 @@ async fn board_view(State(st): State<AppState>) -> Html<String> {
     let prios = live_priorities(&st, &snap, &season).await;
     let addr = mc_addr();
     // Board shows the latest slice of the persistent log (journal-sourced).
-    let acts = st.db.activity_page(&season, None, BOARD_ACTIVITY).await;
+    let acts = st.db.activity_latest(&season, BOARD_ACTIVITY).await;
     render::board_page(&snap, &slots, &prios, Some(&addr), &acts)
 }
 
 /// How many activity rows the board previews; the full log lives at `/log`.
 const BOARD_ACTIVITY: i64 = 15;
-/// Page size for the paginated activity log (board `/log` and past seasons).
-const LOG_PAGE: i64 = 60;
+/// Default page size for the activity log before the client fits it to the
+/// viewport, and the clamp bounds for the viewer-supplied `rpp`.
+const LOG_RPP_DEFAULT: i64 = 25;
+const LOG_RPP_MIN: i64 = 5;
+const LOG_RPP_MAX: i64 = 300;
 
 #[derive(Deserialize)]
 struct LogQuery {
-    before: Option<i64>,
+    /// 1-based page, newest first (page 1 = newest, page n = oldest).
+    page: Option<i64>,
+    /// Rows per page — set by the client to fill the viewport.
+    rpp: Option<i64>,
 }
 
-/// The full, paginated activity log for the current season. Relative times run
-/// against "now" (live). Older pages via `?before=<id>`.
+/// Resolve (rows-per-page, page, total-pages, offset) from the query + a total.
+fn paginate(q: &LogQuery, total: i64) -> (i64, i64, i64, i64) {
+    let rpp = q.rpp.unwrap_or(LOG_RPP_DEFAULT).clamp(LOG_RPP_MIN, LOG_RPP_MAX);
+    let pages = ((total + rpp - 1) / rpp).max(1);
+    let page = q.page.unwrap_or(1).clamp(1, pages);
+    (rpp, page, pages, (page - 1) * rpp)
+}
+
+/// The full, paginated activity log for the current (live) season. Relative
+/// times run against "now"; numbered pages via `?page=&rpp=`.
 async fn log_view(State(st): State<AppState>, Query(q): Query<LogQuery>) -> Html<String> {
     let season = st
         .board
@@ -345,11 +359,10 @@ async fn log_view(State(st): State<AppState>, Query(q): Query<LogQuery>) -> Html
         .ok()
         .and_then(|b| b.seed.clone())
         .unwrap_or_default();
-    // Fetch one extra to know whether an older page exists.
-    let mut rows = st.db.activity_page(&season, q.before, LOG_PAGE + 1).await;
-    let has_more = rows.len() as i64 > LOG_PAGE;
-    rows.truncate(LOG_PAGE as usize);
-    render::log_page(&rows, has_more, None)
+    let total = st.db.activity_count(&season).await;
+    let (rpp, page, pages, offset) = paginate(&q, total);
+    let rows = st.db.activity_page(&season, offset, rpp).await;
+    render::log_page(&rows, page, pages, rpp, None, "/log")
 }
 
 /// A safe local redirect target (must be an absolute path, not protocol-relative).
@@ -1459,10 +1472,10 @@ async fn season_view(
             Ok(summary) => {
                 // The season's activity log, replayed with "x ago" frozen to the
                 // season-end time (finalized_at) rather than now.
-                let mut rows = st.db.activity_page(&seed, q.before, LOG_PAGE + 1).await;
-                let has_more = rows.len() as i64 > LOG_PAGE;
-                rows.truncate(LOG_PAGE as usize);
-                render::season_page(&summary, &rows, has_more).into_response()
+                let total = st.db.activity_count(&seed).await;
+                let (rpp, page, pages, offset) = paginate(&q, total);
+                let rows = st.db.activity_page(&seed, offset, rpp).await;
+                render::season_page(&summary, &rows, page, pages, rpp).into_response()
             }
             Err(_) => render::notice("That season's archive is unreadable.", false, "/").into_response(),
         },

@@ -85,7 +85,6 @@ pub struct SubmissionRow {
 /// `id` (journal order), which is stable even for events in the same second.
 #[derive(Debug, FromRow, Clone)]
 pub struct ActivityRow {
-    pub id: i64,
     pub ts: i64,
     pub kind: String,
     pub text: String,
@@ -622,22 +621,38 @@ impl Db {
             == 1
     }
 
-    /// A page of a season's activity, newest first, with `id < before` when given.
-    /// Returns up to `limit` rows.
-    pub async fn activity_page(
-        &self,
-        season: &str,
-        before: Option<i64>,
-        limit: i64,
-    ) -> Vec<ActivityRow> {
-        let before = before.unwrap_or(i64::MAX);
+    /// The newest `limit` activity rows for a season (board preview).
+    pub async fn activity_latest(&self, season: &str, limit: i64) -> Vec<ActivityRow> {
         sqlx::query_as::<_, ActivityRow>(
-            "SELECT id, ts, kind, text FROM activity
-             WHERE season = ? AND id < ? ORDER BY id DESC LIMIT ?",
+            "SELECT ts, kind, text FROM activity
+             WHERE season = ? ORDER BY id DESC LIMIT ?",
         )
         .bind(season)
-        .bind(before)
         .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default()
+    }
+
+    /// Total activity rows for a season (for numbered pagination).
+    pub async fn activity_count(&self, season: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM activity WHERE season = ?")
+            .bind(season)
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or(0)
+    }
+
+    /// A page of a season's activity, newest first, by offset (page p → offset
+    /// `(p-1)*limit`). Returns up to `limit` rows.
+    pub async fn activity_page(&self, season: &str, offset: i64, limit: i64) -> Vec<ActivityRow> {
+        sqlx::query_as::<_, ActivityRow>(
+            "SELECT ts, kind, text FROM activity
+             WHERE season = ? ORDER BY id DESC LIMIT ? OFFSET ?",
+        )
+        .bind(season)
+        .bind(limit)
+        .bind(offset.max(0))
         .fetch_all(&self.pool)
         .await
         .unwrap_or_default()
