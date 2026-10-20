@@ -676,8 +676,8 @@ main{max-width:none;padding-inline:clamp(20px,4vw,80px)}
 header .hwrap{max-width:none;padding-inline:clamp(20px,4vw,80px)}
 .boardcols{display:flex;gap:28px;align-items:flex-start}
 .boardgrid{flex:1 1 0;min-width:0}
-.boardlog{flex:0 0 clamp(360px,28vw,520px);min-width:0}
-.grid.board{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
+.boardlog{flex:0 0 clamp(380px,29vw,540px);min-width:0}
+.grid.board{grid-template-columns:repeat(auto-fill,minmax(min(400px,100%),1fr))}
 .loghdr,.legend,.feed{max-width:760px;margin-inline:auto}
 @media(max-width:1000px){.boardcols{flex-direction:column;align-items:stretch}.boardgrid,.boardlog{flex:none;width:100%}}
 </style>"#;
