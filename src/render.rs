@@ -141,7 +141,7 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .pager .pg.disabled{opacity:.4}
 .pager .pgnav{font-size:16px}
 .pager .gap{display:inline-flex;align-items:center;justify-content:center;height:32px;color:var(--muted);padding:0 2px}
-.logfilter{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin:0 0 14px;padding:10px 12px;background:var(--panel);border:1px solid var(--bd);border-radius:10px;font-size:12.5px}
+.logfilter{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin:0 0 14px;padding:10px 12px;background:var(--panel);border:1px solid var(--bd);border-radius:10px;font-size:12.5px;max-width:760px;box-sizing:border-box}
 .logfilter .ff{display:flex;align-items:center;gap:6px}
 .logfilter .ffbreak{flex-basis:100%;height:0;margin:0;padding:0;border:0}
 .logfilter .kinds{gap:6px;flex-wrap:wrap}
