@@ -124,7 +124,7 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .foundhints>summary::before{content:"▸ ";color:var(--muted)}
 .foundhints[open]>summary::before{content:"▾ "}
 .hintrow.found{opacity:.6;color:var(--muted)}
-.feed{display:grid;gap:6px}.ev{display:flex;align-items:center;gap:8px;font-size:13px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px}
+.feed{display:grid;gap:6px;max-width:760px}.ev{display:flex;align-items:center;gap:8px;font-size:13px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px}
 .ev .i{font-family:var(--mono);font-size:10px;color:var(--muted);min-width:52px}.ev.goal .i{color:var(--ok)}.ev.death .i{color:var(--bad)}.ev.trap .i{color:var(--warn)}.ev.send .i{color:var(--accent)}.ev.release .i{color:var(--warn)}.ev.collect .i{color:var(--muted)}
 .ev .txt{flex:1;min-width:0;word-break:break-word}
 .ev .ago{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap;cursor:help}
@@ -666,12 +666,14 @@ fn conn_line(snap: &BoardSnapshot) -> String {
     s
 }
 
-/// Board-only overrides: widen the column (and header to match) and render the
-/// slot cards as a viewport-responsive grid (as many ~280px columns as fit) so
-/// widescreens show more games per row instead of the default two.
+/// Board-only overrides: let the column fill the viewport (header to match) and
+/// render the slot cards as a viewport-responsive grid (as many ~280px columns
+/// as fit), so even ultrawides pack more games per row instead of the default
+/// two. The activity feed keeps its own readable width (`.feed` max-width), so
+/// widening the grid doesn't stretch the log's item↔timestamp gap.
 const BOARD_STYLE: &str = r#"<style>
-main{max-width:1500px}
-header .hwrap{max-width:1500px}
+main{max-width:none}
+header .hwrap{max-width:none}
 .grid.board{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
 </style>"#;
 
