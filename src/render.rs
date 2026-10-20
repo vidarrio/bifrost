@@ -301,6 +301,18 @@ function bifAutocomplete(){
  });
 }
 document.addEventListener('DOMContentLoaded',bifAutocomplete);
+// Live board: poll the fragment and swap the columns in place (no full reload),
+// so slot stats/statuses and the activity feed update on their own. Only runs
+// on the board (the only page with .boardcols).
+function bifBoardLive(){
+ var cols=document.querySelector('.boardcols');if(!cols)return;
+ setInterval(function(){
+  fetch('/board/fragment').then(function(r){return r.text()}).then(function(h){
+   if(h&&h.indexOf('boardgrid')>-1){cols.innerHTML=h;bifTick();}
+  }).catch(function(){});
+ },10000);
+}
+document.addEventListener('DOMContentLoaded',bifBoardLive);
 </script>
 <main>"#;
 
@@ -696,7 +708,24 @@ pub fn board_page(
         conn_line(snap)
     ));
 
-    out.push_str(r#"<div class="boardcols"><div class="boardgrid"><h2>Slots — tap one to claim, hint, and see its hints</h2>"#);
+    out.push_str(r#"<div class="boardcols">"#);
+    board_inner(&mut out, snap, slots, prios, mc_addr, activity);
+    out.push_str("</div></main></body></html>");
+    Html(out)
+}
+
+/// The inner content of `.boardcols` — the slots grid + the activity sidebar.
+/// Shared by the full board page and the `/board/fragment` live-update endpoint
+/// (polled by the client so the board updates without a full refresh).
+fn board_inner(
+    out: &mut String,
+    snap: &BoardSnapshot,
+    slots: &[SlotRow],
+    prios: &std::collections::HashSet<(i64, i64, i64)>,
+    mc_addr: Option<&str>,
+    activity: &[crate::db::ActivityRow],
+) {
+    out.push_str(r#"<div class="boardgrid"><h2>Slots — tap one to claim, hint, and see its hints</h2>"#);
     if slots.is_empty() {
         out.push_str(r#"<div class="empty">No slots yet — the board fills once Bifrost connects to a running game.</div>"#);
     } else {
@@ -735,9 +764,7 @@ pub fn board_page(
                 }
             }
             // Prioritized hints showcase on the FINDER's card ("what others want
-            // from you") — so you check your own card instead of skimming the
-            // whole board. `prios` is keyed by (finding, location, item), the same
-            // identity in either orientation. A caption makes the meaning explicit.
+            // from you"). `prios` is keyed by (finding, location, item).
             let wanted: Vec<&crate::ap::HintView> = live
                 .finder_views
                 .iter()
@@ -759,9 +786,22 @@ pub fn board_page(
         out.push_str(r#"<div class="empty">Quiet so far. Item sends, goals, releases and collects show up here.</div>"#);
     } else {
         out.push_str(&class_legend());
-        render_feed(&mut out, activity, None);
+        render_feed(out, activity, None);
     }
-    out.push_str("</aside></div></main></body></html>");
+    out.push_str("</aside>");
+}
+
+/// Live-update fragment: just the inner `.boardcols` HTML, served at
+/// `/board/fragment` and swapped in by the board's poller (no full refresh).
+pub fn board_fragment(
+    snap: &BoardSnapshot,
+    slots: &[SlotRow],
+    prios: &std::collections::HashSet<(i64, i64, i64)>,
+    mc_addr: Option<&str>,
+    activity: &[crate::db::ActivityRow],
+) -> Html<String> {
+    let mut out = String::new();
+    board_inner(&mut out, snap, slots, prios, mc_addr, activity);
     Html(out)
 }
 

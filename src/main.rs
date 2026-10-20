@@ -99,6 +99,7 @@ async fn main() {
         .route("/favicon.svg", get(favicon))
         .route("/check", get(check_form).post(check_run))
         .route("/board", get(board_view))
+        .route("/board/fragment", get(board_fragment_view))
         .route("/log", get(log_view))
         .route("/game/{ap_slot}", get(game_view))
         .route("/game/{ap_slot}/hints", get(game_hints))
@@ -324,6 +325,21 @@ async fn board_view(State(st): State<AppState>) -> Html<String> {
     // Board shows the latest slice of the persistent log (journal-sourced).
     let acts = st.db.activity_latest(&season, BOARD_ACTIVITY).await;
     render::board_page(&snap, &slots, &prios, Some(&addr), &acts)
+}
+
+/// The `.boardcols` inner HTML for the board's live-update poller (same data as
+/// `board_view`, no page chrome). Public like `/board`.
+async fn board_fragment_view(State(st): State<AppState>) -> Html<String> {
+    let snap = match st.board.read() {
+        Ok(b) => b.snapshot(),
+        Err(_) => return Html(String::new()),
+    };
+    let season = snap.seed.clone().unwrap_or_default();
+    let slots = st.db.slots(&season).await.unwrap_or_default();
+    let prios = live_priorities(&st, &snap, &season).await;
+    let addr = mc_addr();
+    let acts = st.db.activity_latest(&season, BOARD_ACTIVITY).await;
+    render::board_fragment(&snap, &slots, &prios, Some(&addr), &acts)
 }
 
 /// How many activity rows the board previews; the full log lives at `/log`.
