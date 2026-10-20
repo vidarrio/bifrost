@@ -204,10 +204,18 @@ pre.out{background:#0b0f14;border:1px solid var(--bd);border-radius:8px;padding:
 </style></head><body>
 <header><div class="hwrap"><a class="brand" href="/">Bifrost</a><span class="spacer"></span><span class="who" id="who"></span><span id="adminslot"></span><a class="pill" href="https://home.example.org/">home</a></div></header>
 <script>
-fetch('/api/me').then(function(r){return r.json()}).then(function(m){
+// Fill the header from a cached identity synchronously (before paint) so it
+// doesn't flicker empty→filled on reload, then confirm/update from /api/me.
+function bifApplyMe(m){
  var w=document.getElementById('who');
  if(w){if(m&&m.user){w.innerHTML='signed in as <b></b>';w.querySelector('b').textContent=m.user}else{w.innerHTML='<a href="/signup">sign in</a>'}}
- if(m&&m.admin){var a=document.getElementById('adminslot');if(a)a.innerHTML='<a class="pill" href="/admin">admin</a>'}
+ var a=document.getElementById('adminslot');
+ if(a)a.innerHTML=(m&&m.admin)?'<a class="pill" href="/admin">admin</a>':'';
+}
+try{var _m=localStorage.getItem('bifme');if(_m)bifApplyMe(JSON.parse(_m));}catch(e){}
+fetch('/api/me').then(function(r){return r.json()}).then(function(m){
+ bifApplyMe(m);
+ try{localStorage.setItem('bifme',JSON.stringify({user:(m&&m.user)||null,admin:!!(m&&m.admin)}));}catch(e){}
 }).catch(function(){});
 // Relative "x ago" for activity rows. data-ts = event epoch secs; optional
 // data-ref = frozen reference epoch (archived seasons) — else live "now".
@@ -307,12 +315,27 @@ document.addEventListener('DOMContentLoaded',bifAutocomplete);
 function bifBoardLive(){
  var cols=document.querySelector('.boardcols');if(!cols)return;
  setInterval(function(){
-  fetch('/board/fragment').then(function(r){return r.text()}).then(function(h){
-   if(h&&h.indexOf('boardgrid')>-1){cols.innerHTML=h;bifTick();}
+  fetch('/board/fragment').then(function(r){return r.json()}).then(function(j){
+   if(j&&j.body&&j.body.indexOf('boardgrid')>-1){
+    cols.innerHTML=j.body;
+    var c=document.getElementById('connline');if(c&&typeof j.conn==='string')c.innerHTML=j.conn;
+    bifTick();
+   }
   }).catch(function(){});
  },10000);
 }
 document.addEventListener('DOMContentLoaded',bifBoardLive);
+// Live full-log: poll the current view (filters+page+rpp carried in the query)
+// and swap just the feed+pager (#logbody), leaving the filter form untouched.
+function bifLogLive(){
+ var body=document.getElementById('logbody');if(!body||!body.hasAttribute('data-live'))return;
+ setInterval(function(){
+  fetch('/log/fragment'+window.location.search).then(function(r){return r.text()}).then(function(h){
+   if(h!=null){body.innerHTML=h;bifTick();}
+  }).catch(function(){});
+ },10000);
+}
+document.addEventListener('DOMContentLoaded',bifLogLive);
 </script>
 <main>"#;
 
@@ -658,6 +681,7 @@ pub fn season_page(
             rpp,
             Some(s.finalized_at),
             f,
+            false,
         );
     }
 
@@ -665,7 +689,7 @@ pub fn season_page(
     Html(out)
 }
 
-fn conn_line(snap: &BoardSnapshot) -> String {
+pub fn conn_line(snap: &BoardSnapshot) -> String {
     let mut s = String::new();
     if snap.connected {
         s.push_str(r#"<span class="dot on"></span>connected"#);
@@ -704,7 +728,7 @@ pub fn board_page(
     let mut out = page_head(None);
     out.push_str(BOARD_STYLE);
     out.push_str(&format!(
-        r#"<h1>Live board</h1><div class="crumb"><a href="/">← Bifrost</a> · {}</div>"#,
+        r#"<h1>Live board</h1><div class="crumb"><a href="/">← Bifrost</a> · <span id="connline">{}</span></div>"#,
         conn_line(snap)
     ));
 
@@ -791,18 +815,18 @@ fn board_inner(
     out.push_str("</aside>");
 }
 
-/// Live-update fragment: just the inner `.boardcols` HTML, served at
-/// `/board/fragment` and swapped in by the board's poller (no full refresh).
+/// Live-update fragment: just the inner `.boardcols` HTML, served (with the
+/// current conn line) at `/board/fragment` and swapped in by the board's poller.
 pub fn board_fragment(
     snap: &BoardSnapshot,
     slots: &[SlotRow],
     prios: &std::collections::HashSet<(i64, i64, i64)>,
     mc_addr: Option<&str>,
     activity: &[crate::db::ActivityRow],
-) -> Html<String> {
+) -> String {
     let mut out = String::new();
     board_inner(&mut out, snap, slots, prios, mc_addr, activity);
-    Html(out)
+    out
 }
 
 /// The windowed page numbers for a classic pager: 1 2 3 … x-1 x x+1 … n-2 n-1 n.
@@ -969,7 +993,9 @@ fn filter_form(base: &str, f: &LogFilter) -> String {
 }
 
 /// Shared body for the log pages: filter bar + feed + numbered pager.
-fn render_log_section(
+/// The swappable part of the log: the feed + pager (no filter form). Served at
+/// `/log/fragment` and swapped into `#logbody` by the live poller.
+fn render_log_body(
     out: &mut String,
     base: &str,
     rows: &[crate::db::ActivityRow],
@@ -979,13 +1005,51 @@ fn render_log_section(
     ref_ts: Option<i64>,
     f: &LogFilter,
 ) {
-    out.push_str(&filter_form(base, f));
     if rows.is_empty() {
         out.push_str(r#"<div class="empty">No activity matches these filters.</div>"#);
     } else {
         render_feed(out, rows, ref_ts);
         out.push_str(&activity_pager(base, f.qs, page, pages, rpp));
     }
+}
+
+/// Filter form (static) + the swappable `#logbody` (feed + pager). `live` marks
+/// the body for the client poller (true only for the current season's `/log`).
+#[allow(clippy::too_many_arguments)]
+fn render_log_section(
+    out: &mut String,
+    base: &str,
+    rows: &[crate::db::ActivityRow],
+    page: i64,
+    pages: i64,
+    rpp: i64,
+    ref_ts: Option<i64>,
+    f: &LogFilter,
+    live: bool,
+) {
+    out.push_str(&filter_form(base, f));
+    out.push_str(if live {
+        r#"<div id="logbody" data-live>"#
+    } else {
+        r#"<div id="logbody">"#
+    });
+    render_log_body(out, base, rows, page, pages, rpp, ref_ts, f);
+    out.push_str("</div>");
+}
+
+/// Just the `#logbody` inner HTML, for the `/log/fragment` live poller.
+pub fn log_body_fragment(
+    rows: &[crate::db::ActivityRow],
+    page: i64,
+    pages: i64,
+    rpp: i64,
+    ref_ts: Option<i64>,
+    base: &str,
+    f: &LogFilter,
+) -> Html<String> {
+    let mut out = String::new();
+    render_log_body(&mut out, base, rows, page, pages, rpp, ref_ts, f);
+    Html(out)
 }
 
 /// The full-log page is just the 760px log column, so narrow `main` + the
@@ -1012,7 +1076,7 @@ pub fn log_page(
     out.push_str(
         r#"<h1>Activity log</h1><div class="crumb"><a href="/board">← board</a> · item sends, goals, releases</div>"#,
     );
-    render_log_section(&mut out, base, rows, page, pages, rpp, ref_ts, f);
+    render_log_section(&mut out, base, rows, page, pages, rpp, ref_ts, f, true);
     out.push_str("</main></body></html>");
     Html(out)
 }

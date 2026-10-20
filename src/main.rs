@@ -101,6 +101,7 @@ async fn main() {
         .route("/board", get(board_view))
         .route("/board/fragment", get(board_fragment_view))
         .route("/log", get(log_view))
+        .route("/log/fragment", get(log_fragment_view))
         .route("/game/{ap_slot}", get(game_view))
         .route("/game/{ap_slot}/hints", get(game_hints))
         .route("/game/{ap_slot}/items", get(game_items))
@@ -327,19 +328,43 @@ async fn board_view(State(st): State<AppState>) -> Html<String> {
     render::board_page(&snap, &slots, &prios, Some(&addr), &acts)
 }
 
-/// The `.boardcols` inner HTML for the board's live-update poller (same data as
-/// `board_view`, no page chrome). Public like `/board`.
-async fn board_fragment_view(State(st): State<AppState>) -> Html<String> {
+/// The board's live-update payload: the `.boardcols` inner HTML (`body`) + the
+/// current connection line (`conn`), as JSON so the poller can update both
+/// without a full refresh. Same data as `board_view`; public like `/board`.
+async fn board_fragment_view(State(st): State<AppState>) -> Json<serde_json::Value> {
     let snap = match st.board.read() {
         Ok(b) => b.snapshot(),
-        Err(_) => return Html(String::new()),
+        Err(_) => return Json(serde_json::json!({})),
     };
     let season = snap.seed.clone().unwrap_or_default();
     let slots = st.db.slots(&season).await.unwrap_or_default();
     let prios = live_priorities(&st, &snap, &season).await;
     let addr = mc_addr();
     let acts = st.db.activity_latest(&season, BOARD_ACTIVITY).await;
-    render::board_fragment(&snap, &slots, &prios, Some(&addr), &acts)
+    Json(serde_json::json!({
+        "conn": render::conn_line(&snap),
+        "body": render::board_fragment(&snap, &slots, &prios, Some(&addr), &acts),
+    }))
+}
+
+/// The `#logbody` (feed + pager) for the full-log live poller, for the current
+/// filters/page/rpp (query carried through). The filter form is not re-sent.
+async fn log_fragment_view(State(st): State<AppState>, Query(q): Query<LogQuery>) -> Html<String> {
+    let season = st
+        .board
+        .read()
+        .ok()
+        .and_then(|b| b.seed.clone())
+        .unwrap_or_default();
+    let kinds = selected_kinds(&q);
+    let classes = selected_classes(&q);
+    let filter = act_filter(&q, &kinds, &classes);
+    let total = st.db.activity_count(&season, &filter).await;
+    let (rpp, page, pages, offset) = paginate(&q, total);
+    let rows = st.db.activity_page(&season, &filter, offset, rpp).await;
+    let qs = filter_qs(&q);
+    let lf = log_filter(&q, &[], &qs);
+    render::log_body_fragment(&rows, page, pages, rpp, None, "/log", &lf)
 }
 
 /// How many activity rows the board previews; the full log lives at `/log`.
