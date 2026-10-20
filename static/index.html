@@ -69,10 +69,20 @@
 <body>
 <header><div class="hwrap"><a class="hbrand" href="/">Bifrost</a><span class="spacer"></span><span class="who" id="who"></span><span id="adminslot"></span><a class="pill" href="https://home.example.org/">home</a></div></header>
 <script>
-fetch('/api/me').then(function(r){return r.json()}).then(function(m){
+// Fill the header from cached identity synchronously (before paint) so it
+// doesn't flicker empty→filled on reload, then confirm/update from /api/me.
+// Shares the 'bifme' cache key with the rest of the app.
+function bifApplyMe(m){
  var w=document.getElementById('who');
- if(w&&m&&m.user){w.innerHTML='signed in as <b></b>';w.querySelector('b').textContent=m.user}
- if(m&&m.admin){var a=document.getElementById('adminslot');if(a)a.innerHTML='<a class="pill" href="/admin">admin</a>'}
+ if(w)w.innerHTML=(m&&m.user)?('signed in as <b>'+'</b>'):'';
+ if(w&&m&&m.user)w.querySelector('b').textContent=m.user;
+ var a=document.getElementById('adminslot');
+ if(a)a.innerHTML=(m&&m.admin)?'<a class="pill" href="/admin">admin</a>':'';
+}
+try{var _m=localStorage.getItem('bifme');if(_m)bifApplyMe(JSON.parse(_m));}catch(e){}
+fetch('/api/me').then(function(r){return r.json()}).then(function(m){
+ bifApplyMe(m);
+ try{localStorage.setItem('bifme',JSON.stringify({user:(m&&m.user)||null,admin:!!(m&&m.admin)}));}catch(e){}
 }).catch(function(){});
 </script>
 <main>

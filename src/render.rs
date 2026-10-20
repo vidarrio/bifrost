@@ -1140,16 +1140,36 @@ pub fn claim_page(
                 out.push_str(&format!(
                     r#"<form class="hintform" method="post" action="/hint">
 <input type="hidden" name="slot_id" value="{}"><input name="item" placeholder="hint one of your items…" required>
-<button type="submit">Hint</button></form>"#,
+<button type="submit">Hint</button></form><div class="inlinemsg"></div>"#,
                     r.id
                 ));
             }
         }
         out.push_str("</div>");
     }
+    out.push_str(CLAIM_HINT_JS);
     out.push_str("</div></main></body></html>");
     Html(out)
 }
+
+/// Claim-page inline quick-hint: submit via fetch and show inline feedback
+/// instead of navigating to the raw JSON (the game page has its own richer
+/// handler). Wires every `.hintform` on the claim page.
+const CLAIM_HINT_JS: &str = r#"<script>
+document.querySelectorAll('form.hintform').forEach(function(f){
+ f.addEventListener('submit',function(e){
+  e.preventDefault();
+  var inp=f.querySelector('input[name=item]'),btn=f.querySelector('button'),msg=f.nextElementSibling;
+  var item=inp.value.trim();if(!item)return;
+  btn.disabled=true;if(msg){msg.className='inlinemsg';msg.textContent='Hinting…';}
+  fetch('/hint',{method:'POST',body:new URLSearchParams(new FormData(f))}).then(function(r){return r.json()}).then(function(j){
+   btn.disabled=false;
+   if(msg){msg.className='inlinemsg '+(j&&j.ok?'ok':'bad');msg.textContent=(j&&j.message)?j.message:(j&&j.ok?'Hinted.':'Hint failed.');}
+   if(j&&j.ok)inp.value='';
+  }).catch(function(){btn.disabled=false;if(msg){msg.className='inlinemsg bad';msg.textContent='Request failed.';}});
+ });
+});
+</script>"#;
 
 pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool, open: bool) -> Html<String> {
     let mut b = page_head(Some(me));
