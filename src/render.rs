@@ -2044,7 +2044,7 @@ pub fn game_page(
         out.push_str(&format!(
             r#"<h2>Send a hint</h2>
 <p class="empty">{have}Each hint in this world costs <b>{cost}</b> points.{bonus} Search your pool and hint one.</p>
-<p class="empty"><a href="/minesweeper">Play minesweeper to earn bonus hints →</a></p>
+<p class="empty"><a href="/minesweeper?back={back}">Play minesweeper to earn bonus hints →</a></p>
 <form method="post" action="/hint" class="hintform" id="hintform">
 <input type="hidden" name="slot_id" value="{sid}"><input type="hidden" name="back" value="{back}">
 <input id="hintq" name="item" placeholder="search your items…" autocomplete="off" required>
@@ -2266,12 +2266,21 @@ pub fn minesweeper_page(
     credits: i64,
     standard: &crate::db::MineStats,
     expert: &crate::db::MineStats,
+    back: &str,
 ) -> Html<String> {
     let mut b = page_head(None);
+    // Freeplay (from the home minigames section) goes home; seasonal goes back to
+    // wherever you entered from — the game page you opened minesweeper for, else
+    // the board.
     let crumb = if free {
-        r#"<div class="crumb"><a href="/">← Bifrost</a></div>"#
+        r#"<div class="crumb"><a href="/">← Bifrost</a></div>"#.to_string()
     } else {
-        r#"<div class="crumb"><a href="/board">← board</a></div>"#
+        let label = if back.starts_with("/game/") {
+            "← back to game"
+        } else {
+            "← board"
+        };
+        format!(r#"<div class="crumb"><a href="{}">{label}</a></div>"#, esc(back))
     };
     b.push_str(&format!(r#"<h1>Minesweeper</h1>{crumb}"#));
     if !enabled {

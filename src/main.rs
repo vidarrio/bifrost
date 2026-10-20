@@ -2036,7 +2036,8 @@ async fn minesweeper_page(
     let stat_scope: Option<&str> = if free { None } else { Some(&season) };
     let standard = st.db.mine_stats(stat_scope, &me, "standard").await;
     let expert = st.db.mine_stats(stat_scope, &me, "expert").await;
-    render::minesweeper_page(enabled, free, credits, &standard, &expert)
+    let back = safe_back(q.back.as_deref(), "/board");
+    render::minesweeper_page(enabled, free, credits, &standard, &expert, &back)
 }
 
 fn now_nanos() -> u64 {
@@ -2058,6 +2059,10 @@ struct KindQuery {
     /// Freeplay (minigame section) vs seasonal (game board).
     #[serde(default)]
     free: bool,
+    /// Where the back link returns to (the game page minesweeper was opened
+    /// from); only read by `minesweeper_page`.
+    #[serde(default)]
+    back: Option<String>,
 }
 
 /// Map key for a player's in-progress game: separate per difficulty AND per mode
