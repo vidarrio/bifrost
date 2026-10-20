@@ -124,8 +124,12 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .foundhints>summary::before{content:"▸ ";color:var(--muted)}
 .foundhints[open]>summary::before{content:"▾ "}
 .hintrow.found{opacity:.6;color:var(--muted)}
-.feed{display:grid;gap:6px}.ev{display:flex;gap:8px;font-size:13px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px}
-.ev .i{font-family:var(--mono);font-size:10px;color:var(--muted);min-width:44px}.ev.goal .i{color:var(--ok)}.ev.death .i{color:var(--bad)}.ev.trap .i{color:var(--warn)}
+.feed{display:grid;gap:6px}.ev{display:flex;align-items:center;gap:8px;font-size:13px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px}
+.ev .i{font-family:var(--mono);font-size:10px;color:var(--muted);min-width:52px}.ev.goal .i{color:var(--ok)}.ev.death .i{color:var(--bad)}.ev.trap .i{color:var(--warn)}.ev.send .i{color:var(--accent)}.ev.release .i{color:var(--warn)}.ev.collect .i{color:var(--muted)}
+.ev .txt{flex:1;min-width:0;word-break:break-word}
+.ev .ago{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap;cursor:help}
+.loghdr{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.loghdr a{font-size:12px}
+.pager{display:flex;justify-content:center;margin:14px 0 4px}.pager a{font-family:var(--mono);font-size:12.5px}
 .empty{color:var(--muted);font-size:13px}
 button:disabled{opacity:.45;cursor:not-allowed}
 .stepper{display:flex;gap:8px;margin:0 0 22px;padding:0;list-style:none;font-family:var(--mono);font-size:12px;max-width:520px}
@@ -172,6 +176,28 @@ fetch('/api/me').then(function(r){return r.json()}).then(function(m){
  if(w){if(m&&m.user){w.innerHTML='signed in as <b></b>';w.querySelector('b').textContent=m.user}else{w.innerHTML='<a href="/signup">sign in</a>'}}
  if(m&&m.admin){var a=document.getElementById('adminslot');if(a)a.innerHTML='<a class="pill" href="/admin">admin</a>'}
 }).catch(function(){});
+// Relative "x ago" for activity rows. data-ts = event epoch secs; optional
+// data-ref = frozen reference epoch (archived seasons) — else live "now".
+// The tooltip (title) shows the exact local date/time in the viewer's zone.
+function bifAgo(sec){
+ if(sec<0)sec=0;
+ if(sec<60)return sec+'s ago';
+ var m=Math.floor(sec/60);if(m<60)return m+'m ago';
+ var h=Math.floor(m/60);if(h<24)return h+'h ago';
+ var d=Math.floor(h/24);if(d<7)return d+'d ago';
+ var w=Math.floor(d/7);return w+'w ago';
+}
+function bifTick(){
+ var now=Math.floor(Date.now()/1000);
+ var els=document.querySelectorAll('.ago[data-ts]');
+ for(var i=0;i<els.length;i++){
+  var el=els[i];var ts=parseInt(el.getAttribute('data-ts'),10);if(isNaN(ts))continue;
+  var r=el.getAttribute('data-ref');var ref=r?parseInt(r,10):now;
+  el.textContent=bifAgo(ref-ts);
+  el.title=new Date(ts*1000).toLocaleString();
+ }
+}
+document.addEventListener('DOMContentLoaded',function(){bifTick();setInterval(bifTick,30000);});
 </script>
 <main>"#;
 
@@ -334,6 +360,69 @@ fn fmt_date(secs: i64) -> String {
     format!("{d} {} {year}", MON[((m - 1).clamp(0, 11)) as usize])
 }
 
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// A whole-unit "x ago" using the largest unit that fits: s, m, h, d, w.
+fn fmt_ago(sec: i64) -> String {
+    let s = sec.max(0);
+    if s < 60 {
+        return format!("{s}s ago");
+    }
+    let m = s / 60;
+    if m < 60 {
+        return format!("{m}m ago");
+    }
+    let h = m / 60;
+    if h < 24 {
+        return format!("{h}h ago");
+    }
+    let d = h / 24;
+    if d < 7 {
+        return format!("{d}d ago");
+    }
+    format!("{}w ago", d / 7)
+}
+
+/// (css class, short label) for an activity kind.
+fn ev_kind(kind: &str) -> (&'static str, &'static str) {
+    match kind {
+        "send" => ("send", "sent"),
+        "goal" => ("goal", "goal"),
+        "release" => ("release", "release"),
+        "collect" => ("collect", "collect"),
+        _ => ("", "·"),
+    }
+}
+
+/// Render activity rows into a `.feed`. `ref_ts = None` means relative times run
+/// against "now" (live); `Some(t)` freezes them to `t` (an archived season's end
+/// time) — emitted as `data-ref` so the client keeps the same frozen value. The
+/// exact timestamp rides along in `data-ts`; the client fills the title tooltip.
+fn render_feed(out: &mut String, rows: &[crate::db::ActivityRow], ref_ts: Option<i64>) {
+    let now = ref_ts.unwrap_or_else(now_secs);
+    out.push_str(r#"<div class="feed">"#);
+    for r in rows {
+        let (cls, label) = ev_kind(&r.kind);
+        let refattr = match ref_ts {
+            Some(t) => format!(r#" data-ref="{t}""#),
+            None => String::new(),
+        };
+        out.push_str(&format!(
+            r#"<div class="ev {cls}"><span class="i">{label}</span><span class="txt">{}</span><time class="ago" data-ts="{}"{refattr} title="{}">{}</time></div>"#,
+            esc(&r.text),
+            r.ts,
+            fmt_date(r.ts),
+            fmt_ago(now - r.ts),
+        ));
+    }
+    out.push_str("</div>");
+}
+
 /// The frontpage "Past seasons" block — a card per archived season linking to
 /// its detail page. Empty string when there are none (so the section hides).
 pub fn past_seasons_section(seasons: &[(String, String, i64)]) -> String {
@@ -355,7 +444,11 @@ pub fn past_seasons_section(seasons: &[(String, String, i64)]) -> String {
 
 /// An archived season's detail page: final standings per game + this season's
 /// frozen minesweeper leaderboards.
-pub fn season_page(s: &crate::season::SeasonSummary) -> Html<String> {
+pub fn season_page(
+    s: &crate::season::SeasonSummary,
+    activity: &[crate::db::ActivityRow],
+    has_more: bool,
+) -> Html<String> {
     let mut out = page_head(None);
     out.push_str(&format!(
         r#"<h1>{}</h1><div class="crumb"><a href="/">← Bifrost</a> · {} player{} · finalized {}</div>"#,
@@ -396,6 +489,19 @@ pub fn season_page(s: &crate::season::SeasonSummary) -> Html<String> {
         }
     }
 
+    // Season activity log, replayed with "x ago" frozen to the season-end time.
+    if !activity.is_empty() {
+        out.push_str(r#"<h2>Activity log</h2>"#);
+        render_feed(&mut out, activity, Some(s.finalized_at));
+        if has_more && let Some(last) = activity.last() {
+            out.push_str(&format!(
+                r#"<div class="pager"><a href="/season/{}?before={}">← older</a></div>"#,
+                esc(&s.seed),
+                last.id
+            ));
+        }
+    }
+
     out.push_str("</main></body></html>");
     Html(out)
 }
@@ -418,6 +524,7 @@ pub fn board_page(
     slots: &[SlotRow],
     prios: &std::collections::HashSet<(i64, i64, i64)>,
     mc_addr: Option<&str>,
+    activity: &[crate::db::ActivityRow],
 ) -> Html<String> {
     let mut out = page_head(None);
     out.push_str(&format!(
@@ -483,20 +590,37 @@ pub fn board_page(
         out.push_str("</div>");
     }
 
-    out.push_str(r#"<h2>Activity</h2>"#);
-    if snap.events.is_empty() {
-        out.push_str(r#"<div class="empty">Quiet so far. Item finds, goals and DeathLinks show up here.</div>"#);
+    out.push_str(r#"<h2 class="loghdr"><span>Activity</span><a href="/log">full log →</a></h2>"#);
+    if activity.is_empty() {
+        out.push_str(r#"<div class="empty">Quiet so far. Item sends, goals, releases and collects show up here.</div>"#);
     } else {
-        out.push_str(r#"<div class="feed">"#);
-        for e in snap.events.iter().take(15) {
+        render_feed(&mut out, activity, None);
+    }
+    out.push_str("</main></body></html>");
+    Html(out)
+}
+
+/// The full, paginated activity log for the current (live) season. Older pages
+/// via `?before=<id>`; relative times run against "now".
+pub fn log_page(
+    rows: &[crate::db::ActivityRow],
+    has_more: bool,
+    _ref_ts: Option<i64>,
+) -> Html<String> {
+    let mut out = page_head(None);
+    out.push_str(
+        r#"<h1>Activity log</h1><div class="crumb"><a href="/board">← board</a> · sends, goals, releases, collects</div>"#,
+    );
+    if rows.is_empty() {
+        out.push_str(r#"<div class="empty">Nothing logged yet this season.</div>"#);
+    } else {
+        render_feed(&mut out, rows, None);
+        if has_more && let Some(last) = rows.last() {
             out.push_str(&format!(
-                r#"<div class="ev {}"><span class="i">{}</span><span>{}</span></div>"#,
-                e.icon,
-                e.icon,
-                esc(&e.text)
+                r#"<div class="pager"><a href="/log?before={}">← older</a></div>"#,
+                last.id
             ));
         }
-        out.push_str("</div>");
     }
     out.push_str("</main></body></html>");
     Html(out)

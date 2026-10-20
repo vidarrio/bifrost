@@ -20,6 +20,7 @@ use axum::{
 use serde::Deserialize;
 use tower_http::trace::TraceLayer;
 
+mod activity;
 mod ap;
 mod archive;
 mod checker;
@@ -80,6 +81,10 @@ async fn main() {
         None => tracing::info!("AP tracker idle (set BIFROST_SLOT to enable the live board)"),
     }
 
+    // Persistent activity log: ingest the AP server journal (independent of the
+    // tracker connection; idles until the board knows a season).
+    activity::spawn(board.clone(), db.clone());
+
     let genstate: generate::GenState = Arc::new(std::sync::Mutex::new((false, "idle".into())));
     let state = AppState {
         board,
@@ -94,6 +99,7 @@ async fn main() {
         .route("/favicon.svg", get(favicon))
         .route("/check", get(check_form).post(check_run))
         .route("/board", get(board_view))
+        .route("/log", get(log_view))
         .route("/game/{ap_slot}", get(game_view))
         .route("/game/{ap_slot}/hints", get(game_hints))
         .route("/game/{ap_slot}/items", get(game_items))
@@ -315,7 +321,35 @@ async fn board_view(State(st): State<AppState>) -> Html<String> {
     let slots = st.db.slots(&season).await.unwrap_or_default();
     let prios = live_priorities(&st, &snap, &season).await;
     let addr = mc_addr();
-    render::board_page(&snap, &slots, &prios, Some(&addr))
+    // Board shows the latest slice of the persistent log (journal-sourced).
+    let acts = st.db.activity_page(&season, None, BOARD_ACTIVITY).await;
+    render::board_page(&snap, &slots, &prios, Some(&addr), &acts)
+}
+
+/// How many activity rows the board previews; the full log lives at `/log`.
+const BOARD_ACTIVITY: i64 = 15;
+/// Page size for the paginated activity log (board `/log` and past seasons).
+const LOG_PAGE: i64 = 60;
+
+#[derive(Deserialize)]
+struct LogQuery {
+    before: Option<i64>,
+}
+
+/// The full, paginated activity log for the current season. Relative times run
+/// against "now" (live). Older pages via `?before=<id>`.
+async fn log_view(State(st): State<AppState>, Query(q): Query<LogQuery>) -> Html<String> {
+    let season = st
+        .board
+        .read()
+        .ok()
+        .and_then(|b| b.seed.clone())
+        .unwrap_or_default();
+    // Fetch one extra to know whether an older page exists.
+    let mut rows = st.db.activity_page(&season, q.before, LOG_PAGE + 1).await;
+    let has_more = rows.len() as i64 > LOG_PAGE;
+    rows.truncate(LOG_PAGE as usize);
+    render::log_page(&rows, has_more, None)
 }
 
 /// A safe local redirect target (must be an absolute path, not protocol-relative).
@@ -1415,10 +1449,21 @@ fn default_season_name() -> String {
 }
 
 /// Render an archived season's detail page.
-async fn season_view(Path(seed): Path<String>, State(st): State<AppState>) -> Response {
+async fn season_view(
+    Path(seed): Path<String>,
+    State(st): State<AppState>,
+    Query(q): Query<LogQuery>,
+) -> Response {
     match st.db.past_season(&seed).await {
         Some(json) => match serde_json::from_str::<season::SeasonSummary>(&json) {
-            Ok(summary) => render::season_page(&summary).into_response(),
+            Ok(summary) => {
+                // The season's activity log, replayed with "x ago" frozen to the
+                // season-end time (finalized_at) rather than now.
+                let mut rows = st.db.activity_page(&seed, q.before, LOG_PAGE + 1).await;
+                let has_more = rows.len() as i64 > LOG_PAGE;
+                rows.truncate(LOG_PAGE as usize);
+                render::season_page(&summary, &rows, has_more).into_response()
+            }
             Err(_) => render::notice("That season's archive is unreadable.", false, "/").into_response(),
         },
         None => render::notice("No such archived season.", false, "/").into_response(),

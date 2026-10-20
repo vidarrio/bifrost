@@ -1,22 +1,20 @@
 //! Archipelago tracker client + live board state.
 //!
 //! Bifrost holds one persistent WebSocket connection to the MultiServer as a
-//! `Tracker`-tagged client. From it we learn every slot (via `Connected`),
+//! `Tracker`-tagged client. From it we learn every slot (via `Connected`) and
 //! subscribe to each slot's status + hints in the server's data storage
-//! (`_read_client_status_*` / `_read_hints_*`), and fold the global `PrintJSON`
-//! event stream (item sends, goals, hints, joins) plus `Bounced` DeathLinks into
-//! a rolling feed. Item/location *names* need the data package and are deferred;
-//! events render at the slot level.
+//! (`_read_client_status_*` / `_read_hints_*`). The persistent, timestamped
+//! activity log is sourced separately from the server journal (see
+//! `activity.rs`); the only live `PrintJSON` handling left here is flipping a
+//! slot to "goaled" immediately so the board doesn't wait for the next poll.
 
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
-
-const MAX_EVENTS: usize = 60;
 
 /// A hint as stored in `_read_hints_*` (ids; names resolved at render via Meta).
 #[derive(Clone)]
@@ -42,12 +40,6 @@ pub struct SlotState {
     pub received_items: Vec<(i64, i64, i64)>,
 }
 
-#[derive(Clone)]
-pub struct Event {
-    pub icon: &'static str,
-    pub text: String,
-}
-
 #[derive(Default)]
 pub struct Board {
     pub connected: bool,
@@ -56,17 +48,10 @@ pub struct Board {
     /// Percentage of a world's locations that must be checked to afford a hint.
     pub hint_cost: i64,
     pub slots: BTreeMap<i64, SlotState>,
-    pub events: VecDeque<Event>,
     pub meta: Option<std::sync::Arc<crate::meta::Meta>>,
 }
 
 impl Board {
-    fn push_event(&mut self, icon: &'static str, text: String) {
-        self.events.push_front(Event { icon, text });
-        while self.events.len() > MAX_EVENTS {
-            self.events.pop_back();
-        }
-    }
     pub fn name_of(&self, slot: i64) -> String {
         if slot == 0 {
             return "Server".into();
@@ -121,7 +106,6 @@ pub struct BoardSnapshot {
     pub seed: Option<String>,
     pub hint_cost: i64,
     pub ap: BTreeMap<i64, ApLive>,
-    pub events: Vec<Event>,
 }
 
 impl Board {
@@ -344,7 +328,6 @@ impl Board {
             seed: self.seed.clone(),
             hint_cost: self.hint_cost,
             ap,
-            events: self.events.iter().cloned().collect(),
         }
     }
 }
@@ -543,7 +526,6 @@ async fn run_once(
                         apply_storage(&mut b, k, &v);
                     }
                 }
-                "Bounced" => on_bounced(board, &pkt),
                 _ => {}
             }
         }
@@ -590,7 +572,6 @@ fn on_connected(board: &Arc<RwLock<Board>>, pkt: &Value) -> Vec<String> {
             keys.push(format!("_read_hints_{team}_{slot}"));
         }
     }
-    b.push_event("*", "Bifrost connected to the multiworld.".into());
     keys
 }
 
@@ -607,12 +588,7 @@ fn apply_storage(b: &mut Board, key: &str, value: &Value) {
         let Some(s) = b.slots.get_mut(&slot) else {
             return;
         };
-        let was_goal = s.status == 30;
         s.status = status;
-        if status == 30 && !was_goal {
-            let name = s.name.clone();
-            b.push_event("goal", format!("{name} reached their goal!"));
-        }
     } else if let Some(rest) = key.strip_prefix("_read_hints_") {
         let Some(slot) = slot_from_key(rest) else {
             return;
@@ -651,98 +627,22 @@ fn parse_hint(v: &Value) -> Option<HintRaw> {
     }
 }
 
+/// The persistent activity log is sourced from the AP server journal (see
+/// `activity.rs`). The live tracker's only remaining job for `PrintJSON` is to
+/// flip a slot's status to "goaled" immediately, so the board updates without
+/// waiting for the next periodic client-status poll. Everything else (item
+/// sends, releases, collects, join/part) is handled by the journal ingester.
 fn on_printjson(board: &Arc<RwLock<Board>>, pkt: &Value) {
-    let ty = pkt.get("type").and_then(Value::as_str).unwrap_or("");
-    let mut b = match board.write() {
-        Ok(b) => b,
-        Err(_) => return,
-    };
-    match ty {
-        "ItemSend" => {
-            let item = pkt.get("item");
-            let src = item
-                .and_then(|i| i.get("player"))
-                .and_then(Value::as_i64)
-                .unwrap_or(0);
-            let dst = pkt.get("receiving").and_then(Value::as_i64).unwrap_or(0);
-            let flags = item
-                .and_then(|i| i.get("flags"))
-                .and_then(Value::as_i64)
-                .unwrap_or(0);
-            let item_id = item
-                .and_then(|i| i.get("item"))
-                .and_then(Value::as_i64)
-                .unwrap_or(0);
-            // NB: sent/received totals are set authoritatively from the savefile
-            // (see the counts refresher in `spawn`), not tallied from live events
-            // here — a tracker only sees events while connected, so counting them
-            // would undercount a mid-season or freshly-restarted board.
-            // Only surface progression/useful/trap items in the feed to keep it
-            // meaningful (filler floods otherwise).
-            if flags != 0 {
-                let (sn, dn) = (b.name_of(src), b.name_of(dst));
-                let icon = if flags & 0b100 != 0 { "trap" } else { "item" };
-                // Resolve the item name if season metadata is loaded.
-                let named = b.meta.as_ref().and_then(|m| {
-                    let recv_game = b.slots.get(&dst)?.game.as_str();
-                    m.item_name(recv_game, item_id).map(str::to_string)
-                });
-                let text = match named {
-                    Some(it) if src == dst => format!("{sn} found their own {it}"),
-                    Some(it) => format!("{sn} found {dn}'s {it}"),
-                    None if src == dst => format!("{sn} found their own item"),
-                    None => format!("{sn} → {dn}"),
-                };
-                b.push_event(icon, text);
-            }
-        }
-        "Goal" => {
-            if let Some(slot) = pkt.get("slot").and_then(Value::as_i64) {
-                let name = b.name_of(slot);
-                if let Some(s) = b.slots.get_mut(&slot) {
-                    s.status = 30;
-                }
-                b.push_event("goal", format!("{name} reached their goal!"));
-            }
-        }
-        "Release" => {
-            if let Some(slot) = pkt.get("slot").and_then(Value::as_i64) {
-                let name = b.name_of(slot);
-                b.push_event("*", format!("{name} released their remaining items"));
-            }
-        }
-        "Collect" => {
-            if let Some(slot) = pkt.get("slot").and_then(Value::as_i64) {
-                let name = b.name_of(slot);
-                b.push_event("*", format!("{name} collected their remaining items"));
-            }
-        }
-        // Join/Part (connect/disconnect) are deliberately not fed into the
-        // activity feed — clients flap on unstable networks and would drown it.
-        _ => {}
-    }
-}
-
-fn on_bounced(board: &Arc<RwLock<Board>>, pkt: &Value) {
-    let tags = pkt.get("tags").and_then(Value::as_array);
-    let is_deathlink = tags
-        .map(|t| t.iter().any(|v| v.as_str() == Some("DeathLink")))
-        .unwrap_or(false);
-    if !is_deathlink {
+    if pkt.get("type").and_then(Value::as_str) != Some("Goal") {
         return;
     }
-    let data = pkt.get("data");
-    let source = data
-        .and_then(|d| d.get("source"))
-        .and_then(Value::as_str)
-        .unwrap_or("someone");
-    let cause = data.and_then(|d| d.get("cause")).and_then(Value::as_str);
-    if let Ok(mut b) = board.write() {
-        let text = match cause {
-            Some(c) if !c.is_empty() => format!("{source} died — {c}"),
-            _ => format!("{source} died"),
-        };
-        b.push_event("death", text);
+    let Some(slot) = pkt.get("slot").and_then(Value::as_i64) else {
+        return;
+    };
+    if let Ok(mut b) = board.write()
+        && let Some(s) = b.slots.get_mut(&slot)
+    {
+        s.status = 30;
     }
 }
 

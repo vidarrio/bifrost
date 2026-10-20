@@ -79,6 +79,18 @@ pub struct SubmissionRow {
     pub yaml_file: String,
 }
 
+/// One persisted activity-log entry, sourced from the AP server journal. `ts` is
+/// epoch seconds (the journal's realtime timestamp); `kind` is one of
+/// send/goal/release/collect; `text` is the rendered line. Rows are ordered by
+/// `id` (journal order), which is stable even for events in the same second.
+#[derive(Debug, FromRow, Clone)]
+pub struct ActivityRow {
+    pub id: i64,
+    pub ts: i64,
+    pub kind: String,
+    pub text: String,
+}
+
 impl Db {
     pub async fn open(path: &str) -> Result<Self, sqlx::Error> {
         let opts = SqliteConnectOptions::new()
@@ -220,6 +232,26 @@ impl Db {
         )
         .execute(&pool)
         .await?;
+        // Persistent activity log, one row per kept AP journal event. Scoped by
+        // season (AP seed) so the archived/past-season view can replay it; like
+        // `season_archive`, deliberately NOT cleared by the admin reset. Ordered
+        // by `id` = journal order. De-duplication across runs is handled by the
+        // journal cursor (setting `journal_cursor`), not a UNIQUE constraint, so
+        // genuine identical events in the same second are never dropped.
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS activity (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 season TEXT NOT NULL,
+                 ts INTEGER NOT NULL,
+                 kind TEXT NOT NULL,
+                 text TEXT NOT NULL
+               )"#,
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_activity ON activity (season, id)")
+            .execute(&pool)
+            .await?;
         Ok(Self { pool })
     }
 
@@ -546,6 +578,69 @@ impl Db {
             .await
             .ok()
             .flatten()
+    }
+
+    /// The most recent archived season's finalization time (0 if none). Used as
+    /// the lower bound for the current season's one-time retroactive journal
+    /// backfill: the current season began when the previous one ended.
+    pub async fn last_finalized_at(&self) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT MAX(finalized_at) FROM season_archive")
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(0)
+    }
+
+    /// The saved journal cursor (where incremental ingest resumes), if set.
+    pub async fn journal_cursor(&self) -> Option<String> {
+        self.get_setting("journal_cursor").await.ok().flatten()
+    }
+
+    pub async fn set_journal_cursor(&self, cursor: &str) {
+        let _ = self.set_setting("journal_cursor", cursor).await;
+    }
+
+    /// Append an activity row (ingest path; dedup is via the cursor).
+    pub async fn activity_add(&self, season: &str, ts: i64, kind: &str, text: &str) {
+        let _ = sqlx::query("INSERT INTO activity (season, ts, kind, text) VALUES (?, ?, ?, ?)")
+            .bind(season)
+            .bind(ts)
+            .bind(kind)
+            .bind(text)
+            .execute(&self.pool)
+            .await;
+    }
+
+    /// Whether any activity rows exist for a season (guards the one-time backfill).
+    pub async fn activity_any(&self, season: &str) -> bool {
+        sqlx::query_scalar::<_, i64>("SELECT EXISTS(SELECT 1 FROM activity WHERE season = ?)")
+            .bind(season)
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or(0)
+            == 1
+    }
+
+    /// A page of a season's activity, newest first, with `id < before` when given.
+    /// Returns up to `limit` rows.
+    pub async fn activity_page(
+        &self,
+        season: &str,
+        before: Option<i64>,
+        limit: i64,
+    ) -> Vec<ActivityRow> {
+        let before = before.unwrap_or(i64::MAX);
+        sqlx::query_as::<_, ActivityRow>(
+            "SELECT id, ts, kind, text FROM activity
+             WHERE season = ? AND id < ? ORDER BY id DESC LIMIT ?",
+        )
+        .bind(season)
+        .bind(before)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default()
     }
 
     /// The set of prioritized hint keys (finding, location, item) for a season.
