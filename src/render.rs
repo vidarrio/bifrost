@@ -672,9 +672,10 @@ fn conn_line(snap: &BoardSnapshot) -> String {
 /// two. The activity feed keeps its own readable width (`.feed` max-width), so
 /// widening the grid doesn't stretch the log's item↔timestamp gap.
 const BOARD_STYLE: &str = r#"<style>
-main{max-width:none}
-header .hwrap{max-width:none}
+main{max-width:none;padding-inline:clamp(20px,4vw,80px)}
+header .hwrap{max-width:none;padding-inline:clamp(20px,4vw,80px)}
 .grid.board{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
+.loghdr,.legend,.feed{max-width:760px;margin-inline:auto}
 </style>"#;
 
 pub fn board_page(
