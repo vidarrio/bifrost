@@ -217,10 +217,12 @@ function bifFitLog(){
  var avail=window.innerHeight-feed.getBoundingClientRect().top-pager.getBoundingClientRect().height-24;
  var fit=Math.floor(avail/stride);if(fit<5)fit=5;if(fit>300)fit=300;
  var url=new URL(window.location.href);
- var curR=parseInt(url.searchParams.get('rpp')||'0',10);
+ // Absent rpp means the server used its default (25); compare against that so a
+ // viewport that already fits the default doesn't trigger a gratuitous reload.
+ var curR=parseInt(url.searchParams.get('rpp')||'25',10);
  if(curR===fit)return;
  var curPage=parseInt(url.searchParams.get('page')||'1',10);
- var topIndex=(curPage-1)*(curR>0?curR:25);
+ var topIndex=(curPage-1)*curR;
  url.searchParams.set('rpp',fit);url.searchParams.set('page',Math.floor(topIndex/fit)+1);
  window.location.replace(url.toString());
 }
