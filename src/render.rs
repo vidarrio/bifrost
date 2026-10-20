@@ -133,16 +133,26 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .pager .pg{min-width:32px;height:32px;box-sizing:border-box;line-height:1;display:inline-flex;align-items:center;justify-content:center;padding:0 8px;border:1px solid var(--bd);border-radius:7px;color:var(--muted);text-decoration:none;background:var(--panel)}
 .pager a.pg:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
 .pager .pg.cur{background:var(--accent);color:#0d1117;border-color:var(--accent);font-weight:700}
-.pager .pg.nav{font-size:17px}.pager .pg.disabled{opacity:.4}
+.pager .pg.disabled{opacity:.4}
+.pager .chev{display:block}
 .pager .gap{display:inline-flex;align-items:center;justify-content:center;height:32px;color:var(--muted);padding:0 2px}
-.logfilter{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:0 0 14px;padding:10px 12px;background:var(--panel);border:1px solid var(--bd);border-radius:10px;font-size:12.5px}
+.logfilter{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin:0 0 14px;padding:10px 12px;background:var(--panel);border:1px solid var(--bd);border-radius:10px;font-size:12.5px}
 .logfilter .ff{display:flex;align-items:center;gap:6px}
-.logfilter .kinds{gap:10px;flex-wrap:wrap}
-.logfilter .chk{display:flex;align-items:center;gap:5px;color:var(--muted);cursor:pointer}
-.logfilter input[type=text],.logfilter select,.logfilter input[type=datetime-local]{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:5px 8px;font-size:12.5px;font-family:var(--font)}
+.logfilter .kinds{gap:6px;flex-wrap:wrap}
+.logfilter .chk{display:inline-flex;align-items:center;gap:6px;height:30px;box-sizing:border-box;padding:0 10px;border:1px solid var(--bd);border-radius:7px;background:var(--bg);color:var(--muted);cursor:pointer}
+.logfilter .chk:has(input:checked){border-color:var(--accent);color:var(--fg)}
+.logfilter .chk input{accent-color:var(--accent);margin:0}
+.logfilter input[type=text],.logfilter select,.logfilter input[type=datetime-local],.logfilter .ffbtns button,.logfilter .ffbtns .pill{height:30px;box-sizing:border-box}
+.logfilter input[type=text],.logfilter select,.logfilter input[type=datetime-local]{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:0 8px;font-size:12.5px;font-family:var(--font)}
 .logfilter input[type=text]{width:120px}
 .logfilter .ffl{color:var(--muted)}
 .logfilter .ffbtns{margin-left:auto;gap:8px}
+.logfilter .ffbtns button,.logfilter .ffbtns .pill{display:inline-flex;align-items:center}
+.logfilter .acwrap{position:relative;display:inline-flex}
+.acbox{position:absolute;top:calc(100% + 3px);left:0;min-width:150px;z-index:7;max-height:220px;overflow:auto;background:var(--panel);border:1px solid var(--bd);display:none}
+.acbox .aci{padding:6px 9px;font-size:12.5px;cursor:pointer;border-bottom:1px solid var(--bd);white-space:nowrap}
+.acbox .aci:last-child{border-bottom:0}
+.acbox .aci:hover,.acbox .aci.sel{background:var(--bd);color:var(--fg)}
 .empty{color:var(--muted);font-size:13px}
 button:disabled{opacity:.45;cursor:not-allowed}
 .stepper{display:flex;gap:8px;margin:0 0 22px;padding:0;list-style:none;font-family:var(--mono);font-size:12px;max-width:520px}
@@ -251,6 +261,36 @@ function bifFilterForm(){
  });
 }
 document.addEventListener('DOMContentLoaded',bifFilterForm);
+// Custom sender/receiver autocomplete (replaces the unstylable native datalist
+// popup). Reads the participant pool from window.bifPlayers.
+function bifAutocomplete(){
+ var players=window.bifPlayers||[];
+ function esch(s){return s.replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+ document.querySelectorAll('input[data-ac]').forEach(function(inp){
+  var box=inp.parentNode.querySelector('.acbox');if(!box)return;var sel=-1,items=[];
+  function hide(){box.style.display='none';box.innerHTML='';sel=-1;items=[];}
+  function show(){
+   var q=inp.value.trim().toLowerCase();
+   items=players.filter(function(p){return p.toLowerCase().indexOf(q)>-1;}).slice(0,8);
+   if(!items.length){hide();return;}
+   box.innerHTML=items.map(function(p,i){return '<div class="aci'+(i===sel?' sel':'')+'">'+esch(p)+'</div>';}).join('');
+   box.style.display='block';
+   Array.prototype.forEach.call(box.children,function(d,i){
+    d.addEventListener('mousedown',function(e){e.preventDefault();inp.value=items[i];hide();});});
+  }
+  inp.addEventListener('input',function(){sel=-1;show();});
+  inp.addEventListener('focus',show);
+  inp.addEventListener('blur',function(){setTimeout(hide,150);});
+  inp.addEventListener('keydown',function(e){
+   if(box.style.display!=='block')return;
+   if(e.key==='ArrowDown'){sel=Math.min(sel+1,items.length-1);show();e.preventDefault();}
+   else if(e.key==='ArrowUp'){sel=Math.max(sel-1,0);show();e.preventDefault();}
+   else if(e.key==='Enter'&&sel>=0){inp.value=items[sel];hide();e.preventDefault();}
+   else if(e.key==='Escape'){hide();}
+  });
+ });
+}
+document.addEventListener('DOMContentLoaded',bifAutocomplete);
 </script>
 <main>"#;
 
@@ -693,12 +733,16 @@ fn activity_pager(base: &str, qs: &str, page: i64, pages: i64, rpp: i64) -> Stri
     } else {
         format!("{qs}&amp;")
     };
+    // SVG chevrons (not text glyphs) so the arrows centre exactly like the
+    // number boxes regardless of the font's punctuation metrics.
+    const CHEV_L: &str = r#"<svg class="chev" width="9" height="12" viewBox="0 0 9 12" aria-hidden="true"><path d="M7 1.5 2.5 6 7 10.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>"#;
+    const CHEV_R: &str = r#"<svg class="chev" width="9" height="12" viewBox="0 0 9 12" aria-hidden="true"><path d="M2 1.5 6.5 6 2 10.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>"#;
     let link = |p: i64| format!(r#"{base}?{pre}page={p}&amp;rpp={rpp}"#);
     let mut out = String::from(r#"<nav class="pager">"#);
     if page > 1 {
-        out.push_str(&format!(r#"<a class="pg nav" href="{}" title="newer">‹</a>"#, link(page - 1)));
+        out.push_str(&format!(r#"<a class="pg nav" href="{}" title="newer">{CHEV_L}</a>"#, link(page - 1)));
     } else {
-        out.push_str(r#"<span class="pg nav disabled">‹</span>"#);
+        out.push_str(&format!(r#"<span class="pg nav disabled">{CHEV_L}</span>"#));
     }
     for item in page_numbers(page, pages) {
         match item {
@@ -708,9 +752,9 @@ fn activity_pager(base: &str, qs: &str, page: i64, pages: i64, rpp: i64) -> Stri
         }
     }
     if page < pages {
-        out.push_str(&format!(r#"<a class="pg nav" href="{}" title="older">›</a>"#, link(page + 1)));
+        out.push_str(&format!(r#"<a class="pg nav" href="{}" title="older">{CHEV_R}</a>"#, link(page + 1)));
     } else {
-        out.push_str(r#"<span class="pg nav disabled">›</span>"#);
+        out.push_str(&format!(r#"<span class="pg nav disabled">{CHEV_R}</span>"#));
     }
     out.push_str("</nav>");
     out
@@ -755,11 +799,11 @@ fn filter_form(base: &str, f: &LogFilter) -> String {
     }
     out.push_str("</div>");
     out.push_str(&format!(
-        r#"<div class="ff"><input type="text" name="sender" placeholder="sender" list="players" value="{}"></div>"#,
+        r#"<div class="ff"><span class="acwrap"><input type="text" name="sender" placeholder="sender" autocomplete="off" data-ac value="{}"><div class="acbox"></div></span></div>"#,
         esc(f.sender)
     ));
     out.push_str(&format!(
-        r#"<div class="ff"><input type="text" name="receiver" placeholder="receiver" list="players" value="{}"></div>"#,
+        r#"<div class="ff"><span class="acwrap"><input type="text" name="receiver" placeholder="receiver" autocomplete="off" data-ac value="{}"><div class="acbox"></div></span></div>"#,
         esc(f.receiver)
     ));
     out.push_str(r#"<div class="ff"><select name="within">"#);
@@ -787,11 +831,13 @@ fn filter_form(base: &str, f: &LogFilter) -> String {
     out.push_str(&format!(
         r#"<div class="ff ffbtns"><button type="submit">Filter</button><a class="ghost pill" href="{base}">Clear</a></div>"#
     ));
-    out.push_str(r#"<datalist id="players">"#);
-    for p in f.participants {
-        out.push_str(&format!(r#"<option value="{}">"#, esc(p)));
-    }
-    out.push_str("</datalist></form>");
+    out.push_str("</form>");
+    // Participant pool for the custom (stylable) sender/receiver autocomplete,
+    // replacing the native <datalist> popup (which can't be styled).
+    let players = serde_json::to_string(f.participants)
+        .unwrap_or_else(|_| "[]".to_string())
+        .replace("</", "<\\/");
+    out.push_str(&format!(r#"<script>window.bifPlayers={players}</script>"#));
     out
 }
 
