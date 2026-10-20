@@ -782,11 +782,13 @@ pub struct LogFilter<'a> {
 fn filter_form(base: &str, f: &LogFilter) -> String {
     let mut out = format!(r#"<form class="logfilter" id="logfilter" method="get" action="{base}">"#);
     out.push_str(r#"<div class="ff kinds">"#);
+    // Collect isn't offered as a filter — in auto mode it always rides along
+    // with a goal/release, so it's not a distinct thing to filter on. Collect
+    // events still appear in the unfiltered feed.
     for (i, (name, label)) in [
         ("kind_send", "sends"),
         ("kind_goal", "goals"),
         ("kind_release", "releases"),
-        ("kind_collect", "collects"),
     ]
     .iter()
     .enumerate()
@@ -875,7 +877,7 @@ pub fn log_page(
 ) -> Html<String> {
     let mut out = page_head(None);
     out.push_str(
-        r#"<h1>Activity log</h1><div class="crumb"><a href="/board">← board</a> · sends, goals, releases, collects</div>"#,
+        r#"<h1>Activity log</h1><div class="crumb"><a href="/board">← board</a> · item sends, goals, releases</div>"#,
     );
     render_log_section(&mut out, base, rows, page, pages, rpp, ref_ts, f);
     out.push_str("</main></body></html>");
