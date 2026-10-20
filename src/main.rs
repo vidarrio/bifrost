@@ -334,12 +334,111 @@ const LOG_RPP_DEFAULT: i64 = 25;
 const LOG_RPP_MIN: i64 = 5;
 const LOG_RPP_MAX: i64 = 300;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct LogQuery {
     /// 1-based page, newest first (page 1 = newest, page n = oldest).
     page: Option<i64>,
     /// Rows per page — set by the client to fill the viewport.
     rpp: Option<i64>,
+    // Filters. Checkboxes submit `=1` only when checked (absent = unchecked);
+    // none checked = all kinds. since/until are epoch seconds (hidden fields the
+    // client fills from local datetime-local inputs); `within` is a relative
+    // window in seconds (0 = any).
+    kind_send: Option<String>,
+    kind_goal: Option<String>,
+    kind_release: Option<String>,
+    kind_collect: Option<String>,
+    sender: Option<String>,
+    receiver: Option<String>,
+    within: Option<i64>,
+    since: Option<String>,
+    until: Option<String>,
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// A query string value trimmed to `None` when empty.
+fn opt_ne(s: &Option<String>) -> Option<&str> {
+    s.as_deref().map(str::trim).filter(|v| !v.is_empty())
+}
+/// Parse an epoch-second query field (empty/invalid/non-positive → None).
+fn parse_ts(s: &Option<String>) -> Option<i64> {
+    opt_ne(s).and_then(|v| v.parse::<i64>().ok()).filter(|t| *t > 0)
+}
+
+/// Event kinds selected in the filter (empty = all).
+fn selected_kinds(q: &LogQuery) -> Vec<&'static str> {
+    let mut v = Vec::new();
+    for (on, k) in [
+        (q.kind_send.is_some(), "send"),
+        (q.kind_goal.is_some(), "goal"),
+        (q.kind_release.is_some(), "release"),
+        (q.kind_collect.is_some(), "collect"),
+    ] {
+        if on {
+            v.push(k);
+        }
+    }
+    v
+}
+
+/// Effective lower time bound = later of absolute `since` and relative `within`.
+fn since_bound(q: &LogQuery) -> Option<i64> {
+    let abs = parse_ts(&q.since);
+    let rel = q.within.filter(|w| *w > 0).map(|w| now_secs() - w);
+    match (abs, rel) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    }
+}
+
+/// Percent-encode a query-string value.
+fn pct(s: &str) -> String {
+    let mut o = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => o.push(b as char),
+            _ => o.push_str(&format!("%{b:02X}")),
+        }
+    }
+    o
+}
+
+/// Serialize the active filters (not page/rpp) for pager links, `&amp;`-joined
+/// so the result drops straight into an HTML href.
+fn filter_qs(q: &LogQuery) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for (on, key) in [
+        (q.kind_send.is_some(), "kind_send"),
+        (q.kind_goal.is_some(), "kind_goal"),
+        (q.kind_release.is_some(), "kind_release"),
+        (q.kind_collect.is_some(), "kind_collect"),
+    ] {
+        if on {
+            parts.push(format!("{key}=1"));
+        }
+    }
+    if let Some(s) = opt_ne(&q.sender) {
+        parts.push(format!("sender={}", pct(s)));
+    }
+    if let Some(r) = opt_ne(&q.receiver) {
+        parts.push(format!("receiver={}", pct(r)));
+    }
+    if let Some(w) = q.within.filter(|w| *w > 0) {
+        parts.push(format!("within={w}"));
+    }
+    if let Some(t) = parse_ts(&q.since) {
+        parts.push(format!("since={t}"));
+    }
+    if let Some(t) = parse_ts(&q.until) {
+        parts.push(format!("until={t}"));
+    }
+    parts.join("&amp;")
 }
 
 /// Resolve (rows-per-page, page, total-pages, offset) from the query + a total.
@@ -350,8 +449,37 @@ fn paginate(q: &LogQuery, total: i64) -> (i64, i64, i64, i64) {
     (rpp, page, pages, (page - 1) * rpp)
 }
 
-/// The full, paginated activity log for the current (live) season. Relative
-/// times run against "now"; numbered pages via `?page=&rpp=`.
+/// The DB filter for a query.
+fn act_filter<'a>(q: &'a LogQuery, kinds: &'a [&'a str]) -> db::ActFilter<'a> {
+    db::ActFilter {
+        kinds,
+        sender: opt_ne(&q.sender),
+        receiver: opt_ne(&q.receiver),
+        since: since_bound(q),
+        until: parse_ts(&q.until),
+    }
+}
+
+/// The render-side filter state for the filter bar + pager links.
+fn log_filter<'a>(q: &'a LogQuery, participants: &'a [String], qs: &'a str) -> render::LogFilter<'a> {
+    render::LogFilter {
+        kinds_selected: [
+            q.kind_send.is_some(),
+            q.kind_goal.is_some(),
+            q.kind_release.is_some(),
+            q.kind_collect.is_some(),
+        ],
+        sender: opt_ne(&q.sender).unwrap_or(""),
+        receiver: opt_ne(&q.receiver).unwrap_or(""),
+        within: q.within.unwrap_or(0).max(0),
+        since: parse_ts(&q.since),
+        until: parse_ts(&q.until),
+        participants,
+        qs,
+    }
+}
+
+/// The full, paginated, filterable activity log for the current (live) season.
 async fn log_view(State(st): State<AppState>, Query(q): Query<LogQuery>) -> Html<String> {
     let season = st
         .board
@@ -359,10 +487,15 @@ async fn log_view(State(st): State<AppState>, Query(q): Query<LogQuery>) -> Html
         .ok()
         .and_then(|b| b.seed.clone())
         .unwrap_or_default();
-    let total = st.db.activity_count(&season).await;
+    let kinds = selected_kinds(&q);
+    let filter = act_filter(&q, &kinds);
+    let total = st.db.activity_count(&season, &filter).await;
     let (rpp, page, pages, offset) = paginate(&q, total);
-    let rows = st.db.activity_page(&season, offset, rpp).await;
-    render::log_page(&rows, page, pages, rpp, None, "/log")
+    let rows = st.db.activity_page(&season, &filter, offset, rpp).await;
+    let participants = st.db.activity_participants(&season).await;
+    let qs = filter_qs(&q);
+    let lf = log_filter(&q, &participants, &qs);
+    render::log_page(&rows, page, pages, rpp, None, "/log", &lf)
 }
 
 /// A safe local redirect target (must be an absolute path, not protocol-relative).
@@ -1472,10 +1605,15 @@ async fn season_view(
             Ok(summary) => {
                 // The season's activity log, replayed with "x ago" frozen to the
                 // season-end time (finalized_at) rather than now.
-                let total = st.db.activity_count(&seed).await;
+                let kinds = selected_kinds(&q);
+                let filter = act_filter(&q, &kinds);
+                let total = st.db.activity_count(&seed, &filter).await;
                 let (rpp, page, pages, offset) = paginate(&q, total);
-                let rows = st.db.activity_page(&seed, offset, rpp).await;
-                render::season_page(&summary, &rows, page, pages, rpp).into_response()
+                let rows = st.db.activity_page(&seed, &filter, offset, rpp).await;
+                let participants = st.db.activity_participants(&seed).await;
+                let qs = filter_qs(&q);
+                let lf = log_filter(&q, &participants, &qs);
+                render::season_page(&summary, &rows, page, pages, rpp, &lf).into_response()
             }
             Err(_) => render::notice("That season's archive is unreadable.", false, "/").into_response(),
         },

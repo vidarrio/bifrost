@@ -90,6 +90,17 @@ pub struct ActivityRow {
     pub text: String,
 }
 
+/// Filter for the activity log. Empty `kinds` = all kinds; `None` fields are
+/// unconstrained. `since`/`until` are epoch-second bounds (inclusive).
+#[derive(Default)]
+pub struct ActFilter<'a> {
+    pub kinds: &'a [&'a str],
+    pub sender: Option<&'a str>,
+    pub receiver: Option<&'a str>,
+    pub since: Option<i64>,
+    pub until: Option<i64>,
+}
+
 impl Db {
     pub async fn open(path: &str) -> Result<Self, sqlx::Error> {
         let opts = SqliteConnectOptions::new()
@@ -243,7 +254,9 @@ impl Db {
                  season TEXT NOT NULL,
                  ts INTEGER NOT NULL,
                  kind TEXT NOT NULL,
-                 text TEXT NOT NULL
+                 text TEXT NOT NULL,
+                 sender TEXT,
+                 receiver TEXT
                )"#,
         )
         .execute(&pool)
@@ -251,6 +264,24 @@ impl Db {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_activity ON activity (season, id)")
             .execute(&pool)
             .await?;
+        // Migrate pre-filter DBs: add sender/receiver. If the ADD succeeds the
+        // columns were absent (old rows lack them) — and since the whole log is
+        // derived from the AP journal, clear it + the cursor to re-backfill with
+        // the structured fields populated. A fresh DB already has the columns
+        // (CREATE above), so the ADD errors and nothing is wiped.
+        let added = sqlx::query("ALTER TABLE activity ADD COLUMN sender TEXT")
+            .execute(&pool)
+            .await
+            .is_ok();
+        let _ = sqlx::query("ALTER TABLE activity ADD COLUMN receiver TEXT")
+            .execute(&pool)
+            .await;
+        if added {
+            let _ = sqlx::query("DELETE FROM activity").execute(&pool).await;
+            let _ = sqlx::query("DELETE FROM setting WHERE key = 'journal_cursor'")
+                .execute(&pool)
+                .await;
+        }
         Ok(Self { pool })
     }
 
@@ -600,15 +631,29 @@ impl Db {
         let _ = self.set_setting("journal_cursor", cursor).await;
     }
 
-    /// Append an activity row (ingest path; dedup is via the cursor).
-    pub async fn activity_add(&self, season: &str, ts: i64, kind: &str, text: &str) {
-        let _ = sqlx::query("INSERT INTO activity (season, ts, kind, text) VALUES (?, ?, ?, ?)")
-            .bind(season)
-            .bind(ts)
-            .bind(kind)
-            .bind(text)
-            .execute(&self.pool)
-            .await;
+    /// Append an activity row (ingest path; dedup is via the cursor). `sender`
+    /// is the actor (sender of an item, or the player who goaled/released/
+    /// collected); `receiver` is the item's recipient (sends only, else None).
+    pub async fn activity_add(
+        &self,
+        season: &str,
+        ts: i64,
+        kind: &str,
+        text: &str,
+        sender: Option<&str>,
+        receiver: Option<&str>,
+    ) {
+        let _ = sqlx::query(
+            "INSERT INTO activity (season, ts, kind, text, sender, receiver) VALUES (?,?,?,?,?,?)",
+        )
+        .bind(season)
+        .bind(ts)
+        .bind(kind)
+        .bind(text)
+        .bind(sender)
+        .bind(receiver)
+        .execute(&self.pool)
+        .await;
     }
 
     /// Whether any activity rows exist for a season (guards the one-time backfill).
@@ -634,25 +679,77 @@ impl Db {
         .unwrap_or_default()
     }
 
-    /// Total activity rows for a season (for numbered pagination).
-    pub async fn activity_count(&self, season: &str) -> i64 {
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM activity WHERE season = ?")
-            .bind(season)
+    /// Append the active WHERE conditions for a filter onto a query builder that
+    /// already has `WHERE season = <bound>`.
+    fn apply_activity_filter<'a>(
+        qb: &mut sqlx::QueryBuilder<'a, sqlx::Sqlite>,
+        f: &'a ActFilter<'a>,
+    ) {
+        if !f.kinds.is_empty() {
+            qb.push(" AND kind IN (");
+            let mut sep = qb.separated(", ");
+            for k in f.kinds {
+                sep.push_bind(*k);
+            }
+            qb.push(")");
+        }
+        if let Some(s) = f.sender {
+            qb.push(" AND sender = ").push_bind(s).push(" COLLATE NOCASE");
+        }
+        if let Some(r) = f.receiver {
+            qb.push(" AND receiver = ").push_bind(r).push(" COLLATE NOCASE");
+        }
+        if let Some(t) = f.since {
+            qb.push(" AND ts >= ").push_bind(t);
+        }
+        if let Some(t) = f.until {
+            qb.push(" AND ts <= ").push_bind(t);
+        }
+    }
+
+    /// Total activity rows for a season matching the filter (for pagination).
+    pub async fn activity_count(&self, season: &str, f: &ActFilter<'_>) -> i64 {
+        let mut qb = sqlx::QueryBuilder::new("SELECT COUNT(*) FROM activity WHERE season = ");
+        qb.push_bind(season);
+        Self::apply_activity_filter(&mut qb, f);
+        qb.build_query_scalar::<i64>()
             .fetch_one(&self.pool)
             .await
             .unwrap_or(0)
     }
 
-    /// A page of a season's activity, newest first, by offset (page p → offset
-    /// `(p-1)*limit`). Returns up to `limit` rows.
-    pub async fn activity_page(&self, season: &str, offset: i64, limit: i64) -> Vec<ActivityRow> {
-        sqlx::query_as::<_, ActivityRow>(
-            "SELECT ts, kind, text FROM activity
-             WHERE season = ? ORDER BY id DESC LIMIT ? OFFSET ?",
+    /// A page of a season's filtered activity, newest first, by offset
+    /// (page p → offset `(p-1)*limit`). Returns up to `limit` rows.
+    pub async fn activity_page(
+        &self,
+        season: &str,
+        f: &ActFilter<'_>,
+        offset: i64,
+        limit: i64,
+    ) -> Vec<ActivityRow> {
+        let mut qb = sqlx::QueryBuilder::new("SELECT ts, kind, text FROM activity WHERE season = ");
+        qb.push_bind(season);
+        Self::apply_activity_filter(&mut qb, f);
+        qb.push(" ORDER BY id DESC LIMIT ")
+            .push_bind(limit)
+            .push(" OFFSET ")
+            .push_bind(offset.max(0));
+        qb.build_query_as::<ActivityRow>()
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default()
+    }
+
+    /// Distinct participant names (senders ∪ receivers) in a season, for the
+    /// filter's sender/receiver autocomplete.
+    pub async fn activity_participants(&self, season: &str) -> Vec<String> {
+        sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT name FROM (
+                 SELECT sender AS name FROM activity WHERE season = ?1 AND sender IS NOT NULL
+                 UNION SELECT receiver FROM activity WHERE season = ?1 AND receiver IS NOT NULL
+             ) ORDER BY name COLLATE NOCASE",
         )
         .bind(season)
-        .bind(limit)
-        .bind(offset.max(0))
         .fetch_all(&self.pool)
         .await
         .unwrap_or_default()

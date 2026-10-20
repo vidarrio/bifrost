@@ -120,8 +120,9 @@ async fn ingest(board: &Arc<RwLock<Board>>, db: &Db) -> Result<(), String> {
         if ts <= boundary {
             continue; // belt-and-suspenders with --since on backfill
         }
-        if let Some((kind, body)) = classify(msg) {
-            db.activity_add(&season, ts, kind, &body).await;
+        if let Some((kind, body, sender, receiver)) = classify(msg) {
+            db.activity_add(&season, ts, kind, &body, sender.as_deref(), receiver.as_deref())
+                .await;
         }
     }
 
@@ -141,18 +142,24 @@ fn current_zip_mtime() -> i64 {
         .unwrap_or(0)
 }
 
-/// Classify one AP server console line into a kept activity entry, or `None` to
-/// drop it (joins/leaves/connections/hints/command echoes/server chatter).
-fn classify(msg: &str) -> Option<(&'static str, String)> {
+/// Classify one AP server console line into a kept activity entry
+/// `(kind, display text, sender, receiver)`, or `None` to drop it (joins/leaves/
+/// connections/hints/command echoes/server chatter). `sender` is the actor;
+/// `receiver` is the item recipient (sends only, else `None`).
+type Classified = (&'static str, String, Option<String>, Option<String>);
+fn classify(msg: &str) -> Option<Classified> {
     // Item send: "(Team #N) SENDER sent ITEM to RECEIVER (LOCATION)".
     if let Some(rest) = msg.strip_prefix("(Team #") {
         let after = rest.split_once(") ")?.1; // drop "N) "
         let (sender, tail) = after.split_once(" sent ")?; // tail = "ITEM to RECEIVER (LOC)"
         let (item_recv, _loc) = split_trailing_paren(tail)?; // strip "(LOCATION)"
         let (item, receiver) = item_recv.rsplit_once(" to ")?;
+        let (sender, receiver, item) = (sender.trim(), receiver.trim(), item.trim());
         return Some((
             "send",
-            format!("{} → {}: {}", sender.trim(), receiver.trim(), item.trim()),
+            format!("{sender} → {receiver}: {item}"),
+            Some(sender.to_string()),
+            Some(receiver.to_string()),
         ));
     }
     // Goal / release / collect: "Notice (all): NAME (Team #N) has <...>."
@@ -160,14 +167,25 @@ fn classify(msg: &str) -> Option<(&'static str, String)> {
         let (name, tail) = rest.split_once(" (Team #")?; // tail = "N) has ..."
         let what = tail.split_once(") ")?.1;
         let name = name.trim();
+        let actor = || Some(name.to_string());
         if what.starts_with("has completed their goal") {
-            return Some(("goal", format!("{name} reached their goal!")));
+            return Some(("goal", format!("{name} reached their goal!"), actor(), None));
         }
         if what.starts_with("has released all remaining items") {
-            return Some(("release", format!("{name} released their remaining items")));
+            return Some((
+                "release",
+                format!("{name} released their remaining items"),
+                actor(),
+                None,
+            ));
         }
         if what.starts_with("has collected their items") {
-            return Some(("collect", format!("{name} collected their remaining items")));
+            return Some((
+                "collect",
+                format!("{name} collected their remaining items"),
+                actor(),
+                None,
+            ));
         }
     }
     None
@@ -205,37 +223,31 @@ mod tests {
 
     #[test]
     fn parses_item_send() {
-        let (k, t) = classify("(Team #1) HunkOfJunk sent Floorings to Cam (Trade Location 8)").unwrap();
+        let (k, t, s, r) =
+            classify("(Team #1) HunkOfJunk sent Floorings to Cam (Trade Location 8)").unwrap();
         assert_eq!(k, "send");
         assert_eq!(t, "HunkOfJunk → Cam: Floorings");
+        assert_eq!(s.as_deref(), Some("HunkOfJunk"));
+        assert_eq!(r.as_deref(), Some("Cam"));
     }
 
     #[test]
     fn parses_send_with_nested_paren_location() {
-        let (k, t) =
+        let (k, t, s, r) =
             classify("(Team #1) Cam sent Sniper Covert to Deh (Science (Durian))").unwrap();
         assert_eq!(k, "send");
         assert_eq!(t, "Cam → Deh: Sniper Covert");
+        assert_eq!((s.as_deref(), r.as_deref()), (Some("Cam"), Some("Deh")));
     }
 
     #[test]
     fn parses_goal_release_collect() {
-        assert_eq!(
-            classify("Notice (all): Cam (Team #1) has completed their goal.").unwrap(),
-            ("goal", "Cam reached their goal!".to_string())
-        );
-        assert_eq!(
-            classify("Notice (all): Elle (Team #1) has released all remaining items from their world.")
-                .unwrap()
-                .0,
-            "release"
-        );
-        assert_eq!(
-            classify("Notice (all): Dustbiter (Team #1) has collected their items from other worlds.")
-                .unwrap()
-                .0,
-            "collect"
-        );
+        let (k, t, s, r) = classify("Notice (all): Cam (Team #1) has completed their goal.").unwrap();
+        assert_eq!((k, t.as_str(), s.as_deref(), r), ("goal", "Cam reached their goal!", Some("Cam"), None));
+        let g = classify("Notice (all): Elle (Team #1) has released all remaining items from their world.").unwrap();
+        assert_eq!((g.0, g.2.as_deref(), g.3), ("release", Some("Elle"), None));
+        let c = classify("Notice (all): Dustbiter (Team #1) has collected their items from other worlds.").unwrap();
+        assert_eq!((c.0, c.2.as_deref()), ("collect", Some("Dustbiter")));
     }
 
     #[test]

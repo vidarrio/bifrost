@@ -130,11 +130,19 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .ev .ago{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap;cursor:help}
 .loghdr{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.loghdr a{font-size:12px}
 .pager{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;margin:16px 0 4px;font-family:var(--mono);font-size:12.5px}
-.pager .pg{min-width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0 8px;border:1px solid var(--bd);border-radius:7px;color:var(--muted);text-decoration:none;background:var(--panel)}
+.pager .pg{min-width:32px;height:32px;box-sizing:border-box;line-height:1;display:inline-flex;align-items:center;justify-content:center;padding:0 8px;border:1px solid var(--bd);border-radius:7px;color:var(--muted);text-decoration:none;background:var(--panel)}
 .pager a.pg:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
 .pager .pg.cur{background:var(--accent);color:#0d1117;border-color:var(--accent);font-weight:700}
-.pager .pg.nav{font-size:15px}.pager .pg.disabled{opacity:.4}
-.pager .gap{color:var(--muted);padding:0 2px}
+.pager .pg.nav{font-size:17px}.pager .pg.disabled{opacity:.4}
+.pager .gap{display:inline-flex;align-items:center;justify-content:center;height:32px;color:var(--muted);padding:0 2px}
+.logfilter{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:0 0 14px;padding:10px 12px;background:var(--panel);border:1px solid var(--bd);border-radius:10px;font-size:12.5px}
+.logfilter .ff{display:flex;align-items:center;gap:6px}
+.logfilter .kinds{gap:10px;flex-wrap:wrap}
+.logfilter .chk{display:flex;align-items:center;gap:5px;color:var(--muted);cursor:pointer}
+.logfilter input[type=text],.logfilter select,.logfilter input[type=datetime-local]{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:5px 8px;font-size:12.5px;font-family:var(--font)}
+.logfilter input[type=text]{width:120px}
+.logfilter .ffl{color:var(--muted)}
+.logfilter .ffbtns{margin-left:auto;gap:8px}
 .empty{color:var(--muted);font-size:13px}
 button:disabled{opacity:.45;cursor:not-allowed}
 .stepper{display:flex;gap:8px;margin:0 0 22px;padding:0;list-style:none;font-family:var(--mono);font-size:12px;max-width:520px}
@@ -227,6 +235,22 @@ function bifFitLog(){
  window.location.replace(url.toString());
 }
 window.addEventListener('load',bifFitLog);
+// Activity-log filter: show the absolute from/to as the viewer's local time but
+// submit epoch seconds (hidden fields), so time filtering is timezone-correct.
+function bifFilterForm(){
+ var form=document.getElementById('logfilter');if(!form)return;
+ function toDTL(ep){var d=new Date(ep*1000),p=function(n){return String(n).padStart(2,'0')};
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes());}
+ var sTs=document.getElementById('since_ts'),uTs=document.getElementById('until_ts'),
+     sDt=document.getElementById('since_dt'),uDt=document.getElementById('until_dt');
+ if(sTs.value)sDt.value=toDTL(parseInt(sTs.value,10));
+ if(uTs.value)uDt.value=toDTL(parseInt(uTs.value,10));
+ form.addEventListener('submit',function(){
+  sTs.value=sDt.value?Math.floor(new Date(sDt.value).getTime()/1000):'';
+  uTs.value=uDt.value?Math.floor(new Date(uDt.value).getTime()/1000):'';
+ });
+}
+document.addEventListener('DOMContentLoaded',bifFilterForm);
 </script>
 <main>"#;
 
@@ -479,6 +503,7 @@ pub fn season_page(
     page: i64,
     pages: i64,
     rpp: i64,
+    f: &LogFilter,
 ) -> Html<String> {
     let mut out = page_head(None);
     out.push_str(&format!(
@@ -521,15 +546,20 @@ pub fn season_page(
     }
 
     // Season activity log, replayed with "x ago" frozen to the season-end time.
-    if !activity.is_empty() {
+    // Shown whenever the season has any logged activity (participants non-empty),
+    // so the filter bar + "no matches" still render under an active filter.
+    if !f.participants.is_empty() {
         out.push_str(r#"<h2>Activity log</h2>"#);
-        render_feed(&mut out, activity, Some(s.finalized_at));
-        out.push_str(&activity_pager(
+        render_log_section(
+            &mut out,
             &format!("/season/{}", esc(&s.seed)),
+            activity,
             page,
             pages,
             rpp,
-        ));
+            Some(s.finalized_at),
+            f,
+        );
     }
 
     out.push_str("</main></body></html>");
@@ -651,18 +681,22 @@ fn page_numbers(cur: i64, n: i64) -> Vec<Option<i64>> {
     out
 }
 
-/// A numbered pager (hidden when there's a single page). Links carry `rpp` so
-/// navigation keeps the viewer's fitted page size; `base` is the page path.
-fn activity_pager(base: &str, page: i64, pages: i64, rpp: i64) -> String {
+/// A numbered pager (hidden when there's a single page). Links carry the active
+/// filter query string `qs` (HTML-escaped, `&amp;`-joined) plus `rpp` so
+/// navigation keeps the filters + the viewer's fitted page size.
+fn activity_pager(base: &str, qs: &str, page: i64, pages: i64, rpp: i64) -> String {
     if pages <= 1 {
         return String::new();
     }
+    let pre = if qs.is_empty() {
+        String::new()
+    } else {
+        format!("{qs}&amp;")
+    };
+    let link = |p: i64| format!(r#"{base}?{pre}page={p}&amp;rpp={rpp}"#);
     let mut out = String::from(r#"<nav class="pager">"#);
     if page > 1 {
-        out.push_str(&format!(
-            r#"<a class="pg nav" href="{base}?page={}&amp;rpp={rpp}" title="newer">‹</a>"#,
-            page - 1
-        ));
+        out.push_str(&format!(r#"<a class="pg nav" href="{}" title="newer">‹</a>"#, link(page - 1)));
     } else {
         out.push_str(r#"<span class="pg nav disabled">‹</span>"#);
     }
@@ -670,16 +704,11 @@ fn activity_pager(base: &str, page: i64, pages: i64, rpp: i64) -> String {
         match item {
             None => out.push_str(r#"<span class="gap">…</span>"#),
             Some(p) if p == page => out.push_str(&format!(r#"<span class="pg cur">{p}</span>"#)),
-            Some(p) => out.push_str(&format!(
-                r#"<a class="pg" href="{base}?page={p}&amp;rpp={rpp}">{p}</a>"#
-            )),
+            Some(p) => out.push_str(&format!(r#"<a class="pg" href="{}">{p}</a>"#, link(p))),
         }
     }
     if page < pages {
-        out.push_str(&format!(
-            r#"<a class="pg nav" href="{base}?page={}&amp;rpp={rpp}" title="older">›</a>"#,
-            page + 1
-        ));
+        out.push_str(&format!(r#"<a class="pg nav" href="{}" title="older">›</a>"#, link(page + 1)));
     } else {
         out.push_str(r#"<span class="pg nav disabled">›</span>"#);
     }
@@ -687,8 +716,107 @@ fn activity_pager(base: &str, page: i64, pages: i64, rpp: i64) -> String {
     out
 }
 
-/// The full, paginated activity log. `ref_ts = None` → relative times live;
-/// `Some(t)` → frozen (archived season). Numbered pages via `?page=&rpp=`.
+/// Render-side state for the activity-log filter bar + pager links.
+pub struct LogFilter<'a> {
+    /// Checked kinds, in order: send, goal, release, collect.
+    pub kinds_selected: [bool; 4],
+    pub sender: &'a str,
+    pub receiver: &'a str,
+    /// Relative window in seconds (0 = any time).
+    pub within: i64,
+    /// Absolute bounds as epoch seconds (the hidden fields; the client shows
+    /// them as local datetime-local inputs).
+    pub since: Option<i64>,
+    pub until: Option<i64>,
+    /// Distinct participant names for the sender/receiver autocomplete.
+    pub participants: &'a [String],
+    /// Active-filter query string for pager links (HTML-escaped, `&amp;`-joined).
+    pub qs: &'a str,
+}
+
+/// The filter bar: event-kind checkboxes, sender/receiver (autocompleted from
+/// the season's participants), a relative window, and an absolute from/to range.
+fn filter_form(base: &str, f: &LogFilter) -> String {
+    let mut out = format!(r#"<form class="logfilter" id="logfilter" method="get" action="{base}">"#);
+    out.push_str(r#"<div class="ff kinds">"#);
+    for (i, (name, label)) in [
+        ("kind_send", "sends"),
+        ("kind_goal", "goals"),
+        ("kind_release", "releases"),
+        ("kind_collect", "collects"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let ck = if f.kinds_selected[i] { " checked" } else { "" };
+        out.push_str(&format!(
+            r#"<label class="chk"><input type="checkbox" name="{name}" value="1"{ck}> {label}</label>"#
+        ));
+    }
+    out.push_str("</div>");
+    out.push_str(&format!(
+        r#"<div class="ff"><input type="text" name="sender" placeholder="sender" list="players" value="{}"></div>"#,
+        esc(f.sender)
+    ));
+    out.push_str(&format!(
+        r#"<div class="ff"><input type="text" name="receiver" placeholder="receiver" list="players" value="{}"></div>"#,
+        esc(f.receiver)
+    ));
+    out.push_str(r#"<div class="ff"><select name="within">"#);
+    for (val, label) in [
+        (0, "any time"),
+        (3600, "last hour"),
+        (21600, "last 6h"),
+        (86400, "last 24h"),
+        (604800, "last 7d"),
+        (2592000, "last 30d"),
+    ] {
+        let sel = if f.within == val { " selected" } else { "" };
+        out.push_str(&format!(r#"<option value="{val}"{sel}>{label}</option>"#));
+    }
+    out.push_str("</select></div>");
+    let ts_val = |t: Option<i64>| t.map(|v| v.to_string()).unwrap_or_default();
+    out.push_str(&format!(
+        r#"<div class="ff"><label class="ffl">from</label><input type="datetime-local" id="since_dt"><input type="hidden" name="since" id="since_ts" value="{}"></div>"#,
+        ts_val(f.since)
+    ));
+    out.push_str(&format!(
+        r#"<div class="ff"><label class="ffl">to</label><input type="datetime-local" id="until_dt"><input type="hidden" name="until" id="until_ts" value="{}"></div>"#,
+        ts_val(f.until)
+    ));
+    out.push_str(&format!(
+        r#"<div class="ff ffbtns"><button type="submit">Filter</button><a class="ghost pill" href="{base}">Clear</a></div>"#
+    ));
+    out.push_str(r#"<datalist id="players">"#);
+    for p in f.participants {
+        out.push_str(&format!(r#"<option value="{}">"#, esc(p)));
+    }
+    out.push_str("</datalist></form>");
+    out
+}
+
+/// Shared body for the log pages: filter bar + feed + numbered pager.
+fn render_log_section(
+    out: &mut String,
+    base: &str,
+    rows: &[crate::db::ActivityRow],
+    page: i64,
+    pages: i64,
+    rpp: i64,
+    ref_ts: Option<i64>,
+    f: &LogFilter,
+) {
+    out.push_str(&filter_form(base, f));
+    if rows.is_empty() {
+        out.push_str(r#"<div class="empty">No activity matches these filters.</div>"#);
+    } else {
+        render_feed(out, rows, ref_ts);
+        out.push_str(&activity_pager(base, f.qs, page, pages, rpp));
+    }
+}
+
+/// The full, paginated, filterable activity log. `ref_ts = None` → relative
+/// times live; `Some(t)` → frozen (archived season).
 pub fn log_page(
     rows: &[crate::db::ActivityRow],
     page: i64,
@@ -696,17 +824,13 @@ pub fn log_page(
     rpp: i64,
     ref_ts: Option<i64>,
     base: &str,
+    f: &LogFilter,
 ) -> Html<String> {
     let mut out = page_head(None);
     out.push_str(
         r#"<h1>Activity log</h1><div class="crumb"><a href="/board">← board</a> · sends, goals, releases, collects</div>"#,
     );
-    if rows.is_empty() {
-        out.push_str(r#"<div class="empty">Nothing logged yet this season.</div>"#);
-    } else {
-        render_feed(&mut out, rows, ref_ts);
-        out.push_str(&activity_pager(base, page, pages, rpp));
-    }
+    render_log_section(&mut out, base, rows, page, pages, rpp, ref_ts, f);
     out.push_str("</main></body></html>");
     Html(out)
 }
