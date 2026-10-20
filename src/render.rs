@@ -134,14 +134,14 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .pager a.pg:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
 .pager .pg.cur{background:var(--accent);color:#0d1117;border-color:var(--accent);font-weight:700}
 .pager .pg.disabled{opacity:.4}
-.pager .chev{display:block}
+.pager .pgnav{font-size:16px}
 .pager .gap{display:inline-flex;align-items:center;justify-content:center;height:32px;color:var(--muted);padding:0 2px}
 .logfilter{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin:0 0 14px;padding:10px 12px;background:var(--panel);border:1px solid var(--bd);border-radius:10px;font-size:12.5px}
 .logfilter .ff{display:flex;align-items:center;gap:6px}
 .logfilter .kinds{gap:6px;flex-wrap:wrap}
-.logfilter .chk{display:inline-flex;align-items:center;gap:6px;height:30px;box-sizing:border-box;padding:0 10px;border:1px solid var(--bd);border-radius:7px;background:var(--bg);color:var(--muted);cursor:pointer}
-.logfilter .chk:has(input:checked){border-color:var(--accent);color:var(--fg)}
-.logfilter .chk input{accent-color:var(--accent);margin:0}
+.logfilter .kindchip{display:inline-flex;align-items:center;height:30px;box-sizing:border-box;margin:0;padding:0 12px;border:1px solid var(--bd);border-radius:7px;background:var(--bg);color:var(--muted);font-size:12.5px;cursor:pointer;user-select:none}
+.logfilter .kindchip:has(input:checked){border-color:var(--accent);color:var(--accent)}
+.logfilter .kindchip input{display:none}
 .logfilter input[type=text],.logfilter select,.logfilter input[type=datetime-local],.logfilter .ffbtns button,.logfilter .ffbtns .pill{height:30px;box-sizing:border-box}
 .logfilter input[type=text],.logfilter select,.logfilter input[type=datetime-local]{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:0 8px;font-size:12.5px;font-family:var(--font)}
 .logfilter input[type=text]{width:120px}
@@ -733,16 +733,14 @@ fn activity_pager(base: &str, qs: &str, page: i64, pages: i64, rpp: i64) -> Stri
     } else {
         format!("{qs}&amp;")
     };
-    // SVG chevrons (not text glyphs) so the arrows centre exactly like the
-    // number boxes regardless of the font's punctuation metrics.
-    const CHEV_L: &str = r#"<svg class="chev" width="9" height="12" viewBox="0 0 9 12" aria-hidden="true"><path d="M7 1.5 2.5 6 7 10.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>"#;
-    const CHEV_R: &str = r#"<svg class="chev" width="9" height="12" viewBox="0 0 9 12" aria-hidden="true"><path d="M2 1.5 6.5 6 2 10.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>"#;
+    // NB: the arrow class is `pgnav`, NOT `nav` — `.nav` is a global wizard class
+    // (margin-top:18px) that would shove the arrow boxes out of line.
     let link = |p: i64| format!(r#"{base}?{pre}page={p}&amp;rpp={rpp}"#);
     let mut out = String::from(r#"<nav class="pager">"#);
     if page > 1 {
-        out.push_str(&format!(r#"<a class="pg nav" href="{}" title="newer">{CHEV_L}</a>"#, link(page - 1)));
+        out.push_str(&format!(r#"<a class="pg pgnav" href="{}" title="newer">‹</a>"#, link(page - 1)));
     } else {
-        out.push_str(&format!(r#"<span class="pg nav disabled">{CHEV_L}</span>"#));
+        out.push_str(r#"<span class="pg pgnav disabled">‹</span>"#);
     }
     for item in page_numbers(page, pages) {
         match item {
@@ -752,9 +750,9 @@ fn activity_pager(base: &str, qs: &str, page: i64, pages: i64, rpp: i64) -> Stri
         }
     }
     if page < pages {
-        out.push_str(&format!(r#"<a class="pg nav" href="{}" title="older">{CHEV_R}</a>"#, link(page + 1)));
+        out.push_str(&format!(r#"<a class="pg pgnav" href="{}" title="older">›</a>"#, link(page + 1)));
     } else {
-        out.push_str(&format!(r#"<span class="pg nav disabled">{CHEV_R}</span>"#));
+        out.push_str(r#"<span class="pg pgnav disabled">›</span>"#);
     }
     out.push_str("</nav>");
     out
@@ -794,7 +792,7 @@ fn filter_form(base: &str, f: &LogFilter) -> String {
     {
         let ck = if f.kinds_selected[i] { " checked" } else { "" };
         out.push_str(&format!(
-            r#"<label class="chk"><input type="checkbox" name="{name}" value="1"{ck}> {label}</label>"#
+            r#"<label class="kindchip"><input type="checkbox" name="{name}" value="1"{ck}>{label}</label>"#
         ));
     }
     out.push_str("</div>");
