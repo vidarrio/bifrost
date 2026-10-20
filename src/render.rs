@@ -674,8 +674,12 @@ fn conn_line(snap: &BoardSnapshot) -> String {
 const BOARD_STYLE: &str = r#"<style>
 main{max-width:none;padding-inline:clamp(20px,4vw,80px)}
 header .hwrap{max-width:none;padding-inline:clamp(20px,4vw,80px)}
+.boardcols{display:flex;gap:28px;align-items:flex-start}
+.boardgrid{flex:1 1 0;min-width:0}
+.boardlog{flex:0 0 clamp(320px,24vw,420px);min-width:0}
 .grid.board{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
 .loghdr,.legend,.feed{max-width:760px;margin-inline:auto}
+@media(max-width:1000px){.boardcols{flex-direction:column;align-items:stretch}.boardgrid,.boardlog{flex:none;width:100%}}
 </style>"#;
 
 pub fn board_page(
@@ -692,7 +696,7 @@ pub fn board_page(
         conn_line(snap)
     ));
 
-    out.push_str(r#"<h2>Slots — tap one to claim, hint, and see its hints</h2>"#);
+    out.push_str(r#"<div class="boardcols"><div class="boardgrid"><h2>Slots — tap one to claim, hint, and see its hints</h2>"#);
     if slots.is_empty() {
         out.push_str(r#"<div class="empty">No slots yet — the board fills once Bifrost connects to a running game.</div>"#);
     } else {
@@ -750,14 +754,14 @@ pub fn board_page(
         out.push_str("</div>");
     }
 
-    out.push_str(r#"<h2 class="loghdr"><span>Activity</span><a href="/log">full log →</a></h2>"#);
+    out.push_str(r#"</div><aside class="boardlog"><h2 class="loghdr"><span>Activity</span><a href="/log">full log →</a></h2>"#);
     if activity.is_empty() {
         out.push_str(r#"<div class="empty">Quiet so far. Item sends, goals, releases and collects show up here.</div>"#);
     } else {
         out.push_str(&class_legend());
         render_feed(&mut out, activity, None);
     }
-    out.push_str("</main></body></html>");
+    out.push_str("</aside></div></main></body></html>");
     Html(out)
 }
 
