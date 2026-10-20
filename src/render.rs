@@ -134,7 +134,7 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .legend .lg{display:inline-flex;align-items:center;gap:6px}
 .legend .dotc{width:9px;height:9px;border-radius:50%;background:var(--c);flex:none}
 .loghdr{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.loghdr a{font-size:12px}
-.pager{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;margin:16px 0 4px;font-family:var(--mono);font-size:12.5px}
+.pager{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;margin:16px 0 4px;max-width:760px;font-family:var(--mono);font-size:12.5px}
 .pager .pg{min-width:32px;height:32px;box-sizing:border-box;line-height:1;display:inline-flex;align-items:center;justify-content:center;padding:0 8px;border:1px solid var(--bd);border-radius:7px;color:var(--muted);text-decoration:none;background:var(--panel)}
 .pager a.pg:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
 .pager .pg.cur{background:var(--accent);color:#0d1117;border-color:var(--accent);font-weight:700}
