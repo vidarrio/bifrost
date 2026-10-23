@@ -722,6 +722,8 @@ header .hwrap{max-width:none;padding-inline:clamp(20px,4vw,80px)}
 .seasonprog .splabel b{color:var(--fg);font-weight:600}
 .seasonprog .sptrack{height:10px;border-radius:999px;background:var(--panel);border:1px solid var(--bd);overflow:hidden}
 .seasonprog .spfill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent),#c58af9);transition:width .6s ease;min-width:2px}
+.slot .cardprog{height:5px;border-radius:999px;background:var(--bg);overflow:hidden;margin:2px 0 9px}
+.slot .cardprog .cpfill{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent),#c58af9);transition:width .6s ease}
 </style>"#;
 
 /// Season-wide location-check progress: the sum of every world's checked
@@ -750,6 +752,22 @@ pub fn season_progress(snap: &BoardSnapshot, slots: &[SlotRow]) -> String {
     format!(
         r#"<div class="seasonprog"><div class="splabel"><span>Season progress</span><span><b>{done}</b> / {total} checks · <b>{pct}%</b></span></div>
 <div class="sptrack" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{pct}"><div class="spfill" style="width:{width:.1}%"></div></div></div>"#,
+    )
+}
+
+/// A single slot card's check-progress mini-bar (`sent / world_size`, the same
+/// per-game measure as the season bar and archive). Empty until the world's
+/// total locations are known (`world_size == 0`), so an unconnected / not-yet-
+/// loaded card shows no bar. Width is clamped to 100% (a goaled/released world
+/// can report `sent == world_size`).
+fn card_progress(sent: u64, world_size: u32) -> String {
+    if world_size == 0 {
+        return String::new();
+    }
+    let width = (sent as f64 * 100.0 / world_size as f64).min(100.0);
+    format!(
+        r#"<div class="cardprog" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{}"><span class="cpfill" style="width:{width:.1}%"></span></div>"#,
+        width as u32
     )
 }
 
@@ -806,6 +824,7 @@ fn board_inner(
                 live.received,
                 live.still_to_find,
             ));
+            out.push_str(&card_progress(live.sent, live.world_size));
             if g.is_common {
                 out.push_str(r#"<div class="seat"><span class="who">Everyone</span><span class="by free">shared game</span></div>"#);
                 if let Some(addr) = mc_addr {
