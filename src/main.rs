@@ -343,6 +343,7 @@ async fn board_fragment_view(State(st): State<AppState>) -> Json<serde_json::Val
     let acts = st.db.activity_latest(&season, BOARD_ACTIVITY).await;
     Json(serde_json::json!({
         "conn": render::conn_line(&snap),
+        "progress": render::season_progress(&snap, &slots),
         "body": render::board_fragment(&snap, &slots, &prios, Some(&addr), &acts),
     }))
 }

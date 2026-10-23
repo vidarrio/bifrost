@@ -319,6 +319,7 @@ function bifBoardLive(){
    if(j&&j.body&&j.body.indexOf('boardgrid')>-1){
     cols.innerHTML=j.body;
     var c=document.getElementById('connline');if(c&&typeof j.conn==='string')c.innerHTML=j.conn;
+    var sp=document.getElementById('seasonprog');if(sp&&typeof j.progress==='string')sp.innerHTML=j.progress;
     bifTick();
    }
   }).catch(function(){});
@@ -716,7 +717,41 @@ header .hwrap{max-width:none;padding-inline:clamp(20px,4vw,80px)}
 .grid.board{grid-template-columns:repeat(auto-fill,minmax(min(400px,100%),1fr))}
 .loghdr,.legend,.feed{max-width:760px;margin-inline:auto}
 @media(max-width:1000px){.boardcols{flex-direction:column;align-items:stretch}.boardgrid,.boardlog{flex:none;width:100%}}
+.seasonprog{margin:2px 0 22px}
+.seasonprog .splabel{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-family:var(--mono);font-size:12px;letter-spacing:.04em;color:var(--muted);margin-bottom:7px}
+.seasonprog .splabel b{color:var(--fg);font-weight:600}
+.seasonprog .sptrack{height:10px;border-radius:999px;background:var(--panel2);border:1px solid var(--bd);overflow:hidden}
+.seasonprog .spfill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .6s ease;min-width:2px}
 </style>"#;
+
+/// Season-wide location-check progress: the sum of every world's checked
+/// locations (`sent`, i.e. `location_checks`) over the sum of their total
+/// locations (`world_size`) — the same per-game measure the archive uses,
+/// aggregated. Returns "" before any world is known (so the bar stays hidden
+/// until Bifrost is connected and has location totals). Co-op slots share one
+/// `ap_slot`, so dedup by it to avoid counting a world twice.
+pub fn season_progress(snap: &BoardSnapshot, slots: &[SlotRow]) -> String {
+    let mut seen = std::collections::HashSet::new();
+    let (mut done, mut total) = (0u64, 0u64);
+    for s in slots {
+        if !seen.insert(s.ap_slot) {
+            continue;
+        }
+        if let Some(a) = snap.ap.get(&s.ap_slot) {
+            done += a.sent;
+            total += a.world_size as u64;
+        }
+    }
+    if total == 0 {
+        return String::new();
+    }
+    let pct = done * 100 / total;
+    let width = done as f64 * 100.0 / total as f64;
+    format!(
+        r#"<div class="seasonprog"><div class="splabel"><span>Season progress</span><span><b>{done}</b> / {total} checks · <b>{pct}%</b></span></div>
+<div class="sptrack" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{pct}"><div class="spfill" style="width:{width:.1}%"></div></div></div>"#,
+    )
+}
 
 pub fn board_page(
     snap: &BoardSnapshot,
@@ -732,6 +767,10 @@ pub fn board_page(
         conn_line(snap)
     ));
 
+    out.push_str(&format!(
+        r#"<div id="seasonprog">{}</div>"#,
+        season_progress(snap, slots)
+    ));
     out.push_str(r#"<div class="boardcols">"#);
     board_inner(&mut out, snap, slots, prios, mc_addr, activity);
     out.push_str("</div></main></body></html>");
