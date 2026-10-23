@@ -720,8 +720,8 @@ header .hwrap{max-width:none;padding-inline:clamp(20px,4vw,80px)}
 .seasonprog{margin:2px 0 22px}
 .seasonprog .splabel{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-family:var(--mono);font-size:12px;letter-spacing:.04em;color:var(--muted);margin-bottom:7px}
 .seasonprog .splabel b{color:var(--fg);font-weight:600}
-.seasonprog .sptrack{height:10px;border-radius:999px;background:var(--panel2);border:1px solid var(--bd);overflow:hidden}
-.seasonprog .spfill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .6s ease;min-width:2px}
+.seasonprog .sptrack{height:10px;border-radius:999px;background:var(--panel);border:1px solid var(--bd);overflow:hidden}
+.seasonprog .spfill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent),#c58af9);transition:width .6s ease;min-width:2px}
 </style>"#;
 
 /// Season-wide location-check progress: the sum of every world's checked
