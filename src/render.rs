@@ -1918,8 +1918,8 @@ const GAME_STYLE: &str = r#"<style>
 .ptgrow{display:flex;gap:3px;justify-content:flex-start}
 .ptcell{position:relative;display:inline-flex;width:34px;height:34px;align-items:center;justify-content:center}
 .ptcell.empty{visibility:hidden}
-.ptitem{max-width:100%;max-height:100%;image-rendering:pixelated}
-.ptitem.off{opacity:.25;filter:grayscale(.7)}
+.ptitem{width:100%;height:100%;object-fit:contain;image-rendering:pixelated}
+.ptitem.off{opacity:.3}
 .ptov{position:absolute;right:1px;bottom:0;font-family:var(--mono);font-size:10px;font-weight:700;color:#fff;text-shadow:0 0 2px #000,0 0 2px #000,0 0 2px #000;pointer-events:none}
 </style>"#;
 
