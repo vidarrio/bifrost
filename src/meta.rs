@@ -67,6 +67,11 @@ pub struct SlotMeta {
     /// [finder_slot, location_id]. Powers the hint box's per-item copy counting.
     #[serde(default)]
     pub placements: HashMap<i64, Vec<[i64; 2]>>,
+    /// Every AP location id that exists for this slot (the seed's full location
+    /// set for the slot). Fed to the PopTracker engine so `visibility_rules` can
+    /// hide markers for options the slot never generated. Static per season.
+    #[serde(default)]
+    pub all_locations: Vec<i64>,
 }
 
 #[derive(Debug, Deserialize)]

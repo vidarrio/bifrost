@@ -32,7 +32,7 @@
 use mlua::{Function, Lua, LuaOptions, MultiValue, StdLib, Table, Value};
 use serde::Serialize;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -283,6 +283,7 @@ struct SectionDef {
 struct LocNode {
     name: String,                // full path, e.g. "Area/Sub/Spot"
     groups: Vec<Vec<String>>,    // effective location-level access: parent chain + own; ALL groups must pass
+    vis_groups: Vec<Vec<String>>, // effective `visibility_rules`: parent chain + own; ALL must pass for the marker to show
     map_locations: Vec<MapLoc>,
     sections: Vec<SectionDef>,
 }
@@ -309,6 +310,13 @@ struct Eng {
     loc_counts: HashMap<String, i64>,
     /// Named layout widgets (`layouts/*.json`), e.g. `tracker_default`.
     layouts: HashMap<String, serde_json::Value>,
+    /// The slot's valid AP location ids (checked ∪ missing). `None` until the
+    /// host feeds them; while `None`, `visibility_rules` are not applied (every
+    /// marker shows). Packs gate markers on `visibility_rules` that reference a
+    /// location id as a bare code — present iff the id is in this set — so this
+    /// is what lets us hide checks a slot's options didn't generate (e.g. the
+    /// "Shipped" squares when shipsanity is off), matching native PopTracker.
+    valid_locations: Option<HashSet<i64>>,
     clear_h: Vec<Function>,
     item_h: Vec<Function>,
     loc_h: Vec<Function>,
@@ -384,6 +392,24 @@ impl Session {
     pub fn set_player(&self, n: i64) {
         if let Ok(ap) = self.lua.globals().get::<Table>("Archipelago") {
             let _ = ap.set("PlayerNumber", n);
+        }
+    }
+
+    /// Feed the slot's valid AP location ids (checked ∪ missing). This switches
+    /// on `visibility_rules` enforcement: a bare numeric visibility code resolves
+    /// to "present" iff its id is in this set, so markers for locations the
+    /// slot's options never generated are hidden (as in native PopTracker).
+    /// Also populates `Archipelago.MissingLocations`/`CheckedLocations` so a
+    /// pack's own `onClear` can set the same toggles if it reads them.
+    pub fn set_valid_locations(&self, ids: &[i64]) {
+        self.eng.borrow_mut().valid_locations = Some(ids.iter().copied().collect());
+        if let Ok(ap) = self.lua.globals().get::<Table>("Archipelago") {
+            if let Ok(t) = self.lua.create_table() {
+                for (i, id) in ids.iter().enumerate() {
+                    let _ = t.set(i as i64 + 1, *id);
+                }
+                let _ = ap.set("MissingLocations", t);
+            }
         }
     }
 
@@ -492,7 +518,19 @@ impl Session {
 
         // locations + markers (from the node model)
         let nodes = self.eng.borrow().nodes.clone();
+        // Only enforce `visibility_rules` once the slot's valid-location set is
+        // known; otherwise every marker shows (fail-safe, old behavior).
+        let enforce_vis = self.eng.borrow().valid_locations.is_some();
         for n in nodes {
+            // Hide a location whose visibility rules fail (e.g. options the slot
+            // didn't generate) — dropped from both markers and the locations list,
+            // just as native PopTracker omits them.
+            if enforce_vis
+                && !n.vis_groups.is_empty()
+                && !eval_groups(&self.lua, &self.eng, &n.vis_groups, 0)
+            {
+                continue;
+            }
             let loc_access = eval_groups(&self.lua, &self.eng, &n.groups, 0);
             let locobjs: Option<Table> = self.lua.globals().get("__LOCOBJS").ok();
             let single = n.sections.len() == 1;
@@ -673,10 +711,23 @@ fn eval_token(lua: &Lua, eng: &E, tok: &str, depth: u32) -> bool {
     }
     if let Some((code, cnt)) = tok.split_once(':') {
         let need: i64 = cnt.trim().parse().unwrap_or(1);
-        provider_count(lua, eng, code.trim()) >= need
+        let code = code.trim();
+        provider_count(lua, eng, code) >= need || location_present(eng, code)
     } else {
-        provider_count(lua, eng, tok) >= 1
+        provider_count(lua, eng, tok) >= 1 || location_present(eng, tok)
     }
+}
+
+/// A bare numeric code in a rule (chiefly `visibility_rules`) is an AP location
+/// id: the pack treats it as "present" exactly when that location exists for the
+/// slot (its `onClear` sets a toggle of that code from `MissingLocations ∪
+/// CheckedLocations`). We resolve it directly against the fed valid-location set.
+/// Returns false when no set was fed (so visibility stays disabled) or the code
+/// isn't a plain integer.
+fn location_present(eng: &E, code: &str) -> bool {
+    let e = eng.borrow();
+    let Some(valid) = e.valid_locations.as_ref() else { return false };
+    code.parse::<i64>().is_ok_and(|id| valid.contains(&id))
 }
 
 fn eval_rule(lua: &Lua, eng: &E, rule: &str, depth: u32) -> bool {
@@ -862,10 +913,16 @@ fn str_rules(node: &serde_json::Value, field: &str) -> Vec<String> {
 
 /// Flatten the location tree into [`LocNode`]s, accumulating the parent chain's
 /// access-rule groups so a node's effective accessibility includes its ancestors.
-fn flatten_locations(eng: &E, node: &serde_json::Value, prefix: &str, parent_groups: &[Vec<String>]) {
+fn flatten_locations(
+    eng: &E,
+    node: &serde_json::Value,
+    prefix: &str,
+    parent_groups: &[Vec<String>],
+    parent_vis: &[Vec<String>],
+) {
     if let Some(arr) = node.as_array() {
         for n in arr {
-            flatten_locations(eng, n, prefix, parent_groups);
+            flatten_locations(eng, n, prefix, parent_groups, parent_vis);
         }
         return;
     }
@@ -877,6 +934,12 @@ fn flatten_locations(eng: &E, node: &serde_json::Value, prefix: &str, parent_gro
     let own = str_rules(node, "access_rules");
     if !own.is_empty() {
         groups.push(own);
+    }
+    // Visibility inherits the same way (a hidden parent hides its children).
+    let mut vis_groups = parent_vis.to_vec();
+    let own_vis = str_rules(node, "visibility_rules");
+    if !own_vis.is_empty() {
+        vis_groups.push(own_vis);
     }
 
     let map_locations: Vec<MapLoc> = node
@@ -930,12 +993,13 @@ fn flatten_locations(eng: &E, node: &serde_json::Value, prefix: &str, parent_gro
         eng.borrow_mut().nodes.push(LocNode {
             name: full.clone(),
             groups: groups.clone(),
+            vis_groups: vis_groups.clone(),
             map_locations,
             sections,
         });
     }
     if let Some(children) = node.get("children") {
-        flatten_locations(eng, children, &full, &groups);
+        flatten_locations(eng, children, &full, &groups, &vis_groups);
     }
 }
 
@@ -1083,7 +1147,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
             lua.create_function(move |_lua, (_t, file): (Table, String)| {
                 let Ok(txt) = read_pack_file(&eng2, &file) else { return Ok(false) };
                 let Ok(json) = parse_pack_json(&txt) else { return Ok(false) };
-                flatten_locations(&eng2, &json, "", &[]);
+                flatten_locations(&eng2, &json, "", &[], &[]);
                 Ok(true)
             })?,
         )?;

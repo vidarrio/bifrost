@@ -104,6 +104,10 @@ def main() -> None:
             "placements": {
                 str(item_id): locs for item_id, locs in placements.get(s, {}).items()
             },
+            # Every location id this slot actually has (the seed's full set for
+            # the slot). Lets the PopTracker engine apply `visibility_rules` to
+            # hide checks the slot's options never generated.
+            "all_locations": sorted(int(loc_id) for loc_id in locations.get(s, {})),
         }
     print(json.dumps(out))
 

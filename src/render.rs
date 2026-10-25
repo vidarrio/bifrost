@@ -2151,7 +2151,7 @@ fn poptracker_panel(ap_slot: i64, has_pack: bool, can_manage: bool) -> String {
 /// The Universal Tracker tab panel, from the slot's cached in-logic result.
 fn inlogic_panel(inlogic: Option<&crate::db::InLogic>) -> String {
     let mut s =
-        String::from(r#"<div class="gtabpanel" id="tab-ut" hidden><h2>In logic now</h2>"#);
+        String::from(r#"<div class="gtabpanel" id="tab-ut" hidden><h2>Available now</h2>"#);
     match inlogic {
         None => s.push_str(
             r#"<p class="empty">Universal Tracker hasn't mapped this slot yet — it recomputes a few seconds after the slot's items or checks change. Check back shortly.</p>"#,
@@ -2160,19 +2160,19 @@ fn inlogic_panel(inlogic: Option<&crate::db::InLogic>) -> String {
             let locs: Vec<String> = serde_json::from_str(&il.locations).unwrap_or_default();
             if locs.is_empty() && il.err.is_some() {
                 let msg = match il.err.as_deref() {
-                    Some("disabled") => "Universal Tracker is turned off for this game by its developers, so live in-logic tracking isn't available here.",
-                    _ => "Couldn't compute in-logic locations for this slot right now — it'll retry automatically.",
+                    Some("disabled") => "Universal Tracker is turned off for this game by its developers, so live availability tracking isn't available here.",
+                    _ => "Couldn't compute available locations for this slot right now — it'll retry automatically.",
                 };
                 s.push_str(&format!(r#"<p class="empty">{msg}</p>"#));
             } else {
                 let n = locs.len();
                 s.push_str(&format!(
-                    r#"<p class="utmeta"><b>{n}</b> location{} reachable right now · as of <span class="ago" data-ts="{}"></span></p>"#,
+                    r#"<p class="utmeta"><b>{n}</b> location{} available right now · as of <span class="ago" data-ts="{}"></span></p>"#,
                     if n == 1 { "" } else { "s" },
                     il.ts,
                 ));
                 if locs.is_empty() {
-                    s.push_str(r#"<p class="empty">Nothing new is in logic right now.</p>"#);
+                    s.push_str(r#"<p class="empty">Nothing new is available right now.</p>"#);
                 } else {
                     s.push_str(r#"<div class="utlist">"#);
                     for l in &locs {

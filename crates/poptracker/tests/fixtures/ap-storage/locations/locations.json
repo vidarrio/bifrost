@@ -9,7 +9,10 @@
       { "name": "NeedsC2orA",    "access_rules": ["c2", "a"],       "sections": [ { "item_count": 1 } ] },
       { "name": "NeedsLuaRule",  "access_rules": ["$has_enough_b"], "sections": [ { "item_count": 1 } ] },
       { "name": "GlitchB",       "access_rules": ["a,[b]"],         "sections": [ { "item_count": 1 } ] },
-      { "name": "InspectB",      "access_rules": ["a,{b}"],         "sections": [ { "item_count": 1 } ] }
+      { "name": "InspectB",      "access_rules": ["a,{b}"],         "sections": [ { "item_count": 1 } ] },
+      { "name": "VisGated",      "access_rules": ["a"],             "visibility_rules": ["424242"],
+        "map_locations": [ { "map": "example", "x": 50, "y": 50 } ],
+        "sections": [ { "item_count": 1 } ] }
     ]
   }
 ]

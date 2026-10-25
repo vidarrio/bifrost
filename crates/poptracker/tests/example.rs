@@ -37,7 +37,7 @@ fn summary_reports_ap_autotracking_and_counts() {
     assert!(sum.archipelago_autotracking, "fixture registers AP handlers");
     assert_eq!(sum.items, 3);
     assert_eq!(sum.maps, 1);
-    assert_eq!(sum.locations, 6);
+    assert_eq!(sum.locations, 7);
 }
 
 #[test]
@@ -139,6 +139,33 @@ fn checked_location_marks_section_and_marker_done() {
     let m = after.markers.iter().find(|m| m.location == "Tests/NeedsA").unwrap();
     assert!(m.checked, "location Done -> marker renders grey");
     assert!(m.sections[0].checked, "marker's section state is Done too");
+}
+
+#[test]
+fn visibility_rules_hide_locations_the_slot_lacks() {
+    let has_vis = |s: &Session| {
+        s.state().locations.iter().any(|l| l.name == "Tests/VisGated")
+    };
+    let marker_shown = |s: &Session| {
+        s.state().markers.iter().any(|m| m.location == "Tests/VisGated")
+    };
+
+    // No valid-location set fed => visibility enforcement is off, marker shows.
+    let s = Session::new(&fixture()).unwrap();
+    s.on_clear(&serde_json::json!({})).unwrap();
+    assert!(has_vis(&s) && marker_shown(&s), "unfiltered: VisGated is visible");
+
+    // Fed a set WITHOUT the gate id (424242) => hidden from locations and markers.
+    let s = Session::new(&fixture()).unwrap();
+    s.set_valid_locations(&[1, 2, 3]);
+    s.on_clear(&serde_json::json!({})).unwrap();
+    assert!(!has_vis(&s) && !marker_shown(&s), "gate id absent -> hidden");
+
+    // Fed a set WITH the gate id => visible again.
+    let s = Session::new(&fixture()).unwrap();
+    s.set_valid_locations(&[1, 424242]);
+    s.on_clear(&serde_json::json!({})).unwrap();
+    assert!(has_vis(&s) && marker_shown(&s), "gate id present -> visible");
 }
 
 #[test]

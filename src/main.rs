@@ -693,9 +693,19 @@ async fn pt_state(Path(ap_slot): Path<i64>, State(st): State<AppState>) -> Json<
             (*item, name)
         })
         .collect();
+    // The slot's full location set (static per season) drives `visibility_rules`
+    // so the tracker hides checks this slot's options never generated.
+    let valid_locations: Vec<i64> = meta
+        .as_ref()
+        .and_then(|m| m.totals(ap_slot))
+        .map(|s| s.all_locations.clone())
+        .unwrap_or_default();
     let version = ptrack::pack_version(&season, ap_slot);
     let season2 = season.clone();
-    let state = tokio::task::spawn_blocking(move || ptrack::compute(&season2, ap_slot, &items, &checked, ap_slot)).await;
+    let state = tokio::task::spawn_blocking(move || {
+        ptrack::compute(&season2, ap_slot, &items, &checked, &valid_locations, ap_slot)
+    })
+    .await;
     match state {
         Ok(Ok(ts)) => Json(serde_json::json!({
             "pack": true,
