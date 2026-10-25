@@ -864,9 +864,11 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                             imgs.push(img_path(im));
                         }
                     }
-                    let key = all_codes.first().cloned().unwrap_or_else(|| {
-                        item.get("name").and_then(|v| v.as_str()).unwrap_or("?").to_string()
-                    });
+                    // Unique per item: PopTracker items can share a leading code
+                    // (e.g. all "Traveling Merchant" days share "tm"), so keying
+                    // by first code would collapse distinct items into one. Use a
+                    // monotonic id and map every code to it.
+                    let key = format!("__item{}", eng2.borrow().kind.len());
                     // Build the item object the way PopTracker exposes it to Lua:
                     // the mutable state fields plus the declared properties packs
                     // read (Increment/MinCount/MaxCount for consumables, etc.).

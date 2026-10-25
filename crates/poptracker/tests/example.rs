@@ -84,13 +84,13 @@ fn full_items_make_locations_reachable() {
     s.on_retrieved("c", &serde_json::json!([true, 1])).unwrap(); // progressive stage 1 -> c2
 
     let st = s.state();
-    let a = st.items.iter().find(|i| i.key == "a").unwrap();
+    let a = st.items.iter().find(|i| i.codes.iter().any(|c| c == "a")).unwrap();
     assert_eq!(a.img.as_deref(), Some("images/a.png"), "item image surfaced for the grid");
     assert!(a.codes.iter().any(|c| c == "a"), "item codes surfaced for grid lookup");
-    let b = st.items.iter().find(|i| i.key == "b").unwrap();
+    let b = st.items.iter().find(|i| i.codes.iter().any(|c| c == "b")).unwrap();
     assert_eq!(b.count, 5, "consumable count set by the pack's Lua");
     assert_eq!(b.overlay.as_deref(), Some("5"), "consumable count overlay");
-    let c = st.items.iter().find(|i| i.key == "c").unwrap();
+    let c = st.items.iter().find(|i| i.codes.iter().any(|c| c == "c")).unwrap();
     assert!(c.active && c.stage == 1, "progressive item active at stage 1");
 
     let acc = accessibility(&s);
