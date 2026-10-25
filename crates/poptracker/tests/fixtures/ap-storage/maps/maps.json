@@ -1,0 +1,3 @@
+[
+  { "name": "example", "img": "images/map.png", "location_size": 16, "location_shape": "rect" }
+]

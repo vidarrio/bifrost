@@ -39,6 +39,16 @@ fn full_items_make_locations_reachable() {
     assert!(acc["Tests/NeedsAandB2"], "a AND b>=2");
     assert!(acc["Tests/NeedsC2orA"], "c2 (stage 1) present");
     assert!(acc["Tests/NeedsLuaRule"], "$has_enough_b: b(5) >= 3");
+
+    // renderer data: the map def and NeedsA's marker come through, marker
+    // accessibility tracks the location.
+    let st2 = s.state();
+    let map = st2.maps.iter().find(|m| m.name == "example").expect("map 'example'");
+    assert_eq!(map.img, "images/map.png");
+    assert_eq!(map.location_size, Some(16.0));
+    let marker = st2.markers.iter().find(|m| m.location == "Tests/NeedsA").expect("NeedsA marker");
+    assert_eq!((marker.map.as_str(), marker.x, marker.y), ("example", 10.0, 20.0));
+    assert!(marker.accessible, "NeedsA reachable -> marker reachable");
 }
 
 #[test]

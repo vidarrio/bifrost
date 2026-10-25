@@ -80,11 +80,16 @@ impl Pack {
 }
 
 /// The computed tracker state — the crate's entire output. Serializable so the
-/// caller can ship it to a front-end.
+/// caller can ship it to a front-end that draws the map and item panel.
 #[derive(Debug, Default, Serialize)]
 pub struct TrackerState {
     pub items: Vec<ItemState>,
+    /// Map definitions (background image + how to draw location markers).
+    pub maps: Vec<MapInfo>,
+    /// Checkable locations with their current accessibility + sections.
     pub locations: Vec<LocationState>,
+    /// Flat list of map placements to draw: one per (location × map_location).
+    pub markers: Vec<Marker>,
 }
 #[derive(Debug, Serialize)]
 pub struct ItemState {
@@ -95,11 +100,67 @@ pub struct ItemState {
     pub stage: i64,
 }
 #[derive(Debug, Serialize)]
+pub struct MapInfo {
+    pub name: String,
+    /// Pack-relative path to the map background image.
+    pub img: String,
+    /// Default marker size in map pixels (per-marker `size` overrides).
+    pub location_size: Option<f64>,
+    /// Default marker shape (rect/diamond/…); per-marker `shape` overrides.
+    pub location_shape: Option<String>,
+}
+#[derive(Debug, Serialize)]
 pub struct LocationState {
     pub name: String,
-    /// Reachable right now (today: a simple reachable/none; richer levels TODO).
+    /// Reachable right now (today: reachable/none; richer levels are TODO).
     pub accessible: bool,
-    pub rules: Vec<String>,
+    pub sections: Vec<SectionState>,
+}
+#[derive(Debug, Serialize)]
+pub struct SectionState {
+    pub name: String,
+    pub item_count: i64,
+    pub accessible: bool,
+}
+/// A single marker to draw on a map image.
+#[derive(Debug, Serialize)]
+pub struct Marker {
+    pub map: String,
+    pub x: f64,
+    pub y: f64,
+    pub size: Option<f64>,
+    pub shape: Option<String>,
+    pub location: String,
+    pub accessible: bool,
+}
+
+#[derive(Clone)]
+struct MapDef {
+    name: String,
+    img: String,
+    location_size: Option<f64>,
+    location_shape: Option<String>,
+}
+#[derive(Clone)]
+struct MapLoc {
+    map: String,
+    x: f64,
+    y: f64,
+    size: Option<f64>,
+    shape: Option<String>,
+}
+#[derive(Clone)]
+struct SectionDef {
+    name: String,
+    item_count: i64,
+    rules: Vec<String>, // section-level access_rules (own OR-group)
+}
+#[derive(Clone)]
+struct LocNode {
+    name: String,                // full path, e.g. "Area/Sub/Spot"
+    groups: Vec<Vec<String>>,    // effective location-level access: parent chain + own; ALL groups must pass
+    map_locations: Vec<MapLoc>,
+    sections: Vec<SectionDef>,
 }
 
 #[derive(Default)]
@@ -108,7 +169,8 @@ struct Eng {
     code_to_key: HashMap<String, String>,
     kind: HashMap<String, String>,
     stage_codes: HashMap<String, Vec<String>>,
-    locations: Vec<(String, Vec<String>)>,
+    maps: Vec<MapDef>,
+    nodes: Vec<LocNode>,
     clear_h: Vec<Function>,
     item_h: Vec<Function>,
     loc_h: Vec<Function>,
@@ -204,10 +266,53 @@ impl Session {
             }
         }
         out.items.sort_by(|a, b| a.key.cmp(&b.key));
-        let locs = self.eng.borrow().locations.clone();
-        for (name, rules) in locs {
-            let accessible = eval_rules(&self.lua, &self.eng, &rules, 0);
-            out.locations.push(LocationState { name, accessible, rules });
+
+        // maps
+        for m in self.eng.borrow().maps.clone() {
+            out.maps.push(MapInfo {
+                name: m.name,
+                img: m.img,
+                location_size: m.location_size,
+                location_shape: m.location_shape,
+            });
+        }
+
+        // locations + markers (from the node model)
+        let nodes = self.eng.borrow().nodes.clone();
+        for n in nodes {
+            let loc_access = eval_groups(&self.lua, &self.eng, &n.groups, 0);
+            let sections = n
+                .sections
+                .iter()
+                .map(|s| {
+                    // section accessible = location groups AND the section's own rules
+                    let mut g = n.groups.clone();
+                    if !s.rules.is_empty() {
+                        g.push(s.rules.clone());
+                    }
+                    SectionState {
+                        name: s.name.clone(),
+                        item_count: s.item_count,
+                        accessible: eval_groups(&self.lua, &self.eng, &g, 0),
+                    }
+                })
+                .collect();
+            for ml in &n.map_locations {
+                out.markers.push(Marker {
+                    map: ml.map.clone(),
+                    x: ml.x,
+                    y: ml.y,
+                    size: ml.size,
+                    shape: ml.shape.clone(),
+                    location: n.name.clone(),
+                    accessible: loc_access,
+                });
+            }
+            out.locations.push(LocationState {
+                name: n.name,
+                accessible: loc_access,
+                sections,
+            });
         }
         out
     }
@@ -276,14 +381,16 @@ fn eval_token(lua: &Lua, eng: &E, tok: &str, depth: u32) -> bool {
         if depth > 32 {
             return false; // crude cycle guard
         }
-        let rules = eng
+        // @Location reference: accessible iff that location's groups all pass.
+        // Strip a trailing "/Section" if present; we key on the location node.
+        let groups = eng
             .borrow()
-            .locations
+            .nodes
             .iter()
-            .find(|(n, _)| n == at || n.ends_with(at))
-            .map(|(_, r)| r.clone());
-        return match rules {
-            Some(r) => eval_rules(lua, eng, &r, depth + 1),
+            .find(|n| n.name == at || n.name.ends_with(at))
+            .map(|n| n.groups.clone());
+        return match groups {
+            Some(g) => eval_groups(lua, eng, &g, depth + 1),
             None => false,
         };
     }
@@ -299,6 +406,7 @@ fn eval_rule(lua: &Lua, eng: &E, rule: &str, depth: u32) -> bool {
     rule.split(',').all(|t| eval_token(lua, eng, t, depth))
 }
 
+/// An access rule list is an OR of rule strings (empty => always true).
 fn eval_rules(lua: &Lua, eng: &E, rules: &[String], depth: u32) -> bool {
     if rules.is_empty() {
         return true;
@@ -306,29 +414,85 @@ fn eval_rules(lua: &Lua, eng: &E, rules: &[String], depth: u32) -> bool {
     rules.iter().any(|r| eval_rule(lua, eng, r, depth))
 }
 
-fn flatten_locations(eng: &E, node: &serde_json::Value, prefix: &str) {
+/// Effective accessibility = every OR-group passes (parent chain + own + section).
+fn eval_groups(lua: &Lua, eng: &E, groups: &[Vec<String>], depth: u32) -> bool {
+    groups.iter().all(|g| eval_rules(lua, eng, g, depth))
+}
+
+/// A number that PopTracker may encode as a JSON number or a numeric string.
+fn num(v: &serde_json::Value) -> Option<f64> {
+    v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+}
+
+fn str_rules(node: &serde_json::Value, field: &str) -> Vec<String> {
+    node.get(field)
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default()
+}
+
+/// Flatten the location tree into [`LocNode`]s, accumulating the parent chain's
+/// access-rule groups so a node's effective accessibility includes its ancestors.
+fn flatten_locations(eng: &E, node: &serde_json::Value, prefix: &str, parent_groups: &[Vec<String>]) {
     if let Some(arr) = node.as_array() {
         for n in arr {
-            flatten_locations(eng, n, prefix);
+            flatten_locations(eng, n, prefix, parent_groups);
         }
         return;
     }
     let name = node.get("name").and_then(|v| v.as_str()).unwrap_or("");
-    let full = if prefix.is_empty() {
-        name.to_string()
-    } else {
-        format!("{prefix}/{name}")
-    };
-    if node.get("sections").is_some() {
-        let rules: Vec<String> = node
-            .get("access_rules")
-            .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
-            .unwrap_or_default();
-        eng.borrow_mut().locations.push((full.clone(), rules));
+    let full = if prefix.is_empty() { name.to_string() } else { format!("{prefix}/{name}") };
+
+    // This node's effective groups = parent chain + its own access_rules.
+    let mut groups = parent_groups.to_vec();
+    let own = str_rules(node, "access_rules");
+    if !own.is_empty() {
+        groups.push(own);
+    }
+
+    let map_locations: Vec<MapLoc> = node
+        .get("map_locations")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|m| {
+                    Some(MapLoc {
+                        map: m.get("map")?.as_str()?.to_string(),
+                        x: num(m.get("x")?)?,
+                        y: num(m.get("y")?)?,
+                        size: m.get("size").and_then(num),
+                        shape: m.get("shape").and_then(|v| v.as_str().map(String::from)),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let sections: Vec<SectionDef> = node
+        .get("sections")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .map(|s| SectionDef {
+                    name: s.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    item_count: s.get("item_count").and_then(|v| v.as_i64()).unwrap_or(1),
+                    rules: str_rules(s, "access_rules"),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // A node is a real, drawable/checkable location if it has sections or a map placement.
+    if !sections.is_empty() || !map_locations.is_empty() {
+        eng.borrow_mut().nodes.push(LocNode {
+            name: full.clone(),
+            groups: groups.clone(),
+            map_locations,
+            sections,
+        });
     }
     if let Some(children) = node.get("children") {
-        flatten_locations(eng, children, &full);
+        flatten_locations(eng, children, &full, &groups);
     }
 }
 
@@ -422,7 +586,27 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
             lua.create_function(move |_lua, (_t, file): (Table, String)| {
                 let txt = read_pack_file(&eng2, &file).map_err(to_lua)?;
                 let json: serde_json::Value = serde_json::from_str(&txt).map_err(|e| mlua::Error::runtime(format!("AddLocations json: {e}")))?;
-                flatten_locations(&eng2, &json, "");
+                flatten_locations(&eng2, &json, "", &[]);
+                Ok(())
+            })?,
+        )?;
+    }
+    {
+        let eng2 = eng.clone();
+        tracker.set(
+            "AddMaps",
+            lua.create_function(move |_lua, (_t, file): (Table, String)| {
+                let txt = read_pack_file(&eng2, &file).map_err(to_lua)?;
+                let json: serde_json::Value = serde_json::from_str(&txt).map_err(|e| mlua::Error::runtime(format!("AddMaps json: {e}")))?;
+                let mut e = eng2.borrow_mut();
+                for m in json.as_array().cloned().unwrap_or_default() {
+                    e.maps.push(MapDef {
+                        name: m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        img: m.get("img").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        location_size: m.get("location_size").and_then(num),
+                        location_shape: m.get("location_shape").and_then(|v| v.as_str().map(String::from)),
+                    });
+                }
                 Ok(())
             })?,
         )?;
@@ -452,7 +636,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
             })?,
         )?;
     }
-    for noop in ["AddLayouts", "AddMaps", "AddClasses", "UiHint", "OpenLink"] {
+    for noop in ["AddLayouts", "AddClasses", "UiHint", "OpenLink"] {
         tracker.set(noop, lua.create_function(|_, _: MultiValue| Ok(()))?)?;
     }
     g.set("Tracker", &tracker)?;

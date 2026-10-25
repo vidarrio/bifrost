@@ -1,4 +1,5 @@
 Tracker:AddItems("items/items.json")
+Tracker:AddMaps("maps/maps.json")
 Tracker:AddLocations("locations/locations.json")
 ScriptHost:LoadScript("scripts/logic.lua")
 if Archipelago then
