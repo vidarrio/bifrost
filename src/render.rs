@@ -1892,6 +1892,8 @@ const MC_LOADER: &str = "NeoForge 26.2.0.90"; // mod loader build
 /// the shared stylesheet uses short utility names, so a generic class would
 /// silently inherit unrelated rules (see the header note in this file).
 const GAME_STYLE: &str = r#"<style>
+main{max-width:none;padding-inline:clamp(20px,4vw,80px)}
+header .hwrap{max-width:none;padding-inline:clamp(20px,4vw,80px)}
 .gtabs{display:flex;gap:2px;border-bottom:1px solid var(--bd);margin:22px 0 16px}
 .gtab{background:none;color:var(--muted);border:0;border-bottom:2px solid transparent;border-radius:0;margin-bottom:-1px;padding:8px 15px;font-family:var(--font);font-size:14px;font-weight:600;cursor:pointer}
 .gtab:hover{color:var(--fg)}
@@ -1900,9 +1902,9 @@ const GAME_STYLE: &str = r#"<style>
 .utlist{display:flex;flex-direction:column;gap:4px;max-height:70vh;overflow:auto}
 .utloc{font-size:13px;line-height:1.35;padding:6px 10px;background:var(--panel);border:1px solid var(--bd);border-radius:7px}
 .utnote{font-size:12px;color:var(--muted);margin-top:14px;font-style:italic}
-.ptmap{overflow:auto;max-width:100%}
-.ptmapwrap{position:relative;display:inline-block;margin:0 14px 16px 0}
-.ptmapwrap img{display:block}
+.ptmap{max-width:100%}
+.ptmapwrap{position:relative;display:inline-block;max-width:100%;vertical-align:top;margin:0 14px 16px 0}
+.ptmapwrap img{display:block;max-width:100%;height:auto}
 .ptmk{position:absolute;border:1px solid rgba(0,0,0,.65);box-sizing:border-box;border-radius:2px}
 .ptmk.d{transform:rotate(45deg)}
 .ptform{margin:10px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -1944,15 +1946,24 @@ const PT_JS: &str = r#"<script>
   if(!m){ wrap.textContent='(map '+mapName+' missing)'; return wrap; }
   var img=document.createElement('img'); img.loading='lazy';
   img.src='/game/'+slot+'/poptracker/asset?file='+encodeURIComponent(m.img); wrap.appendChild(img);
-  var sz=m.location_size||16;
+  var sz=m.location_size||16; var spans=[];
   (st.markers||[]).filter(function(k){return k.map===mapName;}).forEach(function(k){
    var s=k.size||sz; var mk=document.createElement('span');
    mk.className='ptmk'+(((k.shape||m.location_shape)==='diamond')?' d':'');
    mk.dataset.key=k.location+'@'+k.map; mk.dataset.loc=k.location;
    mk.title=k.location+(k.accessible?' (in logic)':' (out of logic)');
-   mk.style.cssText='left:'+(k.x-s/2)+'px;top:'+(k.y-s/2)+'px;width:'+s+'px;height:'+s+'px;background:'+col(k.accessible);
-   wrap.appendChild(mk);
+   mk.style.background=col(k.accessible);
+   mk._k=k; mk._s=s; spans.push(mk); wrap.appendChild(mk);
   });
+  // Position markers as PERCENTAGES of the image's natural size, so they scale
+  // with the responsive (max-width:100%) image on any screen width.
+  function place(){ var W=img.naturalWidth||1, H=img.naturalHeight||1;
+   spans.forEach(function(mk){ var k=mk._k, s=mk._s;
+    mk.style.left=((k.x-s/2)/W*100)+'%'; mk.style.top=((k.y-s/2)/H*100)+'%';
+    mk.style.width=(s/W*100)+'%'; mk.style.height=(s/H*100)+'%';
+   });
+  }
+  if(img.complete && img.naturalWidth) place(); else img.addEventListener('load',place);
   return wrap;
  }
  function render(n){
