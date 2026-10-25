@@ -789,8 +789,10 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         tracker.set(
             "AddItems",
             lua.create_function(move |lua, (_t, file): (Table, String)| {
-                let txt = read_pack_file(&eng2, &file).map_err(to_lua)?;
-                let json = parse_pack_json(&txt).map_err(|e| mlua::Error::runtime(format!("AddItems json: {e}")))?;
+                // PopTracker's Add* return a bool and tolerate a missing/broken
+                // file; mirror that so one bad path can't reject the whole pack.
+                let Ok(txt) = read_pack_file(&eng2, &file) else { return Ok(false) };
+                let Ok(json) = parse_pack_json(&txt) else { return Ok(false) };
                 let items: Table = lua.globals().get("__ITEMS")?;
                 for item in json.as_array().cloned().unwrap_or_default() {
                     let kind = item.get("type").and_then(|v| v.as_str()).unwrap_or("toggle").to_string();
@@ -834,7 +836,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                         e.stage_codes.insert(key, stage_codes);
                     }
                 }
-                Ok(())
+                Ok(true)
             })?,
         )?;
     }
@@ -843,10 +845,10 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         tracker.set(
             "AddLocations",
             lua.create_function(move |_lua, (_t, file): (Table, String)| {
-                let txt = read_pack_file(&eng2, &file).map_err(to_lua)?;
-                let json = parse_pack_json(&txt).map_err(|e| mlua::Error::runtime(format!("AddLocations json: {e}")))?;
+                let Ok(txt) = read_pack_file(&eng2, &file) else { return Ok(false) };
+                let Ok(json) = parse_pack_json(&txt) else { return Ok(false) };
                 flatten_locations(&eng2, &json, "", &[]);
-                Ok(())
+                Ok(true)
             })?,
         )?;
     }
@@ -855,8 +857,8 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         tracker.set(
             "AddMaps",
             lua.create_function(move |_lua, (_t, file): (Table, String)| {
-                let txt = read_pack_file(&eng2, &file).map_err(to_lua)?;
-                let json = parse_pack_json(&txt).map_err(|e| mlua::Error::runtime(format!("AddMaps json: {e}")))?;
+                let Ok(txt) = read_pack_file(&eng2, &file) else { return Ok(false) };
+                let Ok(json) = parse_pack_json(&txt) else { return Ok(false) };
                 let mut e = eng2.borrow_mut();
                 for m in json.as_array().cloned().unwrap_or_default() {
                     e.maps.push(MapDef {
@@ -866,7 +868,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                         location_shape: m.get("location_shape").and_then(|v| v.as_str().map(String::from)),
                     });
                 }
-                Ok(())
+                Ok(true)
             })?,
         )?;
     }
@@ -900,15 +902,15 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         tracker.set(
             "AddLayouts",
             lua.create_function(move |_lua, (_t, file): (Table, String)| {
-                let txt = read_pack_file(&eng2, &file).map_err(to_lua)?;
-                let json = parse_pack_json(&txt).map_err(|e| mlua::Error::runtime(format!("AddLayouts json: {e}")))?;
+                let Ok(txt) = read_pack_file(&eng2, &file) else { return Ok(false) };
+                let Ok(json) = parse_pack_json(&txt) else { return Ok(false) };
                 if let Some(obj) = json.as_object() {
                     let mut e = eng2.borrow_mut();
                     for (k, v) in obj {
                         e.layouts.insert(k.clone(), v.clone());
                     }
                 }
-                Ok(())
+                Ok(true)
             })?,
         )?;
     }
