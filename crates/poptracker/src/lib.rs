@@ -278,6 +278,7 @@ struct SectionDef {
     name: String,
     item_count: i64,
     rules: Vec<String>, // section-level access_rules (own OR-group)
+    vis: Vec<String>,   // section-level visibility_rules (own OR-group); empty = always visible
 }
 #[derive(Clone)]
 struct LocNode {
@@ -552,6 +553,12 @@ impl Session {
             let sections: Vec<SectionState> = n
                 .sections
                 .iter()
+                // A section can carry its own `visibility_rules` (Stardew uses them
+                // at section level, e.g. per Desert Festival stall); drop the ones
+                // the slot didn't generate, same as the node-level filter above.
+                .filter(|s| {
+                    !enforce_vis || s.vis.is_empty() || eval_rules(&self.lua, &self.eng, &s.vis, 0)
+                })
                 .map(|s| {
                     // section accessible = location groups AND the section's own rules
                     let mut g = n.groups.clone();
@@ -570,6 +577,11 @@ impl Session {
                     }
                 })
                 .collect();
+            // A node that declares sections but has none left after visibility
+            // filtering isn't a real check for this slot — omit it entirely.
+            if enforce_vis && !n.sections.is_empty() && sections.is_empty() {
+                continue;
+            }
             // Location is "Done" (grey) when it has sections and every one is checked.
             let loc_checked = !sections.is_empty() && sections.iter().all(|s| s.checked);
             for ml in &n.map_locations {
@@ -904,11 +916,18 @@ fn num(v: &serde_json::Value) -> Option<f64> {
     v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
 }
 
+/// Read a rules field (`access_rules`/`visibility_rules`). PopTracker allows it
+/// as either a single string (one OR-alternative) or an array of strings, so we
+/// accept both — a bare string was being dropped, which silently removed gates
+/// like a parent's `"access_rules": "bus"`.
 fn str_rules(node: &serde_json::Value, field: &str) -> Vec<String> {
-    node.get(field)
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
-        .unwrap_or_default()
+    match node.get(field) {
+        Some(serde_json::Value::String(s)) => vec![s.clone()],
+        Some(serde_json::Value::Array(a)) => {
+            a.iter().filter_map(|x| x.as_str().map(String::from)).collect()
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// Flatten the location tree into [`LocNode`]s, accumulating the parent chain's
@@ -969,6 +988,7 @@ fn flatten_locations(
                     name: s.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                     item_count: s.get("item_count").and_then(|v| v.as_i64()).unwrap_or(1),
                     rules: str_rules(s, "access_rules"),
+                    vis: str_rules(s, "visibility_rules"),
                 })
                 .collect()
         })

@@ -37,7 +37,7 @@ fn summary_reports_ap_autotracking_and_counts() {
     assert!(sum.archipelago_autotracking, "fixture registers AP handlers");
     assert_eq!(sum.items, 3);
     assert_eq!(sum.maps, 1);
-    assert_eq!(sum.locations, 7);
+    assert_eq!(sum.locations, 8);
 }
 
 #[test]
@@ -139,6 +139,24 @@ fn checked_location_marks_section_and_marker_done() {
     let m = after.markers.iter().find(|m| m.location == "Tests/NeedsA").unwrap();
     assert!(m.checked, "location Done -> marker renders grey");
     assert!(m.sections[0].checked, "marker's section state is Done too");
+}
+
+#[test]
+fn string_form_access_rules_still_gate() {
+    // A parent `"access_rules": "a"` (a bare string, not an array) must still
+    // gate its children — regression for Desert Festival showing all-green.
+    let s = Session::new(&fixture()).unwrap();
+    s.on_clear(&serde_json::json!({})).unwrap();
+    s.on_retrieved("a", &serde_json::json!(0)).unwrap(); // a NOT held
+    assert!(
+        !accessibility(&s)["Tests/StrParent/Child"],
+        "string parent rule 'a' unmet -> child blocked"
+    );
+    s.on_retrieved("a", &serde_json::json!(1)).unwrap(); // a held
+    assert!(
+        accessibility(&s)["Tests/StrParent/Child"],
+        "string parent rule 'a' met -> child reachable"
+    );
 }
 
 #[test]
