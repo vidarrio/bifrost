@@ -586,6 +586,12 @@ fn eval_groups(lua: &Lua, eng: &E, groups: &[Vec<String>], depth: u32) -> bool {
     groups.iter().all(|g| eval_rules(lua, eng, g, depth))
 }
 
+/// Parse a pack JSON file tolerating JSONC/JSON5 (comments + trailing commas),
+/// which PopTracker packs use freely; strict `serde_json` rejects those.
+fn parse_pack_json(txt: &str) -> std::result::Result<serde_json::Value, String> {
+    json5::from_str::<serde_json::Value>(txt).map_err(|e| e.to_string())
+}
+
 /// A number that PopTracker may encode as a JSON number or a numeric string.
 fn num(v: &serde_json::Value) -> Option<f64> {
     v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
@@ -707,7 +713,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
             "AddItems",
             lua.create_function(move |lua, (_t, file): (Table, String)| {
                 let txt = read_pack_file(&eng2, &file).map_err(to_lua)?;
-                let json: serde_json::Value = serde_json::from_str(&txt).map_err(|e| mlua::Error::runtime(format!("AddItems json: {e}")))?;
+                let json = parse_pack_json(&txt).map_err(|e| mlua::Error::runtime(format!("AddItems json: {e}")))?;
                 let items: Table = lua.globals().get("__ITEMS")?;
                 for item in json.as_array().cloned().unwrap_or_default() {
                     let kind = item.get("type").and_then(|v| v.as_str()).unwrap_or("toggle").to_string();
@@ -752,7 +758,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
             "AddLocations",
             lua.create_function(move |_lua, (_t, file): (Table, String)| {
                 let txt = read_pack_file(&eng2, &file).map_err(to_lua)?;
-                let json: serde_json::Value = serde_json::from_str(&txt).map_err(|e| mlua::Error::runtime(format!("AddLocations json: {e}")))?;
+                let json = parse_pack_json(&txt).map_err(|e| mlua::Error::runtime(format!("AddLocations json: {e}")))?;
                 flatten_locations(&eng2, &json, "", &[]);
                 Ok(())
             })?,
@@ -764,7 +770,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
             "AddMaps",
             lua.create_function(move |_lua, (_t, file): (Table, String)| {
                 let txt = read_pack_file(&eng2, &file).map_err(to_lua)?;
-                let json: serde_json::Value = serde_json::from_str(&txt).map_err(|e| mlua::Error::runtime(format!("AddMaps json: {e}")))?;
+                let json = parse_pack_json(&txt).map_err(|e| mlua::Error::runtime(format!("AddMaps json: {e}")))?;
                 let mut e = eng2.borrow_mut();
                 for m in json.as_array().cloned().unwrap_or_default() {
                     e.maps.push(MapDef {
@@ -899,6 +905,18 @@ fn sandboxed_lua() -> Result<Lua> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_jsonc_with_comments_and_trailing_commas() {
+        // PopTracker packs use JSONC; strict JSON would reject both of these.
+        let txt = r#"[
+            // a comment
+            { "name": "A", "codes": "a", },  /* block */
+            { "name": "B", "codes": "b" },
+        ]"#;
+        let v = parse_pack_json(txt).expect("JSONC should parse");
+        assert_eq!(v.as_array().unwrap().len(), 2);
+    }
 
     #[test]
     fn sandbox_excludes_dangerous_stdlib() {
