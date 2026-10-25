@@ -119,6 +119,10 @@ header .spacer{flex:1}
 .hintrow>span{min-width:0;overflow-wrap:anywhere}
 .hintrow>form{flex:none}
 .hintrow button{white-space:nowrap}
+/* Match the unprioritized (ghost) button's box to the prioritized (solid) one:
+   the solid has border:0, so draw the ghost's outline as an inset shadow rather
+   than a real border, which would otherwise add ~2px and make it larger. */
+.hintrow button.ghost{border:0;box-shadow:inset 0 0 0 1px var(--bd)}
 button{background:var(--accent);color:#0d1117;border:0;border-radius:7px;padding:5px 12px;font-weight:600;font-size:12px;cursor:pointer}
 button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted)}
 .foundhints{margin:6px 0}
