@@ -1892,8 +1892,6 @@ const MC_LOADER: &str = "NeoForge 26.2.0.90"; // mod loader build
 /// the shared stylesheet uses short utility names, so a generic class would
 /// silently inherit unrelated rules (see the header note in this file).
 const GAME_STYLE: &str = r#"<style>
-main{max-width:none;padding-inline:clamp(20px,4vw,80px)}
-header .hwrap{max-width:none;padding-inline:clamp(20px,4vw,80px)}
 .gtabs{display:flex;gap:2px;border-bottom:1px solid var(--bd);margin:22px 0 16px}
 .gtab{background:none;color:var(--muted);border:0;border-bottom:2px solid transparent;border-radius:0;margin-bottom:-1px;padding:8px 15px;font-family:var(--font);font-size:14px;font-weight:600;cursor:pointer}
 .gtab:hover{color:var(--fg)}
@@ -1902,7 +1900,7 @@ header .hwrap{max-width:none;padding-inline:clamp(20px,4vw,80px)}
 .utlist{display:flex;flex-direction:column;gap:4px;max-height:70vh;overflow:auto}
 .utloc{font-size:13px;line-height:1.35;padding:6px 10px;background:var(--panel);border:1px solid var(--bd);border-radius:7px}
 .utnote{font-size:12px;color:var(--muted);margin-top:14px;font-style:italic}
-.ptmap{max-width:100%}
+.ptmap{width:100vw;max-width:100vw;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);padding-inline:clamp(16px,3vw,48px);box-sizing:border-box}
 .ptmapwrap{position:relative;display:inline-block;max-width:100%;vertical-align:top;margin:0 14px 16px 0}
 .ptmapwrap img{display:block;max-width:100%;height:auto}
 .ptmk{position:absolute;border:1px solid rgba(0,0,0,.65);box-sizing:border-box;border-radius:2px}
