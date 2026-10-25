@@ -26,6 +26,7 @@ mod archive;
 mod checker;
 mod db;
 mod generate;
+mod inlogic;
 mod meta;
 mod mine;
 mod render;
@@ -84,6 +85,10 @@ async fn main() {
     // Persistent activity log: ingest the AP server journal (independent of the
     // tracker connection; idles until the board knows a season).
     activity::spawn(board.clone(), db.clone());
+
+    // Universal-Tracker in-logic recomputer: keeps each slot's reachable-location
+    // cache fresh (shells out to UT when a slot's state moves). Needs the AP conn.
+    inlogic::spawn(board.clone(), db.clone(), ap_cfg.clone());
 
     let genstate: generate::GenState = Arc::new(std::sync::Mutex::new((false, "idle".into())));
     let state = AppState {
@@ -657,6 +662,10 @@ async fn game_view(
     // whitelist form (only read/used there).
     let my_mc = st.db.mc_username(&me).await;
 
+    // Cached Universal-Tracker in-logic locations for this slot (computed by the
+    // inlogic recomputer; may be absent until the first run completes).
+    let inlogic = st.db.inlogic_get(&season, ap_slot).await;
+
     render::game_page(
         ap_slot,
         &game,
@@ -673,6 +682,7 @@ async fn game_view(
         my_mc.as_deref(),
         Some(mc_addr().as_str()),
         &my_files,
+        inlogic.as_ref(),
     )
 }
 

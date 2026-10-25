@@ -93,6 +93,19 @@ pub struct ActivityRow {
     pub class: Option<String>,
 }
 
+/// A slot's cached Universal-Tracker in-logic result, as the game page reads it.
+/// (The `inlogic` table also stores game/count/approx/sent/received for the
+/// recomputer's own bookkeeping; those aren't needed for rendering.)
+#[derive(Debug, FromRow, Clone, Default)]
+pub struct InLogic {
+    /// When this result was computed (epoch seconds).
+    pub ts: i64,
+    /// JSON array of in-logic location names.
+    pub locations: String,
+    /// Set when the last compute failed (and no good prior result was kept).
+    pub err: Option<String>,
+}
+
 /// Filter for the activity log. Empty `kinds`/`classes` = unconstrained; `None`
 /// fields are unconstrained. `since`/`until` are epoch-second bounds (inclusive).
 #[derive(Default)]
@@ -287,6 +300,28 @@ impl Db {
                 .execute(&pool)
                 .await;
         }
+        // Universal-Tracker in-logic cache: one row per (season, ap_slot), holding
+        // that slot's currently-reachable location names (computed out-of-band by
+        // the `inlogic` recomputer shelling out to UT). `sent`/`received` are the
+        // slot state the row was computed at, so the recomputer re-runs only when
+        // the slot's state moves.
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS inlogic (
+                 season TEXT NOT NULL,
+                 ap_slot INTEGER NOT NULL,
+                 ts INTEGER NOT NULL,
+                 game TEXT NOT NULL DEFAULT '',
+                 sent INTEGER NOT NULL DEFAULT 0,
+                 received INTEGER NOT NULL DEFAULT 0,
+                 count INTEGER NOT NULL DEFAULT 0,
+                 locations TEXT NOT NULL DEFAULT '[]',
+                 approx INTEGER NOT NULL DEFAULT 0,
+                 err TEXT,
+                 PRIMARY KEY (season, ap_slot)
+               )"#,
+        )
+        .execute(&pool)
+        .await?;
         Ok(Self { pool })
     }
 
@@ -672,6 +707,70 @@ impl Db {
             .await
             .unwrap_or(0)
             == 1
+    }
+
+    /// Cached in-logic result for one slot, if computed this season.
+    pub async fn inlogic_get(&self, season: &str, ap_slot: i64) -> Option<InLogic> {
+        sqlx::query_as::<_, InLogic>(
+            "SELECT ts, locations, err FROM inlogic WHERE season = ? AND ap_slot = ?",
+        )
+        .bind(season)
+        .bind(ap_slot)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten()
+    }
+
+    /// The `(sent, received)` state a slot's cached in-logic was computed at, so
+    /// the recomputer can skip slots whose state hasn't moved. `None` = no row.
+    pub async fn inlogic_state(&self, season: &str, ap_slot: i64) -> Option<(i64, i64)> {
+        sqlx::query_as::<_, (i64, i64)>(
+            "SELECT sent, received FROM inlogic WHERE season = ? AND ap_slot = ?",
+        )
+        .bind(season)
+        .bind(ap_slot)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten()
+    }
+
+    /// Upsert a slot's computed in-logic result.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn inlogic_set(
+        &self,
+        season: &str,
+        ap_slot: i64,
+        ts: i64,
+        game: &str,
+        sent: i64,
+        received: i64,
+        count: i64,
+        locations: &str,
+        approx: bool,
+        err: Option<&str>,
+    ) {
+        let _ = sqlx::query(
+            "INSERT INTO inlogic (season, ap_slot, ts, game, sent, received, count, locations, approx, err)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(season, ap_slot) DO UPDATE SET
+               ts = excluded.ts, game = excluded.game, sent = excluded.sent,
+               received = excluded.received, count = excluded.count,
+               locations = excluded.locations, approx = excluded.approx, err = excluded.err",
+        )
+        .bind(season)
+        .bind(ap_slot)
+        .bind(ts)
+        .bind(game)
+        .bind(sent)
+        .bind(received)
+        .bind(count)
+        .bind(locations)
+        .bind(approx as i64)
+        .bind(err)
+        .execute(&self.pool)
+        .await;
     }
 
     /// The newest `limit` activity rows for a season (board preview).

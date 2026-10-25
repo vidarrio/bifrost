@@ -1882,6 +1882,72 @@ const MC_LOADER: &str = "NeoForge 26.2.0.90"; // mod loader build
 /// The per-game page: claim/unclaim its players, hint with live item search,
 /// and all hints in this world with a "prioritize" toggle.
 #[allow(clippy::too_many_arguments)]
+/// Game-page tab styling (Hints | Universal Tracker). Distinctive class names:
+/// the shared stylesheet uses short utility names, so a generic class would
+/// silently inherit unrelated rules (see the header note in this file).
+const GAME_STYLE: &str = r#"<style>
+.gtabs{display:flex;gap:2px;border-bottom:1px solid var(--bd);margin:22px 0 16px}
+.gtab{background:none;color:var(--muted);border:0;border-bottom:2px solid transparent;border-radius:0;margin-bottom:-1px;padding:8px 15px;font-family:var(--font);font-size:14px;font-weight:600;cursor:pointer}
+.gtab:hover{color:var(--fg)}
+.gtab.on{color:var(--accent);border-bottom-color:var(--accent)}
+.utmeta{font-family:var(--mono);font-size:12px;color:var(--muted);margin:0 0 12px}
+.utlist{display:flex;flex-direction:column;gap:4px;max-height:70vh;overflow:auto}
+.utloc{font-size:13px;line-height:1.35;padding:6px 10px;background:var(--panel);border:1px solid var(--bd);border-radius:7px}
+.utnote{font-size:12px;color:var(--muted);margin-top:14px;font-style:italic}
+</style>"#;
+
+/// Toggles the game page's tab panels (delegated click on the tab bar).
+const GAME_TAB_JS: &str = r#"<script>
+(function(){var bar=document.querySelector('.gtabs');if(!bar)return;
+bar.addEventListener('click',function(e){var b=e.target.closest('.gtab');if(!b)return;
+bar.querySelectorAll('.gtab').forEach(function(x){x.classList.toggle('on',x===b);});
+var id=b.getAttribute('data-tab');
+document.querySelectorAll('.gtabpanel').forEach(function(p){p.hidden=(p.id!==id);});
+});})();
+</script>"#;
+
+/// Tab bar + the opening tag of the (default-visible) Hints panel. The caller
+/// closes the panel, then appends `inlogic_panel(...)` and `GAME_TAB_JS`.
+fn tabs_open() -> &'static str {
+    r#"<div class="gtabs"><button type="button" class="gtab on" data-tab="tab-hints">Hints</button><button type="button" class="gtab" data-tab="tab-ut">Universal Tracker</button></div><div class="gtabpanel" id="tab-hints">"#
+}
+
+/// The Universal Tracker tab panel, from the slot's cached in-logic result.
+fn inlogic_panel(inlogic: Option<&crate::db::InLogic>) -> String {
+    let mut s =
+        String::from(r#"<div class="gtabpanel" id="tab-ut" hidden><h2>In logic now</h2>"#);
+    match inlogic {
+        None => s.push_str(
+            r#"<p class="empty">Universal Tracker hasn't mapped this slot yet — it recomputes a few seconds after the slot's items or checks change. Check back shortly.</p>"#,
+        ),
+        Some(il) => {
+            let locs: Vec<String> = serde_json::from_str(&il.locations).unwrap_or_default();
+            if locs.is_empty() && il.err.is_some() {
+                s.push_str(r#"<p class="empty">Couldn't compute in-logic locations for this slot right now — it'll retry automatically.</p>"#);
+            } else {
+                let n = locs.len();
+                s.push_str(&format!(
+                    r#"<p class="utmeta"><b>{n}</b> location{} reachable right now · as of <span class="ago" data-ts="{}"></span></p>"#,
+                    if n == 1 { "" } else { "s" },
+                    il.ts,
+                ));
+                if locs.is_empty() {
+                    s.push_str(r#"<p class="empty">Nothing new is in logic right now.</p>"#);
+                } else {
+                    s.push_str(r#"<div class="utlist">"#);
+                    for l in &locs {
+                        s.push_str(&format!(r#"<div class="utloc">{}</div>"#, esc(l)));
+                    }
+                    s.push_str("</div>");
+                }
+                s.push_str(r#"<p class="utnote">Computed by Universal Tracker from this slot's current items. Randomized options (entrance randomizer / weighted choices) can make it differ slightly from the server.</p>"#);
+            }
+        }
+    }
+    s.push_str("</div>");
+    s
+}
+
 pub fn game_page(
     ap_slot: i64,
     game: &str,
@@ -1898,12 +1964,17 @@ pub fn game_page(
     mc_username: Option<&str>,
     mc_addr: Option<&str>,
     files: &[crate::generate::OutputFile],
+    inlogic: Option<&crate::db::InLogic>,
 ) -> Html<String> {
     let live = snap.ap.get(&ap_slot).cloned().unwrap_or_default();
     let back = format!("/game/{ap_slot}");
     let here: Vec<&SlotRow> = slots.iter().filter(|r| r.ap_slot == ap_slot).collect();
     let is_common = here.iter().any(|r| r.is_common);
     let mut out = page_head(Some(me));
+    out.push_str(GAME_STYLE);
+    // The Universal Tracker tab panel is identical for both the common and the
+    // regular slot branches; build it once.
+    let ut_html = inlogic_panel(inlogic);
     out.push_str(&format!(
         r#"<h1>{}</h1><div class="crumb"><a href="/board">← board</a>{}</div>
 <div class="meta">{} locations · sent {} · received {} · {} still to be found</div>"#,
@@ -2002,6 +2073,11 @@ pub fn game_page(
             );
         }
 
+        // Tabs: everything hint-related goes in the Hints panel; the Universal
+        // Tracker panel (built above) sits beside it. The join/whitelist info
+        // above stays outside the tabs.
+        out.push_str(tabs_open());
+
         // Communal hinting: only players with a claimed game this season may spend
         // the common game's OWN (shared) AP hint points — no personal/bonus points.
         if can_hint_common {
@@ -2047,8 +2123,10 @@ pub fn game_page(
             &back,
             is_admin,
         ));
-        out.push_str("</div>");
-
+        out.push_str("</div>"); // close #worldhints
+        out.push_str("</div>"); // close #tab-hints
+        out.push_str(&ut_html);
+        out.push_str(GAME_TAB_JS);
         out.push_str("</main></body></html>");
         return Html(out);
     }
@@ -2099,6 +2177,11 @@ pub fn game_page(
         }
         out.push_str("</div>");
     }
+
+    // Tabs: the hint form + per-item hint list live in the Hints panel; the
+    // Universal Tracker panel (built above) sits beside it. Players/files above
+    // stay outside the tabs.
+    out.push_str(tabs_open());
 
     // Hinting — shown only to a player who claims a seat on this slot. Admins do
     // not get it here; they hint via the server console instead.
@@ -2151,7 +2234,10 @@ pub fn game_page(
         &back,
         can_prioritize,
     ));
-    out.push_str("</div>");
+    out.push_str("</div>"); // close #worldhints
+    out.push_str("</div>"); // close #tab-hints
+    out.push_str(&ut_html);
+    out.push_str(GAME_TAB_JS);
 
     out.push_str("</main></body></html>");
     Html(out)
