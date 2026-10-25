@@ -119,13 +119,9 @@ header .spacer{flex:1}
 .hintrow>span{min-width:0;overflow-wrap:anywhere}
 .hintrow>form{flex:none}
 /* The two states have different-length labels ("★ prioritized" vs
-   "☆ prioritize"), so each button sized to its own text. A shared min-width
-   (big enough for the longer label) makes both the same width. */
-.hintrow button{white-space:nowrap;min-width:140px}
-/* And keep their heights equal: the solid (prioritized) button has border:0, so
-   draw the ghost's outline as an inset shadow instead of a real border (which
-   would add ~2px). */
-.hintrow button.ghost{border:0;box-shadow:inset 0 0 0 1px var(--bd)}
+   "☆ prioritize"), so each button sized to its own text. A shared min-width,
+   set to about the longer label's natural width, makes both the same width. */
+.hintrow button{white-space:nowrap;min-width:112px}
 button{background:var(--accent);color:#0d1117;border:0;border-radius:7px;padding:5px 12px;font-weight:600;font-size:12px;cursor:pointer}
 button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted)}
 .foundhints{margin:6px 0}
