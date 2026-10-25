@@ -1913,6 +1913,14 @@ const GAME_STYLE: &str = r#"<style>
 .pttab{background:none;color:var(--muted);border:0;border-bottom:2px solid transparent;border-radius:0;padding:5px 11px;font-family:var(--font);font-size:13px;font-weight:600;cursor:pointer;margin-bottom:-1px}
 .pttab:hover{color:var(--fg)}.pttab.on{color:var(--accent);border-bottom-color:var(--accent)}
 .ptgroup{margin:6px 0}.ptgh{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:10px 0 4px}
+.ptarr{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.ptgrid{display:inline-block;margin:4px 0}
+.ptgrow{display:flex;gap:3px;justify-content:center}
+.ptcell{position:relative;display:inline-flex;width:34px;height:34px;align-items:center;justify-content:center}
+.ptcell.empty{visibility:hidden}
+.ptitem{max-width:100%;max-height:100%;image-rendering:pixelated}
+.ptitem.off{opacity:.25;filter:grayscale(.7)}
+.ptov{position:absolute;right:1px;bottom:0;font-family:var(--mono);font-size:10px;font-weight:700;color:#fff;text-shadow:0 0 2px #000,0 0 2px #000,0 0 2px #000;pointer-events:none}
 </style>"#;
 
 /// Toggles the game page's tab panels (delegated click on the tab bar).
@@ -1965,6 +1973,21 @@ const PT_JS: &str = r#"<script>
   if(img.complete && img.naturalWidth) place(); else img.addEventListener('load',place);
   return wrap;
  }
+ var itemsByCode={};
+ function buildIndex(){ itemsByCode={}; (st.items||[]).forEach(function(it){ (it.codes||[]).forEach(function(c){ if(c) itemsByCode[c]=it; }); }); }
+ function assetUrl(f){ return '/game/'+slot+'/poptracker/asset?file='+encodeURIComponent(f); }
+ function itemCell(code){
+  var cell=document.createElement('span'); cell.className='ptcell';
+  if(!code){ cell.classList.add('empty'); return cell; }
+  var it=itemsByCode[code];
+  if(it&&it.img){
+   var im=document.createElement('img'); im.className='ptitem'+(it.active?'':' off'); im.dataset.code=code; im.src=assetUrl(it.img); im.alt=it.name||code;
+   cell.title=it.name||code; cell.appendChild(im);
+   if(it.overlay){ var o=document.createElement('span'); o.className='ptov'; o.textContent=it.overlay; cell.appendChild(o); }
+  }
+  return cell;
+ }
+ function appendContent(parent,c){ if(c==null) return; if(Array.isArray(c)){ c.forEach(function(x){ parent.appendChild(render(x)); }); } else { parent.appendChild(render(c)); } }
  function render(n){
   if(n==null) return document.createComment('');
   if(Array.isArray(n)){ var f=document.createElement('div'); n.forEach(function(c){f.appendChild(render(c));}); return f; }
@@ -1986,20 +2009,36 @@ const PT_JS: &str = r#"<script>
    });
    return box;
   }
-  if(t==='group'){ var g=document.createElement('div'); g.className='ptgroup';
-   if(n.header){ var h=document.createElement('div'); h.className='ptgh'; h.textContent=n.header; g.appendChild(h); }
-   if(n.content!==undefined) g.appendChild(render(n.content)); return g;
+  if(t==='itemgrid'){ var g=document.createElement('div'); g.className='ptgrid';
+   (n.rows||[]).forEach(function(row){ var r=document.createElement('div'); r.className='ptgrow'; (row||[]).forEach(function(code){ r.appendChild(itemCell(code)); }); g.appendChild(r); });
+   return g;
   }
-  if(n.content!==undefined) return render(n.content);
+  if(t==='item'){ var ic=document.createElement('div'); ic.className='ptgrow'; ic.appendChild(itemCell(n.item||n.code||'')); return ic; }
+  if(t==='array'){ var a=document.createElement('div'); a.className='ptarr';
+   a.style.flexDirection=(n.orientation==='horizontal'?'row':'column'); a.style.alignItems=(n.orientation==='horizontal'?'flex-start':'center');
+   appendContent(a,n.content); return a;
+  }
+  if(t==='group'){ var gr=document.createElement('div'); gr.className='ptgroup';
+   if(n.header){ var h=document.createElement('div'); h.className='ptgh'; h.textContent=n.header; gr.appendChild(h); }
+   appendContent(gr,n.content); return gr;
+  }
+  if(n.content!==undefined){ var cc=document.createElement('div'); appendContent(cc,n.content); return cc; }
   return document.createComment(t||'');
  }
- function update(){ var m={}; (st.markers||[]).forEach(function(k){m[k.location+'@'+k.map]=k.accessible;});
-  host.querySelectorAll('.ptmk').forEach(function(mk){ var a=m[mk.dataset.key]; if(a!==undefined){ mk.style.background=col(a); mk.title=mk.dataset.loc+(a?' (in logic)':' (out of logic)'); } });
+ function update(){
+  var mm={}; (st.markers||[]).forEach(function(k){mm[k.location+'@'+k.map]=k.accessible;});
+  host.querySelectorAll('.ptmk').forEach(function(mk){ var a=mm[mk.dataset.key]; if(a!==undefined){ mk.style.background=col(a); mk.title=mk.dataset.loc+(a?' (in logic)':' (out of logic)'); } });
+  host.querySelectorAll('.ptitem').forEach(function(im){ var it=itemsByCode[im.dataset.code]; if(!it) return;
+   im.className='ptitem'+(it.active?'':' off'); if(it.img) im.src=assetUrl(it.img);
+   var ov=im.parentNode.querySelector('.ptov');
+   if(it.overlay){ if(!ov){ ov=document.createElement('span'); ov.className='ptov'; im.parentNode.appendChild(ov); } ov.textContent=it.overlay; }
+   else if(ov){ ov.remove(); }
+  });
  }
  function draw(d){
   if(!d||!d.pack){ host.textContent='No pack.'; return; }
   if(d.error){ host.textContent='Tracker error: '+d.error; return; }
-  st=d.state||{};
+  st=d.state||{}; buildIndex();
   if(host.dataset.built){ update(); return; }
   host.innerHTML='';
   if(st.layout){ host.appendChild(render(st.layout)); }

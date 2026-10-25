@@ -183,6 +183,13 @@ pub struct ItemState {
     pub active: bool,
     pub count: i64,
     pub stage: i64,
+    /// All codes this item answers to (so an item-grid cell can look it up).
+    pub codes: Vec<String>,
+    pub name: String,
+    /// Current image to show (stage image for staged items), pack-relative.
+    pub img: Option<String>,
+    /// Small overlay text (e.g. a consumable's count), if any.
+    pub overlay: Option<String>,
 }
 #[derive(Debug, Serialize)]
 pub struct MapInfo {
@@ -266,6 +273,12 @@ struct Eng {
     code_to_key: HashMap<String, String>,
     kind: HashMap<String, String>,
     stage_codes: HashMap<String, Vec<String>>,
+    /// key -> display name.
+    names: HashMap<String, String>,
+    /// key -> all codes (for item-grid cell lookup).
+    item_codes: HashMap<String, Vec<String>>,
+    /// key -> images: stage images for staged items, else a single base image.
+    imgs: HashMap<String, Vec<String>>,
     maps: Vec<MapDef>,
     nodes: Vec<LocNode>,
     /// Named layout widgets (`layouts/*.json`), e.g. `tracker_default`.
@@ -402,12 +415,37 @@ impl Session {
             .collect();
         for (key, kind) in keys {
             if let Ok(t) = items.get::<Table>(key.as_str()) {
+                let active = t.get::<bool>("Active").unwrap_or(false);
+                let count = t.get::<i64>("AcquiredCount").unwrap_or(0);
+                let stage = t.get::<i64>("CurrentStage").unwrap_or(0);
+                let e = self.eng.borrow();
+                let staged = kind == "progressive" || kind == "progressive_toggle" || kind == "static";
+                let img = e.imgs.get(&key).and_then(|v| {
+                    if staged {
+                        let i = (stage.max(0) as usize).min(v.len().saturating_sub(1));
+                        v.get(i)
+                    } else {
+                        v.first()
+                    }
+                    .filter(|s| !s.is_empty())
+                    .cloned()
+                });
+                // A consumable shows its count; an item is "lit" if active or held.
+                let overlay = if kind == "consumable" && count > 0 {
+                    Some(count.to_string())
+                } else {
+                    None
+                };
                 out.items.push(ItemState {
                     key: key.clone(),
                     kind,
-                    active: t.get::<bool>("Active").unwrap_or(false),
-                    count: t.get::<i64>("AcquiredCount").unwrap_or(0),
-                    stage: t.get::<i64>("CurrentStage").unwrap_or(0),
+                    active: active || count > 0,
+                    count,
+                    stage,
+                    codes: e.item_codes.get(&key).cloned().unwrap_or_default(),
+                    name: e.names.get(&key).cloned().unwrap_or_default(),
+                    img,
+                    overlay,
                 });
             }
         }
@@ -798,6 +836,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                     let kind = item.get("type").and_then(|v| v.as_str()).unwrap_or("toggle").to_string();
                     let mut all_codes: Vec<String> = Vec::new();
                     let mut stage_codes: Vec<String> = Vec::new();
+                    let mut imgs: Vec<String> = Vec::new();
                     if let Some(c) = item.get("codes").and_then(|v| v.as_str()) {
                         all_codes.extend(c.split(',').map(|s| s.trim().to_string()));
                     }
@@ -808,6 +847,13 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                                 stage_codes.push(first);
                                 all_codes.extend(c.split(',').map(|s| s.trim().to_string()));
                             }
+                            // one image per stage (index-aligned), "" if none
+                            imgs.push(st.get("img").and_then(|v| v.as_str()).unwrap_or("").to_string());
+                        }
+                    }
+                    if imgs.is_empty() {
+                        if let Some(im) = item.get("img").and_then(|v| v.as_str()) {
+                            imgs.push(im.to_string());
                         }
                     }
                     let key = all_codes.first().cloned().unwrap_or_else(|| {
@@ -827,9 +873,15 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                     t.set("Type", kind.as_str())?;
                     t.set("Name", item.get("name").and_then(|v| v.as_str()).unwrap_or(""))?;
                     items.set(key.as_str(), &t)?;
+                    let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     let mut e = eng2.borrow_mut();
                     for c in &all_codes {
                         e.code_to_key.insert(c.clone(), key.clone());
+                    }
+                    e.names.insert(key.clone(), name);
+                    e.item_codes.insert(key.clone(), all_codes.clone());
+                    if !imgs.is_empty() {
+                        e.imgs.insert(key.clone(), imgs);
                     }
                     e.kind.insert(key.clone(), kind);
                     if !stage_codes.is_empty() {
