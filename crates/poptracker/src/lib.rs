@@ -171,6 +171,10 @@ pub struct TrackerState {
     pub locations: Vec<LocationState>,
     /// Flat list of map placements to draw: one per (location × map_location).
     pub markers: Vec<Marker>,
+    /// The pack's resolved layout tree (`tracker_default` with `layout` refs
+    /// inlined), so the UI can reproduce the pack's tab hierarchy. `null` if the
+    /// pack defines no layout (the UI then just lists the maps).
+    pub layout: Option<serde_json::Value>,
 }
 #[derive(Debug, Serialize)]
 pub struct ItemState {
@@ -264,6 +268,8 @@ struct Eng {
     stage_codes: HashMap<String, Vec<String>>,
     maps: Vec<MapDef>,
     nodes: Vec<LocNode>,
+    /// Named layout widgets (`layouts/*.json`), e.g. `tracker_default`.
+    layouts: HashMap<String, serde_json::Value>,
     clear_h: Vec<Function>,
     item_h: Vec<Function>,
     loc_h: Vec<Function>,
@@ -454,6 +460,15 @@ impl Session {
                 sections,
             });
         }
+
+        // resolved layout tree (tracker_default + fallbacks), `layout` refs inlined
+        let layouts = self.eng.borrow().layouts.clone();
+        for root in ["tracker_default", "tracker_horizontal", "tracker_vertical"] {
+            if let Some(n) = layouts.get(root) {
+                out.layout = Some(resolve_layout(&layouts, n, 0));
+                break;
+            }
+        }
         out
     }
 
@@ -584,6 +599,44 @@ fn eval_rules(lua: &Lua, eng: &E, rules: &[String], depth: u32) -> bool {
 /// Effective accessibility = every OR-group passes (parent chain + own + section).
 fn eval_groups(lua: &Lua, eng: &E, groups: &[Vec<String>], depth: u32) -> bool {
     groups.iter().all(|g| eval_rules(lua, eng, g, depth))
+}
+
+/// Resolve a layout node for the UI: inline `{type:"layout", key:K}` references
+/// to the named layout `K`, recursing through `content`/`tabs`. Other fields
+/// (type, header, title, maps, orientation, dock…) are kept so the front-end can
+/// reproduce the pack's tab hierarchy.
+fn resolve_layout(
+    layouts: &HashMap<String, serde_json::Value>,
+    node: &serde_json::Value,
+    depth: u32,
+) -> serde_json::Value {
+    if depth > 64 {
+        return serde_json::Value::Null;
+    }
+    match node {
+        serde_json::Value::Object(o) => {
+            if o.get("type").and_then(|v| v.as_str()) == Some("layout") {
+                if let Some(target) = o.get("key").and_then(|v| v.as_str()).and_then(|k| layouts.get(k)) {
+                    return resolve_layout(layouts, target, depth + 1);
+                }
+                return serde_json::Value::Null;
+            }
+            let mut m = serde_json::Map::new();
+            for (k, v) in o {
+                let nv = if k == "content" || k == "tabs" {
+                    resolve_layout(layouts, v, depth + 1)
+                } else {
+                    v.clone()
+                };
+                m.insert(k.clone(), nv);
+            }
+            serde_json::Value::Object(m)
+        }
+        serde_json::Value::Array(a) => {
+            serde_json::Value::Array(a.iter().map(|x| resolve_layout(layouts, x, depth + 1)).collect())
+        }
+        other => other.clone(),
+    }
 }
 
 /// Parse a pack JSON file tolerating JSONC/JSON5 (comments + trailing commas),
@@ -842,7 +895,24 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
             })?,
         )?;
     }
-    for noop in ["AddLayouts", "AddClasses", "UiHint", "OpenLink"] {
+    {
+        let eng2 = eng.clone();
+        tracker.set(
+            "AddLayouts",
+            lua.create_function(move |_lua, (_t, file): (Table, String)| {
+                let txt = read_pack_file(&eng2, &file).map_err(to_lua)?;
+                let json = parse_pack_json(&txt).map_err(|e| mlua::Error::runtime(format!("AddLayouts json: {e}")))?;
+                if let Some(obj) = json.as_object() {
+                    let mut e = eng2.borrow_mut();
+                    for (k, v) in obj {
+                        e.layouts.insert(k.clone(), v.clone());
+                    }
+                }
+                Ok(())
+            })?,
+        )?;
+    }
+    for noop in ["AddClasses", "UiHint", "OpenLink"] {
         tracker.set(noop, lua.create_function(|_, _: MultiValue| Ok(()))?)?;
     }
     g.set("Tracker", &tracker)?;
@@ -938,6 +1008,19 @@ fn sandboxed_lua() -> Result<Lua> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn layout_inlines_refs_inside_tabs() {
+        let mut layouts = HashMap::new();
+        layouts.insert("inner".to_string(), serde_json::json!({"type":"map","maps":["m1"]}));
+        layouts.insert(
+            "tracker_default".to_string(),
+            serde_json::json!({"type":"tabbed","tabs":[{"title":"A","content":{"type":"layout","key":"inner"}}]}),
+        );
+        let r = resolve_layout(&layouts, layouts.get("tracker_default").unwrap(), 0);
+        assert_eq!(r["tabs"][0]["content"]["type"], "map");
+        assert_eq!(r["tabs"][0]["content"]["maps"][0], "m1");
+    }
 
     #[test]
     fn parses_jsonc_with_comments_and_trailing_commas() {

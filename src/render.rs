@@ -1907,6 +1907,11 @@ const GAME_STYLE: &str = r#"<style>
 .ptmk.d{transform:rotate(45deg)}
 .ptform{margin:10px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .ptmanage{margin-top:16px}.ptmanage>summary{cursor:pointer;color:var(--muted);font-size:13px}
+.ptnest{margin:4px 0}
+.pttabs{display:flex;flex-wrap:wrap;gap:2px;border-bottom:1px solid var(--bd);margin:0 0 10px}
+.pttab{background:none;color:var(--muted);border:0;border-bottom:2px solid transparent;border-radius:0;padding:5px 11px;font-family:var(--font);font-size:13px;font-weight:600;cursor:pointer;margin-bottom:-1px}
+.pttab:hover{color:var(--fg)}.pttab.on{color:var(--accent);border-bottom-color:var(--accent)}
+.ptgroup{margin:6px 0}.ptgh{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:10px 0 4px}
 </style>"#;
 
 /// Toggles the game page's tab panels (delegated click on the tab bar).
@@ -1931,32 +1936,72 @@ fn tabs_open() -> &'static str {
 const PT_JS: &str = r#"<script>
 (function(){
  var host=document.getElementById('ptmap'); if(!host) return;
- var slot=host.getAttribute('data-slot');
- function esc(s){var d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML;}
- function draw(d){
-  if(!d||!d.pack){host.innerHTML='<p class="empty">No pack.</p>';return;}
-  if(d.error){host.innerHTML='<p class="empty">Tracker error: '+esc(d.error)+'</p>';return;}
-  var st=d.state||{maps:[],markers:[]};
-  if(!st.maps||!st.maps.length){host.innerHTML='<p class="empty">This pack has no maps to show.</p>';return;}
-  var html='';
-  st.maps.forEach(function(m){
-   var sz=m.location_size||16;
-   html+='<div class="ptmapwrap"><img src="/game/'+slot+'/poptracker/asset?file='+encodeURIComponent(m.img)+'" alt="'+esc(m.name)+'">';
-   (st.markers||[]).filter(function(k){return k.map===m.name;}).forEach(function(k){
-    var s=k.size||sz;var col=k.accessible?'#28a56d':'#e24d5f';
-    var dia=((k.shape||m.location_shape)==='diamond')?' d':'';
-    html+='<span class="ptmk'+dia+'" title="'+esc(k.location)+(k.accessible?' (in logic)':' (out of logic)')+'" style="left:'+(k.x-s/2)+'px;top:'+(k.y-s/2)+'px;width:'+s+'px;height:'+s+'px;background:'+col+'"></span>';
-   });
-   html+='</div>';
+ var slot=host.getAttribute('data-slot'); var st={};
+ function col(a){return a?'#28a56d':'#e24d5f';}
+ function drawMap(mapName){
+  var m=(st.maps||[]).filter(function(x){return x.name===mapName;})[0];
+  var wrap=document.createElement('div'); wrap.className='ptmapwrap';
+  if(!m){ wrap.textContent='(map '+mapName+' missing)'; return wrap; }
+  var img=document.createElement('img'); img.loading='lazy';
+  img.src='/game/'+slot+'/poptracker/asset?file='+encodeURIComponent(m.img); wrap.appendChild(img);
+  var sz=m.location_size||16;
+  (st.markers||[]).filter(function(k){return k.map===mapName;}).forEach(function(k){
+   var s=k.size||sz; var mk=document.createElement('span');
+   mk.className='ptmk'+(((k.shape||m.location_shape)==='diamond')?' d':'');
+   mk.dataset.key=k.location+'@'+k.map; mk.dataset.loc=k.location;
+   mk.title=k.location+(k.accessible?' (in logic)':' (out of logic)');
+   mk.style.cssText='left:'+(k.x-s/2)+'px;top:'+(k.y-s/2)+'px;width:'+s+'px;height:'+s+'px;background:'+col(k.accessible);
+   wrap.appendChild(mk);
   });
-  host.innerHTML=html;
+  return wrap;
  }
- function load(){fetch('/game/'+slot+'/poptracker/state').then(function(r){return r.json();}).then(draw).catch(function(){});}
- var panel=document.getElementById('tab-pt');
- var bar=document.querySelector('.gtabs');
- if(bar){bar.addEventListener('click',function(e){var b=e.target.closest('.gtab');if(b&&b.getAttribute('data-tab')==='tab-pt')load();});}
+ function render(n){
+  if(n==null) return document.createComment('');
+  if(Array.isArray(n)){ var f=document.createElement('div'); n.forEach(function(c){f.appendChild(render(c));}); return f; }
+  if(typeof n!=='object') return document.createComment('');
+  var t=n.type;
+  if(t==='map'){ var d=document.createElement('div'); (n.maps||[]).forEach(function(mn){d.appendChild(drawMap(mn));}); return d; }
+  if(t==='tabbed'){
+   var box=document.createElement('div'); box.className='ptnest';
+   var bar=document.createElement('div'); bar.className='pttabs';
+   var body=document.createElement('div'); box.appendChild(bar); box.appendChild(body);
+   (n.tabs||[]).forEach(function(tab,i){
+    var btn=document.createElement('button'); btn.type='button'; btn.className='pttab'+(i===0?' on':''); btn.textContent=tab.title||('Tab '+(i+1));
+    var panel=render(tab.content); panel.hidden=(i!==0);
+    btn.addEventListener('click',function(){
+     bar.querySelectorAll('.pttab').forEach(function(x){x.classList.remove('on');}); btn.classList.add('on');
+     Array.prototype.forEach.call(body.children,function(p){p.hidden=true;}); panel.hidden=false;
+    });
+    bar.appendChild(btn); body.appendChild(panel);
+   });
+   return box;
+  }
+  if(t==='group'){ var g=document.createElement('div'); g.className='ptgroup';
+   if(n.header){ var h=document.createElement('div'); h.className='ptgh'; h.textContent=n.header; g.appendChild(h); }
+   if(n.content!==undefined) g.appendChild(render(n.content)); return g;
+  }
+  if(n.content!==undefined) return render(n.content);
+  return document.createComment(t||'');
+ }
+ function update(){ var m={}; (st.markers||[]).forEach(function(k){m[k.location+'@'+k.map]=k.accessible;});
+  host.querySelectorAll('.ptmk').forEach(function(mk){ var a=m[mk.dataset.key]; if(a!==undefined){ mk.style.background=col(a); mk.title=mk.dataset.loc+(a?' (in logic)':' (out of logic)'); } });
+ }
+ function draw(d){
+  if(!d||!d.pack){ host.textContent='No pack.'; return; }
+  if(d.error){ host.textContent='Tracker error: '+d.error; return; }
+  st=d.state||{};
+  if(host.dataset.built){ update(); return; }
+  host.innerHTML='';
+  if(st.layout){ host.appendChild(render(st.layout)); }
+  else if(st.maps&&st.maps.length){ st.maps.forEach(function(m){ host.appendChild(drawMap(m.name)); }); }
+  else { host.textContent='This pack has no maps to show.'; return; }
+  host.dataset.built='1';
+ }
+ function load(){ fetch('/game/'+slot+'/poptracker/state').then(function(r){return r.json();}).then(draw).catch(function(){}); }
+ var panel=document.getElementById('tab-pt'); var bar=document.querySelector('.gtabs');
+ if(bar){ bar.addEventListener('click',function(e){var b=e.target.closest('.gtab'); if(b&&b.getAttribute('data-tab')==='tab-pt') load();}); }
  load();
- setInterval(function(){if(panel&&!panel.hidden)load();},12000);
+ setInterval(function(){ if(panel&&!panel.hidden) load(); },12000);
 })();
 </script>"#;
 
