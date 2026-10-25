@@ -1919,7 +1919,7 @@ const GAME_STYLE: &str = r#"<style>
 .ptcell{position:relative;display:inline-flex;width:34px;height:34px;align-items:center;justify-content:center}
 .ptcell.empty{visibility:hidden}
 .ptitem{width:100%;height:100%;object-fit:contain;image-rendering:pixelated}
-.ptitem.off{opacity:.3}
+.ptitem.off{opacity:.25;filter:grayscale(.7)}
 .ptov{position:absolute;right:1px;bottom:0;font-family:var(--mono);font-size:10px;font-weight:700;color:#fff;text-shadow:0 0 2px #000,0 0 2px #000,0 0 2px #000;pointer-events:none}
 </style>"#;
 

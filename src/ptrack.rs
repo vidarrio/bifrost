@@ -10,7 +10,7 @@
 //! `poptracker::Session` holds a Lua VM and is `!Send`, so every compute runs
 //! inside one synchronous call — handlers invoke these from `spawn_blocking`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const PACK_ROOT: &str = "/var/lib/bifrost/packs";
 
@@ -53,7 +53,35 @@ pub fn install(season: &str, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), Strin
     std::fs::write(&tmp, zip_bytes).map_err(|e| format!("write temp: {e}"))?;
     let r = poptracker::extract_zip(&tmp, &dir).map_err(|e| e.to_string());
     let _ = std::fs::remove_file(&tmp);
-    r
+    r?;
+    normalize_pngs(&dir);
+    Ok(())
+}
+
+/// Convert indexed/palette (and grayscale) PNGs in the pack to RGBA. Browsers
+/// can render an indexed PNG with its palette background instead of honouring
+/// the `tRNS` transparency (notably under `image-rendering:pixelated`), which
+/// left transparent icons showing a background. Uses the AP venv's Pillow.
+fn normalize_pngs(dir: &Path) {
+    const SCRIPT: &str = r#"
+import sys, os
+from PIL import Image
+for r, _, fs in os.walk(sys.argv[1]):
+    for f in fs:
+        if f.lower().endswith('.png'):
+            p = os.path.join(r, f)
+            try:
+                im = Image.open(p)
+                if im.mode in ('P', 'PA', 'L', 'LA', '1'):
+                    im.convert('RGBA').save(p)
+            except Exception:
+                pass
+"#;
+    let _ = std::process::Command::new("/srv/archipelago/venv/bin/python")
+        .arg("-c")
+        .arg(SCRIPT)
+        .arg(dir)
+        .output();
 }
 
 /// Remove a slot's installed pack.
