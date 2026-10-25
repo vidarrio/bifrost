@@ -1941,35 +1941,49 @@ fn tabs_open() -> &'static str {
 
 /// Script that fills the PopTracker tab: fetch the computed tracker state and
 /// draw each map image with accessibility-coloured markers at their pixel
-/// coordinates (green = in logic, red = out), polling while the tab is open.
+/// coordinates (PopTracker palette: green available, yellow glitch, blue
+/// viewable, red blocked, grey collected; mixed locations split diagonally),
+/// polling while the tab is open.
 const PT_JS: &str = r#"<script>
 (function(){
  var host=document.getElementById('ptmap'); if(!host) return;
  var slot=host.getAttribute('data-slot'); var st={}; var ver='';
- // PopTracker's exact default location colors: collected/"Done" grey, in-logic
- // green, out-of-logic red.
- function secColor(s){ return s.checked?'#3f3f3f':(s.accessible?'#20ff20':'#cf1010'); }
- function secWord(s){ return s.checked?'collected':(s.accessible?'in logic':'out of logic'); }
- // Background for a marker: solid when every section agrees, otherwise a
- // PopTracker-style split (equal vertical bands, one color per section) so a
- // location with mixed in-logic/out-of-logic/collected checks reads at a glance.
+ // PopTracker's exact default marker colors, keyed by accessibility level.
+ var PT_COL={reachable:'#20ff20',glitch:'#ffff20',inspect:'#3040ff',none:'#cf1010',done:'#3f3f3f',partial:'#ff9f20'};
+ // Rank so a split shows the best state top-left, worst bottom-right.
+ var PT_RANK={reachable:4,glitch:3,inspect:2,none:1};
+ function secLevel(s){ return s.checked?'done':(s.level||(s.accessible?'reachable':'none')); }
+ function secColor(s){ return PT_COL[secLevel(s)]||PT_COL.none; }
+ function secWord(s){ var l=secLevel(s);
+  return l==='done'?'collected':l==='reachable'?'available':l==='glitch'?'available (glitch)':l==='inspect'?'viewable only':'blocked'; }
+ // Background for a marker. Collected checks drop out (as in PopTracker); the
+ // color reflects the checks that remain:
+ //   all collected        -> grey
+ //   one remaining state   -> that solid color
+ //   two remaining states  -> diagonal split, bottom-left to top-right
+ //   three or more states  -> solid orange "partial"
  function markerBg(k){
-  var cols=(k.sections||[]).map(secColor);
-  if(!cols.length){ cols=[k.checked?'#3f3f3f':(k.accessible?'#20ff20':'#cf1010')]; }
-  if(cols.every(function(c){return c===cols[0];})) return cols[0];
-  var n=cols.length, parts=[];
-  for(var i=0;i<n;i++){ parts.push(cols[i]+' '+(i*100/n).toFixed(2)+'% '+((i+1)*100/n).toFixed(2)+'%'); }
-  return 'linear-gradient(90deg,'+parts.join(',')+')';
+  var secs=(k.sections||[]);
+  if(!secs.length){ return k.checked?PT_COL.done:(k.accessible?PT_COL.reachable:PT_COL.none); }
+  var rem=secs.filter(function(s){return !s.checked;});
+  if(!rem.length) return PT_COL.done;
+  var cols=rem.map(secColor).filter(function(c,i,a){return a.indexOf(c)===i;});
+  if(cols.length===1) return cols[0];
+  if(cols.length>=3) return PT_COL.partial;
+  cols.sort(function(a,b){ return (ptRankOf(b)-ptRankOf(a)); });
+  // 135deg puts the dividing line bottom-left -> top-right; first color top-left.
+  return 'linear-gradient(135deg,'+cols[0]+' 50%,'+cols[1]+' 50%)';
  }
+ function ptRankOf(hex){ for(var k in PT_COL){ if(PT_COL[k]===hex&&PT_RANK[k]) return PT_RANK[k]; } return 0; }
  // Tooltip: the location name, then each check's name with its cleared/total
- // count and logic state (PopTracker shows every section a location holds).
+ // count and state (PopTracker shows every section a location holds).
  function markerTitle(k){
   var secs=(k.sections||[]);
   if(secs.length<=1){
-   var suffix=k.checked?' (collected)':(k.accessible?' (in logic)':' (out of logic)');
    var s0=secs[0];
-   if(s0&&s0.item_count>1){ return k.location+suffix+'\n'+s0.cleared+'/'+s0.item_count+' checks'; }
-   return k.location+suffix;
+   var word=s0?secWord(s0):(k.checked?'collected':(k.accessible?'available':'blocked'));
+   if(s0&&s0.item_count>1){ return k.location+' ('+word+')\n'+s0.cleared+'/'+s0.item_count+' checks'; }
+   return k.location+' ('+word+')';
   }
   var lines=[k.location];
   secs.forEach(function(s){ lines.push('• '+(s.name||'(section)')+': '+s.cleared+'/'+s.item_count+' ('+secWord(s)+')'); });

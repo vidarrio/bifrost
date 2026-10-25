@@ -37,7 +37,7 @@ fn summary_reports_ap_autotracking_and_counts() {
     assert!(sum.archipelago_autotracking, "fixture registers AP handlers");
     assert_eq!(sum.items, 3);
     assert_eq!(sum.maps, 1);
-    assert_eq!(sum.locations, 4);
+    assert_eq!(sum.locations, 6);
 }
 
 #[test]
@@ -139,6 +139,42 @@ fn checked_location_marks_section_and_marker_done() {
     let m = after.markers.iter().find(|m| m.location == "Tests/NeedsA").unwrap();
     assert!(m.checked, "location Done -> marker renders grey");
     assert!(m.sections[0].checked, "marker's section state is Done too");
+}
+
+#[test]
+fn bracket_rules_yield_glitch_and_inspect_levels() {
+    // `[b]` is a glitch requirement, `{b}` an inspect requirement. With `a` held
+    // but `b` missing, the normal part is met so each rule only downgrades:
+    // GlitchB -> sequence-break (yellow), InspectB -> viewable (blue).
+    let s = Session::new(&fixture()).unwrap();
+    s.on_clear(&serde_json::json!({})).unwrap();
+    s.on_retrieved("a", &serde_json::json!(1)).unwrap();
+    s.on_retrieved("b", &serde_json::json!(0)).unwrap();
+
+    let st = s.state();
+    let sec = |name: &str| {
+        st.locations
+            .iter()
+            .find(|l| l.name == name)
+            .unwrap_or_else(|| panic!("location {name}"))
+            .sections[0]
+            .clone()
+    };
+    assert_eq!(sec("Tests/GlitchB").level, "glitch", "missing [b] -> sequence break");
+    assert_eq!(sec("Tests/InspectB").level, "inspect", "missing {{b}} -> viewable only");
+    assert_eq!(sec("Tests/NeedsA").level, "reachable", "plain met rule -> reachable");
+    // `accessible` (the in-logic tally) stays true only for a fully reachable rule.
+    assert!(sec("Tests/NeedsA").accessible);
+    assert!(!sec("Tests/GlitchB").accessible && !sec("Tests/InspectB").accessible);
+
+    // Holding `b` promotes both to fully reachable.
+    s.on_retrieved("b", &serde_json::json!(1)).unwrap();
+    let st2 = s.state();
+    let lvl2 = |name: &str| {
+        st2.locations.iter().find(|l| l.name == name).unwrap().sections[0].level.clone()
+    };
+    assert_eq!(lvl2("Tests/GlitchB"), "reachable", "[b] now held -> reachable");
+    assert_eq!(lvl2("Tests/InspectB"), "reachable", "{{b}} now held -> reachable");
 }
 
 #[test]

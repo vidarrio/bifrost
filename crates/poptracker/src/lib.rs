@@ -218,7 +218,14 @@ pub struct SectionState {
     /// Chests collected so far (item_count - AvailableChestCount, clamped ≥0).
     /// Lets the UI show PopTracker's "cleared/total" counts in the tooltip.
     pub cleared: i64,
+    /// True iff `level == "reachable"` (fully in logic). Kept for the season-wide
+    /// "in logic" tallies that predate the richer `level`.
     pub accessible: bool,
+    /// PopTracker accessibility level: `reachable` (green), `glitch` (yellow,
+    /// sequence-break-only via `[..]` rules), `inspect` (blue, viewable-only via
+    /// `{..}` rules), or `none` (red, blocked). Bracket-free rules only ever
+    /// yield `reachable`/`none`, matching the old boolean behavior.
+    pub level: String,
     /// All of this section's chests have been checked (AvailableChestCount <= 0).
     pub checked: bool,
 }
@@ -514,11 +521,13 @@ impl Session {
                         g.push(s.rules.clone());
                     }
                     let avail = section_avail(&s.name);
+                    let lvl = eval_groups_level(&self.lua, &self.eng, &g, 0);
                     SectionState {
                         name: s.name.clone(),
                         item_count: s.item_count,
                         cleared: avail.map_or(0, |a| (s.item_count - a).max(0)),
-                        accessible: eval_groups(&self.lua, &self.eng, &g, 0),
+                        accessible: lvl == Level::Reachable,
+                        level: lvl.as_str().to_string(),
                         checked: avail.is_some_and(|a| a <= 0),
                     }
                 })
@@ -685,6 +694,108 @@ fn eval_rules(lua: &Lua, eng: &E, rules: &[String], depth: u32) -> bool {
 /// Effective accessibility = every OR-group passes (parent chain + own + section).
 fn eval_groups(lua: &Lua, eng: &E, groups: &[Vec<String>], depth: u32) -> bool {
     groups.iter().all(|g| eval_rules(lua, eng, g, depth))
+}
+
+/// PopTracker accessibility levels, worst→best. A rule can downgrade from
+/// `Reachable` via two bracket forms: `[token]` is a glitch/sequence-break
+/// requirement (missing it → `Glitch`), `{token}` is an inspect requirement
+/// (missing it → `Inspect`, i.e. you can see the check but not reach it).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Level {
+    None,
+    Inspect,
+    Glitch,
+    Reachable,
+}
+impl Level {
+    fn as_str(self) -> &'static str {
+        match self {
+            Level::None => "none",
+            Level::Inspect => "inspect",
+            Level::Glitch => "glitch",
+            Level::Reachable => "reachable",
+        }
+    }
+}
+
+/// Split a rule on top-level commas, keeping commas inside `[..]`/`{..}` groups
+/// attached to their token.
+fn split_rule_tokens(rule: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    for c in rule.chars() {
+        match c {
+            '[' | '{' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ']' | '}' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            ',' if depth == 0 => {
+                if !cur.trim().is_empty() {
+                    out.push(cur.trim().to_string());
+                }
+                cur.clear();
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur.trim().to_string());
+    }
+    out
+}
+
+/// Accessibility level of one AND-rule: normal tokens are hard requirements
+/// (any failure → `None`); `[..]`/`{..}` tokens downgrade a met rule.
+fn eval_rule_level(lua: &Lua, eng: &E, rule: &str, depth: u32) -> Level {
+    let (mut normal, mut glitch, mut inspect) = (true, true, true);
+    for t in split_rule_tokens(rule) {
+        if let Some(inner) = t.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            if !eval_token(lua, eng, inner, depth) {
+                glitch = false;
+            }
+        } else if let Some(inner) = t.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+            if !eval_token(lua, eng, inner, depth) {
+                inspect = false;
+            }
+        } else if !eval_token(lua, eng, &t, depth) {
+            normal = false;
+        }
+    }
+    if !normal {
+        return Level::None;
+    }
+    match (glitch, inspect) {
+        (true, true) => Level::Reachable,
+        (false, _) => Level::Glitch, // missing a glitch req → sequence-break only
+        (true, false) => Level::Inspect, // missing an inspect req → viewable only
+    }
+}
+
+/// A rule list is an OR: the best level any alternative achieves (empty => Reachable).
+fn eval_rules_level(lua: &Lua, eng: &E, rules: &[String], depth: u32) -> Level {
+    if rules.is_empty() {
+        return Level::Reachable;
+    }
+    rules
+        .iter()
+        .map(|r| eval_rule_level(lua, eng, r, depth))
+        .max()
+        .unwrap_or(Level::None)
+}
+
+/// Effective level across every AND-group (parent chain + own + section): the
+/// weakest group caps the result.
+fn eval_groups_level(lua: &Lua, eng: &E, groups: &[Vec<String>], depth: u32) -> Level {
+    groups
+        .iter()
+        .map(|g| eval_rules_level(lua, eng, g, depth))
+        .min()
+        .unwrap_or(Level::Reachable)
 }
 
 /// Resolve a layout node for the UI: inline `{type:"layout", key:K}` references
