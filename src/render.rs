@@ -1919,7 +1919,7 @@ const GAME_STYLE: &str = r#"<style>
 .ptcell{position:relative;display:inline-flex;width:34px;height:34px;align-items:center;justify-content:center}
 .ptcell.empty{visibility:hidden}
 .ptitem{width:100%;height:100%;object-fit:contain;image-rendering:pixelated}
-.ptitem.off{opacity:.25;filter:grayscale(.7)}
+.ptitem.ptoff{opacity:.25;filter:grayscale(.7)}
 .ptov{position:absolute;right:1px;bottom:0;font-family:var(--mono);font-size:10px;font-weight:700;color:#fff;text-shadow:0 0 2px #000,0 0 2px #000,0 0 2px #000;pointer-events:none}
 </style>"#;
 
@@ -1981,7 +1981,7 @@ const PT_JS: &str = r#"<script>
   if(!code){ cell.classList.add('empty'); return cell; }
   var it=itemsByCode[(''+code).toLowerCase()];
   if(it&&it.img){
-   var im=document.createElement('img'); im.className='ptitem'+(it.active?'':' off'); im.dataset.code=code; im.src=assetUrl(it.img); im.alt=it.name||code;
+   var im=document.createElement('img'); im.className='ptitem'+(it.active?'':' ptoff'); im.dataset.code=code; im.src=assetUrl(it.img); im.alt=it.name||code;
    cell.title=it.name||code; cell.appendChild(im);
    if(it.overlay){ var o=document.createElement('span'); o.className='ptov'; o.textContent=it.overlay; cell.appendChild(o); }
   }
@@ -2029,7 +2029,7 @@ const PT_JS: &str = r#"<script>
   var mm={}; (st.markers||[]).forEach(function(k){mm[k.location+'@'+k.map]=k.accessible;});
   host.querySelectorAll('.ptmk').forEach(function(mk){ var a=mm[mk.dataset.key]; if(a!==undefined){ mk.style.background=col(a); mk.title=mk.dataset.loc+(a?' (in logic)':' (out of logic)'); } });
   host.querySelectorAll('.ptitem').forEach(function(im){ var it=itemsByCode[im.dataset.code]; if(!it) return;
-   im.className='ptitem'+(it.active?'':' off'); if(it.img) im.src=assetUrl(it.img);
+   im.className='ptitem'+(it.active?'':' ptoff'); if(it.img) im.src=assetUrl(it.img);
    var ov=im.parentNode.querySelector('.ptov');
    if(it.overlay){ if(!ov){ ov=document.createElement('span'); ov.className='ptov'; im.parentNode.appendChild(ov); } ov.textContent=it.overlay; }
    else if(ov){ ov.remove(); }
