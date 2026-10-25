@@ -18,6 +18,7 @@ use axum::{
     routing::{get, post},
 };
 use serde::Deserialize;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
 mod activity;
@@ -148,6 +149,14 @@ async fn main() {
         .route("/minesweeper/leaderboard", get(mine_leaderboard))
         .route("/api/me", get(api_me))
         .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
+        // Dynamic HTML/JSON must never be cached (or bfcache'd) by the browser:
+        // a stale page would keep running old inline JS. `no-store` also disables
+        // the back/forward cache. Applied only where a handler didn't already set
+        // Cache-Control, so pack assets keep their explicit immutable/no-cache.
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("no-store"),
+        ))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
