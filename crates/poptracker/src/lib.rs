@@ -238,14 +238,41 @@ type E = Rc<RefCell<Eng>>;
 pub struct Session {
     lua: Lua,
     eng: E,
+    /// Remaining instruction-hook ticks for the current operation; the debug
+    /// hook decrements it and aborts at zero so untrusted pack Lua can't hang
+    /// the host. Reset (via [`charge`]) at the start of each public call.
+    budget: Rc<std::cell::Cell<u64>>,
 }
 
+/// Fire the debug hook every this many Lua VM instructions.
+const HOOK_EVERY: u32 = 1000;
+/// Max hook ticks per operation → `HOOK_EVERY * MAX_TICKS` instructions before
+/// a call is aborted as a runaway (~tens of millions; finite packs never reach it).
+const MAX_TICKS: u64 = 100_000;
+
 impl Session {
-    /// Create a session: set up the sandboxed host, then run the pack's
-    /// `init.lua` (which loads its items/locations/scripts and registers its
-    /// Archipelago handlers).
+    /// Create a session: set up the sandboxed host + instruction cap, then run
+    /// the pack's `init.lua` (which loads its items/locations/scripts and
+    /// registers its Archipelago handlers).
     pub fn new(pack: &Pack) -> Result<Session> {
         let lua = sandboxed_lua()?;
+        let budget = Rc::new(std::cell::Cell::new(MAX_TICKS));
+        {
+            let b = budget.clone();
+            lua.set_hook(
+                mlua::HookTriggers::new().every_nth_instruction(HOOK_EVERY),
+                move |_lua, _dbg| {
+                    let r = b.get();
+                    if r == 0 {
+                        return Err(mlua::Error::runtime(
+                            "instruction limit exceeded (possible infinite loop in pack Lua)",
+                        ));
+                    }
+                    b.set(r - 1);
+                    Ok(mlua::VmState::Continue)
+                },
+            );
+        }
         let eng: E = Rc::new(RefCell::new(Eng {
             dir: pack.dir.clone(),
             ..Default::default()
@@ -253,14 +280,22 @@ impl Session {
         lua.load("__ITEMS = {}").exec()?;
         install_host(&lua, &eng)?;
 
+        budget.set(MAX_TICKS);
         let init = read_pack_file(&eng, "scripts/init.lua")?;
         lua.load(&init).set_name("init.lua").exec()?;
 
-        Ok(Session { lua, eng })
+        Ok(Session { lua, eng, budget })
+    }
+
+    /// Reset the per-operation instruction budget. Call at the start of each
+    /// public method that runs pack Lua.
+    fn charge(&self) {
+        self.budget.set(MAX_TICKS);
     }
 
     /// Fire the pack's Clear handlers (called on connect) with `slot_data`.
     pub fn on_clear(&self, slot_data: &serde_json::Value) -> Result<()> {
+        self.charge();
         let sd = json_to_lua(&self.lua, slot_data)?;
         for h in self.eng.borrow().clear_h.clone() {
             h.call::<()>(sd.clone())?;
@@ -270,6 +305,7 @@ impl Session {
 
     /// Fire the pack's Item handlers for one received item.
     pub fn on_item(&self, index: i64, item_id: i64, item_name: &str, player: i64) -> Result<()> {
+        self.charge();
         for h in self.eng.borrow().item_h.clone() {
             h.call::<()>((index, item_id, item_name, player))?;
         }
@@ -278,6 +314,7 @@ impl Session {
 
     /// Fire the pack's Location handlers for one checked location.
     pub fn on_location(&self, location_id: i64, location_name: &str) -> Result<()> {
+        self.charge();
         for h in self.eng.borrow().loc_h.clone() {
             h.call::<()>((location_id, location_name))?;
         }
@@ -286,6 +323,7 @@ impl Session {
 
     /// Fire the pack's Retrieved/SetReply handlers for a data-storage value.
     pub fn on_retrieved(&self, key: &str, val: &serde_json::Value) -> Result<()> {
+        self.charge();
         let v = json_to_lua(&self.lua, val)?;
         for h in self.eng.borrow().retr_h.iter().chain(self.eng.borrow().setr_h.iter()).cloned() {
             h.call::<()>((key, v.clone()))?;
@@ -295,6 +333,7 @@ impl Session {
 
     /// Snapshot the current tracker state (items + location accessibility).
     pub fn state(&self) -> TrackerState {
+        self.charge();
         let mut out = TrackerState::default();
         let items: Table = match self.lua.globals().get("__ITEMS") {
             Ok(t) => t,

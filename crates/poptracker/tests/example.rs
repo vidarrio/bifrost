@@ -31,6 +31,16 @@ fn zip_add(zw: &mut zip::ZipWriter<std::fs::File>, base: &Path, dir: &Path, pref
 }
 
 #[test]
+fn instruction_cap_aborts_runaway_pack() {
+    // A pack whose init.lua spins forever must be aborted by the instruction
+    // cap, not hang the host.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/infinite-init");
+    let pack = Pack::load(dir).unwrap();
+    let r = Session::new(&pack);
+    assert!(r.is_err(), "runaway init.lua must be aborted by the instruction cap");
+}
+
+#[test]
 fn loads_from_zip_with_top_folder() {
     let src = fixture_dir();
     let tmp = tempfile::NamedTempFile::new().unwrap();
