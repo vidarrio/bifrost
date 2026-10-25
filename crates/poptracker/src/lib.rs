@@ -85,24 +85,8 @@ impl Pack {
     /// locate the pack root (the dir containing `scripts/init.lua`, at the zip
     /// root or one level down — packs are often zipped inside a top folder).
     pub fn load_zip(path: &Path) -> Result<Pack> {
-        let file = std::fs::File::open(path).map_err(|e| Error::Io(e.to_string()))?;
-        let mut zip = zip::ZipArchive::new(file).map_err(|e| Error::Pack(format!("zip: {e}")))?;
         let tmp = tempfile::TempDir::new().map_err(|e| Error::Io(e.to_string()))?;
-        for i in 0..zip.len() {
-            let mut f = zip.by_index(i).map_err(|e| Error::Pack(format!("zip entry {i}: {e}")))?;
-            // enclosed_name() rejects absolute paths and `..` traversal.
-            let Some(rel) = f.enclosed_name() else { continue };
-            let out = tmp.path().join(rel);
-            if f.is_dir() {
-                std::fs::create_dir_all(&out).map_err(|e| Error::Io(e.to_string()))?;
-                continue;
-            }
-            if let Some(parent) = out.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| Error::Io(e.to_string()))?;
-            }
-            let mut w = std::fs::File::create(&out).map_err(|e| Error::Io(e.to_string()))?;
-            std::io::copy(&mut f, &mut w).map_err(|e| Error::Io(e.to_string()))?;
-        }
+        extract_zip(path, tmp.path())?;
         let root = find_pack_root(tmp.path())?;
         Self::from_dir(root, Some(tmp))
     }
@@ -113,6 +97,50 @@ impl Pack {
         }
         Ok(Pack { dir, _tmp: tmp })
     }
+
+    /// The pack's root directory on disk.
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// Read a file from inside the pack (pack-relative), e.g. a map image.
+    /// Guards against path traversal.
+    pub fn asset(&self, rel: &str) -> Option<Vec<u8>> {
+        if rel.contains("..") || rel.starts_with('/') {
+            return None;
+        }
+        std::fs::read(self.dir.join(rel)).ok()
+    }
+}
+
+/// Extract a pack zip into `dest` (with a zip-slip guard). Used both for the
+/// temp-dir load path and to install an uploaded pack to permanent storage.
+pub fn extract_zip(zip_path: &Path, dest: &Path) -> Result<()> {
+    let file = std::fs::File::open(zip_path).map_err(|e| Error::Io(e.to_string()))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|e| Error::Pack(format!("zip: {e}")))?;
+    for i in 0..zip.len() {
+        let mut f = zip.by_index(i).map_err(|e| Error::Pack(format!("zip entry {i}: {e}")))?;
+        // enclosed_name() rejects absolute paths and `..` traversal.
+        let Some(rel) = f.enclosed_name() else { continue };
+        let out = dest.join(rel);
+        if f.is_dir() {
+            std::fs::create_dir_all(&out).map_err(|e| Error::Io(e.to_string()))?;
+            continue;
+        }
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| Error::Io(e.to_string()))?;
+        }
+        let mut w = std::fs::File::create(&out).map_err(|e| Error::Io(e.to_string()))?;
+        std::io::copy(&mut f, &mut w).map_err(|e| Error::Io(e.to_string()))?;
+    }
+    Ok(())
+}
+
+/// Find the pack root under `base`: `base` itself if it has `scripts/init.lua`,
+/// else the first immediate subdirectory that does. Public so a caller that
+/// extracted a pack with [`extract_zip`] can locate the root to load.
+pub fn pack_root(base: &Path) -> Result<PathBuf> {
+    find_pack_root(base)
 }
 
 /// Find the pack root under `base`: `base` itself if it has `scripts/init.lua`,

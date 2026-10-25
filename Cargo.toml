@@ -25,7 +25,8 @@ serde_json = "1"
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake"] }  # AP tracker websocket (ws://)
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }  # Bifrost slots + claims
-zip = { version = "9", default-features = false, features = ["deflate"] }  # read per-player files out of the generated seed zip
+poptracker = { path = "crates/poptracker" }  # PopTracker-pack engine (runs pack Lua -> tracker state)
+zip = { version = "9", default-features = false, features = ["deflate"] }  # read per-player files out of the generated seed zip + uploaded pack assets
 
 # Planned, added as each phase lands:
 #   reqwest     # the Discord bot / kanidm integration

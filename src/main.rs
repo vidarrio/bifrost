@@ -28,6 +28,7 @@ mod db;
 mod generate;
 mod inlogic;
 mod meta;
+mod ptrack;
 mod mine;
 mod render;
 mod season;
