@@ -705,6 +705,30 @@ fn json_to_lua(lua: &Lua, v: &serde_json::Value) -> Result<Value> {
 fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     let g = lua.globals();
 
+    // Plain globals the API declares (packs gate on PopVersion; a nil breaks
+    // version comparisons like `PopVersion < "x"`).
+    g.set("PopVersion", "0.34.1")?;
+    g.set("DEBUG", false)?;
+
+    // AutoTracker (memory interface): present but inert — AP packs still probe
+    // it (e.g. GetConnectionState). Reads return 0; connection state reads as 3
+    // (connected), since from the pack's view we are effectively connected.
+    let at = lua.create_table()?;
+    for m in ["ReadU8", "ReadU16", "ReadU24", "ReadU32"] {
+        at.set(m, lua.create_function(|_, _: MultiValue| Ok(0i64))?)?;
+    }
+    at.set("ReadVariable", lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?)?;
+    at.set("GetConnectionState", lua.create_function(|_, _: MultiValue| Ok(3i64))?)?;
+    at.set("SelectedConnectorType", lua.create_table()?)?;
+    g.set("AutoTracker", &at)?;
+
+    // Highlight enum (display only).
+    let hl = lua.create_table()?;
+    for (k, v) in [("None", 0), ("Avoid", 1), ("NoPriority", 2), ("Unspecified", 3), ("Priority", 4)] {
+        hl.set(k, v)?;
+    }
+    g.set("Highlight", &hl)?;
+
     // Tracker
     let tracker = lua.create_table()?;
     {
