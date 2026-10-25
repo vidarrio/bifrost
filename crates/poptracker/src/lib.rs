@@ -758,10 +758,19 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                     let key = all_codes.first().cloned().unwrap_or_else(|| {
                         item.get("name").and_then(|v| v.as_str()).unwrap_or("?").to_string()
                     });
+                    // Build the item object the way PopTracker exposes it to Lua:
+                    // the mutable state fields plus the declared properties packs
+                    // read (Increment/MinCount/MaxCount for consumables, etc.).
+                    let geti = |k: &str, d: i64| item.get(k).and_then(|v| v.as_i64()).unwrap_or(d);
                     let t = lua.create_table()?;
-                    t.set("Active", false)?;
-                    t.set("AcquiredCount", 0)?;
-                    t.set("CurrentStage", 0)?;
+                    t.set("Active", item.get("initial_active_state").and_then(|v| v.as_bool()).unwrap_or(false))?;
+                    t.set("AcquiredCount", geti("initial_quantity", 0))?;
+                    t.set("CurrentStage", geti("initial_stage_index", 0))?;
+                    t.set("Increment", geti("increment", 1))?;
+                    t.set("MinCount", geti("min_quantity", 0))?;
+                    t.set("MaxCount", geti("max_quantity", 0))?;
+                    t.set("Type", kind.as_str())?;
+                    t.set("Name", item.get("name").and_then(|v| v.as_str()).unwrap_or(""))?;
                     items.set(key.as_str(), &t)?;
                     let mut e = eng2.borrow_mut();
                     for c in &all_codes {
