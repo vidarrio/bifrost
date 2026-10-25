@@ -72,6 +72,12 @@ pub struct SlotMeta {
     /// hide markers for options the slot never generated. Static per season.
     #[serde(default)]
     pub all_locations: Vec<i64>,
+    /// The slot's starting inventory (precollected item ids). Delivered on
+    /// connect in AP, so a live tracker autotracks them — but they're not in the
+    /// savefile's received_items, so the engine must be fed them separately or
+    /// precollected gates (e.g. a starting season) evaluate false. Static.
+    #[serde(default)]
+    pub precollected: Vec<i64>,
 }
 
 #[derive(Debug, Deserialize)]

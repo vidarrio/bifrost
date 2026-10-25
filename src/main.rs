@@ -682,16 +682,25 @@ async fn pt_state(Path(ap_slot): Path<i64>, State(st): State<AppState>) -> Json<
     if season.is_empty() || !ptrack::has_pack(&season, ap_slot) {
         return Json(serde_json::json!({"pack": false}));
     }
-    let items: Vec<(i64, String)> = received
+    let name_of = |item: i64| {
+        meta.as_ref()
+            .and_then(|m| m.item_name(&game, item))
+            .map(str::to_string)
+            .unwrap_or_else(|| item.to_string())
+    };
+    // The slot's starting inventory comes first (as it does on an AP connect),
+    // then the items it has since received. Precollected items aren't in the
+    // savefile's received list, so without this, starting gates (e.g. a season)
+    // read false and their checks show blocked when they shouldn't.
+    let precollected: Vec<i64> = meta
+        .as_ref()
+        .and_then(|m| m.totals(ap_slot))
+        .map(|s| s.precollected.clone())
+        .unwrap_or_default();
+    let items: Vec<(i64, String)> = precollected
         .iter()
-        .map(|(item, _loc, _finder)| {
-            let name = meta
-                .as_ref()
-                .and_then(|m| m.item_name(&game, *item))
-                .map(str::to_string)
-                .unwrap_or_else(|| item.to_string());
-            (*item, name)
-        })
+        .map(|item| (*item, name_of(*item)))
+        .chain(received.iter().map(|(item, _loc, _finder)| (*item, name_of(*item))))
         .collect();
     // The slot's full location set (static per season) drives `visibility_rules`
     // so the tracker hides checks this slot's options never generated.

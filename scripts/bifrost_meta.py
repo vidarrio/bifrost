@@ -42,6 +42,7 @@ def main() -> None:
 
     slot_info = decoded["slot_info"]                # {slot: NetworkSlot}
     locations = decoded["locations"]                # {slot: {loc_id: (item, recv, flags)}}
+    precollected = decoded.get("precollected_items", {})  # {slot: [item_id, ...]} starting inventory
 
     world_size = {s: len(locs) for s, locs in locations.items()}
     items_for = {}
@@ -108,6 +109,11 @@ def main() -> None:
             # the slot). Lets the PopTracker engine apply `visibility_rules` to
             # hide checks the slot's options never generated.
             "all_locations": sorted(int(loc_id) for loc_id in locations.get(s, {})),
+            # The slot's starting inventory (precollected items). The network
+            # protocol delivers these on connect so a live tracker autotracks
+            # them, but they're absent from the savefile's received_items — feed
+            # them to the engine too, or season gates (e.g. "summer") read false.
+            "precollected": [int(i) for i in precollected.get(s, [])],
         }
     print(json.dumps(out))
 
