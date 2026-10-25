@@ -1902,7 +1902,7 @@ const GAME_STYLE: &str = r#"<style>
 .utnote{font-size:12px;color:var(--muted);margin-top:14px;font-style:italic}
 .ptmap{width:100vw;max-width:100vw;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);padding-inline:clamp(16px,3vw,48px);box-sizing:border-box;text-align:center}
 .ptmapwrap{position:relative;display:inline-block;max-width:100%;vertical-align:top;margin:0 7px 16px}
-.ptgroup .ptgh{text-align:left}
+.ptgroup .ptgh{text-align:center}
 .ptmapwrap img{display:block;max-width:100%;height:auto}
 .ptmk{position:absolute;border:1px solid rgba(0,0,0,.65);box-sizing:border-box;border-radius:2px}
 .ptmk.d{transform:rotate(45deg)}
@@ -1915,7 +1915,7 @@ const GAME_STYLE: &str = r#"<style>
 .ptgroup{margin:6px 0}.ptgh{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:10px 0 4px}
 .ptarr{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
 .ptgrid{display:inline-block;margin:4px 0}
-.ptgrow{display:flex;gap:3px;justify-content:center}
+.ptgrow{display:flex;gap:3px;justify-content:flex-start}
 .ptcell{position:relative;display:inline-flex;width:34px;height:34px;align-items:center;justify-content:center}
 .ptcell.empty{visibility:hidden}
 .ptitem{max-width:100%;max-height:100%;image-rendering:pixelated}

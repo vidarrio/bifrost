@@ -421,14 +421,16 @@ impl Session {
                 let e = self.eng.borrow();
                 let staged = kind == "progressive" || kind == "progressive_toggle" || kind == "static";
                 let img = e.imgs.get(&key).and_then(|v| {
-                    if staged {
+                    let pick = if staged {
                         let i = (stage.max(0) as usize).min(v.len().saturating_sub(1));
                         v.get(i)
                     } else {
                         v.first()
                     }
-                    .filter(|s| !s.is_empty())
-                    .cloned()
+                    .filter(|s| !s.is_empty());
+                    // Fall back to the first non-empty image (e.g. a progressive
+                    // item whose stage-0 image is blank) so the cell isn't empty.
+                    pick.or_else(|| v.iter().find(|s| !s.is_empty())).cloned()
                 });
                 // A consumable shows its count; an item is "lit" if active or held.
                 let overlay = if kind == "consumable" && count > 0 {
@@ -683,6 +685,12 @@ fn parse_pack_json(txt: &str) -> std::result::Result<serde_json::Value, String> 
     json5::from_str::<serde_json::Value>(txt).map_err(|e| e.to_string())
 }
 
+/// An item image spec may carry comma-separated image mods (e.g.
+/// `images/x.png,@disabled`); the file path is the part before the first comma.
+fn img_path(s: &str) -> String {
+    s.split(',').next().unwrap_or("").trim().to_string()
+}
+
 /// A number that PopTracker may encode as a JSON number or a numeric string.
 fn num(v: &serde_json::Value) -> Option<f64> {
     v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
@@ -848,12 +856,12 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                                 all_codes.extend(c.split(',').map(|s| s.trim().to_string()));
                             }
                             // one image per stage (index-aligned), "" if none
-                            imgs.push(st.get("img").and_then(|v| v.as_str()).unwrap_or("").to_string());
+                            imgs.push(st.get("img").and_then(|v| v.as_str()).map(img_path).unwrap_or_default());
                         }
                     }
                     if imgs.is_empty() {
                         if let Some(im) = item.get("img").and_then(|v| v.as_str()) {
-                            imgs.push(im.to_string());
+                            imgs.push(img_path(im));
                         }
                     }
                     let key = all_codes.first().cloned().unwrap_or_else(|| {
