@@ -26,6 +26,11 @@ const OUTPUT: &str = "/srv/archipelago/output";
 const COMMON_DIR: &str = "/srv/archipelago/common";
 const COMMON_APWORLD: &str = "minecraft.apworld";
 const COMMON_YAML: &str = "Commons.yaml";
+/// The Universal Tracker apworld, kept canonically in `common/` (placed by
+/// the deploy script) and staged into `custom_worlds/` on every season deploy so
+/// the in-logic feature always has it even after a reset clears custom_worlds.
+/// No YAML references it, so it's inert during generation.
+const TRACKER_APWORLD: &str = "tracker.apworld";
 /// The AP slot name the common-game YAML declares — used to tag its Bifrost
 /// slot communal.
 pub const COMMON_SLOT_NAME: &str = "Commons";
@@ -300,6 +305,19 @@ pub async fn clear_apworlds() -> Result<(), String> {
     clear_ext(CUSTOM_WORLDS, "apworld").await
 }
 
+/// Stage the Universal Tracker apworld into custom_worlds/ from its canonical
+/// copy in common/. Called on every deploy so the in-logic feature survives a
+/// season reset (which clears custom_worlds). Non-fatal: if the canonical copy
+/// is missing, the season still generates — UT in-logic just won't update until
+/// it's reinstalled.
+async fn stage_tracker_apworld() {
+    let src = format!("{COMMON_DIR}/{TRACKER_APWORLD}");
+    let dst = format!("{CUSTOM_WORLDS}/{TRACKER_APWORLD}");
+    if let Err(e) = tokio::fs::copy(&src, &dst).await {
+        tracing::warn!("staging Universal Tracker apworld ({src} -> {dst}): {e}");
+    }
+}
+
 /// Remove every staged player YAML from Players/.
 pub async fn clear_player_yamls() -> Result<(), String> {
     clear_ext(PLAYERS, "yaml").await
@@ -402,6 +420,8 @@ async fn regen_inner(db: &Db, state: &GenState, old_season: &str) -> Result<Stri
         "Re-rolling the current lineup… (this can take a minute)",
     );
     clear_old_seeds().await;
+    // Always keep the Universal Tracker apworld present for the in-logic feature.
+    stage_tracker_apworld().await;
     let out = Command::new(AP_PYTHON)
         .arg(GEN_SCRIPT)
         .current_dir(AP_DIR)
@@ -477,6 +497,9 @@ async fn run_inner(db: &Db, state: &GenState) -> Result<String, String> {
         .await
         .map_err(|e| format!("staging the common-game YAML: {e}"))?;
     }
+
+    // Always keep the Universal Tracker apworld present for the in-logic feature.
+    stage_tracker_apworld().await;
 
     set(
         state,

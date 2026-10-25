@@ -87,13 +87,7 @@ async fn tick(
             continue;
         }
         match run_one(ap_slot, &name, connect, password).await {
-            Ok((ut_game, locs, captured)) => {
-                if !captured {
-                    // Connected/ran but produced no result — leave any prior row
-                    // intact and retry next cycle (state still differs).
-                    tracing::warn!("inlogic {name}: ran but captured nothing");
-                    continue;
-                }
+            Ok((ut_game, locs, true)) => {
                 let g = if ut_game.is_empty() { game } else { ut_game };
                 let json = serde_json::to_string(&locs).unwrap_or_else(|_| "[]".into());
                 db.inlogic_set(
@@ -110,17 +104,40 @@ async fn tick(
                 )
                 .await;
             }
-            Err(e) => {
-                // Transient failure: keep any prior result and retry next cycle.
-                // Only record an error row if we've never had a result, so the
-                // page can say "unavailable" instead of "not computed yet".
-                tracing::warn!("inlogic {name}: {e}");
-                if db.inlogic_get(&season, ap_slot).await.is_none() {
-                    db.inlogic_set(
-                        &season, ap_slot, now(), &game, sent, received, 0, "[]", false, Some(&e),
-                    )
-                    .await;
-                }
+            // Failure: ran-but-captured-nothing (Ok(..,false)), timed out, or
+            // crashed. Record the CURRENT state with an error so we don't re-run
+            // (and jam the serialized loop) until the slot's state actually moves
+            // — important for a world like Starcraft 2 whose logic is too large
+            // to compute in time. Preserve any last-known good list so the page
+            // keeps showing it rather than going blank.
+            other => {
+                let msg = match other {
+                    Err(e) => e,
+                    _ => "could not compute (world too large or unsupported)".to_string(),
+                };
+                tracing::warn!("inlogic {name}: {msg}");
+                let (count, locs_json) = match db.inlogic_get(&season, ap_slot).await {
+                    Some(p) if p.err.is_none() => {
+                        let n = serde_json::from_str::<Vec<String>>(&p.locations)
+                            .map(|v| v.len())
+                            .unwrap_or(0);
+                        (n as i64, p.locations)
+                    }
+                    _ => (0, "[]".to_string()),
+                };
+                db.inlogic_set(
+                    &season,
+                    ap_slot,
+                    now(),
+                    &game,
+                    sent,
+                    received,
+                    count,
+                    &locs_json,
+                    false,
+                    Some(&msg),
+                )
+                .await;
             }
         }
     }

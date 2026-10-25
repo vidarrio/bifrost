@@ -41,13 +41,18 @@ try:
     import settings
     settings.skip_autosave = True
     logging.getLogger().setLevel(logging.ERROR)
+    import worlds.tracker.TrackerClient as _tcl
     from worlds.tracker.TrackerClient import TrackerGameContext, server_loop
     import worlds.tracker.TrackerCore as _tc
-    # updateTracker() computes the in-logic list, then calls log_all_to_tab() to
-    # paint UT's Kivy UI — which imports kivy and sys.exit(1)s with no display.
-    # We only want the computed list (delivered via the callback), so neuter the
-    # UI paint. The CLI Launcher dodges this via a headless Kivy mock we don't set
-    # up; stubbing the UI method is cleaner than pulling in Kivy.
+    # Root fix for headless: UT's colour lookup (get_ut_color) imports kvui/kivy —
+    # which tries to open a window and sys.exit(1)s with no display — ONLY when
+    # `gui_enabled` is True. Kivy is installed here so UT guesses True; force it
+    # off (we are headless) so the colour path returns a constant with no kivy
+    # import. This is what makes games that reach the colour path (e.g. Starcraft
+    # 2) work — the log_all_to_tab stub below alone didn't cover them.
+    _tcl.gui_enabled = False
+    # Belt-and-suspenders: updateTracker() ends by painting UT's UI tab; we only
+    # want the computed list (delivered via the callback), so neuter the paint.
     _tc.TrackerCore.log_all_to_tab = lambda self: None
 except Exception as e:
     result["error"] = "init: %s" % e
