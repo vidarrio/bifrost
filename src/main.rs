@@ -701,6 +701,12 @@ async fn pt_state(Path(ap_slot): Path<i64>, State(st): State<AppState>) -> Json<
 #[derive(Deserialize)]
 struct PtAssetQuery {
     file: String,
+    /// Pack version stamp for cache-busting (see `ptrack::pack_version`). When
+    /// present the URL is unique per pack install, so the asset is immutable;
+    /// when absent (an old cached page) we force revalidation so a stale image
+    /// (e.g. a palette PNG's magenta key) can't keep showing.
+    #[serde(default)]
+    v: Option<String>,
 }
 
 /// Serve a file (e.g. a map image) from the slot's installed pack.
@@ -716,9 +722,17 @@ async fn pt_asset(
         .await
         .ok()
         .flatten();
+    let cache = if q.v.is_some() {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    };
     match bytes {
         Some(b) => (
-            [(axum::http::header::CONTENT_TYPE, pt_content_type(&q.file))],
+            [
+                (axum::http::header::CONTENT_TYPE, pt_content_type(&q.file)),
+                (axum::http::header::CACHE_CONTROL, cache),
+            ],
             b,
         )
             .into_response(),
