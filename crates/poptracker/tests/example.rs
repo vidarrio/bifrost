@@ -115,10 +115,13 @@ fn checked_location_marks_section_and_marker_done() {
     let s = Session::new(&fixture()).unwrap();
     s.on_clear(&serde_json::json!({})).unwrap();
 
-    // Before any check, NeedsA is not collected.
+    // Before any check, NeedsA is not collected and nothing is cleared. The
+    // marker carries the per-section state the map UI needs for split colors.
     let before = s.state();
     let m0 = before.markers.iter().find(|m| m.location == "Tests/NeedsA").unwrap();
     assert!(!m0.checked, "unchecked location marker is not Done");
+    assert_eq!(m0.sections.len(), 1, "marker carries its location's sections");
+    assert_eq!(m0.sections[0].cleared, 0, "nothing cleared before a check");
     let l0 = before.locations.iter().find(|l| l.name == "Tests/NeedsA").unwrap();
     assert!(!l0.checked && !l0.sections[0].checked);
 
@@ -128,9 +131,14 @@ fn checked_location_marks_section_and_marker_done() {
     let after = s.state();
     let l = after.locations.iter().find(|l| l.name == "Tests/NeedsA").unwrap();
     assert!(l.sections[0].checked, "section chest fully decremented -> checked");
+    assert_eq!(
+        l.sections[0].cleared, l.sections[0].item_count,
+        "cleared count reaches the section total once Done"
+    );
     assert!(l.checked, "all sections checked -> location Done");
     let m = after.markers.iter().find(|m| m.location == "Tests/NeedsA").unwrap();
     assert!(m.checked, "location Done -> marker renders grey");
+    assert!(m.sections[0].checked, "marker's section state is Done too");
 }
 
 #[test]

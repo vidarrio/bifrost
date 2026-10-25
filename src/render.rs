@@ -1946,10 +1946,35 @@ const PT_JS: &str = r#"<script>
 (function(){
  var host=document.getElementById('ptmap'); if(!host) return;
  var slot=host.getAttribute('data-slot'); var st={}; var ver='';
- // PopTracker's exact default location colors: collected/"Done" grey, all-in-logic
+ // PopTracker's exact default location colors: collected/"Done" grey, in-logic
  // green, out-of-logic red.
- function markerColor(k){ return k.checked?'#3f3f3f':(k.accessible?'#20ff20':'#cf1010'); }
- function markerTitle(k){ return k.location+(k.checked?' (collected)':(k.accessible?' (in logic)':' (out of logic)')); }
+ function secColor(s){ return s.checked?'#3f3f3f':(s.accessible?'#20ff20':'#cf1010'); }
+ function secWord(s){ return s.checked?'collected':(s.accessible?'in logic':'out of logic'); }
+ // Background for a marker: solid when every section agrees, otherwise a
+ // PopTracker-style split (equal vertical bands, one color per section) so a
+ // location with mixed in-logic/out-of-logic/collected checks reads at a glance.
+ function markerBg(k){
+  var cols=(k.sections||[]).map(secColor);
+  if(!cols.length){ cols=[k.checked?'#3f3f3f':(k.accessible?'#20ff20':'#cf1010')]; }
+  if(cols.every(function(c){return c===cols[0];})) return cols[0];
+  var n=cols.length, parts=[];
+  for(var i=0;i<n;i++){ parts.push(cols[i]+' '+(i*100/n).toFixed(2)+'% '+((i+1)*100/n).toFixed(2)+'%'); }
+  return 'linear-gradient(90deg,'+parts.join(',')+')';
+ }
+ // Tooltip: the location name, then each check's name with its cleared/total
+ // count and logic state (PopTracker shows every section a location holds).
+ function markerTitle(k){
+  var secs=(k.sections||[]);
+  if(secs.length<=1){
+   var suffix=k.checked?' (collected)':(k.accessible?' (in logic)':' (out of logic)');
+   var s0=secs[0];
+   if(s0&&s0.item_count>1){ return k.location+suffix+'\n'+s0.cleared+'/'+s0.item_count+' checks'; }
+   return k.location+suffix;
+  }
+  var lines=[k.location];
+  secs.forEach(function(s){ lines.push('• '+(s.name||'(section)')+': '+s.cleared+'/'+s.item_count+' ('+secWord(s)+')'); });
+  return lines.join('\n');
+ }
  function assetUrl(f){ return '/game/'+slot+'/poptracker/asset?file='+encodeURIComponent(f)+(ver?('&v='+ver):''); }
  function drawMap(mapName){
   var m=(st.maps||[]).filter(function(x){return x.name===mapName;})[0];
@@ -1963,7 +1988,7 @@ const PT_JS: &str = r#"<script>
    mk.className='ptmk'+(((k.shape||m.location_shape)==='diamond')?' d':'');
    mk.dataset.key=k.location+'@'+k.map; mk.dataset.loc=k.location;
    mk.title=markerTitle(k);
-   mk.style.background=markerColor(k);
+   mk.style.background=markerBg(k);
    mk._k=k; mk._s=s; spans.push(mk); wrap.appendChild(mk);
   });
   // Position markers as PERCENTAGES of the image's natural size, so they scale
@@ -2030,7 +2055,7 @@ const PT_JS: &str = r#"<script>
  }
  function update(){
   var mm={}; (st.markers||[]).forEach(function(k){mm[k.location+'@'+k.map]=k;});
-  host.querySelectorAll('.ptmk').forEach(function(mk){ var k=mm[mk.dataset.key]; if(k){ mk.style.background=markerColor(k); mk.title=markerTitle(k); } });
+  host.querySelectorAll('.ptmk').forEach(function(mk){ var k=mm[mk.dataset.key]; if(k){ mk.style.background=markerBg(k); mk.title=markerTitle(k); } });
   host.querySelectorAll('.ptitem').forEach(function(im){ var it=itemsByCode[im.dataset.code]; if(!it) return;
    im.className='ptitem'+(it.active?'':' ptoff'); if(it.img) im.src=assetUrl(it.img);
    var ov=im.parentNode.querySelector('.ptov');

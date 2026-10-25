@@ -211,10 +211,13 @@ pub struct LocationState {
     pub checked: bool,
     pub sections: Vec<SectionState>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct SectionState {
     pub name: String,
     pub item_count: i64,
+    /// Chests collected so far (item_count - AvailableChestCount, clamped ≥0).
+    /// Lets the UI show PopTracker's "cleared/total" counts in the tooltip.
+    pub cleared: i64,
     pub accessible: bool,
     /// All of this section's chests have been checked (AvailableChestCount <= 0).
     pub checked: bool,
@@ -231,6 +234,9 @@ pub struct Marker {
     pub accessible: bool,
     /// The location's checks are all collected → render grey ("Done").
     pub checked: bool,
+    /// Per-section state, so the map marker can render PopTracker-style split
+    /// colors (mixed in-logic/out-of-logic/collected) and a per-check tooltip.
+    pub sections: Vec<SectionState>,
 }
 
 /// A quick summary for validating an uploaded pack before accepting it.
@@ -483,20 +489,19 @@ impl Session {
             let loc_access = eval_groups(&self.lua, &self.eng, &n.groups, 0);
             let locobjs: Option<Table> = self.lua.globals().get("__LOCOBJS").ok();
             let single = n.sections.len() == 1;
-            // A section is "checked" once its chest object (if the pack touched it
-            // via `onLocation`) is fully decremented. Look under both the
-            // `full/section` and bare `full` address forms.
-            let section_checked = |secname: &str| -> bool {
-                let Some(objs) = &locobjs else { return false };
+            // The chests still available in a section's chest object (if the pack
+            // touched it via `onLocation`). Look under both the `full/section`
+            // and bare `full` address forms. `None` => the pack never tracked it.
+            let section_avail = |secname: &str| -> Option<i64> {
+                let objs = locobjs.as_ref()?;
                 let mut keys = vec![format!("{}/{}", n.name, secname)];
                 if single || secname.is_empty() {
                     keys.push(n.name.clone());
                 }
-                keys.iter().any(|k| {
+                keys.iter().find_map(|k| {
                     objs.get::<Table>(k.as_str())
                         .ok()
                         .and_then(|t| t.get::<i64>("AvailableChestCount").ok())
-                        .is_some_and(|avail| avail <= 0)
                 })
             };
             let sections: Vec<SectionState> = n
@@ -508,11 +513,13 @@ impl Session {
                     if !s.rules.is_empty() {
                         g.push(s.rules.clone());
                     }
+                    let avail = section_avail(&s.name);
                     SectionState {
                         name: s.name.clone(),
                         item_count: s.item_count,
+                        cleared: avail.map_or(0, |a| (s.item_count - a).max(0)),
                         accessible: eval_groups(&self.lua, &self.eng, &g, 0),
-                        checked: section_checked(&s.name),
+                        checked: avail.is_some_and(|a| a <= 0),
                     }
                 })
                 .collect();
@@ -528,6 +535,7 @@ impl Session {
                     location: n.name.clone(),
                     accessible: loc_access,
                     checked: loc_checked,
+                    sections: sections.clone(),
                 });
             }
             out.locations.push(LocationState {
