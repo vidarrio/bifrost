@@ -31,6 +31,16 @@ fn zip_add(zw: &mut zip::ZipWriter<std::fs::File>, base: &Path, dir: &Path, pref
 }
 
 #[test]
+fn summary_reports_ap_autotracking_and_counts() {
+    let s = Session::new(&fixture()).unwrap();
+    let sum = s.summary();
+    assert!(sum.archipelago_autotracking, "fixture registers AP handlers");
+    assert_eq!(sum.items, 3);
+    assert_eq!(sum.maps, 1);
+    assert_eq!(sum.locations, 4);
+}
+
+#[test]
 fn instruction_cap_aborts_runaway_pack() {
     // A pack whose init.lua spins forever must be aborted by the instruction
     // cap, not hang the host.

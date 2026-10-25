@@ -187,6 +187,18 @@ pub struct Marker {
     pub accessible: bool,
 }
 
+/// A quick summary for validating an uploaded pack before accepting it.
+#[derive(Debug, Serialize)]
+pub struct Summary {
+    pub items: usize,
+    pub locations: usize,
+    pub maps: usize,
+    /// True if the pack registered any Archipelago autotracking handlers, i.e.
+    /// it can be driven from AP server state. Packs that only autotrack from
+    /// emulator memory register none and are unusable server-side.
+    pub archipelago_autotracking: bool,
+}
+
 #[derive(Clone)]
 struct MapDef {
     name: String,
@@ -407,6 +419,33 @@ impl Session {
             });
         }
         out
+    }
+
+    /// Whether the pack registered any Archipelago autotracking handlers — i.e.
+    /// it can be driven from AP server state. Memory-only (emulator) packs
+    /// register none; the upload path should reject them with a clear message.
+    pub fn has_archipelago_autotracking(&self) -> bool {
+        let e = self.eng.borrow();
+        !(e.clear_h.is_empty()
+            && e.item_h.is_empty()
+            && e.loc_h.is_empty()
+            && e.retr_h.is_empty()
+            && e.setr_h.is_empty())
+    }
+
+    /// A summary for validating an uploaded pack (counts + AP-autotracking flag).
+    pub fn summary(&self) -> Summary {
+        let e = self.eng.borrow();
+        Summary {
+            items: e.kind.len(),
+            locations: e.nodes.len(),
+            maps: e.maps.len(),
+            archipelago_autotracking: !(e.clear_h.is_empty()
+                && e.item_h.is_empty()
+                && e.loc_h.is_empty()
+                && e.retr_h.is_empty()
+                && e.setr_h.is_empty()),
+        }
     }
 }
 
