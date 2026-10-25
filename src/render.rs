@@ -1913,6 +1913,10 @@ const GAME_STYLE: &str = r#"<style>
 .pttab{background:none;color:var(--muted);border:0;border-bottom:2px solid transparent;border-radius:0;padding:5px 11px;font-family:var(--font);font-size:13px;font-weight:600;cursor:pointer;margin-bottom:-1px}
 .pttab:hover{color:var(--fg)}.pttab.on{color:var(--accent);border-bottom-color:var(--accent)}
 .ptgroup{margin:6px 0}.ptgh{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:10px 0 4px}
+.ptdock{display:flex;flex-direction:column;gap:14px}
+.ptdockmid{display:flex;flex-direction:row;flex-wrap:wrap;gap:16px;justify-content:center;align-items:flex-start}
+/* A bottom-docked strip (e.g. the item panels) gets a divider from the map above it. */
+.ptdock>.ptdockmid+.ptdock,.ptdockmid+.ptdock{border-top:1px solid var(--bd);padding-top:12px}
 .ptarr{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
 .ptgrid{display:inline-block;margin:4px 0}
 .ptgrow{display:flex;gap:3px;justify-content:flex-start}
@@ -2063,6 +2067,24 @@ const PT_JS: &str = r#"<script>
   if(t==='group'){ var gr=document.createElement('div'); gr.className='ptgroup';
    if(n.header){ var h=document.createElement('div'); h.className='ptgh'; h.textContent=n.header; gr.appendChild(h); }
    appendContent(gr,n.content); return gr;
+  }
+  // PopTracker dock: children carry a `dock` edge (top/bottom/left/right) and
+  // undocked children fill the center. We honor it so docked panels land on
+  // their edge — e.g. Stardew's item grids are dock:"bottom", so they belong
+  // under the map, not above it (array order alone would float them to the top).
+  if(t==='dock'){
+   var kids=[]; (function col(c){ if(c==null) return; if(Array.isArray(c)) c.forEach(col); else kids.push(c); })(n.content);
+   var b={top:[],bottom:[],left:[],right:[],center:[]};
+   kids.forEach(function(k){ (b[(k&&k.dock)]||b.center).push(k); });
+   var box=document.createElement('div'); box.className='ptdock';
+   b.top.forEach(function(k){ box.appendChild(render(k)); });
+   if(b.left.length||b.center.length||b.right.length){
+    var mid=document.createElement('div'); mid.className='ptdockmid';
+    b.left.concat(b.center,b.right).forEach(function(k){ mid.appendChild(render(k)); });
+    box.appendChild(mid);
+   }
+   b.bottom.forEach(function(k){ box.appendChild(render(k)); });
+   return box;
   }
   if(n.content!==undefined){ var cc=document.createElement('div'); appendContent(cc,n.content); return cc; }
   return document.createComment(t||'');
