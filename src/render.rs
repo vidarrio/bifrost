@@ -1923,7 +1923,11 @@ fn inlogic_panel(inlogic: Option<&crate::db::InLogic>) -> String {
         Some(il) => {
             let locs: Vec<String> = serde_json::from_str(&il.locations).unwrap_or_default();
             if locs.is_empty() && il.err.is_some() {
-                s.push_str(r#"<p class="empty">Couldn't compute in-logic locations for this slot right now — it'll retry automatically.</p>"#);
+                let msg = match il.err.as_deref() {
+                    Some("disabled") => "Universal Tracker is turned off for this game by its developers, so live in-logic tracking isn't available here.",
+                    _ => "Couldn't compute in-logic locations for this slot right now — it'll retry automatically.",
+                };
+                s.push_str(&format!(r#"<p class="empty">{msg}</p>"#));
             } else {
                 let n = locs.len();
                 s.push_str(&format!(

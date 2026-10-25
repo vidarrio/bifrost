@@ -85,6 +85,14 @@ async def run():
     for _ in range(600):  # ~120s cap
         if result["captured"] or ctx.exit_event.is_set():
             break
+        # Some worlds' authors set the apworld's `disable_ut` flag (e.g. Starcraft
+        # 2): UT connects, refuses to track, and just sits idle forever — the
+        # callback never fires. Detect that and exit fast with a clear status
+        # instead of waiting out the whole timeout.
+        tc = getattr(ctx, "tracker_core", None)
+        if tc is not None and getattr(tc, "tracker_disabled", False):
+            result["error"] = "disabled"
+            break
         await asyncio.sleep(0.2)
     else:
         result.setdefault("error", "timeout")
