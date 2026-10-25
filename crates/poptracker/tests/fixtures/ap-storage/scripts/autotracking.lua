@@ -48,7 +48,20 @@ local onClear = function()
 end
 
 
+-- A minimal AP location handler, like real packs: a checked location id maps to
+-- a section `@`-path whose AvailableChestCount we decrement (→ "Done"/grey).
+local LOCATION_MAPPING = { [1] = "@Tests/NeedsA" }
+local onLocation = function(location_id, location_name)
+    local code = LOCATION_MAPPING[location_id]
+    if not code then return end
+    local obj = Tracker:FindObjectForCode(code)
+    if obj then
+        obj.AvailableChestCount = obj.AvailableChestCount - 1
+    end
+end
+
 Archipelago:AddClearHandler("Clear", onClear) -- called when connecting
 Archipelago:AddRetrievedHandler("Retrieved", onRetrieved) -- called when doing Get
 Archipelago:AddSetReplyHandler("Retrieved", onRetrieved) -- called when a watched value got updated
+Archipelago:AddLocationHandler("Location", onLocation) -- called when a location is checked
 print("running!")

@@ -23,6 +23,9 @@ pub struct SlotCounts {
     pub sent: u64,
     #[serde(default)]
     pub items: Vec<[i64; 3]>,
+    /// Location ids this slot has checked (for the PopTracker "Done"/grey state).
+    #[serde(default)]
+    pub checked: Vec<i64>,
 }
 
 /// Read every slot's true sent/received totals from `output/current.apsave`

@@ -667,17 +667,17 @@ async fn pt_remove(Path(ap_slot): Path<i64>, State(st): State<AppState>, headers
 /// Computed tracker state (maps + markers + items) for the slot's pack, as JSON
 /// for the PopTracker tab + its poller. `{pack:false}` when no pack is installed.
 async fn pt_state(Path(ap_slot): Path<i64>, State(st): State<AppState>) -> Json<serde_json::Value> {
-    let (season, game, received, meta) = {
+    let (season, game, received, checked, meta) = {
         let Ok(b) = st.board.read() else {
             return Json(serde_json::json!({"pack": false}));
         };
         let season = b.seed.clone().unwrap_or_default();
-        let (game, received) = b
+        let (game, received, checked) = b
             .slots
             .get(&ap_slot)
-            .map(|s| (s.game.clone(), s.received_items.clone()))
+            .map(|s| (s.game.clone(), s.received_items.clone(), s.checked_locations.clone()))
             .unwrap_or_default();
-        (season, game, received, b.meta.clone())
+        (season, game, received, checked, b.meta.clone())
     };
     if season.is_empty() || !ptrack::has_pack(&season, ap_slot) {
         return Json(serde_json::json!({"pack": false}));
@@ -695,7 +695,7 @@ async fn pt_state(Path(ap_slot): Path<i64>, State(st): State<AppState>) -> Json<
         .collect();
     let version = ptrack::pack_version(&season, ap_slot);
     let season2 = season.clone();
-    let state = tokio::task::spawn_blocking(move || ptrack::compute(&season2, ap_slot, &items, ap_slot)).await;
+    let state = tokio::task::spawn_blocking(move || ptrack::compute(&season2, ap_slot, &items, &checked, ap_slot)).await;
     match state {
         Ok(Ok(ts)) => Json(serde_json::json!({
             "pack": true,

@@ -108,6 +108,7 @@ pub fn compute(
     season: &str,
     ap_slot: i64,
     items: &[(i64, String)],
+    checked: &[i64],
     player: i64,
 ) -> Result<poptracker::TrackerState, String> {
     let root = poptracker::pack_root(&slot_dir(season, ap_slot)).map_err(|e| e.to_string())?;
@@ -119,6 +120,11 @@ pub fn compute(
         session
             .on_item(i as i64, *id, name, player)
             .map_err(|e| e.to_string())?;
+    }
+    // Feed checked locations so the pack's `onLocation` marks sections done
+    // (→ grey "Done" markers). The name is unused by AP packs' handlers.
+    for id in checked {
+        session.on_location(*id, "").map_err(|e| e.to_string())?;
     }
     Ok(session.state())
 }

@@ -35,9 +35,13 @@ location_checks = save.get("location_checks", {})  # {(team, slot): set(loc)}
 received_items = save.get("received_items", {})    # {(team, slot, remote_bool): [NetworkItem, ...]}
 
 sent = {}
+checked_by_slot = {}
 for key, locs in location_checks.items():
     if isinstance(key, tuple) and len(key) >= 2 and key[0] == 0:
         sent[key[1]] = len(locs)
+        # The actual checked location ids, so the PopTracker engine can grey out
+        # collected locations (not just count them).
+        checked_by_slot[key[1]] = [int(x) for x in locs]
 
 # received_items is keyed (team, slot, remote). send_items_to() appends EVERY
 # received item to the (slot, True) bucket but only remote-origin items to
@@ -58,7 +62,11 @@ for slot in set(true_buckets) | set(false_buckets):
     items_by_slot[slot] = [[it.item, it.location, it.player] for it in bucket]
 
 out = {
-    str(slot): {"sent": sent.get(slot, 0), "items": items_by_slot.get(slot, [])}
+    str(slot): {
+        "sent": sent.get(slot, 0),
+        "items": items_by_slot.get(slot, []),
+        "checked": checked_by_slot.get(slot, []),
+    }
     for slot in set(sent) | set(items_by_slot)
 }
 print(json.dumps(out))

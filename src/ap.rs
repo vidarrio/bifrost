@@ -38,6 +38,9 @@ pub struct SlotState {
     /// from the savefile (see the counts refresher). Rendered as the game
     /// page's "found items" list in the same format as hints.
     pub received_items: Vec<(i64, i64, i64)>,
+    /// Location ids this slot has checked (savefile `location_checks`), fed to
+    /// the PopTracker engine to grey out collected locations.
+    pub checked_locations: Vec<i64>,
 }
 
 #[derive(Default)]
@@ -384,6 +387,7 @@ pub fn spawn(
                                         .iter()
                                         .map(|a| (a[0], a[1], a[2]))
                                         .collect();
+                                    s.checked_locations = c.checked;
                                 }
                             }
                         }

@@ -1946,7 +1946,10 @@ const PT_JS: &str = r#"<script>
 (function(){
  var host=document.getElementById('ptmap'); if(!host) return;
  var slot=host.getAttribute('data-slot'); var st={}; var ver='';
- function col(a){return a?'#28a56d':'#e24d5f';}
+ // PopTracker's exact default location colors: collected/"Done" grey, all-in-logic
+ // green, out-of-logic red.
+ function markerColor(k){ return k.checked?'#3f3f3f':(k.accessible?'#20ff20':'#cf1010'); }
+ function markerTitle(k){ return k.location+(k.checked?' (collected)':(k.accessible?' (in logic)':' (out of logic)')); }
  function assetUrl(f){ return '/game/'+slot+'/poptracker/asset?file='+encodeURIComponent(f)+(ver?('&v='+ver):''); }
  function drawMap(mapName){
   var m=(st.maps||[]).filter(function(x){return x.name===mapName;})[0];
@@ -1959,8 +1962,8 @@ const PT_JS: &str = r#"<script>
    var s=k.size||sz; var mk=document.createElement('span');
    mk.className='ptmk'+(((k.shape||m.location_shape)==='diamond')?' d':'');
    mk.dataset.key=k.location+'@'+k.map; mk.dataset.loc=k.location;
-   mk.title=k.location+(k.accessible?' (in logic)':' (out of logic)');
-   mk.style.background=col(k.accessible);
+   mk.title=markerTitle(k);
+   mk.style.background=markerColor(k);
    mk._k=k; mk._s=s; spans.push(mk); wrap.appendChild(mk);
   });
   // Position markers as PERCENTAGES of the image's natural size, so they scale
@@ -2026,8 +2029,8 @@ const PT_JS: &str = r#"<script>
   return document.createComment(t||'');
  }
  function update(){
-  var mm={}; (st.markers||[]).forEach(function(k){mm[k.location+'@'+k.map]=k.accessible;});
-  host.querySelectorAll('.ptmk').forEach(function(mk){ var a=mm[mk.dataset.key]; if(a!==undefined){ mk.style.background=col(a); mk.title=mk.dataset.loc+(a?' (in logic)':' (out of logic)'); } });
+  var mm={}; (st.markers||[]).forEach(function(k){mm[k.location+'@'+k.map]=k;});
+  host.querySelectorAll('.ptmk').forEach(function(mk){ var k=mm[mk.dataset.key]; if(k){ mk.style.background=markerColor(k); mk.title=markerTitle(k); } });
   host.querySelectorAll('.ptitem').forEach(function(im){ var it=itemsByCode[im.dataset.code]; if(!it) return;
    im.className='ptitem'+(it.active?'':' ptoff'); if(it.img) im.src=assetUrl(it.img);
    var ov=im.parentNode.querySelector('.ptov');

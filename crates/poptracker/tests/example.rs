@@ -111,6 +111,29 @@ fn full_items_make_locations_reachable() {
 }
 
 #[test]
+fn checked_location_marks_section_and_marker_done() {
+    let s = Session::new(&fixture()).unwrap();
+    s.on_clear(&serde_json::json!({})).unwrap();
+
+    // Before any check, NeedsA is not collected.
+    let before = s.state();
+    let m0 = before.markers.iter().find(|m| m.location == "Tests/NeedsA").unwrap();
+    assert!(!m0.checked, "unchecked location marker is not Done");
+    let l0 = before.locations.iter().find(|l| l.name == "Tests/NeedsA").unwrap();
+    assert!(!l0.checked && !l0.sections[0].checked);
+
+    // Feed the checked location id (maps to @Tests/NeedsA in the fixture).
+    s.on_location(1, "Tests/NeedsA").unwrap();
+
+    let after = s.state();
+    let l = after.locations.iter().find(|l| l.name == "Tests/NeedsA").unwrap();
+    assert!(l.sections[0].checked, "section chest fully decremented -> checked");
+    assert!(l.checked, "all sections checked -> location Done");
+    let m = after.markers.iter().find(|m| m.location == "Tests/NeedsA").unwrap();
+    assert!(m.checked, "location Done -> marker renders grey");
+}
+
+#[test]
 fn no_items_make_locations_unreachable() {
     let s = Session::new(&fixture()).unwrap();
     s.on_clear(&serde_json::json!({})).unwrap();

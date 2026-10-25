@@ -206,6 +206,9 @@ pub struct LocationState {
     pub name: String,
     /// Reachable right now (today: reachable/none; richer levels are TODO).
     pub accessible: bool,
+    /// Every section's checks have been collected (all sections `checked`), so
+    /// PopTracker would render this location as "Done" (grey).
+    pub checked: bool,
     pub sections: Vec<SectionState>,
 }
 #[derive(Debug, Serialize)]
@@ -213,6 +216,8 @@ pub struct SectionState {
     pub name: String,
     pub item_count: i64,
     pub accessible: bool,
+    /// All of this section's chests have been checked (AvailableChestCount <= 0).
+    pub checked: bool,
 }
 /// A single marker to draw on a map image.
 #[derive(Debug, Serialize)]
@@ -224,6 +229,8 @@ pub struct Marker {
     pub shape: Option<String>,
     pub location: String,
     pub accessible: bool,
+    /// The location's checks are all collected → render grey ("Done").
+    pub checked: bool,
 }
 
 /// A quick summary for validating an uploaded pack before accepting it.
@@ -281,6 +288,12 @@ struct Eng {
     imgs: HashMap<String, Vec<String>>,
     maps: Vec<MapDef>,
     nodes: Vec<LocNode>,
+    /// `@`-location path (without the leading `@`) -> total chest count, for
+    /// resolving `Tracker:FindObjectForCode("@Area/Sub/Section")` to a section
+    /// object the pack's `onLocation` can decrement. Keyed as
+    /// `"<node full path>/<section name>"` (section name may be empty → trailing
+    /// slash), matching how packs' `LOCATION_MAPPING` address sections.
+    loc_counts: HashMap<String, i64>,
     /// Named layout widgets (`layouts/*.json`), e.g. `tracker_default`.
     layouts: HashMap<String, serde_json::Value>,
     clear_h: Vec<Function>,
@@ -337,6 +350,7 @@ impl Session {
             ..Default::default()
         }));
         lua.load("__ITEMS = {}").exec()?;
+        lua.load("__LOCOBJS = {}").exec()?;
         install_host(&lua, &eng)?;
 
         budget.set(MAX_TICKS);
@@ -467,7 +481,25 @@ impl Session {
         let nodes = self.eng.borrow().nodes.clone();
         for n in nodes {
             let loc_access = eval_groups(&self.lua, &self.eng, &n.groups, 0);
-            let sections = n
+            let locobjs: Option<Table> = self.lua.globals().get("__LOCOBJS").ok();
+            let single = n.sections.len() == 1;
+            // A section is "checked" once its chest object (if the pack touched it
+            // via `onLocation`) is fully decremented. Look under both the
+            // `full/section` and bare `full` address forms.
+            let section_checked = |secname: &str| -> bool {
+                let Some(objs) = &locobjs else { return false };
+                let mut keys = vec![format!("{}/{}", n.name, secname)];
+                if single || secname.is_empty() {
+                    keys.push(n.name.clone());
+                }
+                keys.iter().any(|k| {
+                    objs.get::<Table>(k.as_str())
+                        .ok()
+                        .and_then(|t| t.get::<i64>("AvailableChestCount").ok())
+                        .is_some_and(|avail| avail <= 0)
+                })
+            };
+            let sections: Vec<SectionState> = n
                 .sections
                 .iter()
                 .map(|s| {
@@ -480,9 +512,12 @@ impl Session {
                         name: s.name.clone(),
                         item_count: s.item_count,
                         accessible: eval_groups(&self.lua, &self.eng, &g, 0),
+                        checked: section_checked(&s.name),
                     }
                 })
                 .collect();
+            // Location is "Done" (grey) when it has sections and every one is checked.
+            let loc_checked = !sections.is_empty() && sections.iter().all(|s| s.checked);
             for ml in &n.map_locations {
                 out.markers.push(Marker {
                     map: ml.map.clone(),
@@ -492,11 +527,13 @@ impl Session {
                     shape: ml.shape.clone(),
                     location: n.name.clone(),
                     accessible: loc_access,
+                    checked: loc_checked,
                 });
             }
             out.locations.push(LocationState {
                 name: n.name,
                 accessible: loc_access,
+                checked: loc_checked,
                 sections,
             });
         }
@@ -755,6 +792,20 @@ fn flatten_locations(eng: &E, node: &serde_json::Value, prefix: &str, parent_gro
         })
         .unwrap_or_default();
 
+    // Register each section's chest count under its `@`-path(s), so a checked
+    // location can resolve to a decrementable object (see `loc_counts`).
+    {
+        let mut e = eng.borrow_mut();
+        for s in &sections {
+            e.loc_counts.insert(format!("{full}/{}", s.name), s.item_count);
+            // A single-section (or unnamed-section) location is also addressable
+            // by the bare location path.
+            if sections.len() == 1 || s.name.is_empty() {
+                e.loc_counts.insert(full.clone(), s.item_count);
+            }
+        }
+    }
+
     // A node is a real, drawable/checkable location if it has sections or a map placement.
     if !sections.is_empty() || !map_locations.is_empty() {
         eng.borrow_mut().nodes.push(LocNode {
@@ -943,6 +994,28 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         tracker.set(
             "FindObjectForCode",
             lua.create_function(move |lua, (_t, code): (Table, String)| {
+                // `@`-codes address a location section; return (creating on first
+                // use) a small object with a mutable `AvailableChestCount` that
+                // the pack's `onLocation` decrements, so checked locations become
+                // observable server-side. Path is case-sensitive (unlike items).
+                if let Some(path) = code.strip_prefix('@') {
+                    let objs: Table = lua.globals().get("__LOCOBJS")?;
+                    if let Ok(t) = objs.get::<Table>(path) {
+                        return Ok(Value::Table(t));
+                    }
+                    let count = eng2.borrow().loc_counts.get(path).copied();
+                    return match count {
+                        Some(c) => {
+                            let t = lua.create_table()?;
+                            t.set("AvailableChestCount", c)?;
+                            t.set("ChestCount", c)?;
+                            t.set("Active", false)?;
+                            objs.set(path, &t)?;
+                            Ok(Value::Table(t))
+                        }
+                        None => Ok(Value::Nil),
+                    };
+                }
                 let key = eng2.borrow().code_to_key.get(&code.to_lowercase()).cloned();
                 match key {
                     Some(k) => {
