@@ -548,9 +548,10 @@ fn read_pack_file(eng: &E, rel: &str) -> Result<String> {
 // ---- access-rule evaluation --------------------------------------------------
 
 fn provider_count(lua: &Lua, eng: &E, code: &str) -> i64 {
+    let code = code.trim().to_lowercase(); // codes are case-insensitive
     let (key, kind, stages) = {
         let e = eng.borrow();
-        match e.code_to_key.get(code) {
+        match e.code_to_key.get(&code) {
             Some(k) => (
                 k.clone(),
                 e.kind.get(k).cloned().unwrap_or_default(),
@@ -573,7 +574,7 @@ fn provider_count(lua: &Lua, eng: &E, code: &str) -> i64 {
         "progressive_toggle" | "progressive" => {
             let active = it.get::<bool>("Active").unwrap_or(false);
             let stage = it.get::<i64>("CurrentStage").unwrap_or(0);
-            let idx = stages.iter().position(|c| c == code).unwrap_or(0) as i64;
+            let idx = stages.iter().position(|c| c == &code).unwrap_or(0) as i64;
             (active && stage >= idx) as i64
         }
         _ => 0,
@@ -845,15 +846,18 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                     let mut all_codes: Vec<String> = Vec::new();
                     let mut stage_codes: Vec<String> = Vec::new();
                     let mut imgs: Vec<String> = Vec::new();
+                    // Codes are matched case-insensitively in PopTracker (grids
+                    // and logic may reference a differently-cased code than the
+                    // item declares), so normalise to lowercase everywhere.
                     if let Some(c) = item.get("codes").and_then(|v| v.as_str()) {
-                        all_codes.extend(c.split(',').map(|s| s.trim().to_string()));
+                        all_codes.extend(c.split(',').map(|s| s.trim().to_lowercase()));
                     }
                     if let Some(stages) = item.get("stages").and_then(|v| v.as_array()) {
                         for st in stages {
                             if let Some(c) = st.get("codes").and_then(|v| v.as_str()) {
-                                let first = c.split(',').next().unwrap_or("").trim().to_string();
+                                let first = c.split(',').next().unwrap_or("").trim().to_lowercase();
                                 stage_codes.push(first);
-                                all_codes.extend(c.split(',').map(|s| s.trim().to_string()));
+                                all_codes.extend(c.split(',').map(|s| s.trim().to_lowercase()));
                             }
                             // one image per stage (index-aligned), "" if none
                             imgs.push(st.get("img").and_then(|v| v.as_str()).map(img_path).unwrap_or_default());
@@ -939,7 +943,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         tracker.set(
             "FindObjectForCode",
             lua.create_function(move |lua, (_t, code): (Table, String)| {
-                let key = eng2.borrow().code_to_key.get(&code).cloned();
+                let key = eng2.borrow().code_to_key.get(&code.to_lowercase()).cloned();
                 match key {
                     Some(k) => {
                         let items: Table = lua.globals().get("__ITEMS")?;

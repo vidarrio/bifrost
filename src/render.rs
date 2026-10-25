@@ -1974,12 +1974,12 @@ const PT_JS: &str = r#"<script>
   return wrap;
  }
  var itemsByCode={};
- function buildIndex(){ itemsByCode={}; (st.items||[]).forEach(function(it){ (it.codes||[]).forEach(function(c){ if(c) itemsByCode[c]=it; }); }); }
+ function buildIndex(){ itemsByCode={}; (st.items||[]).forEach(function(it){ (it.codes||[]).forEach(function(c){ if(c) itemsByCode[(''+c).toLowerCase()]=it; }); }); }
  function assetUrl(f){ return '/game/'+slot+'/poptracker/asset?file='+encodeURIComponent(f); }
  function itemCell(code){
   var cell=document.createElement('span'); cell.className='ptcell';
   if(!code){ cell.classList.add('empty'); return cell; }
-  var it=itemsByCode[code];
+  var it=itemsByCode[(''+code).toLowerCase()];
   if(it&&it.img){
    var im=document.createElement('img'); im.className='ptitem'+(it.active?'':' off'); im.dataset.code=code; im.src=assetUrl(it.img); im.alt=it.name||code;
    cell.title=it.name||code; cell.appendChild(im);
