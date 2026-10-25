@@ -1909,7 +1909,7 @@ const GAME_STYLE: &str = r#"<style>
 .ptform{margin:10px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .ptmanage{margin-top:16px}.ptmanage>summary{cursor:pointer;color:var(--muted);font-size:13px}
 .ptnest{margin:4px 0}
-.pttabs{display:flex;flex-wrap:wrap;gap:2px;border-bottom:1px solid var(--bd);margin:0 0 10px}
+.pttabs{display:inline-flex;flex-wrap:wrap;gap:2px;justify-content:center;border-bottom:1px solid var(--bd);margin:0 0 10px}
 .pttab{background:none;color:var(--muted);border:0;border-bottom:2px solid transparent;border-radius:0;padding:5px 11px;font-family:var(--font);font-size:13px;font-weight:600;cursor:pointer;margin-bottom:-1px}
 .pttab:hover{color:var(--fg)}.pttab.on{color:var(--accent);border-bottom-color:var(--accent)}
 .ptgroup{margin:6px 0}.ptgh{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:10px 0 4px}
