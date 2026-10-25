@@ -1,0 +1,13 @@
+[package]
+name = "poptracker"
+version = "0.0.1"
+edition = "2021"
+description = "PopTracker-pack engine: runs a pack's Lua headlessly against Archipelago state and emits tracker state (items + location accessibility). Logic only — no rendering, no network."
+license = "MIT"
+publish = false
+
+[dependencies]
+# Embeds its own Lua (vendored) so the release build needs no system Lua.
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

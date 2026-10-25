@@ -7,6 +7,13 @@ description = "Bifrost — the hub for all things Archipelago."
 license = "MIT"
 publish = false
 
+# Workspace: the PopTracker-pack engine lives in its own crate (pure logic→state,
+# no Bifrost/axum coupling). It is NOT yet a dependency of bifrost — it builds on
+# its own via `cargo build -p poptracker` — so normal bifrost builds/deploys are
+# unaffected until the feature is wired in.
+[workspace]
+members = ["crates/poptracker"]
+
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["multipart"] }

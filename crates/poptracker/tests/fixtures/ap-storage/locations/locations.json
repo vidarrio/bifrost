@@ -1,0 +1,11 @@
+[
+  {
+    "name": "Tests",
+    "children": [
+      { "name": "NeedsA",        "access_rules": ["a"],        "sections": [ { "item_count": 1 } ] },
+      { "name": "NeedsAandB2",   "access_rules": ["a,b:2"],    "sections": [ { "item_count": 1 } ] },
+      { "name": "NeedsC2orA",    "access_rules": ["c2", "a"],  "sections": [ { "item_count": 1 } ] },
+      { "name": "NeedsLuaRule",  "access_rules": ["$has_enough_b"], "sections": [ { "item_count": 1 } ] }
+    ]
+  }
+]
