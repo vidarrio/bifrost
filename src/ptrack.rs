@@ -24,6 +24,18 @@ pub fn has_pack(season: &str, ap_slot: i64) -> bool {
     poptracker::pack_root(&slot_dir(season, ap_slot)).is_ok()
 }
 
+/// A version stamp for the slot's pack (install dir mtime, epoch secs), used to
+/// cache-bust asset URLs when a pack is (re)installed — browsers otherwise keep
+/// showing cached images even across a hard refresh.
+pub fn pack_version(season: &str, ap_slot: i64) -> u64 {
+    std::fs::metadata(slot_dir(season, ap_slot))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// Validate uploaded zip bytes: must load and expose an Archipelago autotracking
 /// path (memory-only/emulator packs can't be driven server-side). Returns a
 /// summary on success, else an error message suitable for showing the uploader.

@@ -1945,14 +1945,15 @@ fn tabs_open() -> &'static str {
 const PT_JS: &str = r#"<script>
 (function(){
  var host=document.getElementById('ptmap'); if(!host) return;
- var slot=host.getAttribute('data-slot'); var st={};
+ var slot=host.getAttribute('data-slot'); var st={}; var ver='';
  function col(a){return a?'#28a56d':'#e24d5f';}
+ function assetUrl(f){ return '/game/'+slot+'/poptracker/asset?file='+encodeURIComponent(f)+(ver?('&v='+ver):''); }
  function drawMap(mapName){
   var m=(st.maps||[]).filter(function(x){return x.name===mapName;})[0];
   var wrap=document.createElement('div'); wrap.className='ptmapwrap';
   if(!m){ wrap.textContent='(map '+mapName+' missing)'; return wrap; }
   var img=document.createElement('img'); img.loading='lazy';
-  img.src='/game/'+slot+'/poptracker/asset?file='+encodeURIComponent(m.img); wrap.appendChild(img);
+  img.src=assetUrl(m.img); wrap.appendChild(img);
   var sz=m.location_size||16; var spans=[];
   (st.markers||[]).filter(function(k){return k.map===mapName;}).forEach(function(k){
    var s=k.size||sz; var mk=document.createElement('span');
@@ -1975,7 +1976,6 @@ const PT_JS: &str = r#"<script>
  }
  var itemsByCode={};
  function buildIndex(){ itemsByCode={}; (st.items||[]).forEach(function(it){ (it.codes||[]).forEach(function(c){ if(c) itemsByCode[(''+c).toLowerCase()]=it; }); }); }
- function assetUrl(f){ return '/game/'+slot+'/poptracker/asset?file='+encodeURIComponent(f); }
  function itemCell(code){
   var cell=document.createElement('span'); cell.className='ptcell';
   if(!code){ cell.classList.add('empty'); return cell; }
@@ -2038,7 +2038,7 @@ const PT_JS: &str = r#"<script>
  function draw(d){
   if(!d||!d.pack){ host.textContent='No pack.'; return; }
   if(d.error){ host.textContent='Tracker error: '+d.error; return; }
-  st=d.state||{}; buildIndex();
+  ver=(d.version!=null?(''+d.version):''); st=d.state||{}; buildIndex();
   if(host.dataset.built){ update(); return; }
   host.innerHTML='';
   if(st.layout){ host.appendChild(render(st.layout)); }

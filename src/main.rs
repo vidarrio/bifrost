@@ -684,11 +684,13 @@ async fn pt_state(Path(ap_slot): Path<i64>, State(st): State<AppState>) -> Json<
             (*item, name)
         })
         .collect();
+    let version = ptrack::pack_version(&season, ap_slot);
     let season2 = season.clone();
     let state = tokio::task::spawn_blocking(move || ptrack::compute(&season2, ap_slot, &items, ap_slot)).await;
     match state {
         Ok(Ok(ts)) => Json(serde_json::json!({
             "pack": true,
+            "version": version,
             "state": serde_json::to_value(&ts).unwrap_or_default(),
         })),
         Ok(Err(e)) => Json(serde_json::json!({"pack": true, "error": e})),
