@@ -109,6 +109,10 @@ async fn main() {
         .route("/log", get(log_view))
         .route("/log/fragment", get(log_fragment_view))
         .route("/game/{ap_slot}", get(game_view))
+        .route("/game/{ap_slot}/poptracker", post(pt_upload))
+        .route("/game/{ap_slot}/poptracker/remove", post(pt_remove))
+        .route("/game/{ap_slot}/poptracker/state", get(pt_state))
+        .route("/game/{ap_slot}/poptracker/asset", get(pt_asset))
         .route("/game/{ap_slot}/hints", get(game_hints))
         .route("/game/{ap_slot}/items", get(game_items))
         .route("/game/{ap_slot}/output", get(game_output))
@@ -583,6 +587,158 @@ async fn log_view(State(st): State<AppState>, Query(q): Query<LogQuery>) -> Html
 }
 
 /// A safe local redirect target (must be an absolute path, not protocol-relative).
+// ---- PopTracker map feature ----------------------------------------------
+
+/// Whether the viewer may upload/remove the slot's pack: a claimant of the slot
+/// or an admin.
+async fn pt_can_manage(st: &AppState, season: &str, ap_slot: i64, me: &str, is_admin: bool) -> bool {
+    if is_admin {
+        return true;
+    }
+    st.db
+        .slots(season)
+        .await
+        .unwrap_or_default()
+        .iter()
+        .any(|r| r.ap_slot == ap_slot && r.claimed_by.as_deref() == Some(me))
+}
+
+/// Claimant (or admin) uploads a PopTracker pack (.zip) for this slot.
+async fn pt_upload(
+    Path(ap_slot): Path<i64>,
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    mut mp: Multipart,
+) -> Response {
+    let (me, is_admin) = identity(&headers);
+    let season = st.board.read().ok().and_then(|b| b.seed.clone()).unwrap_or_default();
+    let back = format!("/game/{ap_slot}");
+    if season.is_empty() || !pt_can_manage(&st, &season, ap_slot, &me, is_admin).await {
+        return render::notice("You can't upload a pack for this game.", false, &back).into_response();
+    }
+    let mut bytes: Option<Vec<u8>> = None;
+    while let Ok(Some(field)) = mp.next_field().await {
+        if field.name() == Some("pack") {
+            bytes = field.bytes().await.ok().map(|b| b.to_vec());
+        } else {
+            let _ = field.bytes().await;
+        }
+    }
+    let Some(bytes) = bytes.filter(|b| !b.is_empty()) else {
+        return render::notice("No file received.", false, &back).into_response();
+    };
+    if bytes.len() < 2 || &bytes[..2] != b"PK" {
+        return render::notice("That doesn't look like a .zip pack file.", false, &back).into_response();
+    }
+    // validate + install off the async runtime (runs pack Lua + filesystem).
+    let season2 = season.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        ptrack::validate(&bytes).and_then(|_sum| ptrack::install(&season2, ap_slot, &bytes))
+    })
+    .await;
+    match res {
+        Ok(Ok(())) => Redirect::to(&back).into_response(),
+        Ok(Err(e)) => render::notice(&format!("Pack rejected: {e}"), false, &back).into_response(),
+        Err(_) => render::notice("Upload failed.", false, &back).into_response(),
+    }
+}
+
+/// Claimant (or admin) removes the slot's pack.
+async fn pt_remove(Path(ap_slot): Path<i64>, State(st): State<AppState>, headers: HeaderMap) -> Response {
+    let (me, is_admin) = identity(&headers);
+    let season = st.board.read().ok().and_then(|b| b.seed.clone()).unwrap_or_default();
+    let back = format!("/game/{ap_slot}");
+    if !season.is_empty() && pt_can_manage(&st, &season, ap_slot, &me, is_admin).await {
+        let s2 = season.clone();
+        let _ = tokio::task::spawn_blocking(move || ptrack::remove(&s2, ap_slot)).await;
+    }
+    Redirect::to(&back).into_response()
+}
+
+/// Computed tracker state (maps + markers + items) for the slot's pack, as JSON
+/// for the PopTracker tab + its poller. `{pack:false}` when no pack is installed.
+async fn pt_state(Path(ap_slot): Path<i64>, State(st): State<AppState>) -> Json<serde_json::Value> {
+    let (season, game, received, meta) = {
+        let Ok(b) = st.board.read() else {
+            return Json(serde_json::json!({"pack": false}));
+        };
+        let season = b.seed.clone().unwrap_or_default();
+        let (game, received) = b
+            .slots
+            .get(&ap_slot)
+            .map(|s| (s.game.clone(), s.received_items.clone()))
+            .unwrap_or_default();
+        (season, game, received, b.meta.clone())
+    };
+    if season.is_empty() || !ptrack::has_pack(&season, ap_slot) {
+        return Json(serde_json::json!({"pack": false}));
+    }
+    let items: Vec<(i64, String)> = received
+        .iter()
+        .map(|(item, _loc, _finder)| {
+            let name = meta
+                .as_ref()
+                .and_then(|m| m.item_name(&game, *item))
+                .map(str::to_string)
+                .unwrap_or_else(|| item.to_string());
+            (*item, name)
+        })
+        .collect();
+    let season2 = season.clone();
+    let state = tokio::task::spawn_blocking(move || ptrack::compute(&season2, ap_slot, &items, ap_slot)).await;
+    match state {
+        Ok(Ok(ts)) => Json(serde_json::json!({
+            "pack": true,
+            "state": serde_json::to_value(&ts).unwrap_or_default(),
+        })),
+        Ok(Err(e)) => Json(serde_json::json!({"pack": true, "error": e})),
+        Err(_) => Json(serde_json::json!({"pack": true, "error": "compute failed"})),
+    }
+}
+
+#[derive(Deserialize)]
+struct PtAssetQuery {
+    file: String,
+}
+
+/// Serve a file (e.g. a map image) from the slot's installed pack.
+async fn pt_asset(
+    Path(ap_slot): Path<i64>,
+    State(st): State<AppState>,
+    Query(q): Query<PtAssetQuery>,
+) -> Response {
+    let season = st.board.read().ok().and_then(|b| b.seed.clone()).unwrap_or_default();
+    let file = q.file.clone();
+    let season2 = season.clone();
+    let bytes = tokio::task::spawn_blocking(move || ptrack::read_pack_asset(&season2, ap_slot, &file))
+        .await
+        .ok()
+        .flatten();
+    match bytes {
+        Some(b) => (
+            [(axum::http::header::CONTENT_TYPE, pt_content_type(&q.file))],
+            b,
+        )
+            .into_response(),
+        None => axum::http::StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+fn pt_content_type(f: &str) -> &'static str {
+    let l = f.to_ascii_lowercase();
+    if l.ends_with(".png") {
+        "image/png"
+    } else if l.ends_with(".jpg") || l.ends_with(".jpeg") {
+        "image/jpeg"
+    } else if l.ends_with(".gif") {
+        "image/gif"
+    } else if l.ends_with(".webp") {
+        "image/webp"
+    } else {
+        "application/octet-stream"
+    }
+}
+
 fn safe_back(b: Option<&str>, default: &str) -> String {
     match b {
         Some(p) if p.starts_with('/') && !p.starts_with("//") => p.to_string(),
@@ -667,6 +823,10 @@ async fn game_view(
     // inlogic recomputer; may be absent until the first run completes).
     let inlogic = st.db.inlogic_get(&season, ap_slot).await;
 
+    // PopTracker: is a pack installed, and may the viewer manage it?
+    let pt_has = ptrack::has_pack(&season, ap_slot);
+    let pt_can_manage = i_claim || is_admin;
+
     render::game_page(
         ap_slot,
         &game,
@@ -684,6 +844,8 @@ async fn game_view(
         Some(mc_addr().as_str()),
         &my_files,
         inlogic.as_ref(),
+        pt_has,
+        pt_can_manage,
     )
 }
 

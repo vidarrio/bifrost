@@ -1900,6 +1900,13 @@ const GAME_STYLE: &str = r#"<style>
 .utlist{display:flex;flex-direction:column;gap:4px;max-height:70vh;overflow:auto}
 .utloc{font-size:13px;line-height:1.35;padding:6px 10px;background:var(--panel);border:1px solid var(--bd);border-radius:7px}
 .utnote{font-size:12px;color:var(--muted);margin-top:14px;font-style:italic}
+.ptmap{overflow:auto;max-width:100%}
+.ptmapwrap{position:relative;display:inline-block;margin:0 14px 16px 0}
+.ptmapwrap img{display:block}
+.ptmk{position:absolute;border:1px solid rgba(0,0,0,.65);box-sizing:border-box;border-radius:2px}
+.ptmk.d{transform:rotate(45deg)}
+.ptform{margin:10px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ptmanage{margin-top:16px}.ptmanage>summary{cursor:pointer;color:var(--muted);font-size:13px}
 </style>"#;
 
 /// Toggles the game page's tab panels (delegated click on the tab bar).
@@ -1915,7 +1922,72 @@ document.querySelectorAll('.gtabpanel').forEach(function(p){p.hidden=(p.id!==id)
 /// Tab bar + the opening tag of the (default-visible) Hints panel. The caller
 /// closes the panel, then appends `inlogic_panel(...)` and `GAME_TAB_JS`.
 fn tabs_open() -> &'static str {
-    r#"<div class="gtabs"><button type="button" class="gtab on" data-tab="tab-hints">Hints</button><button type="button" class="gtab" data-tab="tab-ut">Universal Tracker</button></div><div class="gtabpanel" id="tab-hints">"#
+    r#"<div class="gtabs"><button type="button" class="gtab on" data-tab="tab-hints">Hints</button><button type="button" class="gtab" data-tab="tab-ut">Universal Tracker</button><button type="button" class="gtab" data-tab="tab-pt">PopTracker</button></div><div class="gtabpanel" id="tab-hints">"#
+}
+
+/// Script that fills the PopTracker tab: fetch the computed tracker state and
+/// draw each map image with accessibility-coloured markers at their pixel
+/// coordinates (green = in logic, red = out), polling while the tab is open.
+const PT_JS: &str = r#"<script>
+(function(){
+ var host=document.getElementById('ptmap'); if(!host) return;
+ var slot=host.getAttribute('data-slot');
+ function esc(s){var d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML;}
+ function draw(d){
+  if(!d||!d.pack){host.innerHTML='<p class="empty">No pack.</p>';return;}
+  if(d.error){host.innerHTML='<p class="empty">Tracker error: '+esc(d.error)+'</p>';return;}
+  var st=d.state||{maps:[],markers:[]};
+  if(!st.maps||!st.maps.length){host.innerHTML='<p class="empty">This pack has no maps to show.</p>';return;}
+  var html='';
+  st.maps.forEach(function(m){
+   var sz=m.location_size||16;
+   html+='<div class="ptmapwrap"><img src="/game/'+slot+'/poptracker/asset?file='+encodeURIComponent(m.img)+'" alt="'+esc(m.name)+'">';
+   (st.markers||[]).filter(function(k){return k.map===m.name;}).forEach(function(k){
+    var s=k.size||sz;var col=k.accessible?'#28a56d':'#e24d5f';
+    var dia=((k.shape||m.location_shape)==='diamond')?' d':'';
+    html+='<span class="ptmk'+dia+'" title="'+esc(k.location)+(k.accessible?' (in logic)':' (out of logic)')+'" style="left:'+(k.x-s/2)+'px;top:'+(k.y-s/2)+'px;width:'+s+'px;height:'+s+'px;background:'+col+'"></span>';
+   });
+   html+='</div>';
+  });
+  host.innerHTML=html;
+ }
+ function load(){fetch('/game/'+slot+'/poptracker/state').then(function(r){return r.json();}).then(draw).catch(function(){});}
+ var panel=document.getElementById('tab-pt');
+ var bar=document.querySelector('.gtabs');
+ if(bar){bar.addEventListener('click',function(e){var b=e.target.closest('.gtab');if(b&&b.getAttribute('data-tab')==='tab-pt')load();});}
+ load();
+ setInterval(function(){if(panel&&!panel.hidden)load();},12000);
+})();
+</script>"#;
+
+/// The PopTracker tab panel: the map host (filled by `PT_JS`) + upload/manage
+/// controls for a claimant or admin, or a prompt/placeholder otherwise.
+fn poptracker_panel(ap_slot: i64, has_pack: bool, can_manage: bool) -> String {
+    let mut s = String::from(r#"<div class="gtabpanel" id="tab-pt" hidden><h2>PopTracker</h2>"#);
+    if has_pack {
+        s.push_str(&format!(
+            r#"<div class="ptmap" id="ptmap" data-slot="{ap_slot}"><p class="empty">Loading tracker…</p></div>"#
+        ));
+        if can_manage {
+            s.push_str(&format!(
+                r#"<details class="ptmanage"><summary>Manage pack</summary>
+<form method="post" action="/game/{ap_slot}/poptracker" enctype="multipart/form-data" class="ptform">
+<input type="file" name="pack" accept=".zip,application/zip" required><button type="submit">Replace pack</button></form>
+<form method="post" action="/game/{ap_slot}/poptracker/remove" onsubmit="return confirm('Remove this pack?')"><button type="submit" class="ghost">Remove pack</button></form></details>"#
+            ));
+        }
+        s.push_str(PT_JS);
+    } else if can_manage {
+        s.push_str(&format!(
+            r#"<p class="empty">Upload a <a href="https://github.com/black-sliver/PopTracker" target="_blank" rel="noopener">PopTracker</a> pack (.zip) for this game to get its map here, auto-tracked from the server — no setup for anyone viewing. The pack must support Archipelago auto-tracking.</p>
+<form method="post" action="/game/{ap_slot}/poptracker" enctype="multipart/form-data" class="ptform">
+<input type="file" name="pack" accept=".zip,application/zip" required><button type="submit">Upload pack</button></form>"#
+        ));
+    } else {
+        s.push_str(r#"<p class="empty">No PopTracker pack has been uploaded for this game yet.</p>"#);
+    }
+    s.push_str("</div>");
+    s
 }
 
 /// The Universal Tracker tab panel, from the slot's cached in-logic result.
@@ -1975,6 +2047,8 @@ pub fn game_page(
     mc_addr: Option<&str>,
     files: &[crate::generate::OutputFile],
     inlogic: Option<&crate::db::InLogic>,
+    pt_has_pack: bool,
+    pt_can_manage: bool,
 ) -> Html<String> {
     let live = snap.ap.get(&ap_slot).cloned().unwrap_or_default();
     let back = format!("/game/{ap_slot}");
@@ -2136,6 +2210,7 @@ pub fn game_page(
         out.push_str("</div>"); // close #worldhints
         out.push_str("</div>"); // close #tab-hints
         out.push_str(&ut_html);
+        out.push_str(&poptracker_panel(ap_slot, pt_has_pack, pt_can_manage));
         out.push_str(GAME_TAB_JS);
         out.push_str("</main></body></html>");
         return Html(out);
@@ -2247,6 +2322,7 @@ pub fn game_page(
     out.push_str("</div>"); // close #worldhints
     out.push_str("</div>"); // close #tab-hints
     out.push_str(&ut_html);
+    out.push_str(&poptracker_panel(ap_slot, pt_has_pack, pt_can_manage));
     out.push_str(GAME_TAB_JS);
 
     out.push_str("</main></body></html>");

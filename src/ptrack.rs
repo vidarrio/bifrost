@@ -73,6 +73,7 @@ pub fn compute(
     let root = poptracker::pack_root(&slot_dir(season, ap_slot)).map_err(|e| e.to_string())?;
     let pack = poptracker::Pack::load(&root).map_err(|e| e.to_string())?;
     let session = poptracker::Session::new(&pack).map_err(|e| e.to_string())?;
+    session.set_player(player);
     session.on_clear(&serde_json::json!({})).map_err(|e| e.to_string())?;
     for (i, (id, name)) in items.iter().enumerate() {
         session

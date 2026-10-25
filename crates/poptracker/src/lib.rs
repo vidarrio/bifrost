@@ -333,6 +333,14 @@ impl Session {
         self.budget.set(MAX_TICKS);
     }
 
+    /// Set the slot's AP player number (`Archipelago.PlayerNumber`), which some
+    /// packs read to tell local from remote items. Call before feeding state.
+    pub fn set_player(&self, n: i64) {
+        if let Ok(ap) = self.lua.globals().get::<Table>("Archipelago") {
+            let _ = ap.set("PlayerNumber", n);
+        }
+    }
+
     /// Fire the pack's Clear handlers (called on connect) with `slot_data`.
     pub fn on_clear(&self, slot_data: &serde_json::Value) -> Result<()> {
         self.charge();
