@@ -64,19 +64,72 @@ impl From<mlua::Error> for Error {
 }
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// A loaded pack on disk. (Zip support can wrap this by extracting first.)
+/// A loaded pack. Either a directory on disk or a `.zip` extracted to a temp dir
+/// (kept alive by `_tmp` for the pack's lifetime).
 pub struct Pack {
     dir: PathBuf,
+    _tmp: Option<tempfile::TempDir>,
 }
 impl Pack {
-    /// Load a pack from a directory that contains `scripts/init.lua`.
-    pub fn load(dir: impl AsRef<Path>) -> Result<Pack> {
-        let dir = dir.as_ref().to_path_buf();
+    /// Load a pack from a directory **or** a `.zip` file (auto-detected).
+    pub fn load(path: impl AsRef<Path>) -> Result<Pack> {
+        let path = path.as_ref();
+        if path.is_dir() {
+            Self::from_dir(path.to_path_buf(), None)
+        } else {
+            Self::load_zip(path)
+        }
+    }
+
+    /// Extract an untrusted pack zip to a temp dir (with a zip-slip guard) and
+    /// locate the pack root (the dir containing `scripts/init.lua`, at the zip
+    /// root or one level down — packs are often zipped inside a top folder).
+    pub fn load_zip(path: &Path) -> Result<Pack> {
+        let file = std::fs::File::open(path).map_err(|e| Error::Io(e.to_string()))?;
+        let mut zip = zip::ZipArchive::new(file).map_err(|e| Error::Pack(format!("zip: {e}")))?;
+        let tmp = tempfile::TempDir::new().map_err(|e| Error::Io(e.to_string()))?;
+        for i in 0..zip.len() {
+            let mut f = zip.by_index(i).map_err(|e| Error::Pack(format!("zip entry {i}: {e}")))?;
+            // enclosed_name() rejects absolute paths and `..` traversal.
+            let Some(rel) = f.enclosed_name() else { continue };
+            let out = tmp.path().join(rel);
+            if f.is_dir() {
+                std::fs::create_dir_all(&out).map_err(|e| Error::Io(e.to_string()))?;
+                continue;
+            }
+            if let Some(parent) = out.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| Error::Io(e.to_string()))?;
+            }
+            let mut w = std::fs::File::create(&out).map_err(|e| Error::Io(e.to_string()))?;
+            std::io::copy(&mut f, &mut w).map_err(|e| Error::Io(e.to_string()))?;
+        }
+        let root = find_pack_root(tmp.path())?;
+        Self::from_dir(root, Some(tmp))
+    }
+
+    fn from_dir(dir: PathBuf, tmp: Option<tempfile::TempDir>) -> Result<Pack> {
         if !dir.join("scripts/init.lua").is_file() {
             return Err(Error::Pack("missing scripts/init.lua".into()));
         }
-        Ok(Pack { dir })
+        Ok(Pack { dir, _tmp: tmp })
     }
+}
+
+/// Find the pack root under `base`: `base` itself if it has `scripts/init.lua`,
+/// else the first immediate subdirectory that does.
+fn find_pack_root(base: &Path) -> Result<PathBuf> {
+    if base.join("scripts/init.lua").is_file() {
+        return Ok(base.to_path_buf());
+    }
+    if let Ok(rd) = std::fs::read_dir(base) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() && p.join("scripts/init.lua").is_file() {
+                return Ok(p);
+            }
+        }
+    }
+    Err(Error::Pack("no scripts/init.lua found in zip".into()))
 }
 
 /// The computed tracker state — the crate's entire output. Serializable so the

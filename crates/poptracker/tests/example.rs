@@ -5,11 +5,46 @@
 
 use poptracker::{Pack, Session};
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
 
+fn fixture_dir() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ap-storage")
+}
+
 fn fixture() -> Pack {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ap-storage");
-    Pack::load(dir).expect("load fixture pack")
+    Pack::load(fixture_dir()).expect("load fixture pack")
+}
+
+/// Recursively add a directory's files to a zip under `prefix`.
+fn zip_add(zw: &mut zip::ZipWriter<std::fs::File>, base: &Path, dir: &Path, prefix: &str) {
+    for e in std::fs::read_dir(dir).unwrap().flatten() {
+        let p = e.path();
+        let rel = format!("{prefix}{}", p.strip_prefix(base).unwrap().to_string_lossy());
+        if p.is_dir() {
+            zip_add(zw, base, &p, prefix);
+        } else {
+            zw.start_file(&rel, zip::write::SimpleFileOptions::default()).unwrap();
+            zw.write_all(&std::fs::read(&p).unwrap()).unwrap();
+        }
+    }
+}
+
+#[test]
+fn loads_from_zip_with_top_folder() {
+    let src = fixture_dir();
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    {
+        let mut zw = zip::ZipWriter::new(std::fs::File::create(tmp.path()).unwrap());
+        // nest under a top folder to exercise find_pack_root's one-level-down case
+        zip_add(&mut zw, &src, &src, "ap-storage/");
+        zw.finish().unwrap();
+    }
+    let pack = Pack::load(tmp.path()).expect("load pack from zip");
+    let s = Session::new(&pack).unwrap();
+    s.on_clear(&serde_json::json!({})).unwrap();
+    s.on_retrieved("a", &serde_json::json!(1)).unwrap();
+    assert!(accessibility(&s)["Tests/NeedsA"], "zip-loaded pack behaves like the dir");
 }
 
 fn accessibility(s: &Session) -> HashMap<String, bool> {
