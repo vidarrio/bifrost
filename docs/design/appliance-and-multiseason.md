@@ -96,12 +96,13 @@ path. (Aside: the box lacks the `sqlite3` *CLI*, a manual-inspection convenience
 only — the engine is compiled into the binary; inspect via `python3`'s `sqlite3`
 module.)
 
-**Live-box compatibility.** The data root is configurable; on the current
-instance the defaults/overrides still resolve to today's split
-(`/var/lib/bifrost` + `/srv/archipelago`'s `Players/custom_worlds/output/logs`),
-so shipping is a no-op. The single-root layout above is the default for **fresh
-appliance installs**, not a forced migration of the running season. Today's flat
-`Players/custom_worlds/output/logs` becomes the per-season `seasons/<id>/…` form.
+**No live-box compatibility.** The current deployment is **not** migrated in
+place: once the running season ends it is retired and Bifrost is redeployed
+fresh on the appliance layout (§11). So the single-root layout above is *the*
+layout — no legacy profile, no defaults that mimic today's
+`/var/lib/bifrost` + `/srv/archipelago/{Players,custom_worlds,output,logs}`
+split, no compatibility shims. Today's flat AP-dir state becomes the per-season
+`seasons/<id>/…` form.
 
 ## 4. Generation isolation (`sandbox::spawn`)
 
@@ -312,19 +313,20 @@ Beyond §4 isolation:
 - **Input validation** pass over newly-public endpoints.
 - **Per-season isolation of data dirs** so one season can't read another's files.
 
-## 11. Migration from the current deployment
+## 11. Transition from the current deployment
 
-The live system is a single season on the Bifrost host co-located with AP. Migration:
+**Clean break, no in-place migration.** The current system (single season on
+the Bifrost host, co-located with AP) keeps running untouched from `main` until its
+season ends. After that it is retired and the appliance is deployed fresh —
+new data dir, new config, new service wiring. Consequences:
 
-1. Land config-driven paths + the `ap_adapter` without behavior change.
-2. Introduce the `season` table; wrap the existing live season as season #1
-   (backfill name, state=live, its port/paths).
-3. Add native auth alongside trust-header; keep trust-header as the configured
-   provider for the current instance so nothing breaks.
-4. Make background workers + routing season-scoped (season #1 is the default).
-5. Enable creating a *second* season → exercises the fleet supervisor.
-Each step is shippable and reversible; the current setup keeps working
-throughout.
+- No backwards compatibility is built: config names, env vars, on-disk layout
+  and DB schema may change freely on the `appliance` branch.
+- No step needs to be "shippable onto the live box"; each step only needs to
+  build, pass tests, and leave the branch working.
+- Anything worth keeping from the old instance (e.g. past-season archive
+  bundles / summaries) is carried over as a one-off import at redeploy time,
+  decided then — not via compatibility code.
 
 ## 12. Risks & open decisions
 
@@ -341,10 +343,9 @@ throughout.
 
 ## 13. Proposed sequencing
 
-1. **De-hardcode paths + `ap_adapter`** (prerequisite; no behavior change) —
-   introduce the `$BIFROST_DATA` seams (§3a) with defaults that reproduce the
-   live split, so config aims at the single-data-dir target rather than just
-   abstracting the current paths in place.
+1. **De-hardcode paths + `ap_adapter`** (prerequisite; no feature change) —
+   move to the `$BIFROST_DATA` layout (§3a) directly; no compatibility with the
+   current deployment's paths (§11).
 2. **Auth abstraction + native accounts** (default) and the trust-header
    spoof fix; in-app roles (sysadmin/mod/user) + `authorize()`.
 3. **Security hardening**: `sandbox::spawn` tiers + no-net + trusted/untrusted
