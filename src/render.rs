@@ -1956,12 +1956,20 @@ bar.addEventListener('click',function(e){var b=e.target.closest('.gtab');if(!b)r
 var h=(location.hash||'').slice(1),el=h&&document.getElementById(h);
 if(el&&el.classList.contains('gtabpanel'))activate(h);
 })();
+// Live-refresh the game's Log tab while it's open (feed is server-rendered first).
+(function(){var host=document.getElementById('gamelog');if(!host)return;
+var slot=host.getAttribute('data-slot'),panel=document.getElementById('tab-log');
+function load(){fetch('/game/'+slot+'/log/fragment').then(function(r){return r.text();}).then(function(x){host.innerHTML=x;if(window.bifTick)bifTick();}).catch(function(){});}
+var bar=document.querySelector('.gtabs');
+if(bar){bar.addEventListener('click',function(e){var b=e.target.closest('.gtab');if(b&&b.getAttribute('data-tab')==='tab-log')load();});}
+setInterval(function(){if(panel&&!panel.hidden)load();},12000);
+})();
 </script>"#;
 
 /// Tab bar + the opening tag of the (default-visible) Hints panel. The caller
 /// closes the panel, then appends `inlogic_panel(...)` and `GAME_TAB_JS`.
 fn tabs_open() -> &'static str {
-    r#"<div class="gtabs"><button type="button" class="gtab on" data-tab="tab-hints">Hints</button><button type="button" class="gtab" data-tab="tab-ut">Universal Tracker</button><button type="button" class="gtab" data-tab="tab-pt">PopTracker</button></div><div class="gtabpanel" id="tab-hints">"#
+    r#"<div class="gtabs"><button type="button" class="gtab on" data-tab="tab-hints">Hints</button><button type="button" class="gtab" data-tab="tab-ut">Universal Tracker</button><button type="button" class="gtab" data-tab="tab-pt">PopTracker</button><button type="button" class="gtab" data-tab="tab-log">Log</button></div><div class="gtabpanel" id="tab-hints">"#
 }
 
 /// Script that fills the PopTracker tab: fetch the computed tracker state and
@@ -2208,6 +2216,30 @@ fn poptracker_panel(ap_slot: i64, has_pack: bool, can_manage: bool) -> String {
     s
 }
 
+/// Inner HTML of a game's Log feed (the `#gamelog` contents), reused by the tab
+/// and its live-refresh fragment.
+pub fn game_log_feed(rows: &[crate::db::ActivityRow]) -> String {
+    let mut s = String::new();
+    if rows.is_empty() {
+        s.push_str(r#"<p class="empty">No activity involving this game yet.</p>"#);
+    } else {
+        render_feed(&mut s, rows, None);
+    }
+    s
+}
+
+/// The game page's "Log" tab: this slot's own activity (items it sent or
+/// received, its goals/releases/collects), newest first.
+fn log_panel(ap_slot: i64, rows: &[crate::db::ActivityRow]) -> String {
+    let mut s = String::from(
+        r#"<div class="gtabpanel" id="tab-log" hidden><h2>This game's activity</h2>"#,
+    );
+    s.push_str(&format!(r#"<div id="gamelog" class="gamelog" data-slot="{ap_slot}">"#));
+    s.push_str(&game_log_feed(rows));
+    s.push_str("</div></div>");
+    s
+}
+
 /// The Universal Tracker tab panel, from the slot's cached in-logic result.
 fn inlogic_panel(inlogic: Option<&crate::db::InLogic>) -> String {
     let mut s =
@@ -2265,6 +2297,7 @@ pub fn game_page(
     mc_addr: Option<&str>,
     files: &[crate::generate::OutputFile],
     inlogic: Option<&crate::db::InLogic>,
+    log: &[crate::db::ActivityRow],
     pt_has_pack: bool,
     pt_can_manage: bool,
 ) -> Html<String> {
@@ -2274,9 +2307,10 @@ pub fn game_page(
     let is_common = here.iter().any(|r| r.is_common);
     let mut out = page_head(Some(me));
     out.push_str(GAME_STYLE);
-    // The Universal Tracker tab panel is identical for both the common and the
-    // regular slot branches; build it once.
+    // The UT and Log tab panels are the same for the common and regular slot
+    // branches; build them once.
     let ut_html = inlogic_panel(inlogic);
+    let log_html = log_panel(ap_slot, log);
     // "available now" count from the slot's Universal Tracker result (if any).
     let avail = inlogic
         .filter(|il| il.err.is_none())
@@ -2435,6 +2469,7 @@ pub fn game_page(
         out.push_str("</div>"); // close #tab-hints
         out.push_str(&ut_html);
         out.push_str(&poptracker_panel(ap_slot, pt_has_pack, pt_can_manage));
+        out.push_str(&log_html);
         out.push_str(GAME_TAB_JS);
         out.push_str("</main></body></html>");
         return Html(out);
@@ -2547,6 +2582,7 @@ pub fn game_page(
     out.push_str("</div>"); // close #tab-hints
     out.push_str(&ut_html);
     out.push_str(&poptracker_panel(ap_slot, pt_has_pack, pt_can_manage));
+    out.push_str(&log_html);
     out.push_str(GAME_TAB_JS);
 
     out.push_str("</main></body></html>");

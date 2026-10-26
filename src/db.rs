@@ -870,6 +870,28 @@ impl Db {
             .unwrap_or_default()
     }
 
+    /// Latest activity involving one participant — as sender OR receiver —
+    /// newest first. Powers a game page's own "Log" tab, scoped to that slot.
+    pub async fn activity_for_participant(
+        &self,
+        season: &str,
+        name: &str,
+        limit: i64,
+    ) -> Vec<ActivityRow> {
+        sqlx::query_as::<_, ActivityRow>(
+            "SELECT ts, kind, text, item_class FROM activity
+             WHERE season = ?1
+               AND (sender = ?2 COLLATE NOCASE OR receiver = ?2 COLLATE NOCASE)
+             ORDER BY id DESC LIMIT ?3",
+        )
+        .bind(season)
+        .bind(name)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default()
+    }
+
     /// Distinct participant names (senders ∪ receivers) in a season, for the
     /// filter's sender/receiver autocomplete.
     pub async fn activity_participants(&self, season: &str) -> Vec<String> {

@@ -112,6 +112,7 @@ async fn main() {
         .route("/game/{ap_slot}", get(game_view))
         .route("/game/{ap_slot}/poptracker", post(pt_upload))
         .route("/game/{ap_slot}/poptracker/remove", post(pt_remove))
+        .route("/game/{ap_slot}/log/fragment", get(game_log_fragment))
         .route("/game/{ap_slot}/poptracker/state", get(pt_state))
         .route("/game/{ap_slot}/poptracker/asset", get(pt_asset))
         .route("/game/{ap_slot}/hints", get(game_hints))
@@ -391,6 +392,8 @@ async fn log_fragment_view(State(st): State<AppState>, Query(q): Query<LogQuery>
 
 /// How many activity rows the board previews; the full log lives at `/log`.
 const BOARD_ACTIVITY: i64 = 15;
+/// How many rows a game page's own "Log" tab shows (its slot's activity only).
+const GAME_LOG_ROWS: i64 = 120;
 /// Default page size for the activity log before the client fits it to the
 /// viewport, and the clamp bounds for the viewer-supplied `rpp`.
 const LOG_RPP_DEFAULT: i64 = 25;
@@ -870,6 +873,12 @@ async fn game_view(
     // inlogic recomputer; may be absent until the first run completes).
     let inlogic = st.db.inlogic_get(&season, ap_slot).await;
 
+    // This slot's own activity (sent/received/goaled…) for its "Log" tab.
+    let log = st
+        .db
+        .activity_for_participant(&season, &connect_name, GAME_LOG_ROWS)
+        .await;
+
     // PopTracker: is a pack installed, and may the viewer manage it?
     let pt_has = ptrack::has_pack(&season, ap_slot);
     let pt_can_manage = i_claim || is_admin;
@@ -891,9 +900,28 @@ async fn game_view(
         Some(mc_addr().as_str()),
         &my_files,
         inlogic.as_ref(),
+        &log,
         pt_has,
         pt_can_manage,
     )
+}
+
+/// Live-refresh fragment for a game page's Log tab: the `#gamelog` inner HTML,
+/// scoped to that slot's participant (sender or receiver). Public like the
+/// board/log fragments.
+async fn game_log_fragment(Path(ap_slot): Path<i64>, State(st): State<AppState>) -> Html<String> {
+    let (season, name) = match st.board.read() {
+        Ok(b) => (
+            b.seed.clone().unwrap_or_default(),
+            b.slots.get(&ap_slot).map(|s| s.name.clone()).unwrap_or_default(),
+        ),
+        Err(_) => return Html(String::new()),
+    };
+    if season.is_empty() || name.is_empty() {
+        return Html(String::new());
+    }
+    let rows = st.db.activity_for_participant(&season, &name, GAME_LOG_ROWS).await;
+    Html(render::game_log_feed(&rows))
 }
 
 #[derive(Deserialize)]
