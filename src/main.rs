@@ -134,7 +134,7 @@ async fn main() {
         .route("/log", get(log_view))
         .route("/log/fragment", get(log_fragment_view))
         .route("/game/{ap_slot}", get(game_view))
-        .route("/game/{ap_slot}/poptracker", post(pt_upload))
+        .route("/game/{ap_slot}/poptracker", post(pt_upload).layer(upload_limit()))
         .route("/game/{ap_slot}/poptracker/remove", post(pt_remove))
         .route("/game/{ap_slot}/log/fragment", get(game_log_fragment))
         .route("/game/{ap_slot}/poptracker/state", get(pt_state))
@@ -149,7 +149,7 @@ async fn main() {
         .route("/hint", post(hint_post))
         .route("/prioritize", post(prioritize_post))
         .route("/signup", get(signup_get).post(signup_post))
-        .route("/signup/apworld", post(signup_apworld))
+        .route("/signup/apworld", post(signup_apworld).layer(upload_limit()))
         .route("/signup/check", post(signup_check))
         .route("/signup/delete", post(signup_delete))
         .route("/admin", get(admin_view))
@@ -181,7 +181,9 @@ async fn main() {
         ))
         // Authenticate + enforce the route tiers before any handler runs.
         .layer(axum::middleware::from_fn_with_state(auth, auth::middleware))
-        .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
+        // Small bodies everywhere (YAMLs are capped at 512 KiB); only the two
+        // file-upload routes get `upload_limit`.
+        .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024))
         // Dynamic HTML/JSON must never be cached (or bfcache'd) by the browser:
         // a stale page would keep running old inline JS. `no-store` also disables
         // the back/forward cache. Applied only where a handler didn't already set
@@ -227,6 +229,11 @@ async fn main() {
     )
     .await
     .expect("serve");
+}
+
+/// Body limit for the file-upload routes (apworlds, PopTracker packs).
+fn upload_limit() -> axum::extract::DefaultBodyLimit {
+    axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024)
 }
 
 /// Build the auth state for the configured mode; on a fresh native instance,
