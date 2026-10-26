@@ -1899,6 +1899,8 @@ const MC_LOADER: &str = "NeoForge 26.2.0.90"; // mod loader build
 /// the shared stylesheet uses short utility names, so a generic class would
 /// silently inherit unrelated rules (see the header note in this file).
 const GAME_STYLE: &str = r#"<style>
+#tab-log>h2{text-align:center}
+#tab-log .feed,#tab-log .pager{margin-inline:auto}
 .gamelogbar{margin:0 0 10px;text-align:center}
 .gamelogbar input[type=search]{width:100%;max-width:420px;box-sizing:border-box;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:8px 11px;font-size:13px;font-family:var(--font)}
 .gamelogbar input[type=search]:focus{outline:none;border-color:var(--accent)}
