@@ -190,6 +190,28 @@ async fn main() {
             axum::http::header::CACHE_CONTROL,
             axum::http::HeaderValue::from_static("no-store"),
         ))
+        // Baseline security headers (previously left to the reverse proxy).
+        // No strict CSP: pages rely on inline scripts; framing is same-origin.
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::X_CONTENT_TYPE_OPTIONS,
+            axum::http::HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::X_FRAME_OPTIONS,
+            axum::http::HeaderValue::from_static("SAMEORIGIN"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            axum::http::HeaderValue::from_static("frame-ancestors 'self'; base-uri 'self'; object-src 'none'"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::REFERRER_POLICY,
+            axum::http::HeaderValue::from_static("same-origin"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::HeaderName::from_static("permissions-policy"),
+            axum::http::HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+        ))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
