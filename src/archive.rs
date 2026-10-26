@@ -61,9 +61,12 @@ pub async fn bundle_season(season_id: i64, seed: &str, season_txt: &str) -> Resu
     // Metadata/roster.
     let _ = tokio::fs::write(sp.join("season.txt"), season_txt).await;
 
-    // AP server journal (best-effort — needs the systemd-journal group; if the
-    // dump is empty/failed the bundle simply omits it rather than failing).
-    if let Ok(out) = Command::new("journalctl")
+    // The AP server's log: a managed server's captured output, else (external
+    // server) its systemd journal — best-effort; a missing log is omitted.
+    let server_log = season.logs.join("server.log");
+    if cfg.ap_managed {
+        let _ = tokio::fs::copy(&server_log, sp.join("archipelago.log")).await;
+    } else if let Ok(out) = Command::new("journalctl")
         .args(["-u", &cfg.ap_journal_unit, "--no-pager", "-q"])
         .stdin(Stdio::null())
         .output()

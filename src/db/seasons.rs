@@ -34,7 +34,11 @@ pub(super) async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
              -- Where this season's AP-journal ingest resumes.
              journal_cursor TEXT,
              -- Frozen final standings (JSON), captured when archived.
-             summary TEXT
+             summary TEXT,
+             -- The season's AP server passwords: connect (shown to players, may
+             -- be empty) and admin (generated; only Bifrost uses it).
+             ap_password TEXT NOT NULL DEFAULT '',
+             ap_admin_password TEXT NOT NULL DEFAULT ''
            )"#,
     )
     .execute(pool)
@@ -181,10 +185,14 @@ impl Db {
         created_by: Option<i64>,
         now: i64,
     ) -> Result<i64, sqlx::Error> {
-        let r = sqlx::query("INSERT INTO season (name, created_by, created_at) VALUES (?, ?, ?)")
+        let admin_pw: String = crate::auth::new_token().chars().take(24).collect();
+        let r = sqlx::query(
+            "INSERT INTO season (name, created_by, created_at, ap_admin_password) VALUES (?, ?, ?, ?)",
+        )
             .bind(name)
             .bind(created_by)
             .bind(now)
+            .bind(admin_pw)
             .execute(&self.pool)
             .await?;
         Ok(r.last_insert_rowid())
@@ -318,6 +326,26 @@ impl Db {
         }
         q.bind(id).execute(&mut *tx).await.map_err(db)?;
         tx.commit().await.map_err(db)
+    }
+
+    /// The season's AP server (connect, admin) passwords.
+    pub async fn ap_passwords(&self, id: i64) -> (String, String) {
+        sqlx::query_as("SELECT ap_password, ap_admin_password FROM season WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    }
+
+    pub async fn set_ap_password(&self, id: i64, password: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE season SET ap_password = ? WHERE id = ?")
+            .bind(password)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn set_season_seed(&self, id: i64, seed: &str) -> Result<(), sqlx::Error> {

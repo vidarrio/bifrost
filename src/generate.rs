@@ -76,28 +76,6 @@ async fn clear_old_seeds(season: i64) {
     }
 }
 
-/// Deploy a rolled seed as `current.zip` (which restarts the game) and drop the
-/// old save. The existing file is removed first rather than overwritten: it may
-/// be owned by the AP server's user, and `std::fs::copy` would try to chmod it
-/// to match the source (EPERM even when group-writable); a fresh file avoids it.
-async fn deploy_seed(season: i64, seed_zip: &Path) -> Result<(), String> {
-    let season = config::get().season(season);
-    let dst = season.current_zip();
-    let _ = tokio::fs::remove_file(&dst).await;
-    tokio::fs::copy(seed_zip, &dst)
-        .await
-        .map_err(|e| format!("deploy: {e}"))?;
-    // Best-effort save wipe. The AUTHORITATIVE wipe must happen in whatever
-    // restarts the server (today the external reload watcher), which stops the
-    // old server, deletes current.apsave *after* its shutdown auto-save, then
-    // starts fresh. Deleting here can't win that race — the dying old server
-    // re-writes current.apsave on SIGTERM with the previous seed's hints/checks,
-    // and the new server would load those stale hints against the new
-    // (different) placements.
-    let _ = tokio::fs::remove_file(season.current_save()).await;
-    Ok(())
-}
-
 /// The newest AP_*.zip in output/, if any.
 async fn newest_seed(season: i64) -> Option<PathBuf> {
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
@@ -405,10 +383,10 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: i64) {
     if let Err(e) = db.transition(season, State::Generating, now()).await {
         return set(&state, false, format!("Failed — {e}"));
     }
-    match run_inner(&db, &state, season).await {
+    match run_inner(&db, &rts, &state, season).await {
         Ok(msg) => match db.transition(season, State::Live, now()).await {
             Ok(()) => {
-                rts.start_live(season);
+                rts.start_live(season).await;
                 set(&state, false, msg)
             }
             Err(e) => {
@@ -432,7 +410,7 @@ pub async fn regenerate(db: Db, rts: Arc<Runtimes>, season: i64) {
     if let Err(e) = db.transition(season, State::Generating, now()).await {
         return set(&state, false, format!("Failed — {e}"));
     }
-    let r = regen_inner(&db, &state, season).await;
+    let r = regen_inner(&db, &rts, &state, season).await;
     // Live either way: on failure the previous seed is still deployed.
     let _ = db.transition(season, State::Live, now()).await;
     match r {
@@ -445,7 +423,7 @@ fn now() -> i64 {
     crate::auth::now()
 }
 
-async fn regen_inner(db: &Db, state: &GenState, season: i64) -> Result<String, String> {
+async fn regen_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> Result<String, String> {
     // Must have a staged lineup to re-roll.
     let mut has_yaml = false;
     if let Ok(mut rd) = tokio::fs::read_dir(config::get().season(season).players).await {
@@ -480,7 +458,7 @@ async fn regen_inner(db: &Db, state: &GenState, season: i64) -> Result<String, S
     db.remap_season(season, &ap_slots).await.map_err(|e| e.to_string())?;
 
     set(state, true, "Deploying…");
-    deploy_seed(season, &seed_zip).await?;
+    rts.redeploy(season, &seed_zip).await?;
 
     Ok(format!(
         "Regenerated seed {seed_name} — {} AP slots, claims carried over. The game is restarting on a fresh save.",
@@ -488,7 +466,7 @@ async fn regen_inner(db: &Db, state: &GenState, season: i64) -> Result<String, S
     ))
 }
 
-async fn run_inner(db: &Db, state: &GenState, season: i64) -> Result<String, String> {
+async fn run_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> Result<String, String> {
     let subs = db.submissions(season).await.map_err(|e| e.to_string())?;
     if subs.is_empty() {
         return Err("no submissions to generate from".into());
@@ -551,7 +529,7 @@ async fn run_inner(db: &Db, state: &GenState, season: i64) -> Result<String, Str
     .map_err(|e| e.to_string())?;
 
     set(state, true, "Deploying…");
-    deploy_seed(season_id, &seed_zip).await?;
+    rts.redeploy(season_id, &seed_zip).await?;
 
     let common = if mc {
         " The Minecraft common game is included — run “Deploy common game” (manage → archipelago) to ship it to the Minecraft server."

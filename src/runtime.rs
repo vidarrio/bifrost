@@ -1,38 +1,55 @@
 //! Per-season runtime state (design doc §7.4). Every season has its own live
-//! board and generation status; the **live** season also runs the background
-//! workers — AP tracker + counts refresher, activity ingester, in-logic
-//! recomputer — started when it goes live and stopped when it's archived.
+//! board and generation status; the **live** season also runs its AP server
+//! (when Bifrost manages it) and the background workers — AP tracker + counts
+//! refresher, in-logic recomputer, and (for an external server) the journal
+//! ingester — started when it goes live and stopped when it's archived.
 //!
-//! Until Bifrost supervises an AP server per season (§7.2), the configured AP
-//! endpoint serves the one live season.
+//! One season is live at a time until per-season ports land (§7.3).
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 
 use tokio::task::JoinHandle;
 
 use crate::ap::{ApConfig, Board};
+use crate::apserver::{ApServer, Launch};
+use crate::config;
 use crate::db::Db;
 use crate::generate::GenState;
 
 pub struct SeasonRt {
     pub board: Arc<RwLock<Board>>,
     pub genstate: GenState,
+    /// How to reach the season's AP server (set while live).
+    ap: RwLock<Option<ApConfig>>,
+    server: Mutex<Option<Arc<ApServer>>>,
     workers: Mutex<Vec<JoinHandle<()>>>,
+}
+
+impl SeasonRt {
+    /// The AP connection for this season, if it's live and has one.
+    pub fn ap_cfg(&self) -> Option<ApConfig> {
+        self.ap.read().ok().and_then(|c| c.clone())
+    }
+    fn server(&self) -> Option<Arc<ApServer>> {
+        self.server.lock().unwrap().clone()
+    }
 }
 
 pub struct Runtimes {
     db: Db,
-    ap_cfg: Option<ApConfig>,
+    /// The external AP server's connection (`BIFROST_AP_MODE=external`).
+    external: Option<ApConfig>,
     coop: Vec<(String, String)>,
     map: Mutex<HashMap<i64, Arc<SeasonRt>>>,
 }
 
 impl Runtimes {
-    pub fn new(db: Db, ap_cfg: Option<ApConfig>, coop: Vec<(String, String)>) -> Self {
+    pub fn new(db: Db, external: Option<ApConfig>, coop: Vec<(String, String)>) -> Self {
         Self {
             db,
-            ap_cfg,
+            external,
             coop,
             map: Mutex::default(),
         }
@@ -48,29 +65,66 @@ impl Runtimes {
                 Arc::new(SeasonRt {
                     board: Arc::new(RwLock::new(Board::default())),
                     genstate: Arc::new(Mutex::new((false, "idle".into()))),
+                    ap: RwLock::default(),
+                    server: Mutex::default(),
                     workers: Mutex::default(),
                 })
             })
             .clone()
     }
 
-    /// Start the live season's workers (idempotent).
-    pub fn start_live(&self, id: i64) {
+    /// Bring a live season up: its AP server (managed mode) and workers.
+    /// Idempotent.
+    pub async fn start_live(&self, id: i64) {
         let rt = self.get(id);
-        let mut workers = rt.workers.lock().unwrap();
-        if !workers.is_empty() {
+        if !rt.workers.lock().unwrap().is_empty() || rt.server().is_some() {
             return;
         }
-        if let Some(cfg) = self.ap_cfg.clone() {
-            tracing::info!(
-                "season {id}: AP tracker watching {} as slot {}",
-                cfg.url,
-                cfg.slot
+        let cfg = config::get();
+        let ap = if cfg.ap_managed {
+            let (password, admin_password) = self.db.ap_passwords(id).await;
+            let server = ApServer::spawn(
+                Launch {
+                    season: id,
+                    password: password.clone(),
+                    admin_password: admin_password.clone(),
+                },
+                self.db.clone(),
+                rt.board.clone(),
             );
+            *rt.server.lock().unwrap() = Some(Arc::new(server));
+            let host = match cfg.ap_bind.as_str() {
+                "0.0.0.0" | "::" | "" => "127.0.0.1".to_string(),
+                h => h.to_string(),
+            };
+            // Bifrost's own connections (tracker, admin console) join the
+            // room as one of its slots: the configured one, else the first.
+            let first_slot = self
+                .db
+                .slots(id)
+                .await
+                .ok()
+                .and_then(|s| s.into_iter().min_by_key(|r| r.ap_slot).map(|r| r.name));
+            Some(ApConfig {
+                url: format!("ws://{host}:{}", cfg.ap_port),
+                slot: config::var("BIFROST_SLOT")
+                    .or(first_slot)
+                    .unwrap_or_default(),
+                password,
+                admin_password,
+            })
+        } else {
+            self.external.clone()
+        };
+        *rt.ap.write().unwrap() = ap.clone();
+
+        let mut workers = rt.workers.lock().unwrap();
+        if let Some(ap) = ap {
+            tracing::info!("season {id}: AP tracker watching {}", ap.url);
             workers.extend(crate::ap::spawn(
                 id,
                 rt.board.clone(),
-                cfg.clone(),
+                ap.clone(),
                 self.db.clone(),
                 self.coop.clone(),
             ));
@@ -78,28 +132,73 @@ impl Runtimes {
                 id,
                 rt.board.clone(),
                 self.db.clone(),
-                &cfg,
+                &ap,
             ));
         } else {
             tracing::info!(
-                "season {id}: AP tracker idle (set BIFROST_SLOT to enable the live board)"
+                "season {id}: no AP server configured (BIFROST_AP_MODE=external needs BIFROST_SLOT)"
             );
         }
-        // The activity log reads the AP server journal, independent of the
-        // tracker connection.
-        workers.push(crate::activity::spawn(
-            id,
-            rt.board.clone(),
-            self.db.clone(),
-        ));
+        // A managed server's output feeds the activity log directly; an
+        // external one's comes from its systemd journal.
+        if !cfg.ap_managed {
+            workers.push(crate::activity::spawn(
+                id,
+                rt.board.clone(),
+                self.db.clone(),
+            ));
+        }
     }
 
-    /// Stop a season's workers and clear its live board (on archive).
-    pub fn stop(&self, id: i64) {
+    /// Deploy a freshly generated seed for a season. Managed: the supervisor
+    /// stops the server, swaps the seed in with a fresh save, and restarts it.
+    /// External: copy it in as `current.zip`; the host's watcher restarts the
+    /// server (and must wipe the save after stopping it).
+    pub async fn redeploy(&self, id: i64, seed_zip: &Path) -> Result<(), String> {
+        if let Some(server) = self.get(id).server() {
+            return server.redeploy(seed_zip.to_path_buf()).await;
+        }
+        let dirs = config::get().season(id);
+        let dst = dirs.current_zip();
+        let _ = tokio::fs::remove_file(&dst).await;
+        tokio::fs::copy(seed_zip, &dst)
+            .await
+            .map_err(|e| format!("deploy: {e}"))?;
+        let _ = tokio::fs::remove_file(dirs.current_save()).await;
+        Ok(())
+    }
+
+    /// Send a server console command (managed mode); false if there's no
+    /// managed server for the season.
+    pub async fn console(&self, id: i64, cmd: &str) -> bool {
+        match self.get(id).server() {
+            Some(server) => {
+                server.console(cmd).await;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Update the live season's connect password everywhere Bifrost uses it.
+    pub fn set_connect_password(&self, id: i64, password: &str) {
+        if let Some(cfg) = self.get(id).ap.write().unwrap().as_mut() {
+            cfg.password = password.to_string();
+        }
+    }
+
+    /// Stop a season's AP server (saving) and workers, and clear its board
+    /// (on archive).
+    pub async fn stop(&self, id: i64) {
         let rt = self.get(id);
+        let server = rt.server.lock().unwrap().take();
+        if let Some(server) = server {
+            server.stop().await;
+        }
         for w in rt.workers.lock().unwrap().drain(..) {
             w.abort();
         }
+        *rt.ap.write().unwrap() = None;
         if let Ok(mut b) = rt.board.write() {
             *b = Board::default();
         }

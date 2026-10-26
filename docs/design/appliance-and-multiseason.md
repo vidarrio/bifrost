@@ -430,8 +430,26 @@ Built (everything except the AP instance fleet, which waits on §7.3):
   are accepted only in `signup`. Archived seasons' boards show their summary
   at `/s/{id}/season`; the landing page lists them.
 
-Not built yet: the AP fleet / per-season ports (§7.2–7.3), co-moderators
-(`season_mod`) and moderator ownership, and the tabbed console (§9).
+**AP server supervisor (managed mode, the default).** `src/apserver.rs` runs
+the live season's MultiServer itself — sandboxed with network (it imports
+worlds), on `BIFROST_AP_BIND`:`BIFROST_AP_PORT` (default `0.0.0.0:38281`),
+`scripts/bifrost_server.py` pinning AP to the season dir. It restarts the
+server with backoff if it dies; **redeploys stop it (it saves) before wiping
+the save and swapping the seed in**, so the old seed's state can't leak into
+the new world (the race the old reload unit worked around); archive and
+Bifrost shutdown (SIGTERM / Ctrl-C) stop it cleanly with `/exit`. Its output
+goes to `seasons/<id>/logs/server.log` and straight into the activity feed
+(no journald). Per-season passwords live on the season row: a connect
+password the season's mods set (applied live via the server console) and a
+generated admin password only Bifrost uses; Bifrost's own connections join
+as `BIFROST_SLOT` or the season's first slot. Players see
+`BIFROST_AP_PUBLIC_ADDR` (+ optional `BIFROST_AP_CONNECT_NOTE`) on the home
+page. `BIFROST_AP_MODE=external` keeps the old arrangement (env-configured
+endpoint + passwords, journal ingestion, host-side restarts).
+
+Not built yet: more than one live season (per-season ports or routing,
+§7.2–7.3 — needs the connections decision) and the tabbed console (§9).
+Co-moderators and moderator ownership are in (§6).
 
 ## 8. Season apworld & YAML management
 

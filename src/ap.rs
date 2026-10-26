@@ -423,6 +423,17 @@ async fn run_once(
     db: &crate::db::Db,
     coop: &[(String, String)],
 ) -> Result<(), String> {
+    // The tracker connects as one of the room's slots: the configured one,
+    // else the season's first (the roster exists once it's generated).
+    let slot = if cfg.slot.is_empty() {
+        db.slots(season)
+            .await
+            .ok()
+            .and_then(|s| s.into_iter().min_by_key(|r| r.ap_slot).map(|r| r.name))
+            .ok_or("no slots yet to connect the tracker as")?
+    } else {
+        cfg.slot.clone()
+    };
     let (ws, _) = tokio_tungstenite::connect_async(&cfg.url)
         .await
         .map_err(|e| format!("connect {}: {e}", cfg.url))?;
@@ -452,7 +463,7 @@ async fn run_once(
                     let connect = json!([{
                         "cmd": "Connect",
                         "game": "",
-                        "name": cfg.slot,
+                        "name": slot,
                         "uuid": "bifrost-tracker",
                         "version": {"class": "Version", "major": 0, "minor": 6, "build": 8},
                         "items_handling": 0,

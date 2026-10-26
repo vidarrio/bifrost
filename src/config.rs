@@ -55,6 +55,16 @@ pub struct Config {
     /// CIDRs): their `X-Forwarded-For` is believed for client addresses, and in
     /// forward-auth mode they're the only source of identity headers.
     pub trusted_proxies: Vec<Cidr>,
+    /// Bifrost runs the live season's AP server itself (`BIFROST_AP_MODE`
+    /// `managed`, the default) or connects to one run elsewhere (`external`:
+    /// `BIFROST_AP_URL` + passwords, journal-sourced activity).
+    pub ap_managed: bool,
+    /// Where a managed AP server listens (`BIFROST_AP_BIND`, `BIFROST_AP_PORT`).
+    pub ap_bind: String,
+    pub ap_port: u16,
+    /// The address players connect to, shown on the site
+    /// (`BIFROST_AP_PUBLIC_ADDR`, e.g. `ap.example.org:38281`).
+    pub ap_public_addr: Option<String>,
 }
 
 /// The directories of one season. Laid out exactly like an Archipelago *user
@@ -144,6 +154,10 @@ impl Config {
                 .unwrap_or_else(|| "/opt/bifrost".into())
                 .into(),
             ap_journal_unit: var("BIFROST_AP_JOURNAL_UNIT").unwrap_or_else(|| "archipelago".into()),
+            ap_managed: var("BIFROST_AP_MODE").as_deref() != Some("external"),
+            ap_bind: var("BIFROST_AP_BIND").unwrap_or_else(|| "0.0.0.0".into()),
+            ap_port: var("BIFROST_AP_PORT").and_then(|p| p.parse().ok()).unwrap_or(38281),
+            ap_public_addr: var("BIFROST_AP_PUBLIC_ADDR"),
             trusted_proxies: var("BIFROST_TRUSTED_PROXIES")
                 .map(|l| {
                     Cidr::parse_list(&l).unwrap_or_else(|e| panic!("BIFROST_TRUSTED_PROXIES: {e}"))
@@ -232,6 +246,11 @@ const FILE_KEYS: &[(&str, &str, &str)] = &[
     ("server", "public_url", "BIFROST_PUBLIC_URL"),
     ("server", "trusted_proxies", "BIFROST_TRUSTED_PROXIES"),
     ("server", "insecure_cookies", "BIFROST_INSECURE_COOKIES"),
+    ("archipelago", "mode", "BIFROST_AP_MODE"),
+    ("archipelago", "bind", "BIFROST_AP_BIND"),
+    ("archipelago", "port", "BIFROST_AP_PORT"),
+    ("archipelago", "public_addr", "BIFROST_AP_PUBLIC_ADDR"),
+    ("archipelago", "connect_note", "BIFROST_AP_CONNECT_NOTE"),
     ("archipelago", "dir", "BIFROST_AP_DIR"),
     ("archipelago", "python", "BIFROST_AP_PYTHON"),
     ("archipelago", "journal_unit", "BIFROST_AP_JOURNAL_UNIT"),
@@ -347,10 +366,16 @@ pub const EXAMPLE: &str = r#"# $BIFROST_DATA/config.toml — every setting here 
 # insecure_cookies = false           # BIFROST_INSECURE_COOKIES (plain-HTTP dev only)
 
 [archipelago]
+# mode = "managed"                   # BIFROST_AP_MODE: managed (Bifrost runs the AP server) | external
+# port = 38281                       # BIFROST_AP_PORT (managed server)
+# bind = "0.0.0.0"                   # BIFROST_AP_BIND (managed server)
+# public_addr = "ap.example:38281"   # BIFROST_AP_PUBLIC_ADDR (shown to players)
+# connect_note = ""                  # BIFROST_AP_CONNECT_NOTE (extra connect tip on the home page)
 # dir = "/opt/archipelago"           # BIFROST_AP_DIR
 # python = "/opt/archipelago/venv/bin/python"  # BIFROST_AP_PYTHON
+# — external mode only (managed mode generates per-season passwords):
 # url = "ws://127.0.0.1:38281"       # BIFROST_AP_URL
-# slot = "Tracker"                   # BIFROST_SLOT (enables the live board)
+# slot = "Tracker"                   # BIFROST_SLOT (tracker's slot; managed: first slot)
 # password = ""                      # BIFROST_AP_PASSWORD (secret)
 # admin_password = ""                # BIFROST_AP_ADMIN_PASSWORD (secret)
 # journal_unit = "archipelago"       # BIFROST_AP_JOURNAL_UNIT

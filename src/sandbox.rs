@@ -177,6 +177,17 @@ impl Sandbox {
 
     /// Build the command for `job` on this tier. Run it with [`run`].
     pub fn command(&self, job: &Job) -> Command {
+        self.build(job, true)
+    }
+
+    /// Like [`command`](Self::command) for a long-running service (the AP
+    /// server): same jail and limits, but no CPU-time cap — a server that runs
+    /// for weeks would eventually exhaust any fixed one.
+    pub fn service(&self, job: &Job) -> Command {
+        self.build(job, false)
+    }
+
+    fn build(&self, job: &Job, cpu_cap: bool) -> Command {
         let mut cmd = match (&self.tier, &self.bwrap) {
             (Tier::Bubblewrap, Some(bwrap)) => {
                 let mut c = Command::new(bwrap);
@@ -205,7 +216,9 @@ impl Sandbox {
                 // the job spawned.
                 libc::setsid();
                 set_limit(libc::RLIMIT_AS, limits.mem_bytes);
-                set_limit(libc::RLIMIT_CPU, limits.cpu_secs);
+                if cpu_cap {
+                    set_limit(libc::RLIMIT_CPU, limits.cpu_secs);
+                }
                 set_limit(libc::RLIMIT_FSIZE, limits.fsize_bytes);
                 set_limit(libc::RLIMIT_CORE, 0);
                 Ok(())

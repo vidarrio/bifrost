@@ -153,6 +153,21 @@ async fn ingest(season: i64, board: &Arc<RwLock<Board>>, db: &Db) -> Result<(), 
     Ok(())
 }
 
+/// Record one AP server log line (a managed server's output) as activity, if
+/// it's gameplay. `ts` is when it was seen.
+pub async fn ingest_line(season: i64, board: &Arc<RwLock<Board>>, db: &Db, line: &str, ts: i64) {
+    let Some((kind, body, sender, receiver, location)) = classify(line) else {
+        return;
+    };
+    let meta = board.read().ok().and_then(|b| b.meta.clone());
+    let class = match (kind, &sender, &location, &meta) {
+        ("send", Some(s), Some(loc), Some(m)) => m.item_flags(s, loc).map(item_class),
+        _ => None,
+    };
+    db.activity_add(season, ts, kind, &body, sender.as_deref(), receiver.as_deref(), class)
+        .await;
+}
+
 /// Deploy time of the season's seed, as epoch seconds (0 if unknown).
 fn current_zip_mtime(season: i64) -> i64 {
     std::fs::metadata(config::get().season(season).current_zip())

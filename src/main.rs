@@ -21,6 +21,7 @@ mod account;
 mod activity;
 mod ap;
 mod ap_adapter;
+mod apserver;
 mod archive;
 mod auth;
 mod checker;
@@ -46,7 +47,6 @@ use std::sync::Mutex;
 #[derive(Clone)]
 struct AppState {
     db: db::Db,
-    ap_cfg: Option<ap::ApConfig>,
     /// Per-season boards, generation state and live workers.
     seasons: Arc<runtime::Runtimes>,
     /// Active minesweeper games keyed by (player account, board kind). One
@@ -96,20 +96,23 @@ async fn main() {
 
     let auth = init_auth(&db).await;
 
-    let ap_cfg = ap::ApConfig::from_env();
-    let seasons = Arc::new(runtime::Runtimes::new(db.clone(), ap_cfg.clone(), parse_coop()));
+    // An AP server run elsewhere (BIFROST_AP_MODE=external); managed mode
+    // starts one per live season instead.
+    let external = if cfg.ap_managed { None } else { ap::ApConfig::from_env() };
+    let seasons = Arc::new(runtime::Runtimes::new(db.clone(), external, parse_coop()));
     for season in db.seasons().await {
         if season.state() != db::State::Archived {
             let _ = config::get().season(season.id).ensure();
         }
         if season.state() == db::State::Live {
-            seasons.start_live(season.id);
+            seasons.start_live(season.id).await;
         }
     }
 
+    let shutdown_seasons = seasons.clone();
+    let shutdown_db = db.clone();
     let state = AppState {
         db,
-        ap_cfg,
         seasons,
         mine_games: Arc::new(Mutex::new(HashMap::new())),
         auth: auth.clone(),
@@ -224,8 +227,27 @@ async fn main() {
             std::net::SocketAddr,
         >(app),
     )
+    .with_graceful_shutdown(shutdown_signal())
     .await
     .expect("serve");
+    // Let live seasons' AP servers save and exit before Bifrost does.
+    for season in shutdown_db.seasons().await {
+        if season.state() == db::State::Live {
+            shutdown_seasons.stop(season.id).await;
+        }
+    }
+    tracing::info!("Bifrost stopped");
+}
+
+/// SIGTERM (service manager / `docker stop`) or Ctrl-C.
+async fn shutdown_signal() {
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("install SIGTERM handler");
+    tokio::select! {
+        _ = term.recv() => {}
+        _ = tokio::signal::ctrl_c() => {}
+    }
+    tracing::info!("shutting down");
 }
 
 /// Body limit for the file-upload routes (apworlds, PopTracker packs).
@@ -353,7 +375,17 @@ async fn landing(State(st): State<AppState>) -> Html<String> {
         LANDING
             .replace("<!--SEASONLABEL-->", &render::escape(&label))
             .replace("<!--ROSTER-->", &roster)
-            .replace("<!--PASTSEASONS-->", &past_html),
+            .replace("<!--PASTSEASONS-->", &past_html)
+            .replace(
+                "<!--CONNECTADDR-->",
+                &render::escape(config::get().ap_public_addr.as_deref().unwrap_or("ask an admin")),
+            )
+            .replace(
+                "<!--CONNECTNOTE-->",
+                &config::var("BIFROST_AP_CONNECT_NOTE")
+                    .map(|n| format!(r#"<div class="pw" style="margin-top:8px">{}</div>"#, render::escape(&n)))
+                    .unwrap_or_default(),
+            ),
     )
 }
 
@@ -938,7 +970,7 @@ async fn game_view(
     let i_have_claim = slots
         .iter()
         .any(|r| !r.is_common && r.claimed_by_id == Some(my_id));
-    let points = match (i_claim || is_common_slot, &st.ap_cfg) {
+    let points = match (i_claim || is_common_slot, &ctx.rt.ap_cfg()) {
         (true, Some(cfg)) if !connect_name.is_empty() => {
             ap::slot_points(&cfg.url, &cfg.password, &connect_name).await
         }
@@ -1261,7 +1293,7 @@ async fn hint_post(
     let Some(name) = connect_name else {
         return reject("That slot isn't live right now.");
     };
-    let Some(cfg) = st.ap_cfg.as_ref() else {
+    let Some(cfg) = ctx.rt.ap_cfg() else {
         return reject("Hinting isn't configured.");
     };
     let creds = st.db.credits(season, my_id).await;
@@ -1422,7 +1454,6 @@ struct FinishForm {
 /// a manual `/release` in the console.
 async fn game_finish(
     Path(ap_slot): Path<i64>,
-    State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<FinishForm>,
@@ -1440,7 +1471,7 @@ async fn game_finish(
     let Some((name, game)) = slot.filter(|(n, _)| !n.is_empty()) else {
         return render::notice("That slot isn't live right now.", false, &back).into_response();
     };
-    let Some(cfg) = st.ap_cfg.as_ref() else {
+    let Some(cfg) = ctx.rt.ap_cfg() else {
         return render::notice("AP connection not configured.", false, &back).into_response();
     };
     match ap::mark_goal(&cfg.url, &cfg.password, &name, &game).await {
@@ -1686,11 +1717,11 @@ async fn render_admin(ctx: &scope::SeasonCtx, st: &AppState) -> Html<String> {
     let signups_open = ctx.state().accepts_signups();
     let minesweeper_on = ctx.row.minesweeper_enabled;
     let mc_on = ctx.row.mc_enabled;
-    let connect_pw = st
-        .ap_cfg
-        .as_ref()
-        .map(|c| c.password.clone())
-        .unwrap_or_default();
+    let connect_pw = if config::get().ap_managed {
+        st.db.ap_passwords(ctx.id).await.0
+    } else {
+        ctx.rt.ap_cfg().map(|c| c.password).unwrap_or_default()
+    };
     let (running, gen_msg) = ctx.rt
         .genstate
         .lock()
@@ -2029,7 +2060,7 @@ async fn admin_archive_season(
         return render::notice(&format!("Summary saved, but archiving failed: {e}"), false, "admin")
             .into_response();
     }
-    st.seasons.stop(ctx.id);
+    st.seasons.stop(ctx.id).await;
 
     Redirect::to(&ctx.url("/season")).into_response()
 }
@@ -2244,7 +2275,6 @@ struct ConsoleForm {
 /// Run a server command as admin and return its output as JSON, so the admin
 /// page can append it to a live log without a page reload.
 async fn admin_console(
-    State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<ConsoleForm>,
@@ -2269,7 +2299,7 @@ async fn admin_console(
             Some(format!("/send_location {finder} {loc}"))
         })
         .unwrap_or_else(|| cmd.clone());
-    let output = match st.ap_cfg.as_ref() {
+    let output = match ctx.rt.ap_cfg().as_ref() {
         Some(cfg) => {
             match ap::send_admin(
                 &cfg.url,
@@ -2321,7 +2351,11 @@ async fn admin_connect_password(
     me: auth::Me,
     Form(f): Form<ConnPwForm>,
 ) -> Response {
-    if !me.can(auth::Action::ManageInstance) {
+    let managed = config::get().ap_managed;
+    // Managed: the password is the season's own; external: it's the shared
+    // server's, an instance setting.
+    let allowed = if managed { ctx.can_manage(&me) } else { me.can(auth::Action::ManageInstance) };
+    if !allowed {
         return render::notice("Admins only.", false, "board").into_response();
     }
     let pw = f.password.trim().to_string();
@@ -2337,7 +2371,22 @@ async fn admin_connect_password(
         )
         .into_response();
     }
-    let Some(cfg) = st.ap_cfg.as_ref() else {
+    if managed {
+        // Stored with the season (used whenever its server starts) and applied
+        // to the running server's console right away — no restart.
+        if let Err(e) = st.db.set_ap_password(ctx.id, &pw).await {
+            return render::notice(&format!("Couldn't save it: {e}"), false, "admin").into_response();
+        }
+        st.seasons.set_connect_password(ctx.id, &pw);
+        let applied = st.seasons.console(ctx.id, &format!("/option password {pw}")).await;
+        let msg = if applied {
+            "Connect password updated on the running server."
+        } else {
+            "Connect password saved — it applies when this season's server starts."
+        };
+        return render::notice(msg, true, "admin").into_response();
+    }
+    let Some(cfg) = ctx.rt.ap_cfg() else {
         return render::notice("AP connection isn't configured.", false, "admin").into_response();
     };
     // Is a season actually live right now (tracker connected to a running
