@@ -6,8 +6,8 @@
 #
 #   packaging/bundle/build.sh          → dist/bifrost-<version>-x86_64-linux
 #
-# Build args: BIFROST_VERSION, AP_VERSION + AP_SHA256 (the release's source
-# tarball), PY_URL + PY_SHA256 (python-build-standalone install_only).
+# Build args: BIFROST_VERSION, AP_VERSION + AP_SHA256 (a release of Bifrost's
+# Archipelago fork, packaging/archipelago/, and its source tarball), PY_URL + PY_SHA256 (python-build-standalone install_only).
 
 ARG DEBIAN=trixie
 # apt's privilege drop to _apt (uid/gid 65534) fails under rootless builders
@@ -31,9 +31,9 @@ RUN cargo build --release --locked --bin bifrost --target x86_64-unknown-linux-m
 # ---- the runtime payload ----
 FROM docker.io/library/debian:${DEBIAN}-slim AS runtime
 ARG APT
-ARG AP_VERSION=0.6.8
-ARG AP_SHA256=2e957e6cd466d311a3db05f71d4a7525c71858ddfe0eebb7465380a1fa80c3ff
-ARG AP_REPO=https://github.com/ArchipelagoMW/Archipelago
+ARG AP_VERSION=0.6.8-bifrost.1
+ARG AP_SHA256=3db1707be70ee1951d19a5f0f0fb80311a9f3347e5752e48dd502f7ab057d5b6
+ARG AP_REPO=https://github.com/vidarrio/Archipelago
 ARG PY_URL=https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.13.16+20261013-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
 ARG PY_SHA256=d0080766b6b74aeb81e1949ef0d9a20e6c17f7b160fb295a69b936ccb17660be
 RUN ${APT} update && ${APT} install -y --no-install-recommends \

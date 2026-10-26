@@ -11,7 +11,8 @@
 # without it Bifrost runs on the limits-only tier and refuses custom apworlds.
 # --stop-timeout: each AP server gets up to 15 s to save on shutdown.
 #
-# Build args: AP_VERSION (an Archipelago release tag), AP_REPO.
+# Build args: AP_VERSION (a release tag of Bifrost's Archipelago fork,
+# packaging/archipelago/), AP_REPO.
 
 ARG DEBIAN=trixie
 # apt's privilege drop to _apt (uid/gid 65534) fails under rootless builders
@@ -31,8 +32,8 @@ RUN cargo build --release --locked --bin bifrost
 # ---- Archipelago (source checkout + venv; paths match the runtime stage) ----
 FROM docker.io/library/debian:${DEBIAN}-slim AS archipelago
 ARG APT
-ARG AP_VERSION=0.6.8
-ARG AP_REPO=https://github.com/ArchipelagoMW/Archipelago
+ARG AP_VERSION=0.6.8-bifrost.1
+ARG AP_REPO=https://github.com/vidarrio/Archipelago
 RUN ${APT} update && ${APT} install -y --no-install-recommends \
         ca-certificates git python3 python3-venv python3-dev build-essential \
     && rm -rf /var/lib/apt/lists/*
