@@ -351,17 +351,35 @@ process (+ generation spikes); the console should show count/limits.
 ### 7.3 Connections / ports
 
 One AP server == one multiworld, and the AP Connect handshake carries no
-"which season" selector, so seasons must be separated *before* the AP protocol:
+"which season" selector, so seasons must be separated *before* the AP protocol.
+The AP MultiServer is a raw game socket, not an HTTP app — it does no vhost
+routing itself — and native desktop clients connect to a literal `host:port` the
+player bookmarks. So a port per live season is the substrate no matter what
+fronts it; the only real choice is what, if anything, sits in front.
 
-- **Option A — port per season (recommended first):** allocate from a configured
-  range; Bifrost shows each player their season's connect address. Simple,
-  robust; operator forwards a port range.
-- **Option B — SNI/subdomain or reverse-proxy routing:** `season-x.host` →
-  Bifrost ws-proxies to the right instance, one public port. Nicer UX, more
-  moving parts, and depends on the operator's TLS/DNS. Offer as an enhancement.
+**Decided: port-per-season is the baseline.** The sysadmin configures a port
+range (default e.g. `38281–38300`); the supervisor (§7.2) allocates one port per
+*live* season from it, and Bifrost shows each player their season's connect
+address on the board. **Concurrency cap = range size** — an intentional,
+operator-visible limit (see the resource-ceilings open question). The web UI
+stays on Bifrost's single port/host and routes seasons internally (§7.5); only
+the AP game sockets consume the range.
 
-Decision deferred; start with A, design the connect-address as an abstraction so
-B can slot in.
+Allocation is **stable, not ephemeral**: a port is pinned at go-live and held
+until archive — never re-picked on restart — so a crash-and-restart returns on
+the same port and bookmarked connect strings keep working. Lifecycle:
+assign-at-go-live → hold → release-on-archive, with a boot-time reconciliation
+pass (reclaim ports whose season is gone; detect a port still held by a zombie
+instance before reassigning).
+
+**Optional overlay (not an alternative) — subdomain / `:443` for browser
+clients.** A deployment that already runs a reverse proxy with wildcard TLS can
+additionally expose each season's wss at `season-x.host:443` (the Candy Box
+`:443` trick), giving browser clients nice names on one public port. This layers
+*on top* of the per-season port — native clients still use the real port — so it
+depends on the operator's TLS/DNS and is an enhancement, not a replacement.
+Design the connect-address as an abstraction so B slots in without touching
+handlers.
 
 ### 7.4 Background workers per season
 
@@ -391,14 +409,14 @@ landing page lists seasons by state. This touches most handlers; do it behind a
 
 ### 7.7 Implementation notes (step 4, on `appliance`)
 
-Built (everything except the AP instance fleet, which waits on §7.3):
+Built (the AP fleet included; the tabbed console is still to come):
 
 - **Season entity** (`src/db/seasons.rs`): `season` table — name at creation,
   creator, lifecycle state, seed, live/archived times, per-season toggles
   (minesweeper, common game), journal cursor, frozen summary. Lifecycle rules
-  are a pure, tested `State::can_go`; `Db::transition` enforces them plus the
-  **one-live-season rule** (until the fleet exists, the configured AP endpoint
-  serves the single live season). A crash mid-generation can't strand a
+  are a pure, tested `State::can_go`; `Db::transition` enforces them plus
+  **room to go live**: a free AP port in managed mode (§7.3), or no other
+  live season with an external server. A crash mid-generation can't strand a
   season in `generating`.
 - **Re-keyed data:** every season-scoped table (`bifrost_slot`, `submission`,
   `hint_credit`, `hint_priority`, `activity`, `inlogic`, `mine_result`) is keyed
@@ -409,7 +427,7 @@ Built (everything except the AP instance fleet, which waits on §7.3):
   slots + claims onto the new AP slot numbers; minesweeper results and hint
   credits now survive a re-roll.
 - **Per-season runtime** (`src/runtime.rs`): board + generation state per
-  season; the live season's workers (tracker, counts, activity, in-logic) start
+  season; each live season's AP server and workers (tracker, counts, activity, in-logic) start
   on going live and stop on archive. The tracker refuses an AP server running
   a different seed than the season deployed.
 - **Per-season dirs:** `seasons/<id>/{Players,worlds,output,logs,submissions}`
@@ -430,11 +448,12 @@ Built (everything except the AP instance fleet, which waits on §7.3):
   are accepted only in `signup`. Archived seasons' boards show their summary
   at `/s/{id}/season`; the landing page lists them.
 
-**AP server supervisor (managed mode, the default).** `src/apserver.rs` runs
-the live season's MultiServer itself — sandboxed with network (it imports
-worlds), on `BIFROST_AP_BIND`:`BIFROST_AP_PORT` (default `0.0.0.0:38281`),
-`scripts/bifrost_server.py` pinning AP to the season dir. It restarts the
-server with backoff if it dies; **redeploys stop it (it saves) before wiping
+**AP server fleet (managed mode, the default).** `src/apserver.rs` runs one
+MultiServer per live season — sandboxed with network (it imports worlds), on
+`BIFROST_AP_BIND` and the season's own port, `scripts/bifrost_server.py`
+pinning AP to the season dir. It restarts the server with backoff if it dies
+(and retries a start that failed, e.g. because a leftover process still holds
+the port — checked before launching, and logged plainly); **redeploys stop it (it saves) before wiping
 the save and swapping the seed in**, so the old seed's state can't leak into
 the new world (the race the old reload unit worked around); archive and
 Bifrost shutdown (SIGTERM / Ctrl-C) stop it cleanly with `/exit`. Its output
@@ -442,13 +461,32 @@ goes to `seasons/<id>/logs/server.log` and straight into the activity feed
 (no journald). Per-season passwords live on the season row: a connect
 password the season's mods set (applied live via the server console) and a
 generated admin password only Bifrost uses; Bifrost's own connections join
-as `BIFROST_SLOT` or the season's first slot. Players see
-`BIFROST_AP_PUBLIC_ADDR` (+ optional `BIFROST_AP_CONNECT_NOTE`) on the home
-page. `BIFROST_AP_MODE=external` keeps the old arrangement (env-configured
-endpoint + passwords, journal ingestion, host-side restarts).
+as `BIFROST_SLOT` or the season's first slot. `BIFROST_AP_MODE=external`
+keeps the old arrangement (env-configured endpoint + passwords, journal
+ingestion, host-side restarts) and with it one live season at a time.
 
-Not built yet: more than one live season (per-season ports or routing,
-§7.2–7.3 — needs the connections decision) and the tabbed console (§9).
+**Ports (§7.3, as built).** `BIFROST_AP_PORTS` (default `38281-38300`) is the
+range; `season.ap_port` (UNIQUE) is assigned inside the go-live transition
+(`BEGIN IMMEDIATE`, lowest free port, or the one the season already holds if
+it's still in range — so re-rolls and restarts keep it) and cleared on
+archive. Generation checks for room *before* rolling, so a full range refuses
+up front with "every AP port … is held by a live season". Boot runs
+`reconcile_ap_ports`: non-live seasons drop their port, live ones keep theirs
+if still in range or get re-pinned; any that can't be placed are logged and
+left without a server. `Runtimes::connect_address` is the one place the
+player-facing address is built (instance connect host + season port) — the
+`:443`/subdomain overlay slots in there.
+
+**Instance settings.** A sysadmin-only `/admin/settings` page (stored in the
+`setting` table, not `config.toml`) holds what's operator-specific on the
+public pages: the connect host players' clients use, the password note, an
+optional header "home" link, and the Discord servers list. The home page
+renders entirely from it — one connect address per live season — and shows
+the Archipelago version read from the managed install's `Utils.py`
+(`ap_adapter::ap_version`), as does the settings page alongside the port
+range. The board shows its season's address.
+
+Not built yet: the tabbed console (§9).
 Co-moderators and moderator ownership are in (§6).
 
 ## 8. Season apworld & YAML management
@@ -544,8 +582,9 @@ new data dir, new config, new service wiring. Consequences:
 
 - **AP-internals treadmill** — pinning + the adapter contain it, but upgrades are
   ongoing work.
-- **Connections** — port-per-season vs. proxy routing (§7.3): decide before the
-  fleet lands.
+- **Connections** — decided (§7.3): stable port-per-season from a configured
+  range (cap = range size); subdomain/`:443` is an optional overlay for browser
+  clients, not an alternative.
 - **Single-binary AP bundling cost** — accepted as a convenience tier; container
   is primary.
 - **Resource ceilings** for concurrent live seasons — need an operator-visible

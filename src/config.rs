@@ -33,6 +33,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::ops::RangeInclusive;
 use std::sync::OnceLock;
 
 use crate::net::Cidr;
@@ -59,12 +60,11 @@ pub struct Config {
     /// `managed`, the default) or connects to one run elsewhere (`external`:
     /// `BIFROST_AP_URL` + passwords, journal-sourced activity).
     pub ap_managed: bool,
-    /// Where a managed AP server listens (`BIFROST_AP_BIND`, `BIFROST_AP_PORT`).
+    /// Where managed AP servers listen (`BIFROST_AP_BIND`).
     pub ap_bind: String,
-    pub ap_port: u16,
-    /// The address players connect to, shown on the site
-    /// (`BIFROST_AP_PUBLIC_ADDR`, e.g. `ap.example.org:38281`).
-    pub ap_public_addr: Option<String>,
+    /// The ports live seasons' AP servers get, one each (`BIFROST_AP_PORTS`,
+    /// e.g. `38281-38300`). Its size caps how many seasons can be live at once.
+    pub ap_ports: RangeInclusive<u16>,
 }
 
 /// The directories of one season. Laid out exactly like an Archipelago *user
@@ -156,8 +156,9 @@ impl Config {
             ap_journal_unit: var("BIFROST_AP_JOURNAL_UNIT").unwrap_or_else(|| "archipelago".into()),
             ap_managed: var("BIFROST_AP_MODE").as_deref() != Some("external"),
             ap_bind: var("BIFROST_AP_BIND").unwrap_or_else(|| "0.0.0.0".into()),
-            ap_port: var("BIFROST_AP_PORT").and_then(|p| p.parse().ok()).unwrap_or(38281),
-            ap_public_addr: var("BIFROST_AP_PUBLIC_ADDR"),
+            ap_ports: var("BIFROST_AP_PORTS")
+                .map(|r| parse_port_range(&r).unwrap_or_else(|e| panic!("BIFROST_AP_PORTS: {e}")))
+                .unwrap_or(38281..=38300),
             trusted_proxies: var("BIFROST_TRUSTED_PROXIES")
                 .map(|l| {
                     Cidr::parse_list(&l).unwrap_or_else(|e| panic!("BIFROST_TRUSTED_PROXIES: {e}"))
@@ -240,6 +241,23 @@ pub fn var(name: &str) -> Option<String> {
     env_var(name).or_else(|| FILE_VARS.get()?.get(name).cloned())
 }
 
+/// `38281-38300` (or a single port) → an inclusive range.
+fn parse_port_range(s: &str) -> Result<RangeInclusive<u16>, String> {
+    let (a, b) = s.trim().split_once('-').unwrap_or((s.trim(), s.trim()));
+    let port = |p: &str| {
+        p.trim()
+            .parse::<u16>()
+            .ok()
+            .filter(|&p| p > 0)
+            .ok_or_else(|| format!("bad port {p:?}"))
+    };
+    let (a, b) = (port(a)?, port(b)?);
+    if a > b {
+        return Err(format!("{a}-{b} is backwards"));
+    }
+    Ok(a..=b)
+}
+
 /// `[section] key` in config.toml ↔ the `BIFROST_*` setting it provides.
 const FILE_KEYS: &[(&str, &str, &str)] = &[
     ("server", "port", "BIFROST_PORT"),
@@ -248,9 +266,7 @@ const FILE_KEYS: &[(&str, &str, &str)] = &[
     ("server", "insecure_cookies", "BIFROST_INSECURE_COOKIES"),
     ("archipelago", "mode", "BIFROST_AP_MODE"),
     ("archipelago", "bind", "BIFROST_AP_BIND"),
-    ("archipelago", "port", "BIFROST_AP_PORT"),
-    ("archipelago", "public_addr", "BIFROST_AP_PUBLIC_ADDR"),
-    ("archipelago", "connect_note", "BIFROST_AP_CONNECT_NOTE"),
+    ("archipelago", "ports", "BIFROST_AP_PORTS"),
     ("archipelago", "dir", "BIFROST_AP_DIR"),
     ("archipelago", "python", "BIFROST_AP_PYTHON"),
     ("archipelago", "journal_unit", "BIFROST_AP_JOURNAL_UNIT"),
@@ -367,10 +383,9 @@ pub const EXAMPLE: &str = r#"# $BIFROST_DATA/config.toml — every setting here 
 
 [archipelago]
 # mode = "managed"                   # BIFROST_AP_MODE: managed (Bifrost runs the AP server) | external
-# port = 38281                       # BIFROST_AP_PORT (managed server)
-# bind = "0.0.0.0"                   # BIFROST_AP_BIND (managed server)
-# public_addr = "ap.example:38281"   # BIFROST_AP_PUBLIC_ADDR (shown to players)
-# connect_note = ""                  # BIFROST_AP_CONNECT_NOTE (extra connect tip on the home page)
+# ports = "38281-38300"              # BIFROST_AP_PORTS (one per live season; the range size caps live seasons)
+# bind = "0.0.0.0"                   # BIFROST_AP_BIND (managed servers)
+# (The host players connect to is set on the instance settings page.)
 # dir = "/opt/archipelago"           # BIFROST_AP_DIR
 # python = "/opt/archipelago/venv/bin/python"  # BIFROST_AP_PYTHON
 # — external mode only (managed mode generates per-season passwords):
@@ -442,6 +457,17 @@ mod tests {
             Path::new("/opt/bifrost/scripts/bifrost_meta.py")
         );
         assert_eq!(c.ap_journal_unit, "archipelago");
+        assert_eq!(c.ap_ports, 38281..=38300);
+    }
+
+    #[test]
+    fn port_ranges() {
+        assert_eq!(parse_port_range("40000-40009"), Ok(40000..=40009));
+        assert_eq!(parse_port_range(" 38281 "), Ok(38281..=38281));
+        assert!(parse_port_range("40009-40000").is_err());
+        assert!(parse_port_range("0-10").is_err());
+        assert!(parse_port_range("a-b").is_err());
+        assert_eq!(with(&[("BIFROST_AP_PORTS", "5000-5001")]).ap_ports, 5000..=5001);
     }
 
     #[test]

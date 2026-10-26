@@ -10,12 +10,17 @@ use sqlx::{FromRow, SqlitePool};
 
 mod auth;
 mod seasons;
+mod settings;
 pub use auth::{AccountRow, LinkKind, LinkRow, RedeemError};
 pub use seasons::{SeasonRow, State};
+pub use settings::{Discord, Instance};
 
 #[derive(Clone)]
 pub struct Db {
     pool: SqlitePool,
+    /// The AP port range live seasons draw from (managed mode); `None` means
+    /// one external server, so only one season can be live.
+    ap_ports: Option<std::ops::RangeInclusive<u16>>,
 }
 
 #[derive(Debug, FromRow, Clone)]
@@ -128,6 +133,12 @@ pub struct ActFilter<'a> {
 }
 
 impl Db {
+    /// Give each live season its own AP port from `range` (managed mode).
+    pub fn with_ap_ports(mut self, range: std::ops::RangeInclusive<u16>) -> Self {
+        self.ap_ports = Some(range);
+        self
+    }
+
     pub async fn open(path: &str) -> Result<Self, sqlx::Error> {
         let opts = SqliteConnectOptions::new()
             .filename(path)
@@ -139,6 +150,7 @@ impl Db {
         // Accounts and seasons first: the tables below reference them.
         auth::migrate(&pool).await?;
         seasons::migrate(&pool).await?;
+        settings::migrate(&pool).await?;
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS bifrost_slot (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -295,7 +307,7 @@ impl Db {
         )
         .execute(&pool)
         .await?;
-        Ok(Self { pool })
+        Ok(Self { pool, ap_ports: None })
     }
 
     async fn get_setting(&self, key: &str) -> Result<Option<String>, sqlx::Error> {

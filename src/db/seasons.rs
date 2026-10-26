@@ -38,7 +38,10 @@ pub(super) async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
              -- The season's AP server passwords: connect (shown to players, may
              -- be empty) and admin (generated; only Bifrost uses it).
              ap_password TEXT NOT NULL DEFAULT '',
-             ap_admin_password TEXT NOT NULL DEFAULT ''
+             ap_admin_password TEXT NOT NULL DEFAULT '',
+             -- The port its managed AP server listens on: pinned at go-live,
+             -- held through restarts and re-rolls, released on archive.
+             ap_port INTEGER UNIQUE
            )"#,
     )
     .execute(pool)
@@ -127,6 +130,7 @@ pub struct SeasonRow {
     pub archived_at: Option<i64>,
     pub minesweeper_enabled: bool,
     pub mc_enabled: bool,
+    pub ap_port: Option<i64>,
 }
 
 /// `state` as stored (lets `FromRow` decode straight into [`State`]).
@@ -147,7 +151,7 @@ impl SeasonRow {
 }
 
 const COLS: &str = "id, name, state, created_by, created_at, seed, live_at, archived_at,
-                    minesweeper_enabled, mc_enabled";
+                    minesweeper_enabled, mc_enabled, ap_port";
 
 /// Why a transition was refused.
 #[derive(Debug, PartialEq)]
@@ -157,8 +161,10 @@ pub enum TransitionError {
         from: State,
         to: State,
     },
-    /// Only one season can be live until Bifrost runs an AP server per season.
+    /// External mode: one AP server, so only one season can be live.
     AnotherLive(String),
+    /// Managed mode: every port in the range is held by a live season.
+    NoFreePort { first: u16, last: u16 },
     Db(String),
 }
 
@@ -171,7 +177,12 @@ impl std::fmt::Display for TransitionError {
             }
             TransitionError::AnotherLive(name) => write!(
                 f,
-                "season “{name}” is live — only one season can be live at a time for now"
+                "season “{name}” is live — with an external AP server only one season can be live"
+            ),
+            TransitionError::NoFreePort { first, last } => write!(
+                f,
+                "every AP port ({first}–{last}) is held by a live season — archive one, \
+                 or have the sysadmin widen BIFROST_AP_PORTS"
             ),
             TransitionError::Db(e) => write!(f, "{e}"),
         }
@@ -291,7 +302,9 @@ impl Db {
     /// one-live-season rule. Stamps `live_at` / `archived_at`.
     pub async fn transition(&self, id: i64, to: State, now: i64) -> Result<(), TransitionError> {
         let db = |e: sqlx::Error| TransitionError::Db(e.to_string());
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        // IMMEDIATE: this reads then writes; a deferred transaction would
+        // fail outright (not wait) if another writer got in between.
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
         let from: Option<String> = sqlx::query_scalar("SELECT state FROM season WHERE id = ?")
             .bind(id)
             .fetch_optional(&mut *tx)
@@ -302,22 +315,21 @@ impl Db {
             return Err(TransitionError::Illegal { from, to });
         }
         if to == State::Live {
-            let other: Option<String> = sqlx::query_scalar(
-                "SELECT name FROM season WHERE state = 'live' AND id <> ? LIMIT 1",
-            )
-            .bind(id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
-            if let Some(name) = other {
-                return Err(TransitionError::AnotherLive(name));
-            }
+            let port = self.live_slot(&mut tx, id).await?;
+            sqlx::query("UPDATE season SET ap_port = ? WHERE id = ?")
+                .bind(port.map(i64::from))
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
         }
         let sql = match to {
             State::Live => {
                 "UPDATE season SET state = ?, live_at = COALESCE(live_at, ?) WHERE id = ?"
             }
-            State::Archived => "UPDATE season SET state = ?, archived_at = ? WHERE id = ?",
+            State::Archived => {
+                "UPDATE season SET state = ?, archived_at = ?, ap_port = NULL WHERE id = ?"
+            }
             _ => "UPDATE season SET state = ? WHERE id = ?",
         };
         let mut q = sqlx::query(sql).bind(to.as_str());
@@ -326,6 +338,110 @@ impl Db {
         }
         q.bind(id).execute(&mut *tx).await.map_err(db)?;
         tx.commit().await.map_err(db)
+    }
+
+    /// Could the season go live right now (is there room)? Lets generation
+    /// refuse before doing the work.
+    pub async fn can_go_live(&self, id: i64) -> Result<(), TransitionError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| TransitionError::Db(e.to_string()))?;
+        self.live_slot(&mut tx, id).await.map(|_| ())
+    }
+
+    /// Room for `id` among the live seasons: in managed mode its AP port —
+    /// the one it already holds if still in range (stable across re-rolls and
+    /// range edits that keep it), else the lowest free one; with an external
+    /// server, `None` once no other season is live.
+    async fn live_slot(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        id: i64,
+    ) -> Result<Option<u16>, TransitionError> {
+        let db = |e: sqlx::Error| TransitionError::Db(e.to_string());
+        let Some(range) = self.ap_ports.clone() else {
+            let other: Option<String> = sqlx::query_scalar(
+                "SELECT name FROM season WHERE state = 'live' AND id <> ? LIMIT 1",
+            )
+            .bind(id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(db)?;
+            return match other {
+                Some(name) => Err(TransitionError::AnotherLive(name)),
+                None => Ok(None),
+            };
+        };
+        let held: Option<i64> = sqlx::query_scalar("SELECT ap_port FROM season WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(db)?
+            .flatten();
+        if let Some(p) = held.and_then(|p| u16::try_from(p).ok()) {
+            if range.contains(&p) {
+                return Ok(Some(p));
+            }
+        }
+        let taken: std::collections::HashSet<i64> = sqlx::query_scalar(
+            "SELECT ap_port FROM season WHERE ap_port IS NOT NULL AND id <> ?",
+        )
+        .bind(id)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(db)?
+        .into_iter()
+        .collect();
+        range
+            .clone()
+            .find(|p| !taken.contains(&i64::from(*p)))
+            .map(Some)
+            .ok_or(TransitionError::NoFreePort {
+                first: *range.start(),
+                last: *range.end(),
+            })
+    }
+
+    /// Boot-time port reconciliation (managed mode): only live seasons hold
+    /// ports; a live season whose port fell outside the configured range gets
+    /// a new one. Returns the live seasons left without a port (range full).
+    pub async fn reconcile_ap_ports(&self) -> Vec<String> {
+        let _ = sqlx::query("UPDATE season SET ap_port = NULL WHERE state <> 'live'")
+            .execute(&self.pool)
+            .await;
+        let mut stranded = Vec::new();
+        for s in self.seasons().await {
+            if s.state() != State::Live {
+                continue;
+            }
+            let ok = async {
+                let mut tx = self
+                    .pool
+                    .begin_with("BEGIN IMMEDIATE")
+                    .await
+                    .map_err(|e| TransitionError::Db(e.to_string()))?;
+                let port = self.live_slot(&mut tx, s.id).await?;
+                sqlx::query("UPDATE season SET ap_port = ? WHERE id = ?")
+                    .bind(port.map(i64::from))
+                    .bind(s.id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| TransitionError::Db(e.to_string()))?;
+                tx.commit().await.map_err(|e| TransitionError::Db(e.to_string()))
+            }
+            .await;
+            if let Err(e) = ok {
+                tracing::error!("season {} ({}): no AP port — {e}", s.id, s.name);
+                let _ = sqlx::query("UPDATE season SET ap_port = NULL WHERE id = ?")
+                    .bind(s.id)
+                    .execute(&self.pool)
+                    .await;
+                stranded.push(s.name);
+            }
+        }
+        stranded
     }
 
     /// The season's AP server (connect, admin) passwords.
@@ -521,5 +637,49 @@ mod tests {
         assert_eq!(db.default_season().await.unwrap().id, b);
         assert_eq!(db.last_archived_before(b).await, 50);
         assert_eq!(db.last_archived_before(a).await, 0);
+    }
+
+    #[tokio::test]
+    async fn live_seasons_hold_stable_ports_from_the_range() {
+        let db = db().await.with_ap_ports(5000..=5001);
+        let mut ids = Vec::new();
+        for (i, name) in ["A", "B", "C"].iter().enumerate() {
+            let id = db.create_season(name, None, i as i64).await.unwrap();
+            db.transition(id, State::Generating, 10).await.unwrap();
+            ids.push(id);
+        }
+        let (a, b, c) = (ids[0], ids[1], ids[2]);
+        let port = |id| {
+            let db = db.clone();
+            async move { db.season(id).await.unwrap().ap_port }
+        };
+        db.transition(a, State::Live, 11).await.unwrap();
+        db.transition(b, State::Live, 12).await.unwrap();
+        assert_eq!((port(a).await, port(b).await), (Some(5000), Some(5001)));
+        // Range full: C can't go live (and generation can tell up front).
+        assert_eq!(
+            db.can_go_live(c).await,
+            Err(TransitionError::NoFreePort { first: 5000, last: 5001 })
+        );
+        assert!(db.transition(c, State::Live, 13).await.is_err());
+        // A re-roll keeps the port.
+        db.transition(a, State::Generating, 14).await.unwrap();
+        assert!(db.can_go_live(c).await.is_err(), "still held mid re-roll");
+        db.transition(a, State::Live, 15).await.unwrap();
+        assert_eq!(port(a).await, Some(5000));
+        // Archiving releases it; C takes it.
+        db.transition(a, State::Archived, 16).await.unwrap();
+        assert_eq!(port(a).await, None);
+        db.transition(c, State::Live, 17).await.unwrap();
+        assert_eq!(port(c).await, Some(5000));
+        // Boot with a moved range: live seasons are re-pinned inside it,
+        // keeping ports that still fit.
+        let moved = db.clone().with_ap_ports(5001..=5003);
+        assert!(moved.reconcile_ap_ports().await.is_empty());
+        assert_eq!(port(b).await, Some(5001), "still in range: kept");
+        assert_eq!(port(c).await, Some(5002), "out of range: re-pinned");
+        // A shrunken range strands the overflow (logged, not crashed).
+        let tiny = db.clone().with_ap_ports(5002..=5002);
+        assert_eq!(tiny.reconcile_ap_ports().await, vec!["B".to_string()]);
     }
 }

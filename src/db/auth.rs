@@ -318,7 +318,8 @@ impl Db {
         role: Option<Role>,
         now: i64,
     ) -> Result<Option<Principal>, sqlx::Error> {
-        let mut tx = self.pool.begin().await?;
+        // Reads then writes: take the write lock up front (see `transition`).
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let existing: Option<(i64, bool)> =
             sqlx::query_as("SELECT id, disabled FROM account WHERE idp_subject = ?")
                 .bind(subject)

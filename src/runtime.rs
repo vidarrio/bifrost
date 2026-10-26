@@ -4,7 +4,8 @@
 //! refresher, in-logic recomputer, and (for an external server) the journal
 //! ingester — started when it goes live and stopped when it's archived.
 //!
-//! One season is live at a time until per-season ports land (§7.3).
+//! Managed servers each get the port their season holds (§7.3); with an
+//! external server only one season can be live.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -81,11 +82,22 @@ impl Runtimes {
             return;
         }
         let cfg = config::get();
+        let port = self
+            .db
+            .season(id)
+            .await
+            .and_then(|s| s.ap_port)
+            .and_then(|p| u16::try_from(p).ok());
         let ap = if cfg.ap_managed {
+            let Some(port) = port else {
+                tracing::error!("season {id}: live but holds no AP port; not starting its server");
+                return;
+            };
             let (password, admin_password) = self.db.ap_passwords(id).await;
             let server = ApServer::spawn(
                 Launch {
                     season: id,
+                    port,
                     password: password.clone(),
                     admin_password: admin_password.clone(),
                 },
@@ -106,7 +118,7 @@ impl Runtimes {
                 .ok()
                 .and_then(|s| s.into_iter().min_by_key(|r| r.ap_slot).map(|r| r.name));
             Some(ApConfig {
-                url: format!("ws://{host}:{}", cfg.ap_port),
+                url: format!("ws://{host}:{port}"),
                 slot: config::var("BIFROST_SLOT")
                     .or(first_slot)
                     .unwrap_or_default(),
@@ -148,6 +160,24 @@ impl Runtimes {
                 self.db.clone(),
             ));
         }
+    }
+
+    /// Where players point their AP client for this season: the instance's
+    /// public host plus the season's port (managed), or the external server's
+    /// port. `None` until both are known. (A future subdomain/`:443` overlay
+    /// for browser clients slots in here.)
+    pub fn connect_address(&self, row: &crate::db::SeasonRow, domain: &str) -> Option<String> {
+        if row.state() != crate::db::State::Live || domain.trim().is_empty() {
+            return None;
+        }
+        let port = if config::get().ap_managed {
+            row.ap_port.and_then(|p| u16::try_from(p).ok())
+        } else {
+            self.external
+                .as_ref()
+                .and_then(|c| c.url.rsplit(':').next()?.trim_end_matches('/').parse().ok())
+        }?;
+        Some(format!("{}:{port}", domain.trim()))
     }
 
     /// Deploy a freshly generated seed for a season. Managed: the supervisor

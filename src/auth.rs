@@ -481,7 +481,7 @@ pub enum Tier {
 
 /// Route tiers of design doc §14: plain path-prefix match (as the proxy's
 /// `PathPrefix` did), most specific first, public by default.
-const SYSADMIN_PREFIXES: &[&str] = &["/admin/users", "/admin/links"];
+const SYSADMIN_PREFIXES: &[&str] = &["/admin/users", "/admin/links", "/admin/settings"];
 const ADMIN_PREFIXES: &[&str] = &["/admin"];
 const LOGGED_IN_PREFIXES: &[&str] = &[
     "/claim",
@@ -669,6 +669,7 @@ mod tests {
         assert_eq!(tier("/admin/seasons"), Tier::Admin);
         assert_eq!(tier("/admin/users"), Tier::Sysadmin);
         assert_eq!(tier("/admin/links/invite"), Tier::Sysadmin);
+        assert_eq!(tier("/admin/settings"), Tier::Sysadmin);
         for p in [
             "/claim",
             "/hint",

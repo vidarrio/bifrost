@@ -364,21 +364,10 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: i64) {
     let Some(prev) = db.season(season).await.map(|s| s.state()) else {
         return set(&state, false, "Failed — no such season");
     };
-    // Refuse up front rather than generate a world that can't go live.
-    if let Some(live) = db
-        .seasons()
-        .await
-        .into_iter()
-        .find(|s| s.state() == State::Live && s.id != season)
-    {
-        return set(
-            &state,
-            false,
-            format!(
-                "Failed — season “{}” is live; only one season can be live at a time for now",
-                live.name
-            ),
-        );
+    // Refuse up front rather than generate a world that can't go live (no
+    // free AP port, or another season live on an external server).
+    if let Err(e) = db.can_go_live(season).await {
+        return set(&state, false, format!("Failed — {e}"));
     }
     if let Err(e) = db.transition(season, State::Generating, now()).await {
         return set(&state, false, format!("Failed — {e}"));

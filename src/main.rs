@@ -78,9 +78,12 @@ async fn main() {
     let port = cfg.port;
 
     let db_path = cfg.db_path();
-    let db = db::Db::open(&db_path.to_string_lossy())
+    let mut db = db::Db::open(&db_path.to_string_lossy())
         .await
         .unwrap_or_else(|e| panic!("open db {}: {e}", db_path.display()));
+    if cfg.ap_managed {
+        db = db.with_ap_ports(cfg.ap_ports.clone());
+    }
 
     if let Some(code) = cli::run(&args, &db).await {
         std::process::exit(code);
@@ -100,6 +103,16 @@ async fn main() {
     // starts one per live season instead.
     let external = if cfg.ap_managed { None } else { ap::ApConfig::from_env() };
     let seasons = Arc::new(runtime::Runtimes::new(db.clone(), external, parse_coop()));
+    if cfg.ap_managed {
+        // Ports are held only by live seasons, inside the configured range.
+        for name in db.reconcile_ap_ports().await {
+            tracing::error!("season “{name}” is live but every AP port is taken; widen BIFROST_AP_PORTS");
+        }
+    }
+    match ap_adapter::ap_version() {
+        Some(v) => tracing::info!("Archipelago {v} at {}", cfg.ap_dir.display()),
+        None => tracing::warn!("couldn't read the Archipelago version from {}", cfg.ap_dir.display()),
+    }
     for season in db.seasons().await {
         if season.state() != db::State::Archived {
             let _ = config::get().season(season.id).ensure();
@@ -147,6 +160,7 @@ async fn main() {
         .route("/signup/delete", post(signup_delete))
         .route("/admin", get(admin_view))
         .route("/admin/seasons", get(seasons_view).post(seasons_create))
+        .route("/admin/settings", get(settings_view).post(settings_save))
         .route("/admin/mods/add", post(mods_add))
         .route("/admin/mods/remove", post(mods_remove))
         .route("/admin/signups", post(admin_signups))
@@ -371,21 +385,37 @@ async fn landing(State(st): State<AppState>) -> Html<String> {
         .map(|s| (s.id, s.name, s.archived_at.unwrap_or(s.created_at)))
         .collect();
     let past_html = render::past_seasons_section(&past);
+    // Everything operator-specific comes from the instance settings; the AP
+    // version from the install Bifrost actually runs.
+    let inst = st.db.instance().await;
+    let live: Vec<(String, Option<String>)> = st
+        .db
+        .seasons()
+        .await
+        .into_iter()
+        .filter(|s| s.state() == db::State::Live)
+        .map(|s| {
+            let addr = st.seasons.connect_address(&s, &inst.domain);
+            (s.name, addr)
+        })
+        .collect();
     Html(
         LANDING
             .replace("<!--SEASONLABEL-->", &render::escape(&label))
             .replace("<!--ROSTER-->", &roster)
             .replace("<!--PASTSEASONS-->", &past_html)
+            .replace("<!--CONNECT-->", &render::landing_connect(&live, &inst.password_note))
+            .replace("<!--HOMEPILL-->", &render::home_pill(&inst.home_url))
+            .replace("<!--TAG-->", &render::landing_tag(&inst.domain))
             .replace(
-                "<!--CONNECTADDR-->",
-                &render::escape(config::get().ap_public_addr.as_deref().unwrap_or("ask an admin")),
+                "<!--APVERSION-->",
+                &render::escape(
+                    &ap_adapter::ap_version()
+                        .map(|v| format!("Archipelago {v}"))
+                        .unwrap_or_else(|| "Archipelago".into()),
+                ),
             )
-            .replace(
-                "<!--CONNECTNOTE-->",
-                &config::var("BIFROST_AP_CONNECT_NOTE")
-                    .map(|n| format!(r#"<div class="pw" style="margin-top:8px">{}</div>"#, render::escape(&n)))
-                    .unwrap_or_default(),
-            ),
+            .replace("<!--DISCORDS-->", &render::landing_discords(&inst.discords)),
     )
 }
 
@@ -484,7 +514,9 @@ async fn board_view(State(st): State<AppState>, ctx: scope::SeasonCtx) -> Respon
     // Board shows the latest slice of the persistent log (journal-sourced).
     let acts = st.db.activity_latest(season, BOARD_ACTIVITY).await;
     let inlogic = st.db.inlogic_counts(season).await;
-    render::board_page(&snap, &slots, &prios, addr.as_deref(), &acts, &inlogic).into_response()
+    let connect = st.seasons.connect_address(&ctx.row, &st.db.instance().await.domain);
+    render::board_page(&snap, &slots, &prios, addr.as_deref(), &acts, &inlogic, connect.as_deref())
+        .into_response()
 }
 
 /// The board's live-update payload: the `.boardcols` inner HTML (`body`) + the
@@ -2067,6 +2099,109 @@ async fn admin_archive_season(
 
 /// Every season, plus the create form (instance level: no season scope).
 /// Moderators see them all but get admin links only for the ones they run.
+async fn settings_view(State(st): State<AppState>, me: auth::Me) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return render::notice("Sysadmins only.", false, "/").into_response();
+    }
+    let inst = st.db.instance().await;
+    render::settings_page(&inst, &settings_status(), None, false).into_response()
+}
+
+/// What the settings page reports about the deployment (read-only there).
+fn settings_status() -> render::SettingsStatus {
+    let cfg = config::get();
+    render::SettingsStatus {
+        ap_version: ap_adapter::ap_version().map(str::to_string),
+        managed: cfg.ap_managed,
+        ports: (*cfg.ap_ports.start(), *cfg.ap_ports.end()),
+    }
+}
+
+#[derive(Deserialize)]
+struct SettingsForm {
+    #[serde(default)]
+    domain: String,
+    #[serde(default)]
+    home_url: String,
+    #[serde(default)]
+    password_note: String,
+    /// One server per line: `Name | https://discord.gg/… | note`.
+    #[serde(default)]
+    discords: String,
+}
+
+async fn settings_save(State(st): State<AppState>, me: auth::Me, Form(f): Form<SettingsForm>) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return render::notice("Sysadmins only.", false, "/").into_response();
+    }
+    match parse_settings(&f) {
+        Ok(inst) => match st.db.set_instance(&inst).await {
+            Ok(()) => render::settings_page(&inst, &settings_status(), None, true).into_response(),
+            Err(e) => render::notice(&format!("Couldn't save: {e}"), false, "/admin/settings").into_response(),
+        },
+        Err(e) => {
+            // Re-show what they typed, with the problem.
+            let typed = db::Instance {
+                domain: f.domain.clone(),
+                home_url: f.home_url.clone(),
+                password_note: f.password_note.clone(),
+                discords: f
+                    .discords
+                    .lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .map(|l| db::Discord { name: l.to_string(), url: String::new(), note: String::new() })
+                    .collect(),
+            };
+            render::settings_page(&typed, &settings_status(), Some(&e), false).into_response()
+        }
+    }
+}
+
+fn web_url(u: &str) -> bool {
+    (u.starts_with("https://") || u.starts_with("http://"))
+        && u.len() <= 300
+        && !u.chars().any(|c| c.is_whitespace() || c == '"' || c == '<' || c == '>')
+}
+
+fn parse_settings(f: &SettingsForm) -> Result<db::Instance, String> {
+    let domain = f.domain.trim().to_string();
+    let host_ok = |h: &str| {
+        h.len() <= 253 && h.chars().all(|c| c.is_ascii_alphanumeric() || ".-[]:".contains(c))
+    };
+    if !host_ok(&domain) {
+        return Err("The connect host should be a bare hostname or IP, like ap.example.org (no scheme, no port).".into());
+    }
+    let home_url = f.home_url.trim().to_string();
+    if !home_url.is_empty() && !web_url(&home_url) {
+        return Err("The home link must be an http(s) URL.".into());
+    }
+    let password_note: String = f.password_note.trim().chars().take(200).collect();
+    let mut discords = Vec::new();
+    for (i, line) in f.discords.lines().enumerate().filter(|(_, l)| !l.trim().is_empty()) {
+        let mut parts = line.splitn(3, '|').map(str::trim);
+        let (name, url, note) = (
+            parts.next().unwrap_or(""),
+            parts.next().unwrap_or(""),
+            parts.next().unwrap_or(""),
+        );
+        if name.is_empty() || !web_url(url) {
+            return Err(format!(
+                "Discord line {}: expected “Name | https://discord.gg/… | optional note”.",
+                i + 1
+            ));
+        }
+        discords.push(db::Discord {
+            name: name.chars().take(60).collect(),
+            url: url.to_string(),
+            note: note.chars().take(80).collect(),
+        });
+    }
+    if discords.len() > 20 {
+        return Err("At most 20 Discord servers.".into());
+    }
+    Ok(db::Instance { domain, home_url, password_note, discords })
+}
+
 async fn seasons_view(State(st): State<AppState>, me: auth::Me) -> Response {
     if !me.can(auth::Action::CreateSeason) {
         return render::notice("Moderators only.", false, "/").into_response();

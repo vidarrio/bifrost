@@ -447,6 +447,76 @@ pub fn landing_roster(
 /// Frontpage roster for the gap between seasons (no live game yet): the people
 /// signed up for the *next* season, straight from the submission queue, so the
 /// section fills in live as they register. Mirrors `landing_roster`'s card style
+
+/// The home page's "Connect to" block: each live season's address (or "ask
+/// an admin" until the sysadmin sets the connect host), then the password note.
+pub fn landing_connect(live: &[(String, Option<String>)], password_note: &str) -> String {
+    let mut out = String::new();
+    if live.is_empty() {
+        out.push_str(r#"<div class="lbl">Connect to</div><div class="cs">no season is live</div>"#);
+    }
+    for (name, addr) in live {
+        let lbl = if live.len() == 1 {
+            "Connect to".to_string()
+        } else {
+            format!("{} — connect to", esc(name))
+        };
+        out.push_str(&format!(
+            r#"<div class="lbl">{lbl}</div><div class="cs">{}</div>"#,
+            esc(addr.as_deref().unwrap_or("ask an admin"))
+        ));
+    }
+    if !password_note.trim().is_empty() {
+        out.push_str(&format!(
+            r#"<div class="pw" style="margin-top:8px">{}</div>"#,
+            esc(password_note)
+        ));
+    }
+    out
+}
+
+/// The header's optional "home" link (instance settings).
+pub fn home_pill(url: &str) -> String {
+    if url.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<a class="pill" href="{}">home</a>"#, esc(url))
+    }
+}
+
+/// The brand tagline: `<domain> · archipelago`.
+pub fn landing_tag(domain: &str) -> String {
+    match domain.trim() {
+        "" => "archipelago".into(),
+        d => format!("{} · archipelago", esc(d)),
+    }
+}
+
+/// The home page's Discords column (nothing when none are configured).
+pub fn landing_discords(discords: &[crate::db::Discord]) -> String {
+    if discords.is_empty() {
+        return String::new();
+    }
+    let items: String = discords
+        .iter()
+        .map(|d| {
+            let note = if d.note.is_empty() {
+                String::new()
+            } else {
+                format!(r#" <span class="d">{}</span>"#, esc(&d.note))
+            };
+            format!(
+                r#"<li><a href="{}" target="_blank" rel="noopener">{}</a>{note}</li>"#,
+                esc(&d.url),
+                esc(&d.name)
+            )
+        })
+        .collect();
+    format!(
+        r#"<div><h2 class="sec">Discords</h2><div class="card"><ul class="links">{items}</ul></div></div>"#
+    )
+}
+
 /// (who + game) so the section looks identical whether a season is live or not.
 pub fn landing_signups(subs: &[SubmissionRow]) -> String {
     if subs.is_empty() {
@@ -788,11 +858,15 @@ pub fn board_page(
     mc_addr: Option<&str>,
     activity: &[crate::db::ActivityRow],
     inlogic: &std::collections::HashMap<i64, i64>,
+    connect: Option<&str>,
 ) -> Html<String> {
     let mut out = page_head(None);
     out.push_str(BOARD_STYLE);
+    let connect = connect
+        .map(|a| format!(r#" · AP server <b class="mono">{}</b>"#, esc(a)))
+        .unwrap_or_default();
     out.push_str(&format!(
-        r#"<h1>Live board</h1><div class="crumb"><a href="/">← Bifrost</a> · <span id="connline">{}</span></div>"#,
+        r#"<h1>Live board</h1><div class="crumb"><a href="/">← Bifrost</a> · <span id="connline">{}</span>{connect}</div>"#,
         conn_line(snap)
     ));
 
@@ -3375,7 +3449,7 @@ pub fn users_page(v: &UsersView) -> Html<String> {
 
     auth_page(
         "Users & links",
-        r#"<a href="admin">← admin</a>"#,
+        r#"<a href="/admin/seasons">← seasons</a> · <a href="/admin/settings">settings</a>"#,
         v.err,
         &body,
     )
@@ -3422,14 +3496,14 @@ pub fn seasons_page(
 <form class="linkform" method="post" action="/admin/seasons">
 <label>Name<input type="text" name="name" value="{}" maxlength="80" required></label>
 <button type="submit">Create season</button></form>
-<p class="statline">A new season starts as a <b>draft</b>: set it up in its admin page, open signups, then generate it to go live. One season can be live at a time for now.</p>"#,
+<p class="statline">A new season starts as a <b>draft</b>: set it up in its admin page, open signups, then generate it to go live. Each live season gets its own AP port until it's archived.</p>"#,
         esc(default_name)
     ));
     body.push_str("<h2>Seasons</h2>");
     if seasons.is_empty() {
         body.push_str(r#"<div class="empty">No seasons yet.</div>"#);
     } else {
-        body.push_str(r#"<table class="utable"><tr><th>Season</th><th>State</th><th>Created</th><th></th></tr>"#);
+        body.push_str(r#"<table class="utable"><tr><th>Season</th><th>State</th><th>Port</th><th>Created</th><th></th></tr>"#);
         for (s, can) in seasons.iter().zip(manage.iter().chain(std::iter::repeat(&false))) {
             let when = match (s.archived_at, s.live_at) {
                 (Some(t), _) => format!("archived {}", fmt_date(t)),
@@ -3444,14 +3518,89 @@ pub fn seasons_page(
                 format!(r#"<a href="/s/{0}/board">board</a>"#, s.id)
             };
             body.push_str(&format!(
-                r#"<tr class="{}"><td>{}</td><td><span class="tag">{}</span></td><td class="mono">{}</td><td>{links}</td></tr>"#,
+                r#"<tr class="{}"><td>{}</td><td><span class="tag">{}</span></td><td class="mono">{}</td><td class="mono">{}</td><td>{links}</td></tr>"#,
                 if s.state() == crate::db::State::Archived { "dead" } else { "" },
                 esc(&s.name),
                 s.state().as_str(),
+                s.ap_port.map(|p| p.to_string()).unwrap_or_default(),
                 when,
             ));
         }
         body.push_str("</table>");
     }
-    auth_page("Seasons", r#"<a href="/">← home</a> · <a href="/admin/users">users &amp; links</a>"#, err, &body)
+    auth_page(
+        "Seasons",
+        r#"<a href="/">← home</a> · <a href="/admin/users">users &amp; links</a> · <a href="/admin/settings">settings</a>"#,
+        err,
+        &body,
+    )
+}
+
+// ---- instance settings (sysadmin) ----
+
+/// Deployment facts the settings page shows read-only.
+pub struct SettingsStatus {
+    pub ap_version: Option<String>,
+    pub managed: bool,
+    pub ports: (u16, u16),
+}
+
+pub fn settings_page(
+    inst: &crate::db::Instance,
+    status: &SettingsStatus,
+    err: Option<&str>,
+    saved: bool,
+) -> Html<String> {
+    let mut body = String::new();
+    if saved {
+        body.push_str(r#"<div class="banner ok">Saved — the home page shows it now.</div>"#);
+    }
+    let ports = if status.managed {
+        let (a, b) = status.ports;
+        format!(
+            "AP servers: managed by Bifrost, one port per live season from <b>{a}–{b}</b> \
+             (up to {} live at once; set with BIFROST_AP_PORTS)",
+            b - a + 1
+        )
+    } else {
+        "AP server: external (BIFROST_AP_MODE=external)".into()
+    };
+    body.push_str(&format!(
+        r#"<h2>Deployment</h2><p class="statline">Archipelago: <b>{}</b><br>{ports}</p>"#,
+        esc(status.ap_version.as_deref().unwrap_or("unknown — couldn't read Utils.py"))
+    ));
+    let discords: String = inst
+        .discords
+        .iter()
+        .map(|d| {
+            if d.url.is_empty() {
+                d.name.clone()
+            } else if d.note.is_empty() {
+                format!("{} | {}", d.name, d.url)
+            } else {
+                format!("{} | {} | {}", d.name, d.url, d.note)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    body.push_str(&format!(
+        r#"<h2>Home page</h2>
+<style>.authform{{max-width:560px}}.authform textarea{{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:7px 9px;font:13px/1.5 var(--mono);min-height:110px}}</style>
+<form class="authform" method="post" action="/admin/settings">
+<label>Connect host — what players' AP clients connect to; each live season adds its port<input type="text" name="domain" value="{}" placeholder="ap.example.org" maxlength="253"></label>
+<label>Password note — shown under the connect address<input type="text" name="password_note" value="{}" maxlength="200"></label>
+<label>Home link (optional) — a "home" pill in the header<input type="url" name="home_url" value="{}" placeholder="https://example.org/"></label>
+<label>Discord servers — one per line: <span class="mono">Name | https://discord.gg/… | note</span><textarea name="discords" spellcheck="false">{}</textarea></label>
+<button type="submit">Save</button></form>"#,
+        esc(&inst.domain),
+        esc(&inst.password_note),
+        esc(&inst.home_url),
+        esc(&discords),
+    ));
+    auth_page(
+        "Instance settings",
+        r#"<a href="/admin/seasons">← seasons</a> · <a href="/admin/users">users &amp; links</a>"#,
+        err,
+        &body,
+    )
 }

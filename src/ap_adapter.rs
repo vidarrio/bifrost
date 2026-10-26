@@ -135,6 +135,27 @@ fn trusted_world_hashes() -> Vec<String> {
     .collect()
 }
 
+/// The version of the Archipelago install Bifrost runs (`__version__` in its
+/// `Utils.py`), read once. `None` if it can't be determined.
+pub fn ap_version() -> Option<&'static str> {
+    static V: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    V.get_or_init(|| {
+        let src = std::fs::read_to_string(config::get().ap_dir.join("Utils.py")).ok()?;
+        parse_version(&src)
+    })
+    .as_deref()
+}
+
+fn parse_version(utils_py: &str) -> Option<String> {
+    utils_py.lines().find_map(|l| {
+        let v = l.strip_prefix("__version__")?.trim_start().strip_prefix('=')?.trim();
+        let v = v.strip_prefix('"').and_then(|v| v.strip_suffix('"'))
+            .or_else(|| v.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))?;
+        (!v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric() || ".-+".contains(c)))
+            .then(|| v.to_string())
+    })
+}
+
 pub fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -484,6 +505,15 @@ for r, _, fs in os.walk(sys.argv[1]):
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ap_version_is_read_from_utils() {
+        let src = "import os\n__version__ = \"0.6.9\"\nversion_tuple = tuplize_version(__version__)\n";
+        assert_eq!(parse_version(src).as_deref(), Some("0.6.9"));
+        assert_eq!(parse_version("__version__ = '0.7.0-rc1'").as_deref(), Some("0.7.0-rc1"));
+        assert_eq!(parse_version("__version__ = get()"), None);
+        assert_eq!(parse_version("x = 1"), None);
+    }
 
     #[test]
     fn json_is_read_from_the_last_non_empty_line() {

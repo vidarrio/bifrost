@@ -1,5 +1,5 @@
-//! The live season's Archipelago server, run by Bifrost (design doc §7.2, for
-//! one live season until per-season ports land).
+//! A live season's Archipelago server, run by Bifrost (design doc §7.2–7.3):
+//! one per live season, each on the port the season holds.
 //!
 //! A supervisor task owns the MultiServer process: it starts it (sandboxed,
 //! with network) on the season's `output/current.zip`, restarts it with
@@ -45,6 +45,8 @@ pub struct ApServer {
 #[derive(Clone)]
 pub struct Launch {
     pub season: i64,
+    /// The season's pinned port (from `BIFROST_AP_PORTS`).
+    pub port: u16,
     pub password: String,
     pub admin_password: String,
 }
@@ -90,11 +92,23 @@ async fn supervise(launch: Launch, db: Db, board: Arc<RwLock<Board>>, mut rx: mp
     let dirs = config::get().season(season);
     let mut running: Option<Running> = None;
     let mut backoff = Duration::from_secs(2);
+    // The last start attempt failed (e.g. the port is still held): retry on
+    // the backoff rather than wait for a redeploy that may never come.
+    let mut failed = false;
     loop {
         if running.is_none() && dirs.current_zip().exists() {
             match start(&launch, &dirs, &db, &board) {
-                Ok(r) => running = Some(r),
-                Err(e) => tracing::warn!("season {season}: AP server didn't start: {e}"),
+                Ok(r) => {
+                    running = Some(r);
+                    failed = false;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "season {season}: AP server didn't start: {e}; retrying in {}s",
+                        backoff.as_secs()
+                    );
+                    failed = true;
+                }
             }
         }
         let cmd = match running.as_mut() {
@@ -104,6 +118,13 @@ async fn supervise(launch: Launch, db: Db, board: Arc<RwLock<Board>>, mut rx: mp
                     tracing::warn!("season {season}: AP server exited ({status:?}); restarting in {}s", backoff.as_secs());
                     running = None;
                     tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(Duration::from_secs(60));
+                    continue;
+                }
+            },
+            None if failed => tokio::select! {
+                cmd = rx.recv() => cmd,
+                _ = tokio::time::sleep(backoff) => {
                     backoff = (backoff * 2).min(Duration::from_secs(60));
                     continue;
                 }
@@ -118,6 +139,7 @@ async fn supervise(launch: Launch, db: Db, board: Arc<RwLock<Board>>, mut rx: mp
                 }
                 let r = swap_seed(&dirs, &zip).await;
                 backoff = Duration::from_secs(2);
+                failed = false;
                 let _ = reply.send(r);
             }
             Some(Cmd::Console(line)) => {
@@ -177,13 +199,18 @@ fn start(
     board: &Arc<RwLock<Board>>,
 ) -> Result<Running, String> {
     let cfg = config::get();
+    // A server left over from a crashed Bifrost (or anything else) still on
+    // the port would make MultiServer die on bind; say so plainly instead.
+    if let Err(e) = std::net::TcpListener::bind((cfg.ap_bind.as_str(), launch.port)) {
+        return Err(format!("port {} isn't free ({e})", launch.port));
+    }
     let args: Vec<OsString> = vec![
         cfg.script("bifrost_server.py").into(),
         dirs.current_zip().into(),
         "--host".into(),
         cfg.ap_bind.clone().into(),
         "--port".into(),
-        cfg.ap_port.to_string().into(),
+        launch.port.to_string().into(),
         "--password".into(),
         launch.password.clone().into(),
         "--server_password".into(),
@@ -241,7 +268,7 @@ fn start(
         "season {}: AP server started on {}:{}",
         launch.season,
         cfg.ap_bind,
-        cfg.ap_port
+        launch.port
     );
     Ok(Running { child, stdin })
 }
