@@ -46,10 +46,10 @@ struct AppState {
     db: db::Db,
     ap_cfg: Option<ap::ApConfig>,
     genstate: generate::GenState,
-    /// Active minesweeper games keyed by (player sso, board kind). One
+    /// Active minesweeper games keyed by (player account, board kind). One
     /// in-progress board per player *per difficulty*, held server-side so each
     /// difficulty tab survives a tab close/reopen and difficulty switches.
-    mine_games: Arc<Mutex<HashMap<(String, String), mine::Game>>>,
+    mine_games: Arc<Mutex<HashMap<(i64, String), mine::Game>>>,
     auth: auth::Auth,
 }
 
@@ -644,7 +644,7 @@ async fn log_view(State(st): State<AppState>, Query(q): Query<LogQuery>) -> Html
 
 /// Whether the viewer may upload/remove the slot's pack: a claimant of the slot
 /// or an admin.
-async fn pt_can_manage(st: &AppState, season: &str, ap_slot: i64, me: &str, is_admin: bool) -> bool {
+async fn pt_can_manage(st: &AppState, season: &str, ap_slot: i64, account: i64, is_admin: bool) -> bool {
     if is_admin {
         return true;
     }
@@ -653,7 +653,7 @@ async fn pt_can_manage(st: &AppState, season: &str, ap_slot: i64, me: &str, is_a
         .await
         .unwrap_or_default()
         .iter()
-        .any(|r| r.ap_slot == ap_slot && r.claimed_by.as_deref() == Some(me))
+        .any(|r| r.ap_slot == ap_slot && r.claimed_by_id == Some(account))
 }
 
 /// Claimant (or admin) uploads a PopTracker pack (.zip) for this slot.
@@ -663,11 +663,12 @@ async fn pt_upload(
     me: auth::Me,
     mut mp: Multipart,
 ) -> Response {
-    let (me, is_admin) = me.ident();
+    let my_id = me.id();
+    let (_me, is_admin) = me.ident();
     let season = st.board.read().ok().and_then(|b| b.seed.clone()).unwrap_or_default();
     // Land back on the PopTracker tab (the pack-management tab), not the default.
     let back = format!("/game/{ap_slot}#tab-pt");
-    if season.is_empty() || !pt_can_manage(&st, &season, ap_slot, &me, is_admin).await {
+    if season.is_empty() || !pt_can_manage(&st, &season, ap_slot, my_id, is_admin).await {
         return render::notice("You can't upload a pack for this game.", false, &back).into_response();
     }
     let mut bytes: Option<Vec<u8>> = None;
@@ -699,10 +700,11 @@ async fn pt_upload(
 
 /// Claimant (or admin) removes the slot's pack.
 async fn pt_remove(Path(ap_slot): Path<i64>, State(st): State<AppState>, me: auth::Me) -> Response {
-    let (me, is_admin) = me.ident();
+    let my_id = me.id();
+    let (_me, is_admin) = me.ident();
     let season = st.board.read().ok().and_then(|b| b.seed.clone()).unwrap_or_default();
     let back = format!("/game/{ap_slot}#tab-pt");
-    if !season.is_empty() && pt_can_manage(&st, &season, ap_slot, &me, is_admin).await {
+    if !season.is_empty() && pt_can_manage(&st, &season, ap_slot, my_id, is_admin).await {
         let s2 = season.clone();
         let _ = tokio::task::spawn_blocking(move || ptrack::remove(&s2, ap_slot)).await;
     }
@@ -840,6 +842,7 @@ async fn game_view(
     State(st): State<AppState>,
     me: auth::Me,
 ) -> Html<String> {
+    let my_id = me.id();
     let (me, is_admin) = me.ident();
     let (snap, game, item_names, connect_name) = match st.board.read() {
         Ok(b) => {
@@ -872,7 +875,7 @@ async fn game_view(
     // an actual claimant sees the hint form, so only fetch points for them.
     let i_claim = slots
         .iter()
-        .any(|r| r.ap_slot == ap_slot && r.claimed_by.as_deref() == Some(me.as_str()));
+        .any(|r| r.ap_slot == ap_slot && r.claimed_by_id == Some(my_id));
     // The common game shows its own shared points to everyone; personal slots
     // only to their claimant.
     let is_common_slot = slots.iter().any(|r| r.ap_slot == ap_slot && r.is_common);
@@ -880,7 +883,7 @@ async fn game_view(
     // (non-common) slot this season to spend the common game's shared points.
     let i_have_claim = slots
         .iter()
-        .any(|r| !r.is_common && r.claimed_by.as_deref() == Some(me.as_str()));
+        .any(|r| !r.is_common && r.claimed_by_id == Some(my_id));
     let points = match (i_claim || is_common_slot, &st.ap_cfg) {
         (true, Some(cfg)) if !connect_name.is_empty() => {
             ap::slot_points(&cfg.url, &cfg.password, &connect_name).await
@@ -888,7 +891,7 @@ async fn game_view(
         _ => None,
     };
     let credits = if i_claim {
-        st.db.credits(&season, &me).await
+        st.db.credits(&season, my_id).await
     } else {
         0
     };
@@ -906,7 +909,7 @@ async fn game_view(
     };
     // The viewer's own registered Minecraft username, for the common-game page's
     // whitelist form (only read/used there).
-    let my_mc = st.db.mc_username(&me).await;
+    let my_mc = st.db.mc_username(my_id).await;
 
     // Cached Universal-Tracker in-logic locations for this slot (computed by the
     // inlogic recomputer; may be absent until the first run completes).
@@ -1015,7 +1018,8 @@ async fn prioritize_post(
     me: auth::Me,
     Form(f): Form<PrioForm>,
 ) -> Redirect {
-    let (me, is_admin) = me.ident();
+    let my_id = me.id();
+    let (_me, is_admin) = me.ident();
     let (season, is_found) = match st.board.read() {
         Ok(b) => {
             let season = b.seed.clone().unwrap_or_default();
@@ -1032,7 +1036,7 @@ async fn prioritize_post(
     // A hint is prioritized by the item's owner: a claimant of the receiving
     // slot (whose items the hint is about), or an admin. The finder's world can
     // be someone else's, so we gate on `receiving`, not `finding`.
-    if !is_found && (is_admin || st.db.claims_ap_slot(&season, &me, f.receiving).await) {
+    if !is_found && (is_admin || st.db.claims_ap_slot(&season, my_id, f.receiving).await) {
         let _ = st
             .db
             .toggle_priority(&season, f.finding, f.location, f.item)
@@ -1064,7 +1068,8 @@ async fn claim_post(
     me: auth::Me,
     Form(f): Form<ClaimForm>,
 ) -> Response {
-    let (me, is_admin) = me.ident();
+    let my_id = me.id();
+    let (_me, is_admin) = me.ident();
     let back = safe_back(f.back.as_deref(), "/claim");
     let season = st
         .board
@@ -1073,7 +1078,7 @@ async fn claim_post(
         .and_then(|b| b.seed.clone())
         .unwrap_or_default();
     match f.op.as_str() {
-        "claim" => match st.db.claim_one(f.slot_id, &me).await {
+        "claim" => match st.db.claim_one(f.slot_id, my_id).await {
             Ok(db::ClaimOutcome::AlreadyHave(name)) => render::notice(
                 &format!("You already claim {name} — one slot per player. Unclaim it first if you want to move."),
                 false,
@@ -1090,7 +1095,7 @@ async fn claim_post(
             }
         },
         "unclaim" => {
-            let _ = st.db.unclaim(f.slot_id, &me, is_admin).await;
+            let _ = st.db.unclaim(f.slot_id, my_id, is_admin).await;
             export_mc_whitelist(&st, &season).await;
             Redirect::to(&back).into_response()
         }
@@ -1113,7 +1118,8 @@ async fn mc_username_post(
     me: auth::Me,
     Form(f): Form<McUsernameForm>,
 ) -> Response {
-    let (me, _is_admin) = me.ident();
+    let my_id = me.id();
+    let (_me, _is_admin) = me.ident();
     let season = st
         .board
         .read()
@@ -1122,7 +1128,7 @@ async fn mc_username_post(
         .unwrap_or_default();
     let back = safe_back(f.back.as_deref(), "/board");
     let name = f.mc_username.trim();
-    if !st.db.has_claimed_slot(&season, &me).await {
+    if !st.db.has_claimed_slot(&season, my_id).await {
         return render::notice(
             "Claim a game this season first — the whitelist is for players with a slot of their own.",
             false,
@@ -1138,7 +1144,7 @@ async fn mc_username_post(
         )
         .into_response();
     }
-    match st.db.set_mc_username(&me, name).await {
+    match st.db.set_mc_username(my_id, name).await {
         Ok(db::SetMcOutcome::TakenByOther) => render::notice(
             "Someone else already registered that Minecraft username. If it's really yours, ask an admin.",
             false,
@@ -1181,6 +1187,7 @@ async fn hint_post(
     me: auth::Me,
     Form(f): Form<HintForm>,
 ) -> Json<serde_json::Value> {
+    let my_id = me.id();
     let (me, _is_admin) = me.ident();
     let reject = |msg: &str| Json(serde_json::json!({"ok": false, "message": msg}));
     let detail = st.db.slot_detail(f.slot_id).await.ok().flatten();
@@ -1201,10 +1208,10 @@ async fn hint_post(
         if me == "unknown" {
             return reject("Sign in to hint on the common game.");
         }
-        if !st.db.has_claimed_slot(&season, &me).await {
+        if !st.db.has_claimed_slot(&season, my_id).await {
             return reject("Claim one of the season's games before hinting on the common game.");
         }
-    } else if claimant.as_deref() != Some(me.as_str()) {
+    } else if claimant != Some(my_id) {
         return reject("Only the player who claimed this slot can hint on it.");
     }
     let connect_name = st
@@ -1218,7 +1225,7 @@ async fn hint_post(
     let Some(cfg) = st.ap_cfg.as_ref() else {
         return reject("Hinting isn't configured.");
     };
-    let creds = st.db.credits(&season, &me).await;
+    let creds = st.db.credits(&season, my_id).await;
     match ap::send_hint(&cfg.url, &cfg.password, &name, f.item.trim()).await {
         Ok(parts) => {
             let text = st
@@ -1282,8 +1289,8 @@ async fn hint_post(
                                 "ok": false, "message": msg, "credits": creds
                             }));
                         }
-                        st.db.spend_credit(&season, &me).await;
-                        let newc = st.db.credits(&season, &me).await;
+                        st.db.spend_credit(&season, my_id).await;
+                        let newc = st.db.credits(&season, my_id).await;
                         let points = ap::slot_points(&cfg.url, &cfg.password, &name).await;
                         // The admin /hint returns no text on success, so confirm
                         // it ourselves; the new hint shows in the list below.
@@ -1328,13 +1335,14 @@ async fn game_hints(
     State(st): State<AppState>,
     me: auth::Me,
 ) -> Html<String> {
-    let (me, is_admin) = me.ident();
+    let my_id = me.id();
+    let (_me, is_admin) = me.ident();
     let (snap, season) = match st.board.read() {
         Ok(b) => (b.snapshot(), b.seed.clone().unwrap_or_default()),
         Err(_) => return Html(String::new()),
     };
     let prios = live_priorities(&st, &snap, &season).await;
-    let can_prioritize = is_admin || st.db.claims_ap_slot(&season, &me, ap_slot).await;
+    let can_prioritize = is_admin || st.db.claims_ap_slot(&season, my_id, ap_slot).await;
     let (views, found_items) = snap
         .ap
         .get(&ap_slot)
@@ -1487,7 +1495,8 @@ async fn signup_post(
     me: auth::Me,
     mut mp: Multipart,
 ) -> Html<String> {
-    let (me, _) = me.ident();
+    let my_id = me.id();
+    let (_me, _) = me.ident();
     if !st.db.signups_open().await {
         return render::signup_result("Signups are closed right now.", false);
     }
@@ -1548,7 +1557,7 @@ async fn signup_post(
     match st
         .db
         .add_submission(
-            &me,
+            my_id,
             &slot_name,
             &game,
             is_custom,
@@ -1576,8 +1585,9 @@ async fn signup_delete(
     me: auth::Me,
     Form(f): Form<DelForm>,
 ) -> Redirect {
-    let (me, is_admin) = me.ident();
-    if let Ok(Some((yaml_file, apworld_file))) = st.db.delete_submission(f.id, &me, is_admin).await
+    let my_id = me.id();
+    let (_me, is_admin) = me.ident();
+    if let Ok(Some((yaml_file, apworld_file))) = st.db.delete_submission(f.id, my_id, is_admin).await
     {
         let _ = tokio::fs::remove_file(&yaml_file).await;
         if let Some(a) = apworld_file {
@@ -2026,9 +2036,10 @@ async fn admin_delete_player(
     me: auth::Me,
     Form(f): Form<DelForm>,
 ) -> Redirect {
-    let (me, is_admin) = me.ident();
+    let my_id = me.id();
+    let (_me, is_admin) = me.ident();
     if is_admin
-        && let Ok(Some((yaml_file, apworld_file))) = st.db.delete_submission(f.id, &me, true).await
+        && let Ok(Some((yaml_file, apworld_file))) = st.db.delete_submission(f.id, my_id, true).await
     {
         let _ = tokio::fs::remove_file(&yaml_file).await;
         if let Some(a) = apworld_file {
@@ -2287,7 +2298,8 @@ async fn game_output(
     Path(ap_slot): Path<i64>,
     Query(q): Query<OutputQuery>,
 ) -> Response {
-    let (me, is_admin) = me.ident();
+    let my_id = me.id();
+    let (_me, is_admin) = me.ident();
     let season = st
         .board
         .read()
@@ -2297,7 +2309,7 @@ async fn game_output(
     let slots = st.db.slots(&season).await.unwrap_or_default();
     let i_claim = slots
         .iter()
-        .any(|r| r.ap_slot == ap_slot && r.claimed_by.as_deref() == Some(me.as_str()));
+        .any(|r| r.ap_slot == ap_slot && r.claimed_by_id == Some(my_id));
     let back = format!("/game/{ap_slot}");
     if !(i_claim || is_admin) {
         return render::notice("Claim this game to download its files.", false, &back)
@@ -2342,7 +2354,8 @@ async fn minesweeper_page(
     me: auth::Me,
     Query(q): Query<KindQuery>,
 ) -> Html<String> {
-    let (me, _is_admin) = me.ident();
+    let my_id = me.id();
+    let (_me, _is_admin) = me.ident();
     let free = q.free;
     // Freeplay (minigame section) is always available and ignores the admin
     // toggle, which only gates the seasonal bonus-hint board.
@@ -2354,10 +2367,10 @@ async fn minesweeper_page(
         .and_then(|b| b.seed.clone())
         .unwrap_or_default();
     // Freeplay: no bonus hints; stats are all-time. Seasonal: credits + seasonal.
-    let credits = if free { 0 } else { st.db.credits(&season, &me).await };
+    let credits = if free { 0 } else { st.db.credits(&season, my_id).await };
     let stat_scope: Option<&str> = if free { None } else { Some(&season) };
-    let standard = st.db.mine_stats(stat_scope, &me, "standard").await;
-    let expert = st.db.mine_stats(stat_scope, &me, "expert").await;
+    let standard = st.db.mine_stats(stat_scope, my_id, "standard").await;
+    let expert = st.db.mine_stats(stat_scope, my_id, "expert").await;
     let back = safe_back(q.back.as_deref(), "/board");
     render::minesweeper_page(enabled, free, credits, &standard, &expert, &back)
 }
@@ -2390,9 +2403,9 @@ struct KindQuery {
 /// Map key for a player's in-progress game: separate per difficulty AND per mode
 /// (freeplay vs seasonal), so the two can be in progress at once without
 /// clobbering each other.
-fn mine_key(me: &str, free: bool, kind: mine::Kind) -> (String, String) {
+fn mine_key(account: i64, free: bool, kind: mine::Kind) -> (i64, String) {
     let mode = if free { "free:" } else { "" };
-    (me.to_string(), format!("{mode}{}", kind.id()))
+    (account, format!("{mode}{}", kind.id()))
 }
 
 #[derive(Deserialize)]
@@ -2408,7 +2421,8 @@ async fn mine_new(
     me: auth::Me,
     Form(f): Form<NewForm>,
 ) -> Json<serde_json::Value> {
-    let (me, _) = me.ident();
+    let my_id = me.id();
+    let (_me, _) = me.ident();
     // Freeplay (the standalone minigame) is always available; the admin toggle
     // only gates the seasonal, bonus-hint-earning board.
     if !f.free && !st.db.minesweeper_enabled().await {
@@ -2422,7 +2436,7 @@ async fn mine_new(
         // Drop stale games (>12h old) so the map stays small, then replace this
         // player's game of this difficulty+mode with the fresh one.
         games.retain(|_, g| now.saturating_sub(g.created) < 12 * 3600 * 1_000_000_000);
-        games.insert(mine_key(&me, f.free, kind), game);
+        games.insert(mine_key(my_id, f.free, kind), game);
     }
     Json(serde_json::json!({"ok": true, "w": w, "h": h, "mines": mines, "kind": kind.id()}))
 }
@@ -2435,13 +2449,14 @@ async fn mine_state(
     me: auth::Me,
     Query(q): Query<KindQuery>,
 ) -> Json<serde_json::Value> {
-    let (me, _) = me.ident();
+    let my_id = me.id();
+    let (_me, _) = me.ident();
     let kind = mine::Kind::parse(&q.kind);
     let mut games = match st.mine_games.lock() {
         Ok(g) => g,
         Err(p) => p.into_inner(),
     };
-    match games.get_mut(&mine_key(&me, q.free, kind)) {
+    match games.get_mut(&mine_key(my_id, q.free, kind)) {
         Some(g) if !g.over => {
             g.repose();
             let cells: Vec<_> = g
@@ -2508,10 +2523,11 @@ async fn mine_pause(
     me: auth::Me,
     Query(q): Query<KindQuery>,
 ) -> Json<serde_json::Value> {
-    let (me, _) = me.ident();
+    let my_id = me.id();
+    let (_me, _) = me.ident();
     let kind = mine::Kind::parse(&q.kind);
     if let Ok(mut games) = st.mine_games.lock() {
-        if let Some(g) = games.get_mut(&mine_key(&me, q.free, kind)) {
+        if let Some(g) = games.get_mut(&mine_key(my_id, q.free, kind)) {
             g.pause();
         }
     }
@@ -2533,8 +2549,9 @@ async fn mine_reveal(
     me: auth::Me,
     Form(f): Form<RevealForm>,
 ) -> Json<serde_json::Value> {
-    let (me, _) = me.ident();
-    let key = mine_key(&me, f.free, mine::Kind::parse(&f.kind));
+    let my_id = me.id();
+    let (_me, _) = me.ident();
+    let key = mine_key(my_id, f.free, mine::Kind::parse(&f.kind));
     // Reveal under the lock, then release it before any await.
     let outcome = {
         let mut games = match st.mine_games.lock() {
@@ -2576,15 +2593,15 @@ async fn mine_reveal(
                 .unwrap_or_default()
         };
         st.db
-            .record_mine_result(&scope, &me, kind, won, elapsed_ms)
+            .record_mine_result(&scope, my_id, kind, won, elapsed_ms)
             .await;
         if won && !f.free {
-            credits = st.db.add_credits(&scope, &me, 1).await.ok();
+            credits = st.db.add_credits(&scope, my_id, 1).await.ok();
         }
         // Freeplay stats are all-time; seasonal stats scope to the current seed.
         let stat_scope: Option<&str> = if f.free { None } else { Some(&scope) };
-        let standard = st.db.mine_stats(stat_scope, &me, "standard").await;
-        let expert = st.db.mine_stats(stat_scope, &me, "expert").await;
+        let standard = st.db.mine_stats(stat_scope, my_id, "standard").await;
+        let expert = st.db.mine_stats(stat_scope, my_id, "expert").await;
         Some(render::mine_stats_html(&standard, &expert))
     } else {
         None

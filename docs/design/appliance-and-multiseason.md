@@ -335,7 +335,8 @@ landing page lists seasons by state. This touches most handlers; do it behind a
 ### 7.6 Data model deltas
 
 - New `season` table (above); `created_by`, `name`, `state`, `ap_port`/route.
-- New `user` + `role` (or `user.role`) + `session` tables (native auth).
+- `account` (with `role`) + `session` + `auth_link` tables (native auth) —
+  done in step 2; every per-user table keys on `account_id`, never a name.
 - New `season_mod` (season ↔ moderator) for co-mods.
 - Per-season apworld pinning (§8) table.
 - Existing season-keyed tables: confirm every query is season-scoped (mostly

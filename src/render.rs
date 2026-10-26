@@ -1368,7 +1368,7 @@ fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool) -> String {
         } else {
             format!(r#"<div class="meta">+ {}</div>"#, esc(&s.coop_names))
         };
-        let del = if is_admin || s.sso == me {
+        let del = if is_admin || s.username == me {
             format!(
                 r#"<form method="post" action="/signup/delete" style="display:inline">
 <input type="hidden" name="id" value="{}"><button class="ghost" type="submit">Remove</button></form>"#,
@@ -1382,7 +1382,7 @@ fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool) -> String {
 <div class="meta">{} · by {}</div>{coop}<div class="seat"><span></span>{del}</div></div>"#,
             esc(&s.slot_name),
             esc(&s.game),
-            esc(&s.sso),
+            esc(&s.username),
         ));
     }
     b.push_str("</div>");
@@ -1616,7 +1616,7 @@ pub fn admin_page(
                 r#"<div class="hintrow"><span>{} · {}{custom} · by {}</span>{}</div>"#,
                 esc(&s.slot_name),
                 esc(&s.game),
-                esc(&s.sso),
+                esc(&s.username),
                 action_btn(
                     "/admin/delete-player",
                     &[("id", &s.id.to_string())],

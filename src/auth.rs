@@ -130,6 +130,11 @@ impl Me {
         };
         (name, self.can(Action::ManageSeason))
     }
+    /// The account id — what per-user rows are keyed by. `0` when anonymous
+    /// (never a real account), so it matches and owns nothing.
+    pub fn id(&self) -> i64 {
+        self.0.as_ref().map(|p| p.account_id).unwrap_or(0)
+    }
     pub fn can(&self, action: Action) -> bool {
         authorize(self.principal(), action)
     }

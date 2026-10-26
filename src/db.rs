@@ -1,6 +1,6 @@
 //! Persistence for Bifrost slots + claims (SQLite).
 //!
-//! A **Bifrost slot** is one person (claimable, tied to an SSO), mapping to one
+//! A **Bifrost slot** is one person (claimable, tied to an account), mapping to one
 //! **AP slot** (the game). Co-op games (e.g. Don't Starve Together) have several
 //! Bifrost slots pointing at the same `ap_slot`. A season is keyed by the AP
 //! `seed_name`, so a new seed gets a fresh set of slots + claims.
@@ -22,7 +22,9 @@ pub struct SlotRow {
     pub name: String,
     pub ap_slot: i64,
     pub game: String,
+    /// The claimant's current username (display) and account (authorization).
     pub claimed_by: Option<String>,
+    pub claimed_by_id: Option<i64>,
     /// A communal "common game" slot (the shared Minecraft server): one AP slot
     /// everyone plays, no per-person claim. Rendered as a shared card.
     #[sqlx(default)]
@@ -74,7 +76,9 @@ pub enum SetMcOutcome {
 #[derive(Debug, FromRow, Clone)]
 pub struct SubmissionRow {
     pub id: i64,
-    pub sso: String,
+    pub account_id: i64,
+    /// The submitter's current username.
+    pub username: String,
     pub slot_name: String,
     pub game: String,
     pub is_custom: bool,
@@ -130,6 +134,8 @@ impl Db {
             .max_connections(4)
             .connect_with(opts)
             .await?;
+        // Accounts first: the per-user tables below reference account(id).
+        auth::migrate(&pool).await?;
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS bifrost_slot (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -152,7 +158,7 @@ impl Db {
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS claim (
                  bifrost_slot_id INTEGER PRIMARY KEY REFERENCES bifrost_slot(id) ON DELETE CASCADE,
-                 sso TEXT NOT NULL,
+                 account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
                  claimed_at INTEGER NOT NULL
                )"#,
         )
@@ -162,7 +168,7 @@ impl Db {
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS submission (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 sso TEXT NOT NULL,
+                 account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
                  slot_name TEXT NOT NULL UNIQUE,
                  game TEXT NOT NULL,
                  is_custom INTEGER NOT NULL DEFAULT 0,
@@ -187,9 +193,9 @@ impl Db {
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS hint_credit (
                  season TEXT NOT NULL,
-                 sso TEXT NOT NULL,
+                 account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
                  credits INTEGER NOT NULL DEFAULT 0,
-                 PRIMARY KEY (season, sso)
+                 PRIMARY KEY (season, account_id)
                )"#,
         )
         .execute(&pool)
@@ -211,7 +217,7 @@ impl Db {
             r#"CREATE TABLE IF NOT EXISTS mine_result (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
                  season TEXT NOT NULL,
-                 sso TEXT NOT NULL,
+                 account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
                  won INTEGER NOT NULL,
                  duration_ms INTEGER NOT NULL,
                  ts INTEGER NOT NULL,
@@ -226,7 +232,7 @@ impl Db {
             .execute(&pool)
             .await;
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_mine_result ON mine_result (season, sso, kind)",
+            "CREATE INDEX IF NOT EXISTS idx_mine_result ON mine_result (season, account_id, kind)",
         )
         .execute(&pool)
         .await?;
@@ -244,13 +250,13 @@ impl Db {
         .execute(&pool)
         .await?;
         // A player's Minecraft username, for the common-game server's whitelist.
-        // Keyed by SSO identity (persists across seasons — a returning player
+        // Keyed by account (persists across seasons — a returning player
         // keeps their name); the case-insensitive unique index stops two people
         // claiming the same Minecraft account. The *whitelist* itself is scoped
         // to the current season's claimants (see `mc_whitelist`).
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS mc_account (
-                 sso TEXT PRIMARY KEY,
+                 account_id INTEGER PRIMARY KEY REFERENCES account(id) ON DELETE CASCADE,
                  mc_username TEXT NOT NULL,
                  updated_at INTEGER NOT NULL
                )"#,
@@ -325,7 +331,6 @@ impl Db {
         )
         .execute(&pool)
         .await?;
-        auth::migrate(&pool).await?;
         Ok(Self { pool })
     }
 
@@ -378,10 +383,10 @@ impl Db {
     }
 
     /// A player's bonus-hint credits for a season.
-    pub async fn credits(&self, season: &str, sso: &str) -> i64 {
-        sqlx::query_scalar("SELECT credits FROM hint_credit WHERE season = ? AND sso = ?")
+    pub async fn credits(&self, season: &str, account: i64) -> i64 {
+        sqlx::query_scalar("SELECT credits FROM hint_credit WHERE season = ? AND account_id = ?")
             .bind(season)
-            .bind(sso)
+            .bind(account)
             .fetch_optional(&self.pool)
             .await
             .ok()
@@ -389,16 +394,16 @@ impl Db {
             .unwrap_or(0)
     }
 
-    /// True if this SSO user has claimed a regular (non-common) slot this season.
+    /// True if this account has claimed a regular (non-common) slot this season.
     /// Communal-hint gate: only players with a game of their own in the season may
     /// spend the common game's shared hint points.
-    pub async fn has_claimed_slot(&self, season: &str, sso: &str) -> bool {
+    pub async fn has_claimed_slot(&self, season: &str, account: i64) -> bool {
         let n: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM claim c JOIN bifrost_slot s ON s.id = c.bifrost_slot_id
-             WHERE s.season = ? AND c.sso = ? AND s.is_common = 0",
+             WHERE s.season = ? AND c.account_id = ? AND s.is_common = 0",
         )
         .bind(season)
-        .bind(sso)
+        .bind(account)
         .fetch_one(&self.pool)
         .await
         .unwrap_or(0);
@@ -406,9 +411,9 @@ impl Db {
     }
 
     /// This player's registered Minecraft username, if any.
-    pub async fn mc_username(&self, sso: &str) -> Option<String> {
-        sqlx::query_scalar("SELECT mc_username FROM mc_account WHERE sso = ?")
-            .bind(sso)
+    pub async fn mc_username(&self, account: i64) -> Option<String> {
+        sqlx::query_scalar("SELECT mc_username FROM mc_account WHERE account_id = ?")
+            .bind(account)
             .fetch_optional(&self.pool)
             .await
             .ok()
@@ -420,16 +425,16 @@ impl Db {
     /// already validated the name's shape.
     pub async fn set_mc_username(
         &self,
-        sso: &str,
+        account: i64,
         name: &str,
     ) -> Result<SetMcOutcome, sqlx::Error> {
         // Taken by someone else? (Same user re-saving their own name is fine.)
-        let owner: Option<String> =
-            sqlx::query_scalar("SELECT sso FROM mc_account WHERE mc_username = ? COLLATE NOCASE")
+        let owner: Option<i64> =
+            sqlx::query_scalar("SELECT account_id FROM mc_account WHERE mc_username = ? COLLATE NOCASE")
                 .bind(name)
                 .fetch_optional(&self.pool)
                 .await?;
-        if matches!(owner, Some(o) if o != sso) {
+        if matches!(owner, Some(o) if o != account) {
             return Ok(SetMcOutcome::TakenByOther);
         }
         let now = std::time::SystemTime::now()
@@ -437,10 +442,10 @@ impl Db {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         sqlx::query(
-            "INSERT INTO mc_account (sso, mc_username, updated_at) VALUES (?, ?, ?)
-             ON CONFLICT(sso) DO UPDATE SET mc_username = excluded.mc_username, updated_at = excluded.updated_at",
+            "INSERT INTO mc_account (account_id, mc_username, updated_at) VALUES (?, ?, ?)
+             ON CONFLICT(account_id) DO UPDATE SET mc_username = excluded.mc_username, updated_at = excluded.updated_at",
         )
-        .bind(sso)
+        .bind(account)
         .bind(name)
         .bind(now)
         .execute(&self.pool)
@@ -456,7 +461,7 @@ impl Db {
             "SELECT a.mc_username FROM mc_account a
              WHERE EXISTS (
                  SELECT 1 FROM claim c JOIN bifrost_slot s ON s.id = c.bifrost_slot_id
-                 WHERE s.season = ? AND c.sso = a.sso AND s.is_common = 0
+                 WHERE s.season = ? AND c.account_id = a.account_id AND s.is_common = 0
              )
              ORDER BY a.mc_username COLLATE NOCASE",
         )
@@ -467,27 +472,27 @@ impl Db {
     }
 
     /// Grant `n` bonus-hint credits, returning the new total.
-    pub async fn add_credits(&self, season: &str, sso: &str, n: i64) -> Result<i64, sqlx::Error> {
+    pub async fn add_credits(&self, season: &str, account: i64, n: i64) -> Result<i64, sqlx::Error> {
         sqlx::query(
-            "INSERT INTO hint_credit (season, sso, credits) VALUES (?, ?, ?)
-             ON CONFLICT(season, sso) DO UPDATE SET credits = credits + excluded.credits",
+            "INSERT INTO hint_credit (season, account_id, credits) VALUES (?, ?, ?)
+             ON CONFLICT(season, account_id) DO UPDATE SET credits = credits + excluded.credits",
         )
         .bind(season)
-        .bind(sso)
+        .bind(account)
         .bind(n)
         .execute(&self.pool)
         .await?;
-        Ok(self.credits(season, sso).await)
+        Ok(self.credits(season, account).await)
     }
 
     /// Spend one bonus-hint credit if available; returns true if one was spent.
-    pub async fn spend_credit(&self, season: &str, sso: &str) -> bool {
+    pub async fn spend_credit(&self, season: &str, account: i64) -> bool {
         let res = sqlx::query(
             "UPDATE hint_credit SET credits = credits - 1
-             WHERE season = ? AND sso = ? AND credits > 0",
+             WHERE season = ? AND account_id = ? AND credits > 0",
         )
         .bind(season)
-        .bind(sso)
+        .bind(account)
         .execute(&self.pool)
         .await;
         matches!(res, Ok(r) if r.rows_affected() > 0)
@@ -498,17 +503,17 @@ impl Db {
     pub async fn record_mine_result(
         &self,
         season: &str,
-        sso: &str,
+        account: i64,
         kind: &str,
         won: bool,
         duration_ms: i64,
     ) {
         let _ = sqlx::query(
-            "INSERT INTO mine_result (season, sso, kind, won, duration_ms, ts)
+            "INSERT INTO mine_result (season, account_id, kind, won, duration_ms, ts)
              VALUES (?, ?, ?, ?, ?, strftime('%s','now'))",
         )
         .bind(season)
-        .bind(sso)
+        .bind(account)
         .bind(kind)
         .bind(won as i64)
         .bind(duration_ms)
@@ -519,18 +524,18 @@ impl Db {
     /// Per-kind minesweeper stats for a player. `season = Some(s)` scopes to one
     /// season; `None` is all-time (across every season + freeplay) — the
     /// "permanent" view. Time stats are over wins only; `None` = no wins yet.
-    pub async fn mine_stats(&self, season: Option<&str>, sso: &str, kind: &str) -> MineStats {
+    pub async fn mine_stats(&self, season: Option<&str>, account: i64, kind: &str) -> MineStats {
         let mut sql = String::from(
             "SELECT COALESCE(SUM(won),0) AS wins, COALESCE(SUM(1-won),0) AS losses, \
              CAST(AVG(CASE WHEN won=1 THEN duration_ms END) AS INTEGER) AS avg_ms, \
              MIN(CASE WHEN won=1 THEN duration_ms END) AS best_ms, \
              MAX(CASE WHEN won=1 THEN duration_ms END) AS worst_ms \
-             FROM mine_result WHERE sso=? AND kind=?",
+             FROM mine_result WHERE account_id=? AND kind=?",
         );
         if season.is_some() {
             sql.push_str(" AND season=?");
         }
-        let mut q = sqlx::query_as::<_, MineStats>(&sql).bind(sso).bind(kind);
+        let mut q = sqlx::query_as::<_, MineStats>(&sql).bind(account).bind(kind);
         if let Some(s) = season {
             q = q.bind(s);
         }
@@ -545,12 +550,14 @@ impl Db {
         kind: &str,
         limit: i64,
     ) -> Vec<(String, i64)> {
-        let mut sql =
-            String::from("SELECT sso, MIN(duration_ms) AS best FROM mine_result WHERE kind=? AND won=1");
+        let mut sql = String::from(
+            "SELECT a.username, MIN(m.duration_ms) AS best FROM mine_result m \
+             JOIN account a ON a.id = m.account_id WHERE m.kind=? AND m.won=1",
+        );
         if season.is_some() {
-            sql.push_str(" AND season=?");
+            sql.push_str(" AND m.season=?");
         }
-        sql.push_str(" GROUP BY sso ORDER BY best ASC LIMIT ?");
+        sql.push_str(" GROUP BY m.account_id ORDER BY best ASC LIMIT ?");
         let mut q = sqlx::query_as::<_, (String, i64)>(&sql).bind(kind);
         if let Some(s) = season {
             q = q.bind(s);
@@ -568,13 +575,15 @@ impl Db {
         min_games: i64,
         limit: i64,
     ) -> Vec<(String, i64, i64)> {
-        let mut sql =
-            String::from("SELECT sso, SUM(won) AS wins, COUNT(*) AS total FROM mine_result WHERE kind=?");
+        let mut sql = String::from(
+            "SELECT a.username, SUM(m.won) AS wins, COUNT(*) AS total FROM mine_result m \
+             JOIN account a ON a.id = m.account_id WHERE m.kind=?",
+        );
         if season.is_some() {
-            sql.push_str(" AND season=?");
+            sql.push_str(" AND m.season=?");
         }
         sql.push_str(
-            " GROUP BY sso HAVING total>=? ORDER BY (CAST(SUM(won) AS REAL)/COUNT(*)) DESC, total DESC LIMIT ?",
+            " GROUP BY m.account_id HAVING total>=? ORDER BY (CAST(SUM(m.won) AS REAL)/COUNT(*)) DESC, total DESC LIMIT ?",
         );
         let mut q = sqlx::query_as::<_, (String, i64, i64)>(&sql).bind(kind);
         if let Some(s) = season {
@@ -1064,10 +1073,10 @@ impl Db {
                     .await?;
             if let Some(sub) = subs.iter().find(|s| &s.slot_name == name) {
                 sqlx::query(
-                    "INSERT OR IGNORE INTO claim (bifrost_slot_id, sso, claimed_at) VALUES (?, ?, ?)",
+                    "INSERT OR IGNORE INTO claim (bifrost_slot_id, account_id, claimed_at) VALUES (?, ?, ?)",
                 )
                 .bind(id)
-                .bind(&sub.sso)
+                .bind(sub.account_id)
                 .bind(now)
                 .execute(&self.pool)
                 .await?;
@@ -1169,7 +1178,7 @@ impl Db {
         }
         // Carry claims over by name.
         for s in &old {
-            let Some(sso) = &s.claimed_by else { continue };
+            let Some(account) = s.claimed_by_id else { continue };
             let id: Option<i64> =
                 sqlx::query_scalar("SELECT id FROM bifrost_slot WHERE season = ? AND name = ?")
                     .bind(new_season)
@@ -1178,10 +1187,10 @@ impl Db {
                     .await?;
             if let Some(id) = id {
                 sqlx::query(
-                    "INSERT OR IGNORE INTO claim (bifrost_slot_id, sso, claimed_at) VALUES (?, ?, ?)",
+                    "INSERT OR IGNORE INTO claim (bifrost_slot_id, account_id, claimed_at) VALUES (?, ?, ?)",
                 )
                 .bind(id)
-                .bind(sso)
+                .bind(account)
                 .bind(now)
                 .execute(&self.pool)
                 .await?;
@@ -1192,8 +1201,10 @@ impl Db {
 
     pub async fn slots(&self, season: &str) -> Result<Vec<SlotRow>, sqlx::Error> {
         sqlx::query_as::<_, SlotRow>(
-            r#"SELECT s.id, s.name, s.ap_slot, s.game, c.sso AS claimed_by, s.is_common
+            r#"SELECT s.id, s.name, s.ap_slot, s.game, a.username AS claimed_by,
+                      c.account_id AS claimed_by_id, s.is_common
                FROM bifrost_slot s LEFT JOIN claim c ON c.bifrost_slot_id = s.id
+               LEFT JOIN account a ON a.id = c.account_id
                WHERE s.season = ?
                ORDER BY s.ap_slot, s.name"#,
         )
@@ -1203,7 +1214,7 @@ impl Db {
     }
 
     /// Claim a slot, enforcing one claim per player per season.
-    pub async fn claim_one(&self, slot_id: i64, sso: &str) -> Result<ClaimOutcome, sqlx::Error> {
+    pub async fn claim_one(&self, slot_id: i64, account: i64) -> Result<ClaimOutcome, sqlx::Error> {
         let season: Option<String> =
             sqlx::query_scalar("SELECT season FROM bifrost_slot WHERE id = ?")
                 .bind(slot_id)
@@ -1215,10 +1226,10 @@ impl Db {
         // Already holding a *different* slot this season? One per player.
         let existing: Option<String> = sqlx::query_scalar(
             "SELECT s.name FROM claim c JOIN bifrost_slot s ON s.id = c.bifrost_slot_id
-             WHERE s.season = ? AND c.sso = ? AND s.id <> ?",
+             WHERE s.season = ? AND c.account_id = ? AND s.id <> ?",
         )
         .bind(&season)
-        .bind(sso)
+        .bind(account)
         .bind(slot_id)
         .fetch_optional(&self.pool)
         .await?;
@@ -1230,10 +1241,10 @@ impl Db {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         let res = sqlx::query(
-            "INSERT OR IGNORE INTO claim (bifrost_slot_id, sso, claimed_at) VALUES (?, ?, ?)",
+            "INSERT OR IGNORE INTO claim (bifrost_slot_id, account_id, claimed_at) VALUES (?, ?, ?)",
         )
         .bind(slot_id)
-        .bind(sso)
+        .bind(account)
         .bind(now)
         .execute(&self.pool)
         .await?;
@@ -1241,12 +1252,12 @@ impl Db {
             return Ok(ClaimOutcome::Ok);
         }
         // Slot was already claimed — fine if it's this same user, else taken.
-        let owner: Option<String> =
-            sqlx::query_scalar("SELECT sso FROM claim WHERE bifrost_slot_id = ?")
+        let owner: Option<i64> =
+            sqlx::query_scalar("SELECT account_id FROM claim WHERE bifrost_slot_id = ?")
                 .bind(slot_id)
                 .fetch_optional(&self.pool)
                 .await?;
-        if owner.as_deref() == Some(sso) {
+        if owner == Some(account) {
             Ok(ClaimOutcome::Ok)
         } else {
             Ok(ClaimOutcome::SlotTaken)
@@ -1257,7 +1268,7 @@ impl Db {
     #[allow(clippy::too_many_arguments)]
     pub async fn add_submission(
         &self,
-        sso: &str,
+        account: i64,
         slot_name: &str,
         game: &str,
         is_custom: bool,
@@ -1270,10 +1281,10 @@ impl Db {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         let res = sqlx::query(
-            "INSERT INTO submission (sso, slot_name, game, is_custom, coop_names, yaml_file, apworld_file, created_at)
+            "INSERT INTO submission (account_id, slot_name, game, is_custom, coop_names, yaml_file, apworld_file, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
-        .bind(sso)
+        .bind(account)
         .bind(slot_name)
         .bind(game)
         .bind(is_custom as i64)
@@ -1288,8 +1299,9 @@ impl Db {
 
     pub async fn submissions(&self) -> Result<Vec<SubmissionRow>, sqlx::Error> {
         sqlx::query_as::<_, SubmissionRow>(
-            "SELECT id, sso, slot_name, game, is_custom, coop_names, yaml_file
-             FROM submission ORDER BY created_at",
+            "SELECT s.id, s.account_id, a.username, s.slot_name, s.game, s.is_custom,
+                    s.coop_names, s.yaml_file
+             FROM submission s JOIN account a ON a.id = s.account_id ORDER BY s.created_at",
         )
         .fetch_all(&self.pool)
         .await
@@ -1300,11 +1312,11 @@ impl Db {
     pub async fn delete_submission(
         &self,
         id: i64,
-        sso: &str,
+        account: i64,
         is_admin: bool,
     ) -> Result<Option<(String, Option<String>)>, sqlx::Error> {
-        let row = sqlx::query_as::<_, (String, String, Option<String>)>(
-            "SELECT sso, yaml_file, apworld_file FROM submission WHERE id = ?",
+        let row = sqlx::query_as::<_, (i64, String, Option<String>)>(
+            "SELECT account_id, yaml_file, apworld_file FROM submission WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -1312,7 +1324,7 @@ impl Db {
         let Some((owner, yaml_file, apworld_file)) = row else {
             return Ok(None);
         };
-        if !is_admin && owner != sso {
+        if !is_admin && owner != account {
             return Ok(None);
         }
         sqlx::query("DELETE FROM submission WHERE id = ?")
@@ -1322,15 +1334,15 @@ impl Db {
         Ok(Some((yaml_file, apworld_file)))
     }
 
-    /// Whether `sso` claims any Bifrost slot mapping to `ap_slot` this season.
-    pub async fn claims_ap_slot(&self, season: &str, sso: &str, ap_slot: i64) -> bool {
+    /// Whether `account` claims any Bifrost slot mapping to `ap_slot` this season.
+    pub async fn claims_ap_slot(&self, season: &str, account: i64, ap_slot: i64) -> bool {
         let n: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM bifrost_slot s JOIN claim c ON c.bifrost_slot_id = s.id
-             WHERE s.season = ? AND s.ap_slot = ? AND c.sso = ?",
+             WHERE s.season = ? AND s.ap_slot = ? AND c.account_id = ?",
         )
         .bind(season)
         .bind(ap_slot)
-        .bind(sso)
+        .bind(account)
         .fetch_one(&self.pool)
         .await
         .unwrap_or(0);
@@ -1341,9 +1353,9 @@ impl Db {
     pub async fn slot_detail(
         &self,
         id: i64,
-    ) -> Result<Option<(i64, Option<String>, bool)>, sqlx::Error> {
-        sqlx::query_as::<_, (i64, Option<String>, bool)>(
-            "SELECT s.ap_slot, c.sso, s.is_common FROM bifrost_slot s
+    ) -> Result<Option<(i64, Option<i64>, bool)>, sqlx::Error> {
+        sqlx::query_as::<_, (i64, Option<i64>, bool)>(
+            "SELECT s.ap_slot, c.account_id, s.is_common FROM bifrost_slot s
              LEFT JOIN claim c ON c.bifrost_slot_id = s.id WHERE s.id = ?",
         )
         .bind(id)
@@ -1355,7 +1367,7 @@ impl Db {
     pub async fn unclaim(
         &self,
         slot_id: i64,
-        sso: &str,
+        account: i64,
         is_admin: bool,
     ) -> Result<bool, sqlx::Error> {
         let res = if is_admin {
@@ -1364,9 +1376,9 @@ impl Db {
                 .execute(&self.pool)
                 .await?
         } else {
-            sqlx::query("DELETE FROM claim WHERE bifrost_slot_id = ? AND sso = ?")
+            sqlx::query("DELETE FROM claim WHERE bifrost_slot_id = ? AND account_id = ?")
                 .bind(slot_id)
-                .bind(sso)
+                .bind(account)
                 .execute(&self.pool)
                 .await?
         };

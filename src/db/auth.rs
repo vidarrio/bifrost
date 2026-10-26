@@ -661,4 +661,53 @@ mod tests {
                 .is_none()
         );
     }
+
+    #[tokio::test]
+    async fn per_user_rows_follow_the_account() {
+        use crate::db::ClaimOutcome;
+        let db = db().await;
+        let p = db
+            .idp_principal("sub", "old", None, 0)
+            .await
+            .unwrap()
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO bifrost_slot (season, name, ap_slot, game) VALUES ('s', 'Slot', 1, 'G')",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let slot = db.slots("s").await.unwrap()[0].id;
+        assert!(matches!(
+            db.claim_one(slot, p.account_id).await.unwrap(),
+            ClaimOutcome::Ok
+        ));
+        db.add_credits("s", p.account_id, 2).await.unwrap();
+        db.set_mc_username(p.account_id, "Steve").await.unwrap();
+
+        // The IdP renames the user: everything stays theirs, under the new name.
+        db.idp_principal("sub", "new", None, 0).await.unwrap();
+        let row = &db.slots("s").await.unwrap()[0];
+        assert_eq!(row.claimed_by.as_deref(), Some("new"));
+        assert_eq!(row.claimed_by_id, Some(p.account_id));
+        assert_eq!(db.credits("s", p.account_id).await, 2);
+        assert_eq!(db.mc_whitelist("s").await, ["Steve"]);
+
+        // Someone else can neither take nor release it.
+        let other = db.create_account("x", "h", Role::User, 0).await.unwrap();
+        assert!(matches!(
+            db.claim_one(slot, other).await.unwrap(),
+            ClaimOutcome::SlotTaken
+        ));
+        assert!(!db.unclaim(slot, other, false).await.unwrap());
+
+        // Deleting the account cascades its rows away.
+        sqlx::query("DELETE FROM account WHERE id = ?")
+            .bind(p.account_id)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert!(db.slots("s").await.unwrap()[0].claimed_by.is_none());
+        assert_eq!(db.credits("s", p.account_id).await, 0);
+    }
 }
