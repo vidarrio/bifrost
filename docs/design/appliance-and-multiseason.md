@@ -705,8 +705,13 @@ new data dir, new config, new service wiring. Consequences:
   clients, not an alternative.
 - **Single-binary AP bundling cost** — accepted as a convenience tier; container
   is primary.
-- **Resource ceilings** for concurrent live seasons — need an operator-visible
-  limit/warning.
+- **Resource ceilings** for concurrent live seasons — addressed by live load
+  tracking (`src/load.rs`): sampled every 10 s from `/proc` (a container's
+  cgroup v2 memory limit wins over the host's), an hour kept; the settings page
+  charts memory and CPU, lists each live season's AP server (its whole process
+  tree) and the helpers, and warns on tight memory, a busy CPU or a filling
+  disk; a season's admin page warns before going live when the largest
+  running server wouldn't fit in what's free. Warnings, not a hard cap.
 
 ## 13. Proposed sequencing
 

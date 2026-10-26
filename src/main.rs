@@ -34,6 +34,7 @@ mod config;
 mod db;
 mod generate;
 mod inlogic;
+mod load;
 mod meta;
 mod ptrack;
 mod mine;
@@ -174,6 +175,7 @@ async fn main() {
     }
 
     backup::spawn_nightly(db.clone());
+    load::spawn_sampler(cfg.data_dir.clone());
 
     let shutdown_seasons = seasons.clone();
     let shutdown_db = db.clone();
@@ -218,6 +220,7 @@ async fn main() {
         .route("/admin/settings/ap/install", post(ap_install))
         .route("/admin/settings/ap/use", post(ap_use))
         .route("/admin/settings/ap/remove", post(ap_remove))
+        .route("/admin/settings/load", get(settings_load))
         .route("/admin/settings/backups/now", post(backup_now))
         .route("/admin/settings/backups/download", get(backup_download))
         .route("/admin/settings/backups/delete", post(backup_delete))
@@ -2237,7 +2240,9 @@ async fn settings_status(st: &AppState) -> render::SettingsStatus {
             (i, users)
         })
         .collect();
+    let names = seasons.iter().map(|s| (s.id, s.name.clone())).collect();
     render::SettingsStatus {
+        load_html: render::load_panel(load::snapshot().as_ref(), &names),
         installs,
         active_ap: apinstall::active().version,
         updates: apupdate::snapshot(),
@@ -2252,6 +2257,15 @@ async fn settings_status(st: &AppState) -> render::SettingsStatus {
         managed: cfg.ap_managed,
         ports: (*cfg.ap_ports.start(), *cfg.ap_ports.end()),
     }
+}
+
+/// The live-load panel alone (the settings page refreshes it).
+async fn settings_load(State(st): State<AppState>, me: auth::Me) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return axum::http::StatusCode::FORBIDDEN.into_response();
+    }
+    let names = st.db.seasons().await.into_iter().map(|s| (s.id, s.name)).collect();
+    Html(render::load_panel(load::snapshot().as_ref(), &names)).into_response()
 }
 
 // ---- Archipelago installs (settings page) ----

@@ -69,6 +69,10 @@ Settings*, create a season, and open its signups.
 - **Backups.** Nightly and on demand, with retention (the last 7 days, 4 weeks
   and 3 months, capped at 5 GiB by default), downloadable from the settings
   page.
+- **Live load.** The settings page shows memory, CPU and disk over the last
+  hour, what each live season's AP server and the sandboxed helpers use, and
+  warns when memory, CPU or disk run short; a season's admin page warns before
+  going live if another server likely wouldn't fit.
 - **Minesweeper.** Clear a no-guess board to earn a bonus hint.
 
 ## Accounts
@@ -123,6 +127,7 @@ src/
   generate.rs     generate / re-roll orchestration
   sandbox.rs      bubblewrap / rlimit isolation
   backup.rs       backups and retention; bundle.rs: the single-file runtime
+  load.rs         live load sampling and warnings (settings page)
   render.rs       all HTML
 scripts/          Python helpers run under Archipelago's interpreter
 vendor/           bundled apworlds (Universal Tracker)

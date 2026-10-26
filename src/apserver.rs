@@ -83,8 +83,24 @@ impl ApServer {
 }
 
 struct Running {
+    season: i64,
     child: Child,
     stdin: ChildStdin,
+}
+
+/// Live season → its running server's pid (bubblewrap's, or the server's on
+/// the limits tier) — for `load`, which counts everything under it.
+static PIDS: std::sync::Mutex<std::collections::BTreeMap<i64, u32>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+pub fn server_pids() -> std::collections::BTreeMap<i64, u32> {
+    PIDS.lock().unwrap().clone()
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        PIDS.lock().unwrap().remove(&self.season);
+    }
 }
 
 async fn supervise(mut launch: Launch, db: Db, board: Arc<RwLock<Board>>, mut rx: mpsc::Receiver<Cmd>) {
@@ -275,7 +291,10 @@ fn start(
         cfg.ap_bind,
         launch.port
     );
-    Ok(Running { child, stdin })
+    if let Some(pid) = child.id() {
+        PIDS.lock().unwrap().insert(launch.season, pid);
+    }
+    Ok(Running { season: launch.season, child, stdin })
 }
 
 /// Append the server's output to `logs/server.log` and feed gameplay lines to
