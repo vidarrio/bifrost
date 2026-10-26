@@ -11,9 +11,11 @@ use sqlx::{FromRow, SqlitePool};
 mod auth;
 mod seasons;
 mod settings;
+mod worlds;
 pub use auth::{AccountRow, LinkKind, LinkRow, RedeemError};
 pub use seasons::{SeasonRow, State};
-pub use settings::{Discord, Instance};
+pub use settings::{Approval, Discord, Instance};
+pub use worlds::{CatalogWorld, WorldRequest};
 
 #[derive(Clone)]
 pub struct Db {
@@ -91,6 +93,18 @@ pub struct SubmissionRow {
     pub is_custom: bool,
     pub coop_names: String,
     pub yaml_file: String,
+    /// Held until this apworld (a pending upload's file name) is approved;
+    /// its YAML can't be checked before then.
+    pub held_for: Option<String>,
+    /// Why a held submission can't go ahead (its check failed after approval,
+    /// or the apworld was rejected).
+    pub held_err: Option<String>,
+}
+
+impl SubmissionRow {
+    pub fn held(&self) -> bool {
+        self.held_for.is_some()
+    }
 }
 
 /// One persisted activity-log entry, sourced from the AP server journal. `ts` is
@@ -151,6 +165,7 @@ impl Db {
         auth::migrate(&pool).await?;
         seasons::migrate(&pool).await?;
         settings::migrate(&pool).await?;
+        worlds::migrate(&pool).await?;
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS bifrost_slot (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -185,18 +200,10 @@ impl Db {
                  is_custom INTEGER NOT NULL DEFAULT 0,
                  coop_names TEXT NOT NULL DEFAULT '',
                  yaml_file TEXT NOT NULL,
-                 apworld_file TEXT,
+                 held_for TEXT,
+                 held_err TEXT,
                  created_at INTEGER NOT NULL,
                  UNIQUE(season, slot_name)
-               )"#,
-        )
-        .execute(&pool)
-        .await?;
-        // Simple key/value settings (e.g. whether signups are open).
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS setting (
-                 key TEXT PRIMARY KEY,
-                 value TEXT NOT NULL
                )"#,
         )
         .execute(&pool)
@@ -308,22 +315,6 @@ impl Db {
         .execute(&pool)
         .await?;
         Ok(Self { pool, ap_ports: None })
-    }
-
-    async fn get_setting(&self, key: &str) -> Result<Option<String>, sqlx::Error> {
-        sqlx::query_scalar("SELECT value FROM setting WHERE key = ?")
-            .bind(key)
-            .fetch_optional(&self.pool)
-            .await
-    }
-
-    async fn set_setting(&self, key: &str, value: &str) -> Result<(), sqlx::Error> {
-        sqlx::query("INSERT OR REPLACE INTO setting (key, value) VALUES (?, ?)")
-            .bind(key)
-            .bind(value)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
     }
 
     /// A player's bonus-hint credits for a season.
@@ -1156,14 +1147,14 @@ impl Db {
         is_custom: bool,
         coop_names: &str,
         yaml_file: &str,
-        apworld_file: Option<&str>,
+        held_for: Option<&str>,
     ) -> Result<i64, sqlx::Error> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         let res = sqlx::query(
-            "INSERT INTO submission (season, account_id, slot_name, game, is_custom, coop_names, yaml_file, apworld_file, created_at)
+            "INSERT INTO submission (season, account_id, slot_name, game, is_custom, coop_names, yaml_file, held_for, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(season)
@@ -1173,7 +1164,7 @@ impl Db {
         .bind(is_custom as i64)
         .bind(coop_names)
         .bind(yaml_file)
-        .bind(apworld_file)
+        .bind(held_for)
         .bind(now)
         .execute(&self.pool)
         .await?;
@@ -1183,7 +1174,7 @@ impl Db {
     pub async fn submissions(&self, season: i64) -> Result<Vec<SubmissionRow>, sqlx::Error> {
         sqlx::query_as::<_, SubmissionRow>(
             "SELECT s.id, s.account_id, a.username, s.slot_name, s.game, s.is_custom,
-                    s.coop_names, s.yaml_file
+                    s.coop_names, s.yaml_file, s.held_for, s.held_err
              FROM submission s JOIN account a ON a.id = s.account_id
              WHERE s.season = ? ORDER BY s.created_at",
         )
@@ -1193,22 +1184,22 @@ impl Db {
     }
 
     /// Delete a submission (its own submitter, or an admin). Returns the deleted
-    /// row's file paths so the caller can clean them up.
+    /// row's YAML path so the caller can clean it up.
     pub async fn delete_submission(
         &self,
         season: i64,
         id: i64,
         account: i64,
         is_admin: bool,
-    ) -> Result<Option<(String, Option<String>)>, sqlx::Error> {
-        let row = sqlx::query_as::<_, (i64, String, Option<String>)>(
-            "SELECT account_id, yaml_file, apworld_file FROM submission WHERE id = ? AND season = ?",
+    ) -> Result<Option<String>, sqlx::Error> {
+        let row = sqlx::query_as::<_, (i64, String)>(
+            "SELECT account_id, yaml_file FROM submission WHERE id = ? AND season = ?",
         )
         .bind(id)
         .bind(season)
         .fetch_optional(&self.pool)
         .await?;
-        let Some((owner, yaml_file, apworld_file)) = row else {
+        let Some((owner, yaml_file)) = row else {
             return Ok(None);
         };
         if !is_admin && owner != account {
@@ -1218,7 +1209,7 @@ impl Db {
             .bind(id)
             .execute(&self.pool)
             .await?;
-        Ok(Some((yaml_file, apworld_file)))
+        Ok(Some(yaml_file))
     }
 
     /// Whether `account` claims any Bifrost slot mapping to `ap_slot` this season.

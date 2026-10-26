@@ -163,13 +163,32 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// A custom apworld's pin: its content hash when it was accepted, and who
-/// uploaded it.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+/// A custom apworld's pin: its content hash when it was accepted, who
+/// uploaded it, and how it got in.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Pin {
     pub sha256: String,
     pub uploaded_by: String,
     pub uploaded_at: i64,
+    /// Who approved it; empty when the instance auto-approves uploads.
+    #[serde(default)]
+    pub approved_by: String,
+    /// Installed from the curated catalog.
+    #[serde(default)]
+    pub catalog: bool,
+}
+
+impl Pin {
+    /// "from the catalog", "approved by X", or "auto-approved".
+    pub fn provenance(&self) -> String {
+        if self.catalog {
+            "from the catalog".into()
+        } else if self.approved_by.is_empty() {
+            "auto-approved".into()
+        } else {
+            format!("approved by {}", self.approved_by)
+        }
+    }
 }
 
 /// The season's pins (`worlds.lock.json`), by file name. Empty if none.
@@ -192,24 +211,13 @@ fn write_pins(
         .map_err(|e| format!("writing {}: {e}", path.display()))
 }
 
-/// Install an uploaded apworld and pin its hash. The only way custom worlds
-/// should enter a season.
-pub fn install_world(
-    season: &SeasonDirs,
-    file: &str,
-    bytes: &[u8],
-    uploaded_by: &str,
-) -> Result<(), String> {
+/// Install an apworld and pin its hash (`pin.sha256` is filled in here). The
+/// only way custom worlds should enter a season — see [`crate::worlds`].
+pub fn install_world(season: &SeasonDirs, file: &str, bytes: &[u8], mut pin: Pin) -> Result<(), String> {
     let mut pins = world_pins(season);
     std::fs::write(season.worlds.join(file), bytes).map_err(|e| format!("install: {e}"))?;
-    pins.insert(
-        file.to_string(),
-        Pin {
-            sha256: sha256_hex(bytes),
-            uploaded_by: uploaded_by.to_string(),
-            uploaded_at: crate::auth::now(),
-        },
-    );
+    pin.sha256 = sha256_hex(bytes);
+    pins.insert(file.to_string(), pin);
     write_pins(season, &pins)
 }
 

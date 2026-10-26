@@ -40,6 +40,7 @@ mod runtime;
 mod sandbox;
 mod scope;
 mod season;
+mod worlds;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -169,6 +170,13 @@ async fn main() {
         .route("/admin/clear", post(admin_clear))
         .route("/admin/delete-player", post(admin_delete_player))
         .route("/admin/delete-apworld", post(admin_delete_apworld))
+        .route("/admin/worlds/approve", post(admin_world_approve))
+        .route("/admin/worlds/reject", post(admin_world_reject))
+        .route("/admin/worlds/to-catalog", post(admin_world_to_catalog))
+        .route("/admin/catalog", get(catalog_view))
+        .route("/admin/catalog/add", post(catalog_upload).layer(upload_limit()))
+        .route("/admin/catalog/remove", post(catalog_remove))
+        .route("/admin/catalog/approval", post(catalog_approval))
         .route("/admin/console", post(admin_console))
         .route("/admin/connect-password", post(admin_connect_password))
         .route("/admin/minesweeper", post(admin_minesweeper))
@@ -1517,8 +1525,6 @@ async fn game_finish(
 
 
 /// Season `worlds/` file stems Bifrost itself stages (`generate.rs`).
-const RESERVED_WORLDS: &[&str] = &["tracker", "minecraft"];
-
 fn slugify(s: &str) -> String {
     let out: String = s
         .chars()
@@ -1531,69 +1537,77 @@ async fn signup_get(State(st): State<AppState>, ctx: scope::SeasonCtx, me: auth:
     let (me, is_admin) = ctx.ident(&me);
     let subs = st.db.submissions(ctx.id).await.unwrap_or_default();
     let open = ctx.state().accepts_signups();
-    render::signup_page(&subs, &me, is_admin, open)
+    let worlds = render::SignupWorlds {
+        custom_allowed: sandbox::get().custom_worlds_allowed(),
+        manual: st.db.approval().await == db::Approval::Manual,
+        catalog: st.db.catalog().await,
+    };
+    render::signup_page(&subs, &me, is_admin, open, &worlds)
 }
 
-/// Step 1 of signup: install an uploaded `.apworld` into the season's
-/// `worlds/` right away, so the checker can validate a custom-game YAML
-/// against it in step 2. Returns JSON for the wizard.
-async fn signup_apworld(ctx: scope::SeasonCtx, me: auth::Me, mut mp: Multipart) -> Json<serde_json::Value> {
+/// Step 1 of signup: put a custom world in the season — a catalog pick
+/// (`catalog` = its hash) or an uploaded `.apworld` — so step 2 can check a
+/// YAML against it. An upload may instead wait for approval (`pending`), in
+/// which case the YAML is held rather than checked. Returns JSON for the
+/// wizard.
+async fn signup_apworld(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    mut mp: Multipart,
+) -> Json<serde_json::Value> {
+    let fail = |e: &str| Json(serde_json::json!({"ok": false, "error": e}));
     // Worlds change only while the season takes signups — never under a
     // season that's being played.
     if !ctx.state().accepts_signups() {
-        return Json(serde_json::json!({"ok": false, "error": "Signups are closed right now."}));
+        return fail("Signups are closed right now.");
     }
     let mut bytes: Option<Vec<u8>> = None;
     let mut fname = String::new();
+    let mut catalog = String::new();
     while let Ok(Some(field)) = mp.next_field().await {
-        if field.name() == Some("apworld") {
-            fname = field.file_name().unwrap_or("").to_string();
-            bytes = field.bytes().await.ok().map(|b| b.to_vec());
-        } else {
-            let _ = field.bytes().await;
+        match field.name() {
+            Some("apworld") => {
+                fname = field.file_name().unwrap_or("").to_string();
+                bytes = field.bytes().await.ok().map(|b| b.to_vec());
+            }
+            Some("catalog") => catalog = field.text().await.unwrap_or_default(),
+            _ => {
+                let _ = field.bytes().await;
+            }
         }
     }
     if !sandbox::get().custom_worlds_allowed() {
-        return Json(serde_json::json!({
-            "ok": false,
-            "error": "Custom apworlds are disabled on this server (no sandbox available to run them safely). Ask an admin."
-        }));
+        return fail(
+            "Custom apworlds are disabled on this server (no sandbox available to run them safely). Ask an admin.",
+        );
+    }
+    let (uploader, _) = ctx.ident(&me);
+    if !catalog.is_empty() {
+        return match worlds::install_from_catalog(&st.db, ctx.id, catalog.trim(), &uploader).await {
+            Ok(file) => Json(serde_json::json!({"ok": true, "world": file, "pending": false})),
+            Err(e) => fail(&e),
+        };
     }
     let Some(bytes) = bytes.filter(|b| !b.is_empty()) else {
-        return Json(serde_json::json!({"ok": false, "error": "No file received."}));
+        return fail("No file received.");
     };
-    // .apworld files are zips; a quick magic-byte check rejects obvious mistakes.
-    if bytes.len() < 4 || &bytes[..2] != b"PK" {
-        return Json(serde_json::json!({
-            "ok": false, "error": "That doesn't look like a valid .apworld (zip) file."
-        }));
+    if !worlds::looks_like_apworld(&bytes) {
+        return fail("That doesn't look like a valid .apworld (zip) file.");
     }
-    let stem = std::path::Path::new(&fname)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("world");
-    let base = slugify(stem);
-    // Never let an upload replace a world Bifrost ships (Universal Tracker, the
-    // common game): those are trusted by content, and run in-logic/generation.
-    if RESERVED_WORLDS.contains(&base.to_lowercase().as_str()) {
-        return Json(serde_json::json!({
-            "ok": false, "error": "That apworld name is reserved — rename the file and try again."
-        }));
+    let file = match worlds::world_file(&fname) {
+        Ok(f) => f,
+        Err(e) => return fail(e),
+    };
+    match worlds::place_upload(&st.db, ctx.id, &file, bytes, &uploader).await {
+        Ok(placed) => Json(serde_json::json!({
+            "ok": true, "world": file, "pending": placed == worlds::Placed::Pending
+        })),
+        Err(e) => {
+            tracing::info!("apworld upload refused: {e}");
+            fail(&e)
+        }
     }
-    let file = format!("{base}.apworld");
-    let (uploader, _) = ctx.ident(&me);
-    let ctx = ctx.clone();
-    let installed = tokio::task::spawn_blocking(move || {
-        ap_adapter::install_world(&config::get().season(ctx.id), &file, &bytes, &uploader)
-    })
-    .await;
-    if !matches!(installed, Ok(Ok(()))) {
-        tracing::warn!("apworld install failed: {installed:?}");
-        return Json(serde_json::json!({
-            "ok": false, "error": "Couldn't install the apworld on the server."
-        }));
-    }
-    Json(serde_json::json!({"ok": true, "world": format!("{base}.apworld")}))
 }
 
 /// Step 2 of signup: validate a YAML live against the installed worlds (incl. an
@@ -1640,11 +1654,13 @@ async fn signup_post(
     let mut yaml: Option<Vec<u8>> = None;
     let mut is_custom = false;
     let mut coop = String::new();
+    let mut pending_world = String::new();
     while let Ok(Some(field)) = mp.next_field().await {
         match field.name().unwrap_or("") {
             "yaml" => yaml = field.bytes().await.ok().map(|b| b.to_vec()),
             "is_custom" => is_custom = field.text().await.unwrap_or_default() == "1",
             "coop" => coop = field.text().await.unwrap_or_default(),
+            "pending_world" => pending_world = field.text().await.unwrap_or_default(),
             _ => {
                 let _ = field.bytes().await;
             }
@@ -1655,27 +1671,42 @@ async fn signup_post(
         return render::signup_result("No YAML uploaded.", false);
     };
     let yaml_str = String::from_utf8_lossy(&yaml).to_string();
-    // Trust-but-verify: the wizard already checked, but re-roll server-side so a
-    // hand-crafted POST can't slip an invalid YAML through. Custom worlds are
-    // installed by now, so everything must pass.
-    let result = match checker::check_yaml(&ctx.dirs(), &yaml_str).await {
-        Ok(r) => r,
-        Err(e) => return render::signup_result(&format!("Checker error: {e}"), false),
+    let held_for = pending_world.trim().to_string();
+    let (slot_name, game) = if !held_for.is_empty() {
+        // Its world waits for approval, so the YAML can't be checked yet: hold
+        // the signup under the name it declares; it's checked on approval.
+        if st.db.world_request(ctx.id, &held_for).await.is_none() {
+            return render::signup_result("That apworld isn't waiting for approval any more — start over.", false);
+        }
+        if yaml.len() > checker::MAX_YAML {
+            return render::signup_result("That YAML is too large.", false);
+        }
+        match worlds::yaml_name_game(&yaml_str) {
+            (Some(name), game) => (name, game.unwrap_or_else(|| "?".into())),
+            (None, _) => return render::signup_result("Couldn't find a top-level name: in that YAML.", false),
+        }
+    } else {
+        // Trust-but-verify: the wizard already checked, but re-roll server-side so a
+        // hand-crafted POST can't slip an invalid YAML through. Custom worlds are
+        // installed by now, so everything must pass.
+        let result = match checker::check_yaml(&ctx.dirs(), &yaml_str).await {
+            Ok(r) => r,
+            Err(e) => return render::signup_result(&format!("Checker error: {e}"), false),
+        };
+        let Some(p0) = result.players.first() else {
+            return render::signup_result("Couldn't read a player from that YAML.", false);
+        };
+        if !result.ok {
+            return render::signup_result(
+                &format!(
+                    "That YAML didn't pass: {}. Custom game? Install its apworld in step 1 first.",
+                    result.errors.join("; ")
+                ),
+                false,
+            );
+        }
+        (p0.name.clone(), p0.game.clone().unwrap_or_else(|| "?".into()))
     };
-    let Some(p0) = result.players.first() else {
-        return render::signup_result("Couldn't read a player from that YAML.", false);
-    };
-    let slot_name = p0.name.clone();
-    let game = p0.game.clone().unwrap_or_else(|| "?".into());
-    if !result.ok {
-        return render::signup_result(
-            &format!(
-                "That YAML didn't pass: {}. Custom game? Install its apworld in step 1 first.",
-                result.errors.join("; ")
-            ),
-            false,
-        );
-    }
 
     let slug = slugify(&slot_name);
     let uploads = ctx.dirs().submissions;
@@ -1701,10 +1732,16 @@ async fn signup_post(
             is_custom,
             &coop_clean,
             &yaml_path,
-            None,
+            (!held_for.is_empty()).then_some(held_for.as_str()),
         )
         .await
     {
+        Ok(_) if !held_for.is_empty() => render::signup_result(
+            &format!(
+                "Signed up: {slot_name} — held until a moderator approves {held_for}; your YAML is checked then."
+            ),
+            true,
+        ),
         Ok(_) => render::signup_result(&format!("Signed up: {slot_name} — {game}."), true),
         Err(_) => render::signup_result(
             &format!("'{slot_name}' is already signed up — delete that entry first to resubmit."),
@@ -1726,18 +1763,14 @@ async fn signup_delete(
 ) -> Redirect {
     let my_id = me.id();
     let (_me, is_admin) = ctx.ident(&me);
-    if let Ok(Some((yaml_file, apworld_file))) = st.db.delete_submission(ctx.id, f.id, my_id, is_admin).await
-    {
+    if let Ok(Some(yaml_file)) = st.db.delete_submission(ctx.id, f.id, my_id, is_admin).await {
         let _ = tokio::fs::remove_file(&yaml_file).await;
-        if let Some(a) = apworld_file {
-            let _ = tokio::fs::remove_file(&a).await;
-        }
     }
     Redirect::to(&ctx.url("/signup"))
 }
 
 /// Gather everything the admin page shows and render it.
-async fn render_admin(ctx: &scope::SeasonCtx, st: &AppState) -> Html<String> {
+async fn render_admin(ctx: &scope::SeasonCtx, st: &AppState, me: &auth::Me) -> Html<String> {
     let (connected, seed, acdata) = ctx.rt
         .board
         .read()
@@ -1791,6 +1824,8 @@ async fn render_admin(ctx: &scope::SeasonCtx, st: &AppState) -> Html<String> {
         &gen_msg,
         &subs,
         &apworlds,
+        &st.db.world_requests(ctx.id).await,
+        me.can(auth::Action::ManageInstance),
         &acdata,
         archived.as_deref(),
         &outputs,
@@ -1805,7 +1840,7 @@ async fn admin_view(State(st): State<AppState>, ctx: scope::SeasonCtx, me: auth:
     if !is_admin {
         return render::notice("Admins only.", false, "board").into_response();
     }
-    render_admin(&ctx, &st).await.into_response()
+    render_admin(&ctx, &st, &me).await.into_response()
 }
 
 #[derive(Deserialize)]
@@ -1916,6 +1951,7 @@ async fn admin_clear(
     match f.what.as_str() {
         "apworlds" => {
             let _ = generate::clear_apworlds(id).await;
+            worlds::clear_pending(&st.db, id).await;
         }
         "signups" => clear_signups(&st, id).await,
         "players" => clear_current_players(&st, id).await,
@@ -1923,6 +1959,7 @@ async fn admin_clear(
         "world" => generate::clear_world(id).await,
         "reset" => {
             let _ = generate::clear_apworlds(id).await;
+            worlds::clear_pending(&st.db, id).await;
             clear_signups(&st, id).await;
             clear_current_players(&st, id).await;
             generate::clear_save(id).await;
@@ -2389,12 +2426,9 @@ async fn admin_delete_player(
     let my_id = me.id();
     let (_me, is_admin) = ctx.ident(&me);
     if is_admin
-        && let Ok(Some((yaml_file, apworld_file))) = st.db.delete_submission(ctx.id, f.id, my_id, true).await
+        && let Ok(Some(yaml_file)) = st.db.delete_submission(ctx.id, f.id, my_id, true).await
     {
         let _ = tokio::fs::remove_file(&yaml_file).await;
-        if let Some(a) = apworld_file {
-            let _ = tokio::fs::remove_file(&a).await;
-        }
     }
     Redirect::to(&ctx.url("/admin"))
 }
@@ -2410,6 +2444,138 @@ async fn admin_delete_apworld(ctx: scope::SeasonCtx, me: auth::Me, Form(f): Form
         let _ = generate::delete_apworld(ctx.id, &f.name).await;
     }
     Redirect::to(&ctx.url("/admin"))
+}
+
+/// Approve a pending apworld upload (season moderator or sysadmin).
+async fn admin_world_approve(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Form(f): Form<ApworldForm>,
+) -> Response {
+    let (who, is_admin) = ctx.ident(&me);
+    if !is_admin {
+        return render::notice("Admins only.", false, "board").into_response();
+    }
+    match worlds::approve(&st.db, ctx.id, &f.name, &who).await {
+        Ok(_) => Redirect::to(&ctx.url("/admin")).into_response(),
+        Err(e) => render::notice(&e, false, "admin").into_response(),
+    }
+}
+
+async fn admin_world_reject(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Form(f): Form<ApworldForm>,
+) -> Response {
+    let (who, is_admin) = ctx.ident(&me);
+    if !is_admin {
+        return render::notice("Admins only.", false, "board").into_response();
+    }
+    match worlds::reject(&st.db, ctx.id, &f.name, &who).await {
+        Ok(()) => Redirect::to(&ctx.url("/admin")).into_response(),
+        Err(e) => render::notice(&e, false, "admin").into_response(),
+    }
+}
+
+/// Add a world installed in this season to the instance catalog (sysadmin).
+async fn admin_world_to_catalog(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Form(f): Form<ApworldForm>,
+) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return render::notice("Sysadmins only.", false, "admin").into_response();
+    }
+    let (who, _) = ctx.ident(&me);
+    match worlds::catalog_add_installed(&st.db, ctx.id, &f.name, &who).await {
+        Ok(_) => Redirect::to(&ctx.url("/admin")).into_response(),
+        Err(e) => render::notice(&e, false, "admin").into_response(),
+    }
+}
+
+// ---- the apworld catalog (instance, sysadmin) ----
+
+async fn catalog_page(st: &AppState, err: Option<&str>, saved: Option<&str>) -> Html<String> {
+    render::catalog_page(&st.db.catalog().await, st.db.approval().await, err, saved)
+}
+
+async fn catalog_view(State(st): State<AppState>, me: auth::Me) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return render::notice("Sysadmins only.", false, "/").into_response();
+    }
+    catalog_page(&st, None, None).await.into_response()
+}
+
+async fn catalog_upload(State(st): State<AppState>, me: auth::Me, mut mp: Multipart) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return render::notice("Sysadmins only.", false, "/").into_response();
+    }
+    let (mut bytes, mut fname) = (None::<Vec<u8>>, String::new());
+    let (mut game, mut version, mut note) = (String::new(), String::new(), String::new());
+    while let Ok(Some(field)) = mp.next_field().await {
+        match field.name().unwrap_or("") {
+            "apworld" => {
+                fname = field.file_name().unwrap_or("").to_string();
+                bytes = field.bytes().await.ok().map(|b| b.to_vec());
+            }
+            "game" => game = field.text().await.unwrap_or_default(),
+            "version" => version = field.text().await.unwrap_or_default(),
+            "note" => note = field.text().await.unwrap_or_default(),
+            _ => {
+                let _ = field.bytes().await;
+            }
+        }
+    }
+    let res = async {
+        let bytes = bytes.filter(|b| !b.is_empty()).ok_or("No file received.".to_string())?;
+        if !worlds::looks_like_apworld(&bytes) {
+            return Err("That doesn't look like a valid .apworld (zip) file.".to_string());
+        }
+        let file = worlds::world_file(&fname).map_err(str::to_string)?;
+        let who = me.username();
+        worlds::catalog_add(&st.db, &file, &bytes, &game, &version, &note, &who).await
+    }
+    .await;
+    match res {
+        Ok(w) => catalog_page(&st, None, Some(&format!("Added {} to the catalog.", w.file))).await.into_response(),
+        Err(e) => catalog_page(&st, Some(&e), None).await.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct CatalogRemoveForm {
+    sha256: String,
+}
+
+async fn catalog_remove(State(st): State<AppState>, me: auth::Me, Form(f): Form<CatalogRemoveForm>) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return render::notice("Sysadmins only.", false, "/").into_response();
+    }
+    match worlds::catalog_remove(&st.db, &f.sha256).await {
+        Ok(()) => Redirect::to("/admin/catalog").into_response(),
+        Err(e) => catalog_page(&st, Some(&e), None).await.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct ApprovalForm {
+    mode: String,
+}
+
+async fn catalog_approval(State(st): State<AppState>, me: auth::Me, Form(f): Form<ApprovalForm>) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return render::notice("Sysadmins only.", false, "/").into_response();
+    }
+    let Some(mode) = db::Approval::parse(&f.mode) else {
+        return catalog_page(&st, Some("Unknown approval mode."), None).await.into_response();
+    };
+    match st.db.set_approval(mode).await {
+        Ok(()) => Redirect::to("/admin/catalog").into_response(),
+        Err(e) => catalog_page(&st, Some(&e.to_string()), None).await.into_response(),
+    }
 }
 
 #[derive(Deserialize)]

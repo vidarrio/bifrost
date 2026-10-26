@@ -527,9 +527,27 @@ runs, every custom world must match its pin — an unpinned file (dropped in
 behind Bifrost's back) or one changed since upload is refused on every tier,
 and the admin's apworld list shows each world's provenance (shipped / pinned
 hash + uploader / ⚠). Worlds Bifrost ships are trusted by hash, not pinned.
-**Not yet built:** sysadmin/mod *acceptance* before an upload is usable, and
-the curated catalog (index-seeded discovery + pinned downloads) — the
-acceptance step changes the signup flow, pending a decision.
+**Catalog + approval — as built (`src/worlds.rs`, `db/worlds.rs`).** A
+sysadmin-curated **catalog** (instance console → Apworlds) holds vetted worlds
+as `catalog/<sha256>.apworld`, with game/version read from the world's
+`archipelago.json` (overridable) and a note. Players can pick a catalog world
+in signup step 1, and an upload whose bytes match a catalog entry is accepted
+as that entry. Everything else follows the sysadmin's **approval toggle**:
+*automatic* installs uploads straight away (pinned as before); *manual* (the
+default) parks them in `seasons/<id>/pending/` — outside `worlds/`, so AP
+never loads them — as a `world_request`. A signup whose YAML needs a pending
+world is *held* (`submission.held_for`): its slot name is read from the YAML's
+top level without AP, and it's checked for real on approval. The season's
+moderators or a sysadmin approve or reject from the season console; approval
+installs and pins the world, then re-checks the held signups in the
+background (pass → released with the name/game the check read; fail → the
+reason shown on the roster). Rejection leaves held signups flagged until
+removed. Generation refuses while any signup is held. A different file under
+a name that's installed or pending is refused (no swapping a world out from
+under others' YAMLs). Sysadmins can also promote an installed upload into the
+catalog from the season console. Removing a catalog entry leaves seasons'
+installed copies alone. Not built: seeding discovery from an external index
+(`silasary/apworlds`) — the catalog is filled by hand.
 
 ## 9. Console redesign (tabbed)
 

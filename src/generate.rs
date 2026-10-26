@@ -299,9 +299,19 @@ pub async fn delete_apworld(season: i64, name: &str) -> Result<(), String> {
     ap_adapter::unpin_world(&season, Some(name))
 }
 
-/// The installed apworlds as (file name, provenance line): shipped with
-/// Bifrost, or pinned hash + uploader — or flagged when unpinned/changed.
-pub async fn list_apworlds(season: i64) -> Vec<(String, String)> {
+/// An installed apworld as the season admin page lists it.
+pub struct Apworld {
+    pub file: String,
+    /// Provenance: shipped with Bifrost, or pinned hash + uploader + how it
+    /// was approved — or flagged when unpinned/changed.
+    pub detail: String,
+    /// A custom world whose pin holds (so it could join the catalog).
+    pub pinned: bool,
+    /// Installed from the catalog.
+    pub catalog: bool,
+}
+
+pub async fn list_apworlds(season: i64) -> Vec<Apworld> {
     let season = config::get().season(season);
     let custom = ap_adapter::custom_worlds(&season);
     let pins = ap_adapter::world_pins(&season);
@@ -312,22 +322,25 @@ pub async fn list_apworlds(season: i64) -> Vec<(String, String)> {
             if !name.ends_with(".apworld") {
                 continue;
             }
-            let detail = if !custom.contains(&name) {
+            let mut w = Apworld { file: name.clone(), detail: String::new(), pinned: false, catalog: false };
+            w.detail = if !custom.contains(&name) {
                 "shipped with Bifrost".to_string()
             } else {
                 let actual = tokio::fs::read(entry.path()).await.map(|b| ap_adapter::sha256_hex(&b));
                 match (pins.get(&name), actual) {
                     (Some(p), Ok(h)) if p.sha256 == h => {
-                        format!("sha256 {}… · uploaded by {}", &h[..12], p.uploaded_by)
+                        w.pinned = true;
+                        w.catalog = p.catalog;
+                        format!("sha256 {}… · uploaded by {} · {}", &h[..12], p.uploaded_by, p.provenance())
                     }
                     (Some(_), _) => "⚠ changed on disk since upload — won't run".to_string(),
                     (None, _) => "⚠ not installed through Bifrost — won't run".to_string(),
                 }
             };
-            out.push((name, detail));
+            out.push(w);
         }
     }
-    out.sort();
+    out.sort_by(|a, b| a.file.cmp(&b.file));
     out
 }
 
@@ -459,6 +472,13 @@ async fn run_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> Re
     let subs = db.submissions(season).await.map_err(|e| e.to_string())?;
     if subs.is_empty() {
         return Err("no submissions to generate from".into());
+    }
+    let held = subs.iter().filter(|s| s.held()).count();
+    if held > 0 {
+        return Err(format!(
+            "{held} signup(s) are held for an apworld that isn't approved yet, or failed their check \
+             after approval — approve, reject or remove them first"
+        ));
     }
 
     set(state, true, "Staging submissions…");

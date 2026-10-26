@@ -83,6 +83,9 @@ pub struct SeasonDirs {
     pub logs: PathBuf,
     /// Players' submitted YAMLs (before generation stages them into Players/).
     pub submissions: PathBuf,
+    /// Uploaded apworlds waiting for approval — outside `worlds/`, so AP
+    /// never loads them.
+    pub pending: PathBuf,
 }
 
 impl SeasonDirs {
@@ -93,13 +96,14 @@ impl SeasonDirs {
             output: root.join("output"),
             logs: root.join("logs"),
             submissions: root.join("submissions"),
+            pending: root.join("pending"),
             root,
         }
     }
 
     /// Create the season's directories (idempotent).
     pub fn ensure(&self) -> std::io::Result<()> {
-        for d in [&self.players, &self.worlds, &self.output, &self.logs, &self.submissions] {
+        for d in [&self.players, &self.worlds, &self.output, &self.logs, &self.submissions, &self.pending] {
             std::fs::create_dir_all(d)?;
         }
         Ok(())
@@ -184,6 +188,10 @@ impl Config {
     pub fn archives_dir(&self) -> PathBuf {
         self.data_dir.join("archives")
     }
+    /// The curated apworld catalog, one `<sha256>.apworld` per entry.
+    pub fn catalog_dir(&self) -> PathBuf {
+        self.data_dir.join("catalog")
+    }
     pub fn mc_whitelist_file(&self) -> PathBuf {
         self.data_dir.join("mc-whitelist.json")
     }
@@ -219,6 +227,7 @@ impl Config {
             self.packs_dir(),
             self.uploads_dir(),
             self.archives_dir(),
+            self.catalog_dir(),
         ] {
             std::fs::create_dir_all(d)?;
         }

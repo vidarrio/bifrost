@@ -53,28 +53,88 @@ impl Default for Instance {
     }
 }
 
+/// Whether uploaded apworlds that aren't in the catalog can be used right
+/// away, or wait for a moderator or sysadmin to approve them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Approval {
+    Auto,
+    Manual,
+}
+
+impl Approval {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Approval::Auto => "auto",
+            Approval::Manual => "manual",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "auto" => Some(Approval::Auto),
+            "manual" => Some(Approval::Manual),
+            _ => None,
+        }
+    }
+}
+
 impl Db {
-    /// The instance settings (defaults until a sysadmin saves them).
-    pub async fn instance(&self) -> Instance {
-        sqlx::query_scalar::<_, String>("SELECT value FROM setting WHERE key = 'instance'")
+    pub(super) async fn get_setting(&self, key: &str) -> Result<Option<String>, sqlx::Error> {
+        sqlx::query_scalar("SELECT value FROM setting WHERE key = ?")
+            .bind(key)
             .fetch_optional(&self.pool)
             .await
-            .ok()
-            .flatten()
+    }
+
+    async fn setting(&self, key: &str) -> Option<String> {
+        self.get_setting(key).await.ok().flatten()
+    }
+
+    pub(super) async fn set_setting(&self, key: &str, value: &str) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO setting (key, value) VALUES (?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// How uploaded apworlds are approved (manual until a sysadmin changes it).
+    pub async fn approval(&self) -> Approval {
+        self.setting("apworld_approval")
+            .await
+            .and_then(|v| Approval::parse(&v))
+            .unwrap_or(Approval::Manual)
+    }
+
+    pub async fn set_approval(&self, a: Approval) -> Result<(), sqlx::Error> {
+        self.set_setting("apworld_approval", a.as_str()).await
+    }
+
+    /// The Archipelago version new generations and checks use, if a sysadmin
+    /// picked one (otherwise the bundled install).
+    pub async fn ap_active(&self) -> Option<String> {
+        self.setting("ap_active").await.filter(|v| !v.is_empty())
+    }
+
+    pub async fn set_ap_active(&self, version: Option<&str>) -> Result<(), sqlx::Error> {
+        self.set_setting("ap_active", version.unwrap_or("")).await
+    }
+
+    /// The instance settings (defaults until a sysadmin saves them).
+    pub async fn instance(&self) -> Instance {
+        self.setting("instance")
+            .await
             .and_then(|v| serde_json::from_str(&v).ok())
             .unwrap_or_default()
     }
 
     pub async fn set_instance(&self, inst: &Instance) -> Result<(), sqlx::Error> {
         let v = serde_json::to_string(inst).expect("settings serialize");
-        sqlx::query(
-            "INSERT INTO setting (key, value) VALUES ('instance', ?)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        )
-        .bind(v)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        self.set_setting("instance", &v).await
     }
 }
 
@@ -97,6 +157,14 @@ mod tests {
         };
         db.set_instance(&inst).await.unwrap();
         assert_eq!(db.instance().await, inst);
+        assert_eq!(db.approval().await, Approval::Manual);
+        db.set_approval(Approval::Auto).await.unwrap();
+        assert_eq!(db.approval().await, Approval::Auto);
+        assert_eq!(db.ap_active().await, None);
+        db.set_ap_active(Some("0.6.9")).await.unwrap();
+        assert_eq!(db.ap_active().await.as_deref(), Some("0.6.9"));
+        db.set_ap_active(None).await.unwrap();
+        assert_eq!(db.ap_active().await, None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

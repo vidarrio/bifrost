@@ -32,7 +32,7 @@ impl Drop for QueueSlot {
 }
 
 /// Guard against someone pasting something enormous into the box.
-const MAX_YAML: usize = 512 * 1024;
+pub const MAX_YAML: usize = 512 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub struct CheckResult {

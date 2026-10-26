@@ -1320,7 +1320,33 @@ document.querySelectorAll('form.hintform').forEach(function(f){
 });
 </script>"#;
 
-pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool, open: bool) -> Html<String> {
+/// What step 1 of the signup wizard offers for custom games.
+pub struct SignupWorlds {
+    /// The sandbox can run custom worlds at all.
+    pub custom_allowed: bool,
+    /// Uploads not in the catalog wait for approval.
+    pub manual: bool,
+    pub catalog: Vec<crate::db::CatalogWorld>,
+}
+
+/// A catalog entry as one line: "Game 1.2 (file)".
+fn catalog_label(w: &crate::db::CatalogWorld) -> String {
+    let name = if w.game.is_empty() { w.file.trim_end_matches(".apworld") } else { &w.game };
+    let mut l = name.to_string();
+    if !w.version.is_empty() {
+        l.push_str(&format!(" {}", w.version));
+    }
+    l.push_str(&format!(" ({})", w.file));
+    l
+}
+
+pub fn signup_page(
+    subs: &[SubmissionRow],
+    me: &str,
+    is_admin: bool,
+    open: bool,
+    worlds: &SignupWorlds,
+) -> Html<String> {
     let mut b = page_head(Some(me));
     b.push_str(r#"<h1>Season signup</h1><div class="crumb"><a href="/">← Bifrost</a></div>"#);
     if !open {
@@ -1331,8 +1357,52 @@ pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool, open: bool)
         b.push_str("</main></body></html>");
         return Html(b);
     }
+    let mut step1 = String::from(
+        r#"<div class="choice">
+      <label><input type="radio" name="gtype" value="core" checked> <span>A core / officially supported game</span></label>"#,
+    );
+    if worlds.custom_allowed && !worlds.catalog.is_empty() {
+        step1.push_str(r#"<label><input type="radio" name="gtype" value="catalog"> <span>A custom game from this server's catalog</span></label>"#);
+    }
+    if worlds.custom_allowed {
+        step1.push_str(r#"<label><input type="radio" name="gtype" value="custom"> <span>Another custom (unofficial) game — I have its <code>.apworld</code></span></label>"#);
+    }
+    step1.push_str("</div>");
+    if !worlds.custom_allowed {
+        step1.push_str(r#"<p class="hint">Custom (unofficial) games are turned off on this server.</p>"#);
+    }
+    if worlds.custom_allowed && !worlds.catalog.is_empty() {
+        let opts: String = worlds
+            .catalog
+            .iter()
+            .map(|w| format!(r#"<option value="{}">{}</option>"#, esc(&w.sha256), esc(&catalog_label(w))))
+            .collect();
+        step1.push_str(&format!(
+            r#"<div data-box="catalog" hidden>
+      <p class="hint">Worlds the server's admins have vetted — they're ready to use.</p>
+      <select id="catsel">{opts}</select>
+      <button type="button" id="catbtn" class="back">Use this world</button>
+      <div id="catmsg" class="inlinemsg"></div>
+    </div>"#
+        ));
+    }
+    if worlds.custom_allowed {
+        let approval = if worlds.manual {
+            " If it isn't in the catalog, a moderator has to approve it before it can run — your signup is held until then."
+        } else {
+            " It installs on the server right away so we can validate your YAML next."
+        };
+        step1.push_str(&format!(
+            r#"<div data-box="custom" hidden>
+      <p class="hint">Upload the world's <code>.apworld</code>.{approval}</p>
+      <input type="file" id="apfile" accept=".apworld">
+      <button type="button" id="apbtn" class="back">Upload apworld</button>
+      <div id="apmsg" class="inlinemsg"></div>
+    </div>"#
+        ));
+    }
     b.push_str(
-        r#"<p class="empty">Three quick steps. We check everything against the server as you go, so the seed rolls clean when the season is generated.</p>
+        &r#"<p class="empty">Three quick steps. We check everything against the server as you go, so the seed rolls clean when the season is generated.</p>
 <ol class="stepper">
   <li data-step="1"><span class="n">1</span> Game</li>
   <li data-step="2"><span class="n">2</span> YAML</li>
@@ -1341,21 +1411,12 @@ pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool, open: bool)
 <form id="wiz" method="post" action="signup" enctype="multipart/form-data">
   <section class="wstep" data-step="1">
     <h2>Your game</h2>
-    <div class="choice">
-      <label><input type="radio" name="gtype" value="core" checked> <span>A core / officially supported game</span></label>
-      <label><input type="radio" name="gtype" value="custom"> <span>A custom (unofficial) game — I have its <code>.apworld</code></span></label>
-    </div>
-    <div id="apbox" hidden>
-      <p class="hint">Upload the world's <code>.apworld</code>. It installs on the server right away so we can validate your YAML next.</p>
-      <input type="file" id="apfile" accept=".apworld">
-      <button type="button" id="apbtn" class="back">Install apworld</button>
-      <div id="apmsg" class="inlinemsg"></div>
-    </div>
+<!--STEP1-->
     <div class="nav"><button type="button" id="tostep2" data-goto="2">Next →</button></div>
   </section>
   <section class="wstep" data-step="2" hidden>
     <h2>Options YAML</h2>
-    <p class="hint">Upload your options file. It's rolled against the installed worlds — it has to pass before you continue.</p>
+    <p class="hint" id="yamlhint">Upload your options file. It's rolled against the installed worlds — it has to pass before you continue.</p>
     <input type="file" name="yaml" id="yamlfile" accept=".yaml,.yml" required>
     <button type="button" id="checkbtn" class="back">Check it</button>
     <div id="checkmsg" class="inlinemsg"></div>
@@ -1369,6 +1430,7 @@ pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool, open: bool)
       <label class="hint">You're already included above — just list the <b>other</b> people sharing this game, comma-separated. They can claim their seat once the season is generated.<input type="text" name="coop" placeholder="e.g. Robin, Sam"></label>
     </div>
     <input type="hidden" name="is_custom" id="iscustom" value="">
+    <input type="hidden" name="pending_world" id="pendingworld" value="">
     <div class="nav"><button type="button" class="back" data-goto="2">← Back</button><button type="submit">Sign me up</button></div>
   </section>
 </form>
@@ -1380,29 +1442,46 @@ pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool, open: bool)
    document.querySelectorAll('.stepper li').forEach(function(li){var s=Number(li.dataset.step);li.classList.toggle('active',s==n);li.classList.toggle('done',s<n)});
  }
  form.querySelectorAll('[data-goto]').forEach(function(btn){btn.addEventListener('click',function(){if(!btn.disabled)show(Number(btn.dataset.goto))})});
- var installed=false,next1=document.getElementById('tostep2');
+ var ready={core:true,catalog:false,custom:false},pending='',next1=document.getElementById('tostep2');
+ var chkbtn=document.getElementById('checkbtn'),chkmsg=document.getElementById('checkmsg'),next2=document.getElementById('tostep3'),yamlfile=document.getElementById('yamlfile');
+ function gtype(){var r=form.querySelector('input[name=gtype]:checked');return r?r.value:'core';}
  function refresh1(){
-   var custom=form.querySelector('input[name=gtype]:checked').value=='custom';
-   document.getElementById('apbox').hidden=!custom;
-   document.getElementById('iscustom').value=custom?'1':'';
-   next1.disabled=custom&&!installed;
+   var t=gtype();
+   form.querySelectorAll('[data-box]').forEach(function(b){b.hidden=b.dataset.box!=t;});
+   document.getElementById('iscustom').value=t=='core'?'':'1';
+   var p=t=='custom'?pending:'';
+   document.getElementById('pendingworld').value=p;
+   chkbtn.hidden=!!p;
+   document.getElementById('yamlhint').textContent=p?('Upload your options file. It can\'t be checked until '+p+' is approved — your signup is held and checked then.'):'Upload your options file. It\'s rolled against the installed worlds — it has to pass before you continue.';
+   next2.disabled=!(p&&yamlfile.files.length);chkmsg.textContent='';
+   next1.disabled=!ready[t];
  }
  form.querySelectorAll('input[name=gtype]').forEach(function(r){r.addEventListener('change',refresh1)});
- refresh1();
- var apbtn=document.getElementById('apbtn'),apmsg=document.getElementById('apmsg');
- apbtn.addEventListener('click',function(){
-   var f=document.getElementById('apfile').files[0];
-   if(!f){apmsg.className='inlinemsg bad';apmsg.textContent='Choose an .apworld file first.';return;}
-   apmsg.className='inlinemsg';apmsg.textContent='Installing…';apbtn.disabled=true;
-   var fd=new FormData();fd.append('apworld',f);
+ function place(btn,msg,fd,kind){
+   msg.className='inlinemsg';msg.textContent='Installing…';btn.disabled=true;
    fetch('signup/apworld',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(j){
-     apbtn.disabled=false;
-     if(j.ok){installed=true;apmsg.className='inlinemsg ok';apmsg.textContent='Installed '+j.world+'. You can continue.';next1.disabled=false;}
-     else{installed=false;apmsg.className='inlinemsg bad';apmsg.textContent=j.error||'Install failed.';next1.disabled=true;}
-   }).catch(function(){apbtn.disabled=false;apmsg.className='inlinemsg bad';apmsg.textContent='Install failed (network).';});
+     btn.disabled=false;
+     if(j.ok&&j.pending){ready[kind]=true;pending=j.world;msg.className='inlinemsg ok';msg.textContent='Uploaded '+j.world+' — it needs a moderator\'s approval before it can run. You can continue; your signup is held until then.';}
+     else if(j.ok){ready[kind]=true;if(kind=='custom')pending='';msg.className='inlinemsg ok';msg.textContent='Installed '+j.world+'. You can continue.';}
+     else{ready[kind]=false;msg.className='inlinemsg bad';msg.textContent=j.error||'Install failed.';}
+     refresh1();
+   }).catch(function(){btn.disabled=false;msg.className='inlinemsg bad';msg.textContent='Install failed (network).';});
+ }
+ var apbtn=document.getElementById('apbtn');
+ if(apbtn)apbtn.addEventListener('click',function(){
+   var f=document.getElementById('apfile').files[0],m=document.getElementById('apmsg');
+   if(!f){m.className='inlinemsg bad';m.textContent='Choose an .apworld file first.';return;}
+   var fd=new FormData();fd.append('apworld',f);place(apbtn,m,fd,'custom');
  });
- var chkbtn=document.getElementById('checkbtn'),chkmsg=document.getElementById('checkmsg'),next2=document.getElementById('tostep3'),yamlfile=document.getElementById('yamlfile');
- yamlfile.addEventListener('change',function(){next2.disabled=true;chkmsg.textContent='';});
+ var catbtn=document.getElementById('catbtn');
+ if(catbtn)catbtn.addEventListener('click',function(){
+   var fd=new FormData();fd.append('catalog',document.getElementById('catsel').value);
+   place(catbtn,document.getElementById('catmsg'),fd,'catalog');
+ });
+ var catsel=document.getElementById('catsel');
+ if(catsel)catsel.addEventListener('change',function(){ready.catalog=false;document.getElementById('catmsg').textContent='';refresh1();});
+ refresh1();
+ yamlfile.addEventListener('change',function(){next2.disabled=!(pending&&gtype()=='custom'&&yamlfile.files.length);chkmsg.textContent='';});
  chkbtn.addEventListener('click',function(){
    var f=yamlfile.files[0];
    if(!f){chkmsg.className='inlinemsg bad';chkmsg.textContent='Choose your YAML first.';return;}
@@ -1418,7 +1497,8 @@ pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool, open: bool)
  coopchk.addEventListener('change',function(){document.getElementById('coopbox').hidden=!coopchk.checked;});
  show(1);
 })();
-</script>"#,
+</script>"#
+            .replace("<!--STEP1-->", &step1),
     );
 
     b.push_str(&roster(subs, me, is_admin));
@@ -1441,6 +1521,11 @@ fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool) -> String {
         } else {
             ""
         };
+        let held = match (&s.held_for, &s.held_err) {
+            (Some(_), Some(e)) => format!(r#"<div class="meta" style="color:var(--bad)">held: {}</div>"#, esc(e)),
+            (Some(w), None) => format!(r#"<div class="meta">held — waiting for {} to be approved</div>"#, esc(w)),
+            _ => String::new(),
+        };
         let coop = if s.coop_names.is_empty() {
             String::new()
         } else {
@@ -1457,7 +1542,7 @@ fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool) -> String {
         };
         b.push_str(&format!(
             r#"<div class="slot idle"><div class="game">{}{custom}</div>
-<div class="meta">{} · by {}</div>{coop}<div class="seat"><span></span>{del}</div></div>"#,
+<div class="meta">{} · by {}</div>{held}{coop}<div class="seat"><span></span>{del}</div></div>"#,
             esc(&s.slot_name),
             esc(&s.game),
             esc(&s.username),
@@ -1515,7 +1600,9 @@ pub fn admin_page(
     running: bool,
     gen_msg: &str,
     subs: &[SubmissionRow],
-    apworlds: &[(String, String)],
+    apworlds: &[crate::generate::Apworld],
+    requests: &[crate::db::WorldRequest],
+    sysadmin: bool,
     acdata: &str,
     archived: Option<&str>,
     outputs: &[crate::generate::OutputFile],
@@ -1617,8 +1704,13 @@ pub fn admin_page(
     } else {
         for s in subs {
             let custom = if s.is_custom { " · custom" } else { "" };
+            let held = match (&s.held_for, &s.held_err) {
+                (Some(_), Some(e)) => format!(r#" · <span style="color:var(--bad)">held: {}</span>"#, esc(e)),
+                (Some(w), None) => format!(r#" · <span style="color:var(--warn)">held for {}</span>"#, esc(w)),
+                _ => String::new(),
+            };
             b.push_str(&format!(
-                r#"<div class="hintrow"><span>{} · {}{custom} · by {}</span>{}</div>"#,
+                r#"<div class="hintrow"><span>{} · {}{custom} · by {}{held}</span>{}</div>"#,
                 esc(&s.slot_name),
                 esc(&s.game),
                 esc(&s.username),
@@ -1643,22 +1735,50 @@ pub fn admin_page(
         )
     ));
 
+    // Apworlds waiting for approval
+    if !requests.is_empty() {
+        b.push_str(r#"<h2>Apworlds waiting for approval</h2><p class="statline">Uploads that aren't in the catalog. Approving installs one and checks the signups held for it; nothing runs its code before then.</p>"#);
+        for r in requests {
+            let game = if r.game.is_empty() { String::new() } else { format!(" · {}", esc(&r.game)) };
+            b.push_str(&format!(
+                r#"<div class="hintrow"><span>{}{game} <span class="statline">· sha256 {}… · uploaded by {} · {}</span></span><span>{} {}</span></div>"#,
+                esc(&r.file),
+                esc(&r.sha256[..12.min(r.sha256.len())]),
+                esc(&r.uploaded_by),
+                fmt_date(r.uploaded_at),
+                action_btn("admin/worlds/approve", &[("name", &r.file)], "approve", false, ""),
+                action_btn(
+                    "admin/worlds/reject",
+                    &[("name", &r.file)],
+                    "reject",
+                    true,
+                    &format!("Reject {}? Signups held for it stay held until removed.", r.file)
+                ),
+            ));
+        }
+    }
+
     // Apworlds (installed)
     b.push_str(r#"<h2>Installed apworlds</h2>"#);
     if apworlds.is_empty() {
         b.push_str(r#"<div class="empty">None installed.</div>"#);
     } else {
-        for (name, detail) in apworlds {
+        for w in apworlds {
+            let to_catalog = if sysadmin && w.pinned && !w.catalog {
+                action_btn("admin/worlds/to-catalog", &[("name", &w.file)], "add to catalog", false, "")
+            } else {
+                String::new()
+            };
             b.push_str(&format!(
-                r#"<div class="hintrow"><span>{} <span class="statline">· {}</span></span>{}</div>"#,
-                esc(name),
-                esc(detail),
+                r#"<div class="hintrow"><span>{} <span class="statline">· {}</span></span><span>{to_catalog} {}</span></div>"#,
+                esc(&w.file),
+                esc(&w.detail),
                 action_btn(
                     "admin/delete-apworld",
-                    &[("name", name)],
+                    &[("name", &w.file)],
                     "delete",
                     true,
-                    &format!("Delete {name}?")
+                    &format!("Delete {}?", w.file)
                 )
             ));
         }
@@ -2085,6 +2205,7 @@ fn console_nav(active: &str, sysadmin: bool) -> String {
     for (href, label) in [
         ("/admin/seasons", "Seasons"),
         ("/admin/users", "Users &amp; links"),
+        ("/admin/catalog", "Apworlds"),
         ("/admin/settings", "Settings"),
     ] {
         if !sysadmin && href != "/admin/seasons" {
@@ -3669,4 +3790,71 @@ pub fn settings_page(
         err,
         &body,
     )
+}
+
+// ---- the apworld catalog (instance, sysadmin) ----
+
+pub fn catalog_page(
+    catalog: &[crate::db::CatalogWorld],
+    approval: crate::db::Approval,
+    err: Option<&str>,
+    saved: Option<&str>,
+) -> Html<String> {
+    use crate::db::Approval;
+    let mut body = console_nav("/admin/catalog", true);
+    if let Some(m) = saved {
+        body.push_str(&format!(r#"<div class="banner ok">{}</div>"#, esc(m)));
+    }
+    let checked = |a: Approval| if a == approval { " checked" } else { "" };
+    body.push_str(&format!(
+        r#"<h2>Uploads</h2>
+<form class="authform" method="post" action="/admin/catalog/approval">
+<label class="chk"><input type="radio" name="mode" value="manual"{}> <span><b>Manual approval</b> — an uploaded apworld that isn't in the catalog waits until a moderator of that season (or a sysadmin) approves it. Signups that need it are held, then checked on approval.</span></label>
+<label class="chk"><input type="radio" name="mode" value="auto"{}> <span><b>Automatic</b> — uploads install right away (still pinned by hash, and still run only in the sandbox).</span></label>
+<button type="submit">Save</button></form>"#,
+        checked(Approval::Manual),
+        checked(Approval::Auto),
+    ));
+    body.push_str(r#"<h2>Catalog</h2><p class="statline">Worlds you've vetted. Players can pick them at signup, and an upload with the same contents is accepted without approval. Removing one doesn't touch seasons that already installed it.</p>"#);
+    if catalog.is_empty() {
+        body.push_str(r#"<div class="empty">The catalog is empty.</div>"#);
+    } else {
+        body.push_str(r#"<table class="utable"><tr><th>Game</th><th>Version</th><th>File</th><th>SHA-256</th><th>Added</th><th></th></tr>"#);
+        for w in catalog {
+            let note = if w.note.is_empty() {
+                String::new()
+            } else {
+                format!(r#"<div class="statline">{}</div>"#, esc(&w.note))
+            };
+            body.push_str(&format!(
+                r#"<tr><td>{}{note}</td><td class="mono">{}</td><td class="mono">{}</td><td class="mono" title="{}">{}…</td><td>{} · {}</td><td>{}</td></tr>"#,
+                esc(if w.game.is_empty() { "—" } else { &w.game }),
+                esc(&w.version),
+                esc(&w.file),
+                esc(&w.sha256),
+                esc(&w.sha256[..12.min(w.sha256.len())]),
+                esc(&w.added_by),
+                fmt_date(w.added_at),
+                action_btn(
+                    "/admin/catalog/remove",
+                    &[("sha256", &w.sha256)],
+                    "remove",
+                    true,
+                    &format!("Remove {} from the catalog?", w.file)
+                ),
+            ));
+        }
+        body.push_str("</table>");
+    }
+    body.push_str(
+        r#"<h2>Add a world</h2>
+<form class="authform" method="post" action="/admin/catalog/add" enctype="multipart/form-data">
+<label>.apworld file<input type="file" name="apworld" accept=".apworld" required></label>
+<label>Game (optional — read from the world's manifest when blank)<input type="text" name="game" maxlength="80"></label>
+<label>Version (optional — likewise)<input type="text" name="version" maxlength="80"></label>
+<label>Note (optional)<input type="text" name="note" maxlength="200" placeholder="e.g. source URL, who vetted it"></label>
+<button type="submit">Add to catalog</button></form>
+<p class="statline">You can also add a world straight from a season: its admin page has an “add to catalog” button next to each installed upload.</p>"#,
+    );
+    auth_page("Console", r#"<a href="/">← home</a>"#, err, &body)
 }
