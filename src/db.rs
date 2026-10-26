@@ -391,6 +391,25 @@ impl Db {
     /// The Minecraft whitelist for a season: the registered usernames of everyone
     /// holding a regular (non-common) slot this season. Exported for the
     /// host-side `mc-whitelist-sync` to apply to the Minecraft server.
+    /// Everyone to whitelist on the shared Minecraft server: claimants of a
+    /// regular slot in any live season that has the common game on.
+    pub async fn mc_whitelist_all(&self) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT a.mc_username FROM mc_account a
+             WHERE EXISTS (
+                 SELECT 1 FROM claim c JOIN bifrost_slot s ON s.id = c.bifrost_slot_id
+                 JOIN season se ON se.id = s.season
+                 WHERE se.state = 'live' AND se.mc_enabled = 1
+                   AND c.account_id = a.account_id AND s.is_common = 0
+             )
+             ORDER BY a.mc_username COLLATE NOCASE",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default()
+    }
+
+    #[cfg(test)]
     pub async fn mc_whitelist(&self, season: i64) -> Vec<String> {
         sqlx::query_scalar(
             "SELECT a.mc_username FROM mc_account a
@@ -1086,15 +1105,17 @@ impl Db {
     }
 
     /// Claim a slot, enforcing one claim per player per season.
-    pub async fn claim_one(&self, slot_id: i64, account: i64) -> Result<ClaimOutcome, sqlx::Error> {
-        let season: Option<i64> =
-            sqlx::query_scalar("SELECT season FROM bifrost_slot WHERE id = ?")
+    /// Claim `slot_id` — only if it's one of `season`'s slots.
+    pub async fn claim_one(&self, season: i64, slot_id: i64, account: i64) -> Result<ClaimOutcome, sqlx::Error> {
+        let found: Option<i64> =
+            sqlx::query_scalar("SELECT season FROM bifrost_slot WHERE id = ? AND season = ?")
                 .bind(slot_id)
+                .bind(season)
                 .fetch_optional(&self.pool)
                 .await?;
-        let Some(season) = season else {
+        if found.is_none() {
             return Ok(ClaimOutcome::SlotTaken);
-        };
+        }
         // Already holding a *different* slot this season? One per player.
         let existing: Option<String> = sqlx::query_scalar(
             "SELECT s.name FROM claim c JOIN bifrost_slot s ON s.id = c.bifrost_slot_id
@@ -1230,32 +1251,40 @@ impl Db {
     /// (ap_slot, current claimant) for a Bifrost slot, or None if it doesn't exist.
     pub async fn slot_detail(
         &self,
+        season: i64,
         id: i64,
     ) -> Result<Option<(i64, Option<i64>, bool)>, sqlx::Error> {
         sqlx::query_as::<_, (i64, Option<i64>, bool)>(
             "SELECT s.ap_slot, c.account_id, s.is_common FROM bifrost_slot s
-             LEFT JOIN claim c ON c.bifrost_slot_id = s.id WHERE s.id = ?",
+             LEFT JOIN claim c ON c.bifrost_slot_id = s.id WHERE s.id = ? AND s.season = ?",
         )
         .bind(id)
+        .bind(season)
         .fetch_optional(&self.pool)
         .await
     }
 
     /// Release a claim. A non-admin may only release their own; an admin any.
+    /// Release `slot_id` (one of `season`'s slots): the claimant's own, or
+    /// anyone's for that season's admins.
     pub async fn unclaim(
         &self,
+        season: i64,
         slot_id: i64,
         account: i64,
         is_admin: bool,
     ) -> Result<bool, sqlx::Error> {
+        const IN_SEASON: &str = "bifrost_slot_id IN (SELECT id FROM bifrost_slot WHERE id = ? AND season = ?)";
         let res = if is_admin {
-            sqlx::query("DELETE FROM claim WHERE bifrost_slot_id = ?")
+            sqlx::query(&format!("DELETE FROM claim WHERE {IN_SEASON}"))
                 .bind(slot_id)
+                .bind(season)
                 .execute(&self.pool)
                 .await?
         } else {
-            sqlx::query("DELETE FROM claim WHERE bifrost_slot_id = ? AND account_id = ?")
+            sqlx::query(&format!("DELETE FROM claim WHERE {IN_SEASON} AND account_id = ?"))
                 .bind(slot_id)
+                .bind(season)
                 .bind(account)
                 .execute(&self.pool)
                 .await?

@@ -43,7 +43,9 @@ pub(super) async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
              -- held through restarts and re-rolls, released on archive.
              ap_port INTEGER UNIQUE,
              -- The Archipelago version that generated the current seed.
-             ap_version TEXT
+             ap_version TEXT,
+             -- While generating: the state it started from (crash recovery).
+             gen_from TEXT
            )"#,
     )
     .execute(pool)
@@ -55,13 +57,6 @@ pub(super) async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
              account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
              PRIMARY KEY (season, account_id)
            )"#,
-    )
-    .execute(pool)
-    .await?;
-    // A crash mid-generation must not strand a season in `generating`.
-    sqlx::query(
-        "UPDATE season SET state = CASE WHEN seed IS NULL THEN 'signup' ELSE 'live' END
-         WHERE state = 'generating'",
     )
     .execute(pool)
     .await?;
@@ -305,6 +300,20 @@ impl Db {
 
     /// Move a season along its lifecycle, enforcing the legal steps and the
     /// one-live-season rule. Stamps `live_at` / `archived_at`.
+    /// A crash or restart mid-generation must not strand a season in
+    /// `generating`: put it back where the generation started from. Server
+    /// startup only — a CLI command (e.g. `backup now`) may run beside a live
+    /// server whose generation is still going.
+    pub async fn recover_interrupted_generations(&self) -> Result<u64, sqlx::Error> {
+        let r = sqlx::query(
+            "UPDATE season SET state = COALESCE(gen_from, 'signup'), gen_from = NULL
+             WHERE state = 'generating'",
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected())
+    }
+
     pub async fn transition(&self, id: i64, to: State, now: i64) -> Result<(), TransitionError> {
         let db = |e: sqlx::Error| TransitionError::Db(e.to_string());
         // IMMEDIATE: this reads then writes; a deferred transaction would
@@ -342,6 +351,13 @@ impl Db {
             q = q.bind(now);
         }
         q.bind(id).execute(&mut *tx).await.map_err(db)?;
+        // Remember where a generation started, for crash recovery.
+        sqlx::query("UPDATE season SET gen_from = ? WHERE id = ?")
+            .bind((to == State::Generating).then_some(from.as_str()))
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
         tx.commit().await.map_err(db)
     }
 
@@ -478,7 +494,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn set_season_ap_version(&self, id: i64, version: &str) -> Result<(), sqlx::Error> {
+    pub async fn set_season_ap_version(&self, id: i64, version: Option<&str>) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE season SET ap_version = ? WHERE id = ?")
             .bind(version)
             .bind(id)
@@ -651,6 +667,24 @@ mod tests {
         assert_eq!(db.default_season().await.unwrap().id, b);
         assert_eq!(db.last_archived_before(b).await, 50);
         assert_eq!(db.last_archived_before(a).await, 0);
+    }
+
+    #[tokio::test]
+    async fn interrupted_generations_go_back_where_they_started() {
+        let db = db().await.with_ap_ports(5000..=5001);
+        let first = db.create_season("First", None, 0).await.unwrap();
+        db.transition(first, State::Signup, 1).await.unwrap();
+        db.transition(first, State::Generating, 2).await.unwrap();
+        // Generation writes the seed before the world is deployed.
+        db.set_season_seed(first, "seed-1").await.unwrap();
+        let reroll = db.create_season("Reroll", None, 0).await.unwrap();
+        db.transition(reroll, State::Generating, 1).await.unwrap();
+        db.transition(reroll, State::Live, 2).await.unwrap();
+        db.transition(reroll, State::Generating, 3).await.unwrap();
+        assert_eq!(db.recover_interrupted_generations().await.unwrap(), 2);
+        assert_eq!(db.season(first).await.unwrap().state(), State::Signup, "not live with an undeployed seed");
+        assert_eq!(db.season(reroll).await.unwrap().state(), State::Live);
+        assert_eq!(db.recover_interrupted_generations().await.unwrap(), 0);
     }
 
     #[tokio::test]

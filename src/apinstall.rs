@@ -145,11 +145,33 @@ pub fn active() -> Install {
     v.and_then(|v| find(&v)).unwrap_or_else(bundled)
 }
 
+/// The install a pinned season runs: an installed one, or — after the native
+/// bundle was upgraded — the previous bundle build's runtime, which is kept
+/// while a season runs on it (`bundle::cleanup`).
+fn find_pinned(version: &str) -> Option<Install> {
+    find(version).or_else(|| {
+        let (dir, python) = crate::bundle::previous(&config::get().data_dir, version)?;
+        Some(Install { version: version.to_string(), dir, python, bundled: true })
+    })
+}
+
+/// The version a season is pinned to when no install provides it (e.g. the
+/// image was upgraded to a newer bundled Archipelago).
+pub fn missing_pin(id: i64) -> Option<String> {
+    let v = STATE.read().unwrap().pins.get(&id).cloned()?;
+    find_pinned(&v).is_none().then_some(v)
+}
+
+/// The versions non-archived seasons are pinned to.
+pub fn pinned_versions() -> Vec<String> {
+    STATE.read().unwrap().pins.values().cloned().collect()
+}
+
 /// The install a season's helpers and server run: the one its seed was
 /// generated with, else the active one.
 pub fn for_season(id: i64) -> Install {
     let v = STATE.read().unwrap().pins.get(&id).cloned();
-    match v.map(|v| (find(&v), v)) {
+    match v.map(|v| (find_pinned(&v), v)) {
         Some((Some(i), _)) => i,
         Some((None, v)) => {
             tracing::warn!("season {id} was generated with Archipelago {v}, which isn't installed any more — using the active one");

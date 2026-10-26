@@ -212,9 +212,10 @@ launcher; `ap_adapter` runs every helper through it with a per-helper policy.
   **in-logic**, which must reach the AP server (`--share-net`): world code
   there runs sandboxed but networked — a known gap until the AP server is
   reachable over a socket bound into the sandbox.
-- A season `host.yaml` is created on demand by a step that imports only AP's
-  `settings` (no worlds), so world-importing helpers can keep the season
-  read-only.
+- A season `host.yaml` is created on demand: a copy of the operator's
+  `$BIFROST_DATA/host.yaml` if there is one, else by a step that imports only
+  AP's `settings` (no worlds), so world-importing helpers can keep the season
+  read-only. Managed servers get the season's passwords on their command line.
 - Trusted vs custom worlds: worlds Bifrost ships (vendored Universal Tracker,
   the operator's common-game apworld) are recognised **by SHA-256**; anything
   else in `worlds/` is custom. On the limits tier, custom worlds are refused
@@ -309,6 +310,14 @@ kanidm groups.
   `SIGN_IN_URL` / `SIGN_OUT_URL` for the header bar. Identity headers are read
   **only on signed-in tiers**: on public routes the proxy doesn't overwrite
   them, so a client could supply its own.
+- **Season URLs.** Season pages live under `/s/{id}/…` (`/s/3/admin`,
+  `/s/3/claim`, …), and Bifrost tiers them by the part after the id. The
+  proxy must therefore run forward-auth on those prefixes too, e.g. Traefik
+  `PathRegexp(`^/s/[0-9]+/(admin|claim|hint|signup|game|prioritize|minesweeper|api|mc)`)`
+  next to the plain prefixes — otherwise it passes a client's own identity
+  headers through and Bifrost believes them. A proxy set up for the old
+  single-season paths is **not** enough. Instance pages (`/admin/users`,
+  `/admin/settings`, `/admin/catalog`, `/api`, …) have one URL only.
 - Until seasons have owners (§7) `ManageSeason` is sysadmin-only, matching
   §14's sysadmin-only `/admin`; moderators gain powers with §7.
 

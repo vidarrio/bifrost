@@ -96,6 +96,11 @@ async fn main() {
     if let Some(code) = cli::run(&args, &db).await {
         std::process::exit(code);
     }
+    match db.recover_interrupted_generations().await {
+        Ok(0) => {}
+        Ok(n) => tracing::warn!("{n} season(s) were mid-generation when Bifrost stopped; put back to where they were"),
+        Err(e) => tracing::error!("recovering interrupted generations: {e}"),
+    }
 
     // How AP helpers (which run apworld code) are contained on this host.
     let sb = sandbox::init(sandbox::Sandbox::detect(&cfg.ap_python).await);
@@ -131,6 +136,11 @@ async fn main() {
     );
     let bundled = apinstall::bundled();
     tracing::info!("Archipelago {} bundled at {}", bundled.version, bundled.dir.display());
+    if bundle::present()
+        && let Some(current) = bundled.dir.parent()
+    {
+        bundle::cleanup(&cfg.data_dir, current, &apinstall::pinned_versions());
+    }
     let active = apinstall::active();
     if !active.bundled {
         tracing::info!("Archipelago {} active (new seasons use it), at {}", active.version, active.dir.display());
@@ -140,7 +150,26 @@ async fn main() {
             let _ = config::get().season(season.id).ensure();
         }
         if season.state() == db::State::Live {
-            seasons.start_live(season.id).await;
+            match apinstall::missing_pin(season.id) {
+                // Its version isn't here any more (an image upgrade replaced
+                // the bundled install): reinstall that release before its
+                // server starts, rather than run the game on another version.
+                Some(v) => {
+                    let (seasons, id) = (seasons.clone(), season.id);
+                    tokio::spawn(async move {
+                        tracing::warn!("season {id} runs Archipelago {v}, which isn't installed; installing it first");
+                        if let Err(e) = apupdate::ensure(&v).await {
+                            tracing::error!("season {id}: couldn't install Archipelago {v} ({e}); starting it on the active version");
+                        }
+                        seasons.start_live(id).await;
+                    });
+                }
+                None => seasons.start_live(season.id).await,
+            }
+        }
+        if season.state().accepts_signups() {
+            let (db, id) = (db.clone(), season.id);
+            tokio::spawn(async move { worlds::recheck_stale(&db, id).await });
         }
     }
 
@@ -524,8 +553,10 @@ fn valid_mc_username(s: &str) -> bool {
 /// Recompute the season's whitelist and write it to the whitelist file
 /// atomically (temp + rename). Best-effort: a failure is logged, not fatal —
 /// the next change (or the host timer) reconciles.
-async fn export_mc_whitelist(st: &AppState, season: i64) {
-    let names = st.db.mc_whitelist(season).await;
+/// Write the Minecraft whitelist (one file for the one shared server: every
+/// live, MC-enabled season's claimants) for the host syncer.
+async fn export_mc_whitelist(st: &AppState) {
+    let names = st.db.mc_whitelist_all().await;
     let json = serde_json::to_string(&names).unwrap_or_else(|_| "[]".into());
     let file = config::get().mc_whitelist_file();
     let tmp = file.with_extension("json.tmp");
@@ -1225,8 +1256,11 @@ async fn claim_post(
     let (_me, is_admin) = ctx.ident(&me);
     let back = ctx.back(f.back.as_deref(), "/claim");
     let season = ctx.id;
+    if ctx.state() == db::State::Archived {
+        return render::notice("That season is archived.", false, &back).into_response();
+    }
     match f.op.as_str() {
-        "claim" => match st.db.claim_one(f.slot_id, my_id).await {
+        "claim" => match st.db.claim_one(season, f.slot_id, my_id).await {
             Ok(db::ClaimOutcome::AlreadyHave(name)) => render::notice(
                 &format!("You already claim {name} — one slot per player. Unclaim it first if you want to move."),
                 false,
@@ -1238,13 +1272,13 @@ async fn claim_post(
             }
             _ => {
                 // Claimant set changed → refresh the MC whitelist export.
-                export_mc_whitelist(&st, season).await;
+                export_mc_whitelist(&st).await;
                 Redirect::to(&back).into_response()
             }
         },
         "unclaim" => {
-            let _ = st.db.unclaim(f.slot_id, my_id, is_admin).await;
-            export_mc_whitelist(&st, season).await;
+            let _ = st.db.unclaim(season, f.slot_id, my_id, is_admin).await;
+            export_mc_whitelist(&st).await;
             Redirect::to(&back).into_response()
         }
         _ => Redirect::to(&back).into_response(),
@@ -1296,7 +1330,7 @@ async fn mc_username_post(
         )
         .into_response(),
         Ok(db::SetMcOutcome::Ok) => {
-            export_mc_whitelist(&st, season).await;
+            export_mc_whitelist(&st).await;
             Redirect::to(&back).into_response()
         }
         Err(_) => render::notice("Couldn't save that right now — try again.", false, &back)
@@ -1335,7 +1369,7 @@ async fn hint_post(
     let my_id = me.id();
     let (me, _is_admin) = ctx.ident(&me);
     let reject = |msg: &str| Json(serde_json::json!({"ok": false, "message": msg}));
-    let detail = st.db.slot_detail(f.slot_id).await.ok().flatten();
+    let detail = st.db.slot_detail(ctx.id, f.slot_id).await.ok().flatten();
     let Some((ap_slot, claimant, is_common)) = detail else {
         return reject("Unknown slot.");
     };
@@ -1999,8 +2033,7 @@ async fn admin_clear(
     // Clearing players/claims empties the season's whitelist — refresh the export
     // so the host syncer drops the old names.
     if matches!(f.what.as_str(), "players" | "reset") {
-        let season = ctx.id;
-        export_mc_whitelist(&st, season).await;
+        export_mc_whitelist(&st).await;
     }
     Redirect::to(&ctx.url("/admin")).into_response()
 }
@@ -2025,10 +2058,10 @@ async fn admin_archive_season(
     }
     // Snapshot the live board under one lock: seed, per-slot figures, and the
     // AP slot -> primary player name map (to put the lead seat first).
-    let Ok((snap, ap_names)) = ctx.rt.board.read().map(|b| {
+    let Ok((snap, ap_names, board_seed)) = ctx.rt.board.read().map(|b| {
         let names: HashMap<i64, String> =
             b.slots.iter().map(|(k, s)| (*k, s.name.clone())).collect();
-        (b.snapshot(), names)
+        (b.snapshot(), names, b.seed.clone())
     }) else {
         return render::notice("Board is busy — try again.", false, "admin").into_response();
     };
@@ -2036,6 +2069,17 @@ async fn admin_archive_season(
         return render::notice("Only a live season can be archived.", false, "admin").into_response();
     }
     let seed = ctx.row.seed.clone().unwrap_or_default();
+    // The standings come from the live board: refuse until it has seen this
+    // season's room (just after a restart, or while the server is down or
+    // loading, every game would be frozen at 0 checks — and archiving is final).
+    if seed.is_empty() || board_seed.as_deref() != Some(seed.as_str()) || ap_names.is_empty() {
+        return render::notice(
+            "The live board isn't connected to this season's game yet — try again once it shows the game's progress.",
+            false,
+            "admin",
+        )
+        .into_response();
+    }
     let slots = st.db.slots(ctx.id).await.unwrap_or_default();
     if slots.is_empty() {
         return render::notice("No slots to archive for the current season.", false, "admin")
@@ -2162,6 +2206,7 @@ async fn admin_archive_season(
     }
     st.seasons.stop(ctx.id).await;
     apinstall::pin(ctx.id, None);
+    export_mc_whitelist(&st).await;
 
     Redirect::to(&ctx.url("/season")).into_response()
 }
@@ -2921,6 +2966,7 @@ async fn admin_mc(
     let (_me, is_admin) = ctx.ident(&me);
     if is_admin {
         let _ = st.db.set_mc_enabled(ctx.id, f.open == "1").await;
+        export_mc_whitelist(&st).await;
     }
     Redirect::to(&ctx.url("/admin"))
 }
@@ -3083,8 +3129,10 @@ struct KindQuery {
 /// Map key for a player's in-progress game: separate per difficulty AND per mode
 /// (freeplay vs seasonal), so the two can be in progress at once without
 /// clobbering each other.
-fn mine_key(account: i64, free: bool, kind: mine::Kind) -> (i64, String) {
-    let mode = if free { "free:" } else { "" };
+fn mine_key(account: i64, free: bool, season: i64, kind: mine::Kind) -> (i64, String) {
+    // A seasonal game belongs to its season: finishing it under another
+    // season's URL mustn't credit that one.
+    let mode = if free { "free:".to_string() } else { format!("s{season}:") };
     (account, format!("{mode}{}", kind.id()))
 }
 
@@ -3117,7 +3165,7 @@ async fn mine_new(
         // Drop stale games (>12h old) so the map stays small, then replace this
         // player's game of this difficulty+mode with the fresh one.
         games.retain(|_, g| now.saturating_sub(g.created) < 12 * 3600 * 1_000_000_000);
-        games.insert(mine_key(my_id, f.free, kind), game);
+        games.insert(mine_key(my_id, f.free, ctx.id, kind), game);
     }
     Json(serde_json::json!({"ok": true, "w": w, "h": h, "mines": mines, "kind": kind.id()}))
 }
@@ -3127,6 +3175,7 @@ async fn mine_new(
 /// pauses the clock (`repose`); it resumes on the next reveal.
 async fn mine_state(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Query(q): Query<KindQuery>,
 ) -> Json<serde_json::Value> {
@@ -3137,7 +3186,7 @@ async fn mine_state(
         Ok(g) => g,
         Err(p) => p.into_inner(),
     };
-    match games.get_mut(&mine_key(my_id, q.free, kind)) {
+    match games.get_mut(&mine_key(my_id, q.free, ctx.id, kind)) {
         Some(g) if !g.over => {
             g.repose();
             let cells: Vec<_> = g
@@ -3197,6 +3246,7 @@ async fn mine_leaderboard(
 /// switching to the other difficulty). Idempotent.
 async fn mine_pause(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Query(q): Query<KindQuery>,
 ) -> Json<serde_json::Value> {
@@ -3204,7 +3254,7 @@ async fn mine_pause(
     let (_me, _) = me.ident();
     let kind = mine::Kind::parse(&q.kind);
     if let Ok(mut games) = st.mine_games.lock() {
-        if let Some(g) = games.get_mut(&mine_key(my_id, q.free, kind)) {
+        if let Some(g) = games.get_mut(&mine_key(my_id, q.free, ctx.id, kind)) {
             g.pause();
         }
     }
@@ -3229,7 +3279,7 @@ async fn mine_reveal(
 ) -> Json<serde_json::Value> {
     let my_id = me.id();
     let (_me, _) = ctx.ident(&me);
-    let key = mine_key(my_id, f.free, mine::Kind::parse(&f.kind));
+    let key = mine_key(my_id, f.free, ctx.id, mine::Kind::parse(&f.kind));
     // Reveal under the lock, then release it before any await.
     let outcome = {
         let mut games = match st.mine_games.lock() {
@@ -3265,7 +3315,7 @@ async fn mine_reveal(
         st.db
             .record_mine_result(scope, my_id, kind, won, elapsed_ms)
             .await;
-        if won && !f.free {
+        if won && !f.free && ctx.row.minesweeper_enabled && ctx.state() != db::State::Archived {
             credits = st.db.add_credits(ctx.id, my_id, 1).await.ok();
         }
         // Freeplay stats are all-time; seasonal stats scope to the season.

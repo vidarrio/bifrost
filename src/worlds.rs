@@ -223,8 +223,9 @@ pub async fn recheck_held(db: &Db, season: i64, file: &str) {
     for (id, yaml_path) in db.held_submissions(season, file).await {
         let outcome = match tokio::fs::read_to_string(&yaml_path).await {
             Err(e) => Err(format!("the stored YAML is gone ({e})")),
-            Ok(yaml) => match crate::checker::check_yaml(&dirs, &yaml).await {
-                Err(e) => Err(format!("checker error: {e}")),
+            Ok(yaml) => match check_with_retries(&dirs, &yaml).await {
+                // No verdict: `stale_holds` picks it up again.
+                Err(e) => Err(format!("couldn't be checked ({e}) — it's tried again before generating")),
                 Ok(r) if !r.ok => Err(format!("its YAML didn't pass: {}", r.errors.join("; "))),
                 Ok(r) => r
                     .players
@@ -243,6 +244,33 @@ pub async fn recheck_held(db: &Db, season: i64, file: &str) {
         if let Err(e) = res {
             tracing::info!("held signup {id} in season {season} still held: {e}");
             let _ = db.set_held_err(id, &e).await;
+        }
+    }
+}
+
+/// A YAML check, retried a few times when the checker couldn't run it (busy
+/// queue, timeout) — those aren't verdicts on the YAML.
+async fn check_with_retries(dirs: &config::SeasonDirs, yaml: &str) -> Result<crate::checker::CheckResult, String> {
+    let mut wait = std::time::Duration::from_secs(15);
+    for _ in 0..3 {
+        match crate::checker::check_yaml(dirs, yaml).await {
+            Ok(r) => return Ok(r),
+            Err(e) => tracing::info!("re-checking a held signup: {e}; retrying in {}s", wait.as_secs()),
+        }
+        tokio::time::sleep(wait).await;
+        wait *= 2;
+    }
+    crate::checker::check_yaml(dirs, yaml).await
+}
+
+/// Finish re-checks that were cut short (a restart mid-loop, a check that
+/// couldn't run): held signups whose world is installed and no longer waits
+/// for approval. Run at startup and before generating.
+pub async fn recheck_stale(db: &Db, season: i64) {
+    let dirs = config::get().season(season);
+    for file in db.stale_holds(season).await {
+        if dirs.worlds.join(&file).is_file() {
+            recheck_held(db, season, &file).await;
         }
     }
 }
@@ -275,11 +303,15 @@ pub async fn catalog_add(
     };
     let path = catalog_file(&w.sha256);
     let tmp = path.with_extension("apworld.tmp");
-    tokio::fs::create_dir_all(config::get().catalog_dir())
-        .await
-        .and(tokio::fs::write(&tmp, bytes).await)
-        .and(tokio::fs::rename(&tmp, &path).await)
-        .map_err(|e| format!("storing the catalog copy: {e}"))?;
+    let store = async {
+        tokio::fs::create_dir_all(config::get().catalog_dir()).await?;
+        tokio::fs::write(&tmp, bytes).await?;
+        tokio::fs::rename(&tmp, &path).await
+    };
+    if let Err(e) = store.await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(format!("storing the catalog copy: {e}"));
+    }
     db.catalog_add(&w).await.map_err(|e| e.to_string())?;
     Ok(w)
 }

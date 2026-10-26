@@ -47,6 +47,9 @@ pub struct Sandbox {
     tier: Tier,
     bwrap: Option<PathBuf>,
     limits: Limits,
+    /// Generation's own, larger ceilings: a big multiworld needs far more
+    /// than a YAML check.
+    generate_limits: Limits,
     allow_unsandboxed_custom: bool,
     /// Why bubblewrap isn't in use (for the posture line), if it isn't.
     weak_reason: Option<String>,
@@ -82,12 +85,18 @@ impl Sandbox {
             cpu_secs: mb("BIFROST_SANDBOX_CPU_SECS", 1800),
             fsize_bytes: mb("BIFROST_SANDBOX_FILE_MB", 1024) << 20,
         };
+        let generate_limits = Limits {
+            mem_bytes: mb("BIFROST_GENERATE_MEM_MB", 16384) << 20,
+            cpu_secs: mb("BIFROST_GENERATE_CPU_SECS", 7200),
+            ..limits
+        };
         let allow_unsandboxed_custom =
             var("BIFROST_ALLOW_UNSANDBOXED_CUSTOM_WORLDS").as_deref() == Some("1");
         let mut sb = Sandbox {
             tier: Tier::Limits,
             bwrap: None,
             limits,
+            generate_limits,
             allow_unsandboxed_custom,
             weak_reason: None,
         };
@@ -183,17 +192,23 @@ impl Sandbox {
 
     /// Build the command for `job` on this tier. Run it with [`run`].
     pub fn command(&self, job: &Job) -> Command {
-        self.build(job, true)
+        self.build(job, true, self.limits)
+    }
+
+    /// Like [`command`](Self::command) with generation's ceilings
+    /// (`BIFROST_GENERATE_MEM_MB` / `_CPU_SECS`).
+    pub fn generation(&self, job: &Job) -> Command {
+        self.build(job, true, self.generate_limits)
     }
 
     /// Like [`command`](Self::command) for a long-running service (the AP
     /// server): same jail and limits, but no CPU-time cap — a server that runs
     /// for weeks would eventually exhaust any fixed one.
     pub fn service(&self, job: &Job) -> Command {
-        self.build(job, false)
+        self.build(job, false, self.limits)
     }
 
-    fn build(&self, job: &Job, cpu_cap: bool) -> Command {
+    fn build(&self, job: &Job, cpu_cap: bool, limits: Limits) -> Command {
         let mut cmd = match (&self.tier, &self.bwrap) {
             (Tier::Bubblewrap, Some(bwrap)) => {
                 let mut c = Command::new(bwrap);
@@ -214,7 +229,6 @@ impl Sandbox {
             .envs(job.env.iter().map(|(k, v)| (*k, v)))
             .stdin(Stdio::null())
             .kill_on_drop(true);
-        let limits = self.limits;
         // SAFETY: only async-signal-safe libc calls between fork and exec.
         unsafe {
             cmd.pre_exec(move || {
@@ -391,6 +405,11 @@ mod tests {
             tier: Tier::Limits,
             bwrap: None,
             limits: Limits {
+                mem_bytes: 512 << 20,
+                cpu_secs: 10,
+                fsize_bytes: 1 << 20,
+            },
+            generate_limits: Limits {
                 mem_bytes: 512 << 20,
                 cpu_secs: 10,
                 fsize_bytes: 1 << 20,

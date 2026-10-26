@@ -225,14 +225,43 @@ pub fn prepare(data_dir: &Path) -> Result<Option<Runtime>, String> {
         std::fs::rename(&partial, &dest).map_err(|e| format!("{}: {e}", dest.display()))?;
         tracing::info!("bundled runtime ready");
     }
+    Ok(Some(Runtime { root: dest }))
+}
+
+/// Remove earlier bundle builds' runtimes nothing uses any more: not this
+/// build's (`current`), not one an installed release's venv was built from,
+/// and not one whose Archipelago a season still runs (`pinned` versions; see
+/// `apinstall::for_season`). Server startup only, after the pins are loaded —
+/// never from a CLI command, which may run beside a server still using one.
+pub fn cleanup(data_dir: &Path, current: &Path, pinned: &[String]) {
+    let base = data_dir.join("runtime");
     for e in std::fs::read_dir(&base).into_iter().flatten().flatten() {
         let path = e.path();
-        if path != dest && !referenced(data_dir, &path) {
-            tracing::info!("removing the old bundled runtime {}", path.display());
-            let _ = std::fs::remove_dir_all(&path);
+        if path == current || referenced(data_dir, &path) {
+            continue;
         }
+        // Needed only when nothing else (this build, an installed release)
+        // provides that version.
+        let version = crate::apinstall::read_version(&path.join("archipelago"));
+        if version.is_some_and(|v| pinned.contains(&v) && crate::apinstall::find(&v).is_none()) {
+            continue;
+        }
+        tracing::info!("removing the old bundled runtime {}", path.display());
+        let _ = std::fs::remove_dir_all(&path);
     }
-    Ok(Some(Runtime { root: dest }))
+}
+
+/// An earlier bundle build's runtime, still unpacked, that carries
+/// Archipelago `version`: its AP dir and Python.
+pub fn previous(data_dir: &Path, version: &str) -> Option<(PathBuf, PathBuf)> {
+    std::fs::read_dir(data_dir.join("runtime"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| Runtime { root: e.path() })
+        .filter(|r| r.root.join(COMPLETE).is_file())
+        .find(|r| crate::apinstall::read_version(&r.ap_dir()).as_deref() == Some(version))
+        .map(|r| (r.ap_dir(), r.python()))
 }
 
 #[cfg(test)]

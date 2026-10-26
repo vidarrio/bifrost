@@ -33,7 +33,8 @@ use crate::sandbox::{self, Job};
 const CHECK_TIMEOUT: Duration = Duration::from_secs(180);
 const META_TIMEOUT: Duration = Duration::from_secs(300);
 const COUNTS_TIMEOUT: Duration = Duration::from_secs(120);
-const GENERATE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// Default wall-clock cap on a generation (`BIFROST_GENERATE_TIMEOUT_MIN`).
+const GENERATE_TIMEOUT: Duration = Duration::from_secs(120 * 60);
 const SETTINGS_TIMEOUT: Duration = Duration::from_secs(60);
 const PNG_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -45,6 +46,8 @@ struct Access {
     read: Vec<PathBuf>,
     network: bool,
     env: Vec<(&'static str, OsString)>,
+    /// Generation: its own, larger resource ceilings.
+    generate: bool,
 }
 
 /// A sandboxed helper-script run against `season`.
@@ -75,7 +78,8 @@ async fn run_helper(
         write: access.write,
         network: access.network,
     };
-    sandbox::run(sandbox::get().command(&job), timeout).await
+    let cmd = if access.generate { sandbox::get().generation(&job) } else { sandbox::get().command(&job) };
+    sandbox::run(cmd, timeout).await
 }
 
 /// The environment every AP process gets (see also `apserver`). Bifrost owns
@@ -94,13 +98,24 @@ fn helper_env(season: &SeasonDirs, ap: &Install) -> Vec<(&'static str, OsString)
 }
 
 /// AP writes a default `host.yaml` when it finds none, which a read-only
-/// season dir would refuse. Create it up front in a step that imports only
-/// AP's settings module (no worlds, so no world code runs with write access).
+/// season dir would refuse. Create it up front: a copy of the operator's
+/// instance-wide `$BIFROST_DATA/host.yaml` when there is one (hint cost,
+/// release/collect modes… baked into each seed at generation), else AP's
+/// defaults, from a step that imports only AP's settings module (no worlds,
+/// so no world code runs with write access).
 async fn ensure_host_yaml(season: &SeasonDirs, ap: &Install) -> Result<(), String> {
-    if season.root.join("host.yaml").exists() {
+    let dest = season.root.join("host.yaml");
+    if dest.exists() {
         return Ok(());
     }
     let cfg = config::get();
+    let template = cfg.data_dir.join("host.yaml");
+    if template.is_file() {
+        return tokio::fs::copy(&template, &dest)
+            .await
+            .map(|_| ())
+            .map_err(|e| format!("copying {} into the season: {e}", template.display()));
+    }
     const INIT: &str = "import bifrost_ap, settings\nsettings.get_settings()\n";
     let job = Job {
         program: &ap.python,
@@ -163,12 +178,18 @@ pub struct Pin {
     /// Installed from the curated catalog.
     #[serde(default)]
     pub catalog: bool,
+    /// A world Bifrost ships (Universal Tracker, the common game), as staged
+    /// into this season — trusted even after an upgrade changes the shipped copy.
+    #[serde(default)]
+    pub shipped: bool,
 }
 
 impl Pin {
     /// "from the catalog", "approved by X", or "auto-approved".
     pub fn provenance(&self) -> String {
-        if self.catalog {
+        if self.shipped {
+            "shipped with Bifrost".into()
+        } else if self.catalog {
             "from the catalog".into()
         } else if self.approved_by.is_empty() {
             "auto-approved".into()
@@ -186,6 +207,10 @@ pub fn world_pins(season: &SeasonDirs) -> std::collections::BTreeMap<String, Pin
         .unwrap_or_default()
 }
 
+/// Serialises every read-modify-write of a season's pins (concurrent
+/// uploads, deletes).
+static PINS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn write_pins(
     season: &SeasonDirs,
     pins: &std::collections::BTreeMap<String, Pin>,
@@ -201,15 +226,29 @@ fn write_pins(
 /// Install an apworld and pin its hash (`pin.sha256` is filled in here). The
 /// only way custom worlds should enter a season — see [`crate::worlds`].
 pub fn install_world(season: &SeasonDirs, file: &str, bytes: &[u8], mut pin: Pin) -> Result<(), String> {
-    let mut pins = world_pins(season);
+    let _lock = PINS.lock().unwrap_or_else(|p| p.into_inner());
     std::fs::write(season.worlds.join(file), bytes).map_err(|e| format!("install: {e}"))?;
     pin.sha256 = sha256_hex(bytes);
+    let mut pins = world_pins(season);
     pins.insert(file.to_string(), pin);
+    write_pins(season, &pins)
+}
+
+/// Pin a shipped world just staged into the season as `file`.
+pub fn pin_shipped(season: &SeasonDirs, file: &str) -> Result<(), String> {
+    let _lock = PINS.lock().unwrap_or_else(|p| p.into_inner());
+    let bytes = std::fs::read(season.worlds.join(file)).map_err(|e| format!("{file}: {e}"))?;
+    let mut pins = world_pins(season);
+    pins.insert(
+        file.to_string(),
+        Pin { sha256: sha256_hex(&bytes), uploaded_by: "bifrost".into(), shipped: true, ..Pin::default() },
+    );
     write_pins(season, &pins)
 }
 
 /// Forget a removed world's pin (`None` = all of them).
 pub fn unpin_world(season: &SeasonDirs, file: Option<&str>) -> Result<(), String> {
+    let _lock = PINS.lock().unwrap_or_else(|p| p.into_inner());
     let mut pins = world_pins(season);
     match file {
         Some(f) => {
@@ -220,17 +259,23 @@ pub fn unpin_world(season: &SeasonDirs, file: Option<&str>) -> Result<(), String
     write_pins(season, &pins)
 }
 
-/// File names in the season's `worlds/` that aren't Bifrost-shipped worlds.
+/// File names in the season's `worlds/` that aren't Bifrost-shipped worlds:
+/// the current shipped copies, or ones pinned as shipped when staged.
 pub fn custom_worlds(season: &SeasonDirs) -> Vec<String> {
     let trusted = trusted_world_hashes();
+    let pins = world_pins(season);
     let mut out: Vec<String> = std::fs::read_dir(&season.worlds)
         .into_iter()
         .flatten()
         .flatten()
         .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("apworld"))
         .filter(|e| {
+            let shipped = pins.get(&*e.file_name().to_string_lossy()).filter(|p| p.shipped);
             std::fs::read(e.path())
-                .map(|b| !trusted.contains(&sha256_hex(&b)))
+                .map(|b| {
+                    let h = sha256_hex(&b);
+                    !trusted.contains(&h) && shipped.is_none_or(|p| p.sha256 != h)
+                })
                 .unwrap_or(true)
         })
         .map(|e| e.file_name().to_string_lossy().into_owned())
@@ -383,14 +428,18 @@ pub async fn generate(season: &SeasonDirs) -> Result<(), String> {
     check_worlds(season)?;
     let access = Access {
         write: vec![season.output.clone(), season.logs.clone()],
+        generate: true,
         ..Default::default()
     };
+    let timeout = config::var("BIFROST_GENERATE_TIMEOUT_MIN")
+        .and_then(|m| m.parse::<u64>().ok())
+        .map_or(GENERATE_TIMEOUT, |m| Duration::from_secs(m * 60));
     let out = run_helper(
         "bifrost_generate.py",
         vec![],
         season,
         access,
-        GENERATE_TIMEOUT,
+        timeout,
     )
     .await
     .map_err(|e| format!("generate: {e}"))?;

@@ -39,13 +39,35 @@ pub fn link_base() -> String {
 #[derive(Clone, Copy)]
 struct Selected(i64);
 
+/// Instance-level pages: not about a season, so not reachable under `/s/{id}/`
+/// (one URL each — a forward-auth proxy gating them by prefix sees them all).
+const INSTANCE_ROUTES: &[&str] = &[
+    "/admin/seasons",
+    "/admin/settings",
+    "/admin/catalog",
+    "/admin/users",
+    "/admin/links",
+    "/api",
+    "/login",
+    "/logout",
+    "/setup",
+    "/invite",
+    "/reset",
+    "/health",
+    "/favicon.svg",
+];
+
 /// Split `/s/{id}/rest` into `(id, "/rest")`; `/s/{id}` alone is its board.
+/// `None` for an instance-level page under `/s/` (it then 404s).
 fn split(path: &str) -> Option<(i64, String)> {
     let rest = path.strip_prefix("/s/")?;
     let (id, tail) = rest.split_once('/').unwrap_or((rest, ""));
     let id = id.parse::<i64>().ok().filter(|&i| i > 0)?;
-    let tail = if tail.is_empty() { "board" } else { tail };
-    Some((id, format!("/{tail}")))
+    let tail = format!("/{}", if tail.is_empty() { "board" } else { tail });
+    let instance = INSTANCE_ROUTES
+        .iter()
+        .any(|r| tail.strip_prefix(r).is_some_and(|after| after.is_empty() || after.starts_with('/')));
+    (!instance).then_some((id, tail))
 }
 
 pub async fn rewrite(mut req: Request, next: Next) -> Response {
@@ -175,5 +197,13 @@ mod tests {
         assert_eq!(split("/s/0/board"), None);
         assert_eq!(split("/season/3"), None);
         assert_eq!(split("/board"), None);
+        // Instance pages have one URL only.
+        assert_eq!(split("/s/1/admin/users"), None);
+        assert_eq!(split("/s/1/admin/settings/ap/install"), None);
+        assert_eq!(split("/s/1/api/me"), None);
+        assert_eq!(split("/s/1/login"), None);
+        assert_eq!(split("/s/1/admin"), Some((1, "/admin".into())));
+        assert_eq!(split("/s/1/admin/seasonsx"), Some((1, "/admin/seasonsx".into())));
+        assert_eq!(split("/s/1/admin/worlds/approve"), Some((1, "/admin/worlds/approve".into())));
     }
 }

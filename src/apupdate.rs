@@ -110,6 +110,35 @@ fn log(line: impl Into<String>) {
     }
 }
 
+/// Install release `tag` and wait for it — at startup, for a live season whose
+/// version went missing (an image upgrade replaced the bundled install), so it
+/// keeps running the version that generated it. Waits out a running install.
+pub async fn ensure(tag: &str) -> Result<(), String> {
+    static ONE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _one = ONE.lock().await;
+    loop {
+        if apinstall::find(tag).is_some() {
+            return Ok(());
+        }
+        let ours = match start_install(tag) {
+            Ok(()) => true,
+            Err(e) if e.contains("already running") => false,
+            Err(e) => return Err(e),
+        };
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let u = UPDATES.lock().unwrap();
+            match &u.job {
+                Some(j) if j.outcome.is_none() => continue,
+                Some(j) if ours && j.version == tag => {
+                    return j.outcome.clone().unwrap_or(Ok(String::new())).map(|_| ());
+                }
+                _ => break,
+            }
+        }
+    }
+}
+
 /// Start installing release `tag` in the background.
 pub fn start_install(tag: &str) -> Result<(), String> {
     if !apinstall::valid_version(tag) {

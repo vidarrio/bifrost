@@ -183,6 +183,22 @@ impl Db {
         .unwrap_or_default()
     }
 
+    /// Worlds signups are still held for although nothing waits for approval
+    /// under that name, and that no verdict was reached on (never checked, or
+    /// the check couldn't run): a re-check was cut short.
+    pub async fn stale_holds(&self, season: i64) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT DISTINCT held_for FROM submission s
+             WHERE season = ? AND held_for IS NOT NULL
+               AND (held_err IS NULL OR held_err LIKE 'couldn''t be checked%')
+               AND NOT EXISTS (SELECT 1 FROM world_request w WHERE w.season = s.season AND w.file = s.held_for)",
+        )
+        .bind(season)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default()
+    }
+
     /// A held submission passed its check: take the slot name and game the
     /// check read, and stop holding it. Fails if that slot name is taken.
     pub async fn release_submission(&self, id: i64, slot_name: &str, game: &str) -> Result<(), sqlx::Error> {

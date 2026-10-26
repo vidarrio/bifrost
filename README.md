@@ -75,8 +75,10 @@ Settings*, create a season, and open its signups.
 
 Usernames and passwords by default, with single-use invites, community invite
 links and sysadmin-minted reset links. Alternatively an identity provider via
-forward-auth (`bifrost auth mode forward-auth`), exclusive per instance. The
-CLI is the break-glass:
+forward-auth (`bifrost auth mode forward-auth`), exclusive per instance: the
+proxy must authenticate the season paths (`/s/{id}/admin`, `/s/{id}/claim`, …)
+as well as the plain ones, or it lets clients' own identity headers through
+(see the design doc, §5). The CLI is the break-glass:
 
 ```
 bifrost auth status                       show the auth mode and accounts
@@ -92,7 +94,10 @@ bifrost backup now | list | restore <zip> backups (restore with Bifrost stopped)
 Settings come from the environment or `$BIFROST_DATA/config.toml` (the
 environment wins). `bifrost config example` prints a commented template of
 every setting. Page-level settings (connect host, home page, Discords, apworld
-approval, Archipelago versions) live in the console instead.
+approval, Archipelago versions) live in the console instead. Archipelago's own
+generation settings (hint cost, release/collect modes, …) come from
+`$BIFROST_DATA/host.yaml` if you put one there; each new season starts from a
+copy of it (AP's defaults otherwise).
 
 ## Isolation
 

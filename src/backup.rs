@@ -208,11 +208,21 @@ fn free_bytes(dir: &Path) -> Option<u64> {
     (unsafe { libc::statvfs(c.as_ptr(), &mut s) } == 0).then(|| s.f_bavail as u64 * s.f_frsize as u64)
 }
 
-/// What a backup leaves out, relative to the data dir.
+/// A path as the filesystem resolves it (symlinks, `..`), so the backup dir
+/// is recognised inside the data dir however either is spelled.
+fn resolved(p: &Path) -> PathBuf {
+    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+}
+
+/// What a backup leaves out, relative to the data dir. `data` and `backups`
+/// are [`resolved`].
 fn excluded(data: &Path, rel: &Path, backups: &Path) -> bool {
     let top = rel.components().next().map(|c| c.as_os_str().to_string_lossy().into_owned());
-    // `.cache`: tools that treat the data dir as $HOME (the container's user).
-    matches!(top.as_deref(), Some("ap" | "tmp" | ".cache"))
+    // `ap`, `runtime`: reinstallable (installed releases; the native bundle's
+    // unpacked Python + AP, which a restore must not swap for a copy without
+    // its symlinks and exec bits). `.cache`: tools that treat the data dir as
+    // $HOME (the container's user).
+    matches!(top.as_deref(), Some("ap" | "runtime" | "tmp" | ".cache"))
         || rel.to_str().is_some_and(|r| r == "bifrost.db" || r.starts_with("bifrost.db-"))
         || data.join(rel).starts_with(backups)
         || top.as_deref().is_some_and(|t| t.starts_with(".restore-") || t.starts_with(".pre-restore-"))
@@ -330,7 +340,7 @@ async fn create_inner(db: &Db, p: &Policy) -> Result<Backup, String> {
     let _ = std::fs::remove_file(&partial);
     let _ = std::fs::remove_file(&snapshot);
     db.snapshot_to(&snapshot).await.map_err(|e| format!("database snapshot: {e}"))?;
-    let (data, out, snap, bdir) = (config::get().data_dir.clone(), partial.clone(), snapshot.clone(), dir.clone());
+    let (data, out, snap, bdir) = (resolved(&config::get().data_dir), partial.clone(), snapshot.clone(), resolved(&dir));
     let written = tokio::task::spawn_blocking(move || write_zip(&out, &data, &snap, &bdir))
         .await
         .map_err(|e| e.to_string())?;
@@ -386,6 +396,7 @@ pub fn spawn_nightly(db: Db) {
 /// Restore a backup into the data dir (Bifrost must be stopped). The current
 /// contents move to `.pre-restore-<time>/` rather than being deleted.
 pub fn restore(file: &Path) -> Result<String, String> {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
     let cfg = config::get();
     if std::net::TcpStream::connect(("127.0.0.1", cfg.port)).is_ok() {
         return Err(format!(
@@ -413,10 +424,21 @@ pub fn restore(file: &Path) -> Result<String, String> {
                 continue;
             }
             let dest = staging.join(rel);
+            // Owner-only, like the backup itself: it holds config.toml's
+            // secrets and the account database.
             if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                std::fs::DirBuilder::new()
+                    .recursive(true)
+                    .mode(0o700)
+                    .create(parent)
+                    .map_err(|e| e.to_string())?;
             }
-            let mut out = std::fs::File::create(&dest).map_err(|e| format!("{}: {e}", dest.display()))?;
+            let mut out = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&dest)
+                .map_err(|e| format!("{}: {e}", dest.display()))?;
             let mut buf = Vec::new();
             entry.read_to_end(&mut buf).map_err(|e| e.to_string())?;
             out.write_all(&buf).map_err(|e| e.to_string())?;
@@ -430,7 +452,8 @@ pub fn restore(file: &Path) -> Result<String, String> {
     // Move what's there aside (keeping backups, installed AP releases and
     // tmp in place), then move the backup's contents in.
     std::fs::create_dir_all(&aside).map_err(|e| e.to_string())?;
-    let backups = dir();
+    let backups = resolved(&dir());
+    let data = &resolved(data);
     for e in std::fs::read_dir(data).map_err(|e| e.to_string())?.flatten() {
         let p = e.path();
         let rel = PathBuf::from(e.file_name());
@@ -500,6 +523,21 @@ mod tests {
     }
 
     #[test]
+    fn backup_dir_is_found_through_symlinks() {
+        let root = std::env::temp_dir().join(format!("bifrost-bk-{}", std::process::id()));
+        let real = root.join("real");
+        std::fs::create_dir_all(real.join("backups")).unwrap();
+        let link = root.join("link");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        // Data dir given through the symlink, backup dir by its real path.
+        let (data, bk) = (resolved(&link), resolved(&real.join("backups")));
+        assert!(excluded(&data, Path::new("backups/bifrost-x.zip"), &bk));
+        assert!(!excluded(&data, Path::new("seasons/1/x"), &bk));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn next_run() {
         assert_eq!(until_next(0, 4), 4 * 3600);
         assert_eq!(until_next(4 * 3600, 4), 86400);
@@ -512,6 +550,7 @@ mod tests {
         let bk = Path::new("/data/backups");
         assert!(excluded(d, Path::new("ap/0.6.9/Utils.py"), bk));
         assert!(excluded(d, Path::new("tmp/x"), bk));
+        assert!(excluded(d, Path::new("runtime/0.0.1-ap0.6.8/python/bin/python3"), bk));
         assert!(excluded(d, Path::new(".cache/pip/x"), bk));
         assert!(excluded(d, Path::new("bifrost.db-wal"), bk));
         assert!(excluded(d, Path::new("backups/bifrost-x.zip"), bk));

@@ -87,7 +87,7 @@ struct Running {
     stdin: ChildStdin,
 }
 
-async fn supervise(launch: Launch, db: Db, board: Arc<RwLock<Board>>, mut rx: mpsc::Receiver<Cmd>) {
+async fn supervise(mut launch: Launch, db: Db, board: Arc<RwLock<Board>>, mut rx: mpsc::Receiver<Cmd>) {
     let season = launch.season;
     let dirs = config::get().season(season);
     let mut running: Option<Running> = None;
@@ -97,6 +97,9 @@ async fn supervise(launch: Launch, db: Db, board: Arc<RwLock<Board>>, mut rx: mp
     let mut failed = false;
     loop {
         if running.is_none() && dirs.current_zip().exists() {
+            // The passwords as they are now (a moderator may have changed the
+            // connect password since the last start).
+            (launch.password, launch.admin_password) = db.ap_passwords(season).await;
             match start(&launch, &dirs, &db, &board) {
                 Ok(r) => {
                     running = Some(r);

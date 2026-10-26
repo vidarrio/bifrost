@@ -353,6 +353,9 @@ const FILE_KEYS: &[(&str, &str, &str)] = &[
     ("sandbox", "mem_mb", "BIFROST_SANDBOX_MEM_MB"),
     ("sandbox", "cpu_secs", "BIFROST_SANDBOX_CPU_SECS"),
     ("sandbox", "file_mb", "BIFROST_SANDBOX_FILE_MB"),
+    ("sandbox", "generate_mem_mb", "BIFROST_GENERATE_MEM_MB"),
+    ("sandbox", "generate_cpu_secs", "BIFROST_GENERATE_CPU_SECS"),
+    ("sandbox", "generate_timeout_min", "BIFROST_GENERATE_TIMEOUT_MIN"),
     (
         "sandbox",
         "allow_unsandboxed_custom_worlds",
@@ -487,6 +490,9 @@ pub const EXAMPLE: &str = r#"# $BIFROST_DATA/config.toml — every setting here 
 # mem_mb = 4096                      # BIFROST_SANDBOX_MEM_MB
 # cpu_secs = 1800                    # BIFROST_SANDBOX_CPU_SECS
 # file_mb = 1024                     # BIFROST_SANDBOX_FILE_MB
+# generate_mem_mb = 16384            # BIFROST_GENERATE_MEM_MB (address space, not RSS)
+# generate_cpu_secs = 7200           # BIFROST_GENERATE_CPU_SECS
+# generate_timeout_min = 120         # BIFROST_GENERATE_TIMEOUT_MIN
 # allow_unsandboxed_custom_worlds = false  # BIFROST_ALLOW_UNSANDBOXED_CUSTOM_WORLDS
 
 [forward_auth]                       # only with `bifrost auth mode forward-auth`

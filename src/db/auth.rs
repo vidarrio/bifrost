@@ -755,7 +755,7 @@ mod tests {
             .unwrap();
         let slot = db.slots(s).await.unwrap()[0].id;
         assert!(matches!(
-            db.claim_one(slot, p.account_id).await.unwrap(),
+            db.claim_one(s, slot, p.account_id).await.unwrap(),
             ClaimOutcome::Ok
         ));
         db.add_credits(s, p.account_id, 2).await.unwrap();
@@ -772,10 +772,15 @@ mod tests {
         // Someone else can neither take nor release it.
         let other = db.create_account("x", "h", Role::User, 0).await.unwrap();
         assert!(matches!(
-            db.claim_one(slot, other).await.unwrap(),
+            db.claim_one(s, slot, other).await.unwrap(),
             ClaimOutcome::SlotTaken
         ));
-        assert!(!db.unclaim(slot, other, false).await.unwrap());
+        assert!(!db.unclaim(s, slot, other, false).await.unwrap());
+        // Nor can another season's admins, through their own season.
+        let s2 = db.create_season("S2", None, 0).await.unwrap();
+        assert!(!db.unclaim(s2, slot, other, true).await.unwrap());
+        assert!(matches!(db.claim_one(s2, slot, other).await.unwrap(), ClaimOutcome::SlotTaken));
+        assert!(db.slot_detail(s2, slot).await.unwrap().is_none());
 
         // Deleting the account cascades its rows away.
         sqlx::query("DELETE FROM account WHERE id = ?")

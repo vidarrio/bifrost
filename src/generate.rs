@@ -261,13 +261,16 @@ pub async fn clear_apworlds(season: i64) -> Result<(), String> {
 async fn stage_tracker_apworld(season: i64) {
     let cfg = config::get();
     let src = cfg.vendor_file(TRACKER_APWORLD);
-    let dst = cfg.season(season).worlds.join(TRACKER_APWORLD);
+    let dirs = cfg.season(season);
+    let dst = dirs.worlds.join(TRACKER_APWORLD);
     if let Err(e) = tokio::fs::copy(&src, &dst).await {
         tracing::warn!(
             "staging Universal Tracker apworld ({} -> {}): {e}",
             src.display(),
             dst.display()
         );
+    } else if let Err(e) = ap_adapter::pin_shipped(&dirs, TRACKER_APWORLD) {
+        tracing::warn!("pinning the staged Universal Tracker apworld: {e}");
     }
 }
 
@@ -358,10 +361,10 @@ fn ap_slots(meta: &Meta) -> Vec<(i64, String, String)> {
 
 /// Decode a freshly rolled seed: its name and AP roster.
 async fn read_seed(
-    season: i64,
+    dirs: &config::SeasonDirs,
     seed_zip: &Path,
 ) -> Result<(String, Vec<(i64, String, String)>), String> {
-    let meta = ap_adapter::decode_meta(&config::get().season(season), seed_zip).await?;
+    let meta = ap_adapter::decode_meta(dirs, seed_zip).await?;
     let seed_name = meta
         .seed
         .clone()
@@ -377,6 +380,10 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: i64) {
     let Some(prev) = db.season(season).await.map(|s| s.state()) else {
         return set(&state, false, "Failed — no such season");
     };
+    // A live season is re-rolled (which keeps claims), never generated afresh.
+    if !matches!(prev, State::Draft | State::Signup) {
+        return set(&state, false, "Failed — the season is already live; re-roll it instead");
+    }
     // Refuse up front rather than generate a world that can't go live (no
     // free AP port, or another season live on an external server).
     if let Err(e) = db.can_go_live(season).await {
@@ -427,12 +434,45 @@ fn now() -> i64 {
 
 /// Roll with the active Archipelago install, then pin the season to it: from
 /// here its server and helpers run the version that made its seed.
-async fn roll(db: &Db, season: i64) -> Result<(), String> {
+/// One generation at a time on the whole instance: each can take GBs of
+/// memory, next to every live season's AP server.
+static GENERATION: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+/// Generate with the active install; the season's dirs bound to that install
+/// (to read the new seed with). Waits while another season generates.
+async fn roll(state: &GenState, season: i64) -> Result<config::SeasonDirs, String> {
+    let _turn = match GENERATION.try_acquire() {
+        Ok(p) => p,
+        Err(_) => {
+            let msg = state.lock().map(|g| g.1.clone()).unwrap_or_default();
+            set(state, true, "Waiting for another season's generation to finish…");
+            let p = GENERATION.acquire().await.map_err(|e| e.to_string())?;
+            set(state, true, msg);
+            p
+        }
+    };
     let ap = crate::apinstall::active();
-    let dirs = config::get().season(season).with_install(ap.clone());
+    let dirs = config::get().season(season).with_install(ap);
     ap_adapter::generate(&dirs).await?;
-    db.set_season_ap_version(season, &ap.version).await.map_err(|e| e.to_string())?;
-    crate::apinstall::pin(season, Some(ap.version));
+    Ok(dirs)
+}
+
+/// Deploy the new seed with its season pinned to the install that generated
+/// it (the server restarts on it); on failure the old seed stays deployed,
+/// so the old pin comes back too.
+async fn deploy(db: &Db, rts: &Runtimes, season: i64, dirs: &config::SeasonDirs, seed_zip: &Path) -> Result<(), String> {
+    let version = dirs.install.as_ref().map(|i| i.version.clone());
+    let before = db.season(season).await.and_then(|s| s.ap_version);
+    let pin = |v: Option<String>| async move {
+        db.set_season_ap_version(season, v.as_deref()).await.map_err(|e| e.to_string())?;
+        crate::apinstall::pin(season, v);
+        Ok::<(), String>(())
+    };
+    pin(version).await?;
+    if let Err(e) = rts.redeploy(season, seed_zip).await {
+        let _ = pin(before).await;
+        return Err(e);
+    }
     Ok(())
 }
 
@@ -459,11 +499,11 @@ async fn regen_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> 
     clear_old_seeds(season).await;
     // Always keep the Universal Tracker apworld present for the in-logic feature.
     stage_tracker_apworld(season).await;
-    roll(db, season).await?;
+    let dirs = roll(state, season).await?;
 
     let seed_zip = newest_seed(season).await.ok_or("no seed was produced")?;
     set(state, true, "Mapping slots and carrying over claims…");
-    let (seed_name, ap_slots) = read_seed(season, &seed_zip).await?;
+    let (seed_name, ap_slots) = read_seed(&dirs, &seed_zip).await?;
     // The new seed is the season's from here: the tracker accepts the restarted
     // server, and data derived from the old seed is dropped.
     db.set_season_seed(season, &seed_name).await.map_err(|e| e.to_string())?;
@@ -471,7 +511,7 @@ async fn regen_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> 
     db.remap_season(season, &ap_slots).await.map_err(|e| e.to_string())?;
 
     set(state, true, "Deploying…");
-    rts.redeploy(season, &seed_zip).await?;
+    deploy(db, rts, season, &dirs, &seed_zip).await?;
 
     Ok(format!(
         "Regenerated seed {seed_name} — {} AP slots, claims carried over. The game is restarting on a fresh save.",
@@ -480,6 +520,10 @@ async fn regen_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> 
 }
 
 async fn run_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> Result<String, String> {
+    if !db.stale_holds(season).await.is_empty() {
+        set(state, true, "Checking held signups…");
+        crate::worlds::recheck_stale(db, season).await;
+    }
     let subs = db.submissions(season).await.map_err(|e| e.to_string())?;
     if subs.is_empty() {
         return Err("no submissions to generate from".into());
@@ -520,6 +564,7 @@ async fn run_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> Re
         )
         .await
         .map_err(|e| format!("staging the Minecraft apworld: {e}"))?;
+        ap_adapter::pin_shipped(&season, COMMON_APWORLD)?;
         tokio::fs::copy(common.join(COMMON_YAML), season.players.join(COMMON_YAML))
         .await
         .map_err(|e| format!("staging the common-game YAML: {e}"))?;
@@ -533,12 +578,15 @@ async fn run_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> Re
         true,
         "Generating the multiworld… (this can take a minute)",
     );
-    roll(db, season_id).await?;
+    let dirs = roll(state, season_id).await?;
 
     let seed_zip = newest_seed(season_id).await.ok_or("no seed was produced")?;
     set(state, true, "Mapping slots and claims…");
-    let (seed_name, ap_slots) = read_seed(season_id, &seed_zip).await?;
+    let (seed_name, ap_slots) = read_seed(&dirs, &seed_zip).await?;
     db.set_season_seed(season_id, &seed_name).await.map_err(|e| e.to_string())?;
+    // A fresh world: nothing from an earlier, failed attempt carries over.
+    db.clear_all_slots(season_id).await.map_err(|e| e.to_string())?;
+    db.clear_seed_data(season_id).await.map_err(|e| e.to_string())?;
     db.seed_from_submissions(
         season_id,
         &ap_slots,
@@ -549,7 +597,7 @@ async fn run_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> Re
     .map_err(|e| e.to_string())?;
 
     set(state, true, "Deploying…");
-    rts.redeploy(season_id, &seed_zip).await?;
+    deploy(db, rts, season_id, &dirs, &seed_zip).await?;
 
     let common = if mc {
         " The Minecraft common game is included — run “Deploy common game” (manage → archipelago) to ship it to the Minecraft server."

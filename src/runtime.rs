@@ -110,18 +110,14 @@ impl Runtimes {
                 h => h.to_string(),
             };
             // Bifrost's own connections (tracker, admin console) join the
-            // room as one of its slots: the configured one, else the first.
-            let first_slot = self
-                .db
-                .slots(id)
-                .await
-                .ok()
-                .and_then(|s| s.into_iter().min_by_key(|r| r.ap_slot).map(|r| r.name));
+            // room as one of its slots: the configured one when this season
+            // has it (BIFROST_SLOT is instance-wide), else the first.
+            let slots = self.db.slots(id).await.unwrap_or_default();
+            let configured = config::var("BIFROST_SLOT").filter(|n| slots.iter().any(|r| &r.name == n));
+            let first_slot = slots.into_iter().min_by_key(|r| r.ap_slot).map(|r| r.name);
             Some(ApConfig {
                 url: format!("ws://{host}:{port}"),
-                slot: config::var("BIFROST_SLOT")
-                    .or(first_slot)
-                    .unwrap_or_default(),
+                slot: configured.or(first_slot).unwrap_or_default(),
                 password,
                 admin_password,
             })
@@ -129,7 +125,13 @@ impl Runtimes {
             self.external.clone()
         };
         *rt.ap.write().unwrap() = ap.clone();
+        self.spawn_workers(id, &rt, ap);
+    }
 
+    /// The season's tracker, in-logic recomputer and (external mode) activity
+    /// ingester, connecting with `ap`.
+    fn spawn_workers(&self, id: i64, rt: &SeasonRt, ap: Option<ApConfig>) {
+        let cfg = config::get();
         let mut workers = rt.workers.lock().unwrap();
         if let Some(ap) = ap {
             tracing::info!("season {id}: AP tracker watching {}", ap.url);
@@ -210,11 +212,21 @@ impl Runtimes {
         }
     }
 
-    /// Update the live season's connect password everywhere Bifrost uses it.
+    /// Update the live season's connect password everywhere Bifrost uses it:
+    /// the shared config, and the workers (restarted, as they hold their own
+    /// copy). The AP server supervisor reads it from the database on each start.
     pub fn set_connect_password(&self, id: i64, password: &str) {
-        if let Some(cfg) = self.get(id).ap.write().unwrap().as_mut() {
+        let rt = self.get(id);
+        let ap = {
+            let mut ap = rt.ap.write().unwrap();
+            let Some(cfg) = ap.as_mut() else { return };
             cfg.password = password.to_string();
+            ap.clone()
+        };
+        for w in rt.workers.lock().unwrap().drain(..) {
+            w.abort();
         }
+        self.spawn_workers(id, &rt, ap);
     }
 
     /// Stop a season's AP server (saving) and workers, and clear its board

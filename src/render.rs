@@ -1674,23 +1674,26 @@ pub fn admin_page(
     if running {
         b.push_str(r#"<script>setTimeout(function(){location.reload()},4000)</script>"#);
     } else {
-        b.push_str(&format!(
-            r#"<div class="btnrow">{}{}</div>"#,
-            action_btn(
+        // A fresh generation for a season that isn't live yet; a re-roll
+        // (keeping claims) once it is.
+        let btn = match season.state() {
+            crate::db::State::Draft | crate::db::State::Signup => action_btn(
                 "admin/generate",
                 &[],
                 "Generate the season",
                 false,
-                "Generate a NEW season from the signups now? This restarts the game and closes signups."
+                "Generate the season from the signups now? This closes signups and starts the game.",
             ),
-            action_btn(
+            crate::db::State::Live => action_btn(
                 "admin/regenerate",
                 &[],
                 "Regenerate (re-roll current)",
                 false,
-                "Re-roll the current lineup into a new world with a fresh save? Claims are kept; the game restarts."
-            )
-        ));
+                "Re-roll the current lineup into a new world with a fresh save? Claims are kept; the game restarts.",
+            ),
+            _ => String::new(),
+        };
+        b.push_str(&format!(r#"<div class="btnrow">{btn}</div>"#));
     }
 
     b.push_str(&mods_section(mods));
