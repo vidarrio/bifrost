@@ -616,10 +616,11 @@ so Bifrost can carry small compatibility patches: each build is an upstream
 tag plus `packaging/archipelago/patches/`, released as
 `<tag>-bifrost.<build>` by `release.sh`, with a `BIFROST_VERSION` file that
 names the install (players are shown the upstream part). The first patch
-silences join/leave/tag-change/`!admin` announcements for clients tagged
-`Bifrost`, which every Bifrost connection sends (`ap::QUIET_TAG`, the
-in-logic helper). Upstream servers still work; they just announce those
-clients.
+silences join/leave/tag-change/`!admin` announcements for clients that
+present the server's `BIFROST_QUIET_KEY` (random per Bifrost process, given
+only to the AP servers it runs; `ap::quiet_key`, also passed to the in-logic
+helper). A client-chosen tag would let players connect unannounced. Upstream
+servers still work; they just announce those clients.
 
 **Backups — as built (`src/backup.rs`).** Nightly at `[backup] hour` (UTC,
 default 04:00; `off` disables), plus *Back up now* on the settings page and

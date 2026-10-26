@@ -16,10 +16,24 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
 
-/// The tag every Bifrost connection carries: Bifrost's Archipelago fork
-/// doesn't announce such clients joining, leaving or using `!admin`
-/// (`packaging/archipelago/patches/`). Upstream servers just list it.
-pub const QUIET_TAG: &str = "Bifrost";
+/// The key that marks a connection as Bifrost's own: Bifrost's Archipelago
+/// fork doesn't announce clients that present it (`bifrost_key` in Connect)
+/// joining, leaving or using `!admin` (`packaging/archipelago/patches/`).
+/// Random per process and handed only to the AP servers Bifrost runs (env
+/// `BIFROST_QUIET_KEY`), so it's never sent to an external server. Not the
+/// admin password: the in-logic helper, which runs apworld code, gets it too.
+pub fn quiet_key() -> Option<&'static str> {
+    static KEY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    crate::config::get().ap_managed.then(|| KEY.get_or_init(crate::auth::new_token).as_str())
+}
+
+/// Add the quiet key to a `[Connect]` message, when there is one.
+fn keyed(mut connect: Value) -> Value {
+    if let (Some(key), Some(c)) = (quiet_key(), connect.get_mut(0).and_then(Value::as_object_mut)) {
+        c.insert("bifrost_key".into(), key.into());
+    }
+    connect
+}
 
 /// A hint as stored in `_read_hints_*` (ids; names resolved at render via Meta).
 #[derive(Clone)]
@@ -472,10 +486,11 @@ async fn run_once(
                         "uuid": "bifrost-tracker",
                         "version": {"class": "Version", "major": 0, "minor": 6, "build": 8},
                         "items_handling": 0,
-                        "tags": ["Tracker", QUIET_TAG],
+                        "tags": ["Tracker"],
                         "slot_data": false,
                         "password": cfg.password,
                     }]);
+                    let connect = keyed(connect);
                     if let Ok(mut b) = board.write() {
                         if let Some(seed) = pkt.get("seed_name").and_then(Value::as_str) {
                             b.seed = Some(seed.to_string());
@@ -715,9 +730,10 @@ pub async fn mark_goal(url: &str, password: &str, name: &str, game: &str) -> Res
                         let connect = json!([{
                             "cmd": "Connect", "game": game, "name": name, "uuid": "bifrost-goal",
                             "version": {"class": "Version", "major": 0, "minor": 6, "build": 8},
-                            "items_handling": 7, "tags": [QUIET_TAG], "slot_data": false,
+                            "items_handling": 7, "tags": [], "slot_data": false,
                             "password": password,
                         }]);
+                        let connect = keyed(connect);
                         tx.send(Message::Text(connect.to_string()))
                             .await
                             .map_err(|e| format!("send Connect: {e}"))?;
@@ -828,9 +844,10 @@ pub async fn send_hint(
                         let connect = json!([{
                             "cmd": "Connect", "game": "", "name": name, "uuid": "bifrost-hint",
                             "version": {"class": "Version", "major": 0, "minor": 6, "build": 8},
-                            "items_handling": 0, "tags": ["TextOnly", QUIET_TAG], "slot_data": false,
+                            "items_handling": 0, "tags": ["TextOnly"], "slot_data": false,
                             "password": password,
                         }]);
+                        let connect = keyed(connect);
                         tx.send(Message::Text(connect.to_string()))
                             .await
                             .map_err(|e| format!("send Connect: {e}"))?;
@@ -968,9 +985,10 @@ pub async fn send_admin(
                         let connect = json!([{
                             "cmd": "Connect", "game": "", "name": connect_name, "uuid": "bifrost-admin",
                             "version": {"class": "Version", "major": 0, "minor": 6, "build": 8},
-                            "items_handling": 0, "tags": ["TextOnly", QUIET_TAG], "slot_data": false,
+                            "items_handling": 0, "tags": ["TextOnly"], "slot_data": false,
                             "password": password,
                         }]);
+                        let connect = keyed(connect);
                         tx.send(Message::Text(connect.to_string()))
                             .await
                             .map_err(|e| format!("send Connect: {e}"))?;
@@ -1081,9 +1099,10 @@ pub async fn slot_points(url: &str, password: &str, name: &str) -> Option<i64> {
                         let connect = json!([{
                             "cmd": "Connect", "game": "", "name": name, "uuid": "bifrost-points",
                             "version": {"class": "Version", "major": 0, "minor": 6, "build": 8},
-                            "items_handling": 0, "tags": ["TextOnly", QUIET_TAG], "slot_data": false,
+                            "items_handling": 0, "tags": ["TextOnly"], "slot_data": false,
                             "password": password,
                         }]);
+                        let connect = keyed(connect);
                         tx.send(Message::Text(connect.to_string())).await.ok()?;
                     }
                     "ConnectionRefused" => return None,

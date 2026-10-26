@@ -44,6 +44,7 @@ struct Access {
     write: Vec<PathBuf>,
     read: Vec<PathBuf>,
     network: bool,
+    env: Vec<(&'static str, OsString)>,
 }
 
 /// A sandboxed helper-script run against `season`.
@@ -69,7 +70,7 @@ async fn run_helper(
         program: &ap.python,
         args: all_args,
         cwd: &season.root,
-        env: helper_env(season, &ap),
+        env: helper_env(season, &ap).into_iter().chain(access.env).collect(),
         read,
         write: access.write,
         network: access.network,
@@ -103,7 +104,8 @@ async fn ensure_host_yaml(season: &SeasonDirs, ap: &Install) -> Result<(), Strin
     const INIT: &str = "import bifrost_ap, settings\nsettings.get_settings()\n";
     let job = Job {
         program: &ap.python,
-        args: vec!["-c".into(), INIT.into()],
+        // -P: don't put the cwd (the season dir) on sys.path.
+        args: vec!["-P".into(), "-c".into(), INIT.into()],
         cwd: &season.root,
         env: {
             let mut e = helper_env(season, ap);
@@ -423,6 +425,7 @@ pub async fn inlogic(
     let access = Access {
         write: vec![dir.clone()],
         network: true,
+        env: crate::ap::quiet_key().map(|k| ("BIFROST_QUIET_KEY", k.into())).into_iter().collect(),
         ..Default::default()
     };
     let args = vec![
@@ -483,8 +486,10 @@ for r, _, fs in os.walk(sys.argv[1]):
     let cfg = config::get();
     let job = Job {
         program: &cfg.ap_python,
-        args: vec!["-c".into(), SCRIPT.into(), dir.into()],
-        cwd: dir,
+        // -I and cwd /: with `-c` Python would put the cwd — the uploaded pack
+        // — first on sys.path, so a pack shipping `PIL/` would run its code.
+        args: vec!["-I".into(), "-c".into(), SCRIPT.into(), dir.into()],
+        cwd: Path::new("/"),
         env: vec![("PYTHONDONTWRITEBYTECODE", "1".into())],
         read: vec![],
         write: vec![dir.to_path_buf()],

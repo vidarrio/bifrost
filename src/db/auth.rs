@@ -310,7 +310,10 @@ impl Db {
     /// step with the IdP. `role` is applied when the IdP is authoritative for
     /// roles (a group mapping is configured); otherwise a new account starts as
     /// a user and keeps whatever role the console gives it. `None` if the
-    /// account is disabled.
+    /// account is disabled. When the IdP's username is taken by another
+    /// account (e.g. a native one from before the switch), a new account gets
+    /// `name-2`, `name-3`, … and an existing one keeps its current name —
+    /// accounts are never linked by name.
     pub async fn idp_principal(
         &self,
         subject: &str,
@@ -318,6 +321,22 @@ impl Db {
         role: Option<Role>,
         now: i64,
     ) -> Result<Option<Principal>, sqlx::Error> {
+        // Every signed-in request lands here: answer from a read when nothing
+        // changed, and only take the write lock when something did.
+        let current: Option<(i64, String, String, bool)> =
+            sqlx::query_as("SELECT id, username, role, disabled FROM account WHERE idp_subject = ?")
+                .bind(subject)
+                .fetch_optional(&self.pool)
+                .await?;
+        if let Some((id, name, r, disabled)) = &current {
+            if *disabled {
+                return Ok(None);
+            }
+            let role_ok = role.is_none_or(|want| want.as_str() == r);
+            if role_ok && (name == username || self.username_taken(username, Some(*id)).await?) {
+                return Ok(Some(PrincipalRow { id: *id, username: name.clone(), role: r.clone() }.into()));
+            }
+        }
         // Reads then writes: take the write lock up front (see `transition`).
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let existing: Option<(i64, bool)> =
@@ -328,24 +347,45 @@ impl Db {
         let id = match existing {
             Some((_, true)) => return Ok(None),
             Some((id, false)) => {
-                sqlx::query("UPDATE account SET username = ? WHERE id = ? AND username <> ?")
-                    .bind(username)
-                    .bind(id)
-                    .bind(username)
-                    .execute(&mut *tx)
-                    .await?;
+                sqlx::query(
+                    "UPDATE account SET username = ? WHERE id = ? AND username <> ? \
+                     AND NOT EXISTS (SELECT 1 FROM account WHERE username = ? AND id <> ?)",
+                )
+                .bind(username)
+                .bind(id)
+                .bind(username)
+                .bind(username)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
                 id
             }
-            None => sqlx::query(
-                "INSERT INTO account (username, idp_subject, role, created_at) VALUES (?, ?, ?, ?)",
-            )
-            .bind(username)
-            .bind(subject)
-            .bind(role.unwrap_or(Role::User).as_str())
-            .bind(now)
-            .execute(&mut *tx)
-            .await?
-            .last_insert_rowid(),
+            None => {
+                let mut name = username.to_string();
+                let mut n = 1;
+                while sqlx::query_scalar::<_, i64>("SELECT count(*) FROM account WHERE username = ?")
+                    .bind(&name)
+                    .fetch_one(&mut *tx)
+                    .await?
+                    > 0
+                {
+                    n += 1;
+                    name = format!("{username}-{n}");
+                }
+                if n > 1 {
+                    tracing::warn!("forward-auth: username {username} is taken; the IdP user {subject} gets {name}");
+                }
+                sqlx::query(
+                    "INSERT INTO account (username, idp_subject, role, created_at) VALUES (?, ?, ?, ?)",
+                )
+                .bind(&name)
+                .bind(subject)
+                .bind(role.unwrap_or(Role::User).as_str())
+                .bind(now)
+                .execute(&mut *tx)
+                .await?
+                .last_insert_rowid()
+            }
         };
         if let Some(role) = role {
             sqlx::query("UPDATE account SET role = ? WHERE id = ?")
@@ -360,6 +400,17 @@ impl Db {
             .await?;
         tx.commit().await?;
         Ok(Some(p.into()))
+    }
+
+    /// Is `username` held by an account other than `except`? (Case-insensitive,
+    /// like the column.)
+    async fn username_taken(&self, username: &str, except: Option<i64>) -> Result<bool, sqlx::Error> {
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM account WHERE username = ? AND id IS NOT ?")
+            .bind(username)
+            .bind(except)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(n > 0)
     }
 
     // ---- links ----
@@ -670,6 +721,21 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn idp_names_never_collide_with_other_accounts() {
+        let db = db().await;
+        let native = db.create_account("Alice", "h", Role::Sysadmin, 0).await.unwrap();
+        // A new IdP user whose name is taken gets a suffix, not the account.
+        let p = db.idp_principal("sub-a", "alice", None, 0).await.unwrap().unwrap();
+        assert_ne!(p.account_id, native);
+        assert_eq!((p.username.as_str(), p.role), ("alice-2", Role::User));
+        let q = db.idp_principal("sub-b", "alice", None, 0).await.unwrap().unwrap();
+        assert_eq!(q.username, "alice-3");
+        // Renamed by the IdP to a taken name: keeps its own.
+        let r = db.idp_principal("sub-b", "ALICE-2", None, 0).await.unwrap().unwrap();
+        assert_eq!((r.account_id, r.username.as_str()), (q.account_id, "alice-3"));
     }
 
     #[tokio::test]

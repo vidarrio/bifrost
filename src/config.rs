@@ -300,9 +300,10 @@ fn env_var(name: &str) -> Option<String> {
 }
 
 /// A `BIFROST_*` setting: the environment, else the config file. Before
-/// [`Config::load`] (and in tests) only the environment is consulted.
+/// [`Config::load`] (and in tests) only the environment is consulted. An
+/// empty value is unset either way (e.g. the template's `secret = ""`).
 pub fn var(name: &str) -> Option<String> {
-    env_var(name).or_else(|| FILE_VARS.get()?.get(name).cloned())
+    env_var(name).or_else(|| FILE_VARS.get()?.get(name).filter(|v| !v.trim().is_empty()).cloned())
 }
 
 /// `38281-38300` (or a single port) → an inclusive range.

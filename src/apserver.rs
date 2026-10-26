@@ -220,6 +220,9 @@ fn start(
     let ap = crate::apinstall::for_dirs(dirs);
     let mut env = crate::ap_adapter::ap_env(dirs, &ap);
     env.push(("PYTHONUNBUFFERED", "1".into()));
+    if let Some(key) = crate::ap::quiet_key() {
+        env.push(("BIFROST_QUIET_KEY", key.into()));
+    }
     let job = Job {
         program: &ap.python,
         args,

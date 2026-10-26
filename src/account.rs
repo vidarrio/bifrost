@@ -4,8 +4,8 @@
 
 use axum::{
     Form, Router,
-    extract::{Path, Query, State},
-    http::header,
+    extract::{ConnectInfo, Path, Query, State},
+    http::{HeaderMap, header},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
@@ -90,13 +90,19 @@ struct LoginForm {
     rd: Option<String>,
 }
 
-async fn login_post(State(st): State<AppState>, Form(f): Form<LoginForm>) -> Response {
+async fn login_post(
+    State(st): State<AppState>,
+    peer: Option<axum::Extension<ConnectInfo<std::net::SocketAddr>>>,
+    headers: HeaderMap,
+    Form(f): Form<LoginForm>,
+) -> Response {
     if let Some(r) = native_only(&st) {
         return r;
     }
     let rd = auth::safe_redirect(f.rd.as_deref());
     let username = f.username.trim().to_string();
-    let wait = st.auth.throttle.wait(&username);
+    let client = crate::ratelimit::client_ip(&crate::config::get().trusted_proxies, &headers, peer.map(|p| p.0.0.ip()));
+    let wait = st.auth.throttle.wait(&username, client);
     if wait > 0 {
         let msg = format!("Too many failed attempts — try again in {wait} s.");
         return render::login_page(&rd, &username, Some(&msg)).into_response();
@@ -114,7 +120,7 @@ async fn login_post(State(st): State<AppState>, Form(f): Form<LoginForm>) -> Res
         .unwrap_or(false);
     match found {
         Some((id, _)) if ok => {
-            st.auth.throttle.succeed(&username);
+            st.auth.throttle.succeed(&username, client);
             match st.auth.start_session(id).await {
                 Ok(cookie) => with_cookie(&rd, cookie),
                 Err(e) => {
@@ -124,7 +130,7 @@ async fn login_post(State(st): State<AppState>, Form(f): Form<LoginForm>) -> Res
             }
         }
         _ => {
-            st.auth.throttle.fail(&username);
+            st.auth.throttle.fail(&username, client);
             render::login_page(&rd, &username, Some("Wrong username or password.")).into_response()
         }
     }
@@ -351,7 +357,7 @@ async fn reset_post(
     };
     match st.auth.db.redeem_reset(&th, &h, auth::now()).await {
         Ok(Some(id)) => {
-            st.auth.throttle.succeed(&username);
+            st.auth.throttle.forgive(&username);
             tracing::info!("password reset for {username}");
             match st.auth.start_session(id).await {
                 Ok(cookie) => with_cookie("/", cookie),

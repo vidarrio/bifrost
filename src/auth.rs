@@ -350,39 +350,47 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// Per-username failed-login backoff: after [`FREE_FAILURES`], each further
-/// failure doubles the lockout (from 30 s, capped at 15 min). In memory only —
-/// a restart forgives.
+/// Failed-login backoff per username *and client*: after [`FREE_FAILURES`],
+/// each further failure doubles the lockout (from 30 s, capped at 15 min).
+/// Keyed by client too, so one client's failures can't lock an account for
+/// everyone (the per-IP rate limit bounds guessing across usernames). In
+/// memory only — a restart forgives.
 #[derive(Default)]
 pub struct Throttle {
-    failures: Mutex<HashMap<String, (u32, Instant)>>,
+    failures: Mutex<HashMap<(String, Option<IpAddr>), (u32, Instant)>>,
 }
 
 const FREE_FAILURES: u32 = 5;
 
 impl Throttle {
-    /// Seconds until `username` may try again (0 = now).
-    pub fn wait(&self, username: &str) -> u64 {
+    fn key(username: &str, client: Option<IpAddr>) -> (String, Option<IpAddr>) {
+        (username.to_lowercase(), client)
+    }
+    /// Seconds until `client` may try `username` again (0 = now).
+    pub fn wait(&self, username: &str, client: Option<IpAddr>) -> u64 {
         let map = self.failures.lock().unwrap();
-        let Some(&(n, last)) = map.get(&username.to_lowercase()) else {
+        let Some(&(n, last)) = map.get(&Self::key(username, client)) else {
             return 0;
         };
         let lock = Self::lockout(n);
         lock.saturating_sub(last.elapsed()).as_secs()
     }
-    pub fn fail(&self, username: &str) {
+    pub fn fail(&self, username: &str, client: Option<IpAddr>) {
         let mut map = self.failures.lock().unwrap();
         let e = map
-            .entry(username.to_lowercase())
+            .entry(Self::key(username, client))
             .or_insert((0, Instant::now()));
         e.0 += 1;
         e.1 = Instant::now();
     }
-    pub fn succeed(&self, username: &str) {
-        self.failures
-            .lock()
-            .unwrap()
-            .remove(&username.to_lowercase());
+    /// A successful sign-in: forgive that client.
+    pub fn succeed(&self, username: &str, client: Option<IpAddr>) {
+        self.failures.lock().unwrap().remove(&Self::key(username, client));
+    }
+    /// A password reset: forgive every client.
+    pub fn forgive(&self, username: &str) {
+        let u = username.to_lowercase();
+        self.failures.lock().unwrap().retain(|(name, _), _| *name != u);
     }
     fn lockout(failures: u32) -> Duration {
         if failures < FREE_FAILURES {
@@ -652,9 +660,18 @@ pub fn pct(s: &str) -> String {
 }
 
 /// A post-login redirect target, only if it's a local path (no open redirect).
+/// Visible ASCII only: browsers drop tabs/newlines from a Location (so
+/// `/\t/evil` would become `//evil`), and non-ASCII can't be a header value.
 pub fn safe_redirect(rd: Option<&str>) -> String {
     match rd {
-        Some(r) if r.starts_with('/') && !r.starts_with("//") && !r.contains('\\') => r.to_string(),
+        Some(r)
+            if r.starts_with('/')
+                && !r.starts_with("//")
+                && !r.contains('\\')
+                && r.bytes().all(|b| b.is_ascii_graphic()) =>
+        {
+            r.to_string()
+        }
         _ => "/".to_string(),
     }
 }
@@ -792,19 +809,34 @@ mod tests {
         assert_eq!(safe_redirect(Some("https://evil.example")), "/");
         assert_eq!(safe_redirect(Some("/\\evil.example")), "/");
         assert_eq!(safe_redirect(None), "/");
+        assert_eq!(safe_redirect(Some("/\t/evil.example")), "/");
+        assert_eq!(safe_redirect(Some("/\n/evil.example")), "/");
+        assert_eq!(safe_redirect(Some("/ /evil.example")), "/");
+        assert_eq!(safe_redirect(Some("/caf\u{e9}")), "/");
     }
 
     #[test]
     fn throttle_backs_off_then_forgives() {
         let t = Throttle::default();
+        let (me, them) = (Some("10.0.0.1".parse().unwrap()), Some("10.0.0.2".parse().unwrap()));
         for _ in 0..FREE_FAILURES - 1 {
-            t.fail("Ann");
+            t.fail("Ann", them);
         }
-        assert_eq!(t.wait("ann"), 0);
-        t.fail("ann");
-        assert!(t.wait("ANN") > 0);
-        t.succeed("ann");
-        assert_eq!(t.wait("ann"), 0);
+        assert_eq!(t.wait("ann", them), 0);
+        t.fail("ann", them);
+        assert!(t.wait("ANN", them) > 0);
+        // Another client's failures don't lock the account for me.
+        assert_eq!(t.wait("ann", me), 0);
+        t.succeed("ann", me);
+        assert!(t.wait("ann", them) > 0, "my sign-in doesn't forgive them");
+        t.succeed("ann", them);
+        assert_eq!(t.wait("ann", them), 0);
+        t.fail("ann", them);
+        for _ in 0..FREE_FAILURES {
+            t.fail("ann", them);
+        }
+        t.forgive("ANN");
+        assert_eq!(t.wait("ann", them), 0, "a reset forgives everyone");
         assert_eq!(Throttle::lockout(100), Duration::from_secs(15 * 60));
     }
 

@@ -10,6 +10,7 @@ Writes: {"slot","game"?,"count","in_logic":[...],"captured":bool,"error"?}
 
 Runs under the AP venv; AP paths are pinned to the season by bifrost_ap, so UT
 finds the season's custom worlds and regenerates from its Players/ YAMLs."""
+import os
 import sys
 import json
 import asyncio
@@ -66,7 +67,10 @@ async def run():
     # received items + checks, runs the logic once, fires our callback, and exits.
     ctx = TrackerGameContext(connect, password, print_count=True)
     ctx.auth = slot
-    ctx.tags.add("Bifrost")  # quiet join/leave on Bifrost's AP fork (src/ap.rs QUIET_TAG)
+    key = os.environ.get("BIFROST_QUIET_KEY")
+    if key:  # Bifrost's AP fork doesn't announce this connection (src/ap.rs quiet_key)
+        send_connect = ctx.send_connect
+        ctx.send_connect = lambda **kw: send_connect(bifrost_key=key, **kw)
     # Regenerate from the season's YAMLs regardless of any host.yaml override.
     ctx.tracker_core.player_folder_override = bifrost_ap.season_path("Players")
     ctx.set_callback(cb)

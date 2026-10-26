@@ -18,11 +18,11 @@ defaults to the fork). The image and the native bundle pin one build
 
 | Patch | What it does |
 |---|---|
-| `0001` MultiServer: no announcements for Bifrost's own clients | Clients tagged `Bifrost` join, leave, change tags and use `!admin` without a broadcast to everyone. Bifrost's tools (board tracker, points, hint and admin relays, goal reporter, in-logic tracker) all send the tag (`QUIET_TAG` in `src/ap.rs`). Hints and goals are still announced as usual. |
+| `0001` MultiServer: no announcements for Bifrost's own clients | A client that presents the server's `BIFROST_QUIET_KEY` (as `bifrost_key` in its Connect) joins, leaves, changes tags and uses `!admin` without a broadcast to everyone. Bifrost generates the key per process, gives it to the AP servers it runs, and every one of its tools sends it (`quiet_key` in `src/ap.rs`). A key, not a tag: players could set a tag themselves to sneak into slots unannounced. Hints and goals are still announced as usual. |
 
 Keep patches small and local, so they carry forward across upstream releases.
-On an upstream server everything still works: the tag just shows up in the
-announcements.
+On an upstream server everything still works; Bifrost's connections are
+just announced like any other.
 
 ## Cutting a build
 
