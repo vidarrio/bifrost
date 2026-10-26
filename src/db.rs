@@ -871,11 +871,14 @@ impl Db {
     }
 
     /// A page of activity involving one participant — as sender OR receiver —
-    /// newest first. Powers a game page's own paginated "Log" tab.
+    /// newest first, optionally narrowed to rows whose text contains `q`
+    /// (case-insensitive substring; empty `q` matches all). Powers a game page's
+    /// own paginated, searchable "Log" tab.
     pub async fn activity_for_participant(
         &self,
         season: &str,
         name: &str,
+        q: &str,
         offset: i64,
         limit: i64,
     ) -> Vec<ActivityRow> {
@@ -883,10 +886,12 @@ impl Db {
             "SELECT ts, kind, text, item_class FROM activity
              WHERE season = ?1
                AND (sender = ?2 COLLATE NOCASE OR receiver = ?2 COLLATE NOCASE)
-             ORDER BY id DESC LIMIT ?3 OFFSET ?4",
+               AND (?3 = '' OR instr(lower(text), lower(?3)) > 0)
+             ORDER BY id DESC LIMIT ?4 OFFSET ?5",
         )
         .bind(season)
         .bind(name)
+        .bind(q)
         .bind(limit)
         .bind(offset.max(0))
         .fetch_all(&self.pool)
@@ -894,15 +899,18 @@ impl Db {
         .unwrap_or_default()
     }
 
-    /// Total activity rows involving one participant (for the Log tab's pager).
-    pub async fn activity_count_for_participant(&self, season: &str, name: &str) -> i64 {
+    /// Total activity rows involving one participant matching `q` (empty = all),
+    /// for the Log tab's pager.
+    pub async fn activity_count_for_participant(&self, season: &str, name: &str, q: &str) -> i64 {
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM activity
              WHERE season = ?1
-               AND (sender = ?2 COLLATE NOCASE OR receiver = ?2 COLLATE NOCASE)",
+               AND (sender = ?2 COLLATE NOCASE OR receiver = ?2 COLLATE NOCASE)
+               AND (?3 = '' OR instr(lower(text), lower(?3)) > 0)",
         )
         .bind(season)
         .bind(name)
+        .bind(q)
         .fetch_one(&self.pool)
         .await
         .unwrap_or(0)

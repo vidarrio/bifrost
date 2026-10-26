@@ -1899,6 +1899,9 @@ const MC_LOADER: &str = "NeoForge 26.2.0.90"; // mod loader build
 /// the shared stylesheet uses short utility names, so a generic class would
 /// silently inherit unrelated rules (see the header note in this file).
 const GAME_STYLE: &str = r#"<style>
+.gamelogbar{margin:0 0 10px;text-align:center}
+.gamelogbar input[type=search]{width:100%;max-width:420px;box-sizing:border-box;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:8px 11px;font-size:13px;font-family:var(--font)}
+.gamelogbar input[type=search]:focus{outline:none;border-color:var(--accent)}
 .gtabs{display:flex;gap:2px;border-bottom:1px solid var(--bd);margin:22px 0 16px}
 .gtab{background:none;color:var(--muted);border:0;border-bottom:2px solid transparent;border-radius:0;margin-bottom:-1px;padding:8px 15px;font-family:var(--font);font-size:14px;font-weight:600;cursor:pointer}
 .gtab:hover{color:var(--fg)}
@@ -1956,17 +1959,27 @@ bar.addEventListener('click',function(e){var b=e.target.closest('.gtab');if(!b)r
 var h=(location.hash||'').slice(1),el=h&&document.getElementById(h);
 if(el&&el.classList.contains('gtabpanel'))activate(h);
 })();
-// The game's Log tab: paginated, with live refresh of the current page while
-// open. Pager links point at the fragment endpoint; intercept them to swap in
-// place rather than navigate away. The feed's first page is server-rendered.
+// The game's Log tab: a type-to-filter search + a feed whose page size is
+// fitted to the viewport, with live refresh of the current page while open.
+// Pager links (carrying the active search + rpp) are intercepted to swap in
+// place. The first page is server-rendered; JS refits on show/resize.
 (function(){var host=document.getElementById('gamelog');if(!host)return;
-var slot=host.getAttribute('data-slot'),panel=document.getElementById('tab-log');
-var cur='/game/'+slot+'/log/fragment';
-function load(url){cur=url;fetch(url).then(function(r){return r.text();}).then(function(x){host.innerHTML=x;if(window.bifTick)bifTick();}).catch(function(){});}
-host.addEventListener('click',function(e){var a=e.target.closest('a.pg');if(!a)return;e.preventDefault();load(a.getAttribute('href'));});
+var slot=host.getAttribute('data-slot'),panel=document.getElementById('tab-log'),
+    search=document.getElementById('gamelogq'),cur=null,tmr=null,rt=null,rpp=25;
+function into(u){cur=u;fetch(u).then(function(r){return r.text();}).then(function(x){host.innerHTML=x;if(window.bifTick)bifTick();}).catch(function(){});}
+function fit(){ // how many rows fit below the feed's top, within sane bounds
+ var top=host.getBoundingClientRect().top,row=30,ev=host.querySelector('.ev');
+ if(ev){var h=ev.getBoundingClientRect().height;if(h>0)row=h+6;}
+ var n=Math.floor((window.innerHeight-top-64)/row);
+ if(n<8)n=8;if(n>200)n=200;return n;}
+function reload(page){rpp=fit();var q=search?search.value.trim():'';
+ into('/game/'+slot+'/log/fragment?page='+(page||1)+'&rpp='+rpp+(q?('&q='+encodeURIComponent(q)):''));}
+host.addEventListener('click',function(e){var a=e.target.closest('a.pg');if(!a)return;e.preventDefault();into(a.getAttribute('href'));});
+if(search){search.addEventListener('input',function(){clearTimeout(tmr);tmr=setTimeout(function(){reload(1);},200);});}
 var bar=document.querySelector('.gtabs');
-if(bar){bar.addEventListener('click',function(e){var b=e.target.closest('.gtab');if(b&&b.getAttribute('data-tab')==='tab-log')load(cur);});}
-setInterval(function(){if(panel&&!panel.hidden)load(cur);},12000);
+if(bar){bar.addEventListener('click',function(e){var b=e.target.closest('.gtab');if(b&&b.getAttribute('data-tab')==='tab-log')reload(1);});}
+window.addEventListener('resize',function(){if(panel&&panel.hidden)return;clearTimeout(rt);rt=setTimeout(function(){reload(1);},250);});
+setInterval(function(){if(panel&&!panel.hidden&&cur)into(cur);},12000);
 })();
 </script>"#;
 
@@ -2220,37 +2233,50 @@ fn poptracker_panel(ap_slot: i64, has_pack: bool, can_manage: bool) -> String {
     s
 }
 
-/// Rows per page in a game page's Log tab.
+/// Game Log tab page size: the server default (before the client fits it to the
+/// viewport) and the clamp bounds the fitted value must stay within.
 pub const GAME_LOG_RPP: i64 = 25;
+pub const GAME_LOG_RPP_MIN: i64 = 8;
+pub const GAME_LOG_RPP_MAX: i64 = 200;
 
-/// Pages for a given total at [`GAME_LOG_RPP`] (at least 1).
-pub fn game_log_pages(total: i64) -> i64 {
-    ((total + GAME_LOG_RPP - 1) / GAME_LOG_RPP).max(1)
+/// Pages for a given total at `rpp` (at least 1).
+pub fn game_log_pages(total: i64, rpp: i64) -> i64 {
+    ((total + rpp - 1) / rpp.max(1)).max(1)
 }
 
 /// Inner HTML of a game's Log feed (the `#gamelog` contents): one page of rows
 /// plus a numbered pager. Reused by the tab and its live-refresh fragment; the
-/// pager links point at the fragment endpoint and are intercepted client-side.
-pub fn game_log_feed(ap_slot: i64, rows: &[crate::db::ActivityRow], page: i64, pages: i64) -> String {
+/// pager links carry the active search `qs` + `rpp` and are intercepted
+/// client-side so navigation swaps in place.
+pub fn game_log_feed(
+    ap_slot: i64,
+    rows: &[crate::db::ActivityRow],
+    page: i64,
+    pages: i64,
+    rpp: i64,
+    qs: &str,
+) -> String {
     let mut s = String::new();
     if rows.is_empty() {
-        s.push_str(r#"<p class="empty">No activity involving this game yet.</p>"#);
+        s.push_str(r#"<p class="empty">Nothing matches.</p>"#);
         return s;
     }
     render_feed(&mut s, rows, None);
     let base = format!("/game/{ap_slot}/log/fragment");
-    s.push_str(&activity_pager(&base, "", page, pages, GAME_LOG_RPP));
+    s.push_str(&activity_pager(&base, qs, page, pages, rpp));
     s
 }
 
 /// The game page's "Log" tab: this slot's own activity (items it sent or
-/// received, its goals/releases/collects), newest first, paginated.
+/// received, its goals/releases/collects), newest first, with a type-to-filter
+/// search box and a viewport-fitted paginated feed.
 fn log_panel(ap_slot: i64, rows: &[crate::db::ActivityRow], total: i64) -> String {
     let mut s = String::from(
-        r#"<div class="gtabpanel" id="tab-log" hidden><h2>This game's activity</h2>"#,
+        r#"<div class="gtabpanel" id="tab-log" hidden><h2>This game's activity</h2>
+<div class="gamelogbar"><input type="search" id="gamelogq" placeholder="Search this game's activity…" autocomplete="off"></div>"#,
     );
     s.push_str(&format!(r#"<div id="gamelog" class="gamelog" data-slot="{ap_slot}">"#));
-    s.push_str(&game_log_feed(ap_slot, rows, 1, game_log_pages(total)));
+    s.push_str(&game_log_feed(ap_slot, rows, 1, game_log_pages(total, GAME_LOG_RPP), GAME_LOG_RPP, ""));
     s.push_str("</div></div>");
     s
 }

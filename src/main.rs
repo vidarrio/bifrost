@@ -872,12 +872,15 @@ async fn game_view(
     let inlogic = st.db.inlogic_get(&season, ap_slot).await;
 
     // This slot's own activity (sent/received/goaled…) for its paginated "Log"
-    // tab: first page of rows + the total for the pager.
+    // tab: first page of rows + the total for the pager (unfiltered).
     let log = st
         .db
-        .activity_for_participant(&season, &connect_name, 0, render::GAME_LOG_RPP)
+        .activity_for_participant(&season, &connect_name, "", 0, render::GAME_LOG_RPP)
         .await;
-    let log_total = st.db.activity_count_for_participant(&season, &connect_name).await;
+    let log_total = st
+        .db
+        .activity_count_for_participant(&season, &connect_name, "")
+        .await;
 
     // PopTracker: is a pack installed, and may the viewer manage it?
     let pt_has = ptrack::has_pack(&season, ap_slot);
@@ -911,11 +914,16 @@ async fn game_view(
 struct LogPageQuery {
     #[serde(default)]
     page: Option<i64>,
+    #[serde(default)]
+    rpp: Option<i64>,
+    #[serde(default)]
+    q: Option<String>,
 }
 
-/// Live-refresh / pagination fragment for a game page's Log tab: one page of the
-/// `#gamelog` inner HTML (feed + pager), scoped to that slot's participant
-/// (sender or receiver). Public like the board/log fragments.
+/// Live-refresh / pagination / search fragment for a game page's Log tab: one
+/// page of the `#gamelog` inner HTML (feed + pager), scoped to that slot's
+/// participant (sender or receiver) and narrowed by the search term. Public like
+/// the board/log fragments.
 async fn game_log_fragment(
     Path(ap_slot): Path<i64>,
     State(st): State<AppState>,
@@ -931,15 +939,25 @@ async fn game_log_fragment(
     if season.is_empty() || name.is_empty() {
         return Html(String::new());
     }
-    let total = st.db.activity_count_for_participant(&season, &name).await;
-    let pages = render::game_log_pages(total);
+    let term = q.q.as_deref().unwrap_or("").trim();
+    let rpp = q
+        .rpp
+        .unwrap_or(render::GAME_LOG_RPP)
+        .clamp(render::GAME_LOG_RPP_MIN, render::GAME_LOG_RPP_MAX);
+    let total = st.db.activity_count_for_participant(&season, &name, term).await;
+    let pages = render::game_log_pages(total, rpp);
     let page = q.page.unwrap_or(1).clamp(1, pages);
-    let offset = (page - 1) * render::GAME_LOG_RPP;
+    let offset = (page - 1) * rpp;
     let rows = st
         .db
-        .activity_for_participant(&season, &name, offset, render::GAME_LOG_RPP)
+        .activity_for_participant(&season, &name, term, offset, rpp)
         .await;
-    Html(render::game_log_feed(ap_slot, &rows, page, pages))
+    let qs = if term.is_empty() {
+        String::new()
+    } else {
+        format!("q={}", pct(term))
+    };
+    Html(render::game_log_feed(ap_slot, &rows, page, pages, rpp, &qs))
 }
 
 #[derive(Deserialize)]
