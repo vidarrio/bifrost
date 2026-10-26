@@ -397,6 +397,18 @@ Per-season, owned by the moderator, surfaced in the season console:
   ownership, replace/remove, and clear errors. Validation runs in the same
   sandbox as generation.
 
+**Implementation notes (step 3b, partial).** Hash pinning is in: every upload
+goes through `ap_adapter::install_world`, which records its SHA-256, uploader
+and time in `seasons/<id>/worlds.lock.json` (outside `worlds/`, read-only to
+helpers, included in the season bundle). Before any world-importing helper
+runs, every custom world must match its pin — an unpinned file (dropped in
+behind Bifrost's back) or one changed since upload is refused on every tier,
+and the admin's apworld list shows each world's provenance (shipped / pinned
+hash + uploader / ⚠). Worlds Bifrost ships are trusted by hash, not pinned.
+**Not yet built:** sysadmin/mod *acceptance* before an upload is usable, and
+the curated catalog (index-seeded discovery + pinned downloads) — the
+acceptance step changes the signup flow, pending a decision.
+
 ## 9. Console redesign (tabbed)
 
 Split today's flat admin page into a **tabbed console**, scoped by role:

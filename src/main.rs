@@ -1471,7 +1471,7 @@ async fn signup_get(State(st): State<AppState>, me: auth::Me) -> Html<String> {
 /// Step 1 of signup: install an uploaded `.apworld` into the season's
 /// `worlds/` right away, so the checker can validate a custom-game YAML
 /// against it in step 2. Returns JSON for the wizard.
-async fn signup_apworld(mut mp: Multipart) -> Json<serde_json::Value> {
+async fn signup_apworld(me: auth::Me, mut mp: Multipart) -> Json<serde_json::Value> {
     let mut bytes: Option<Vec<u8>> = None;
     let mut fname = String::new();
     while let Ok(Some(field)) = mp.next_field().await {
@@ -1509,8 +1509,14 @@ async fn signup_apworld(mut mp: Multipart) -> Json<serde_json::Value> {
             "ok": false, "error": "That apworld name is reserved — rename the file and try again."
         }));
     }
-    let dst = config::get().season().worlds.join(format!("{base}.apworld"));
-    if tokio::fs::write(&dst, &bytes).await.is_err() {
+    let file = format!("{base}.apworld");
+    let (uploader, _) = me.ident();
+    let installed = tokio::task::spawn_blocking(move || {
+        ap_adapter::install_world(&config::get().season(), &file, &bytes, &uploader)
+    })
+    .await;
+    if !matches!(installed, Ok(Ok(()))) {
+        tracing::warn!("apworld install failed: {installed:?}");
         return Json(serde_json::json!({
             "ok": false, "error": "Couldn't install the apworld on the server."
         }));

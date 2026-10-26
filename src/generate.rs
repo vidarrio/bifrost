@@ -269,7 +269,9 @@ pub fn read_output(member: &str) -> Option<Vec<u8>> {
 
 /// Remove every installed custom apworld from the season's worlds/.
 pub async fn clear_apworlds() -> Result<(), String> {
-    clear_ext(&config::get().season().worlds, "apworld").await
+    let season = config::get().season();
+    clear_ext(&season.worlds, "apworld").await?;
+    ap_adapter::unpin_world(&season, None)
 }
 
 /// Stage the Universal Tracker apworld into the season's worlds/ from the
@@ -311,20 +313,39 @@ pub async fn delete_apworld(name: &str) -> Result<(), String> {
     if name.is_empty() || name.contains('/') || !name.ends_with(".apworld") {
         return Err("invalid apworld name".into());
     }
-    tokio::fs::remove_file(config::get().season().worlds.join(name))
+    let season = config::get().season();
+    tokio::fs::remove_file(season.worlds.join(name))
         .await
-        .map_err(|e| format!("remove {name}: {e}"))
+        .map_err(|e| format!("remove {name}: {e}"))?;
+    ap_adapter::unpin_world(&season, Some(name))
 }
 
-/// The installed custom apworlds, by file name.
-pub async fn list_apworlds() -> Vec<String> {
+/// The installed apworlds as (file name, provenance line): shipped with
+/// Bifrost, or pinned hash + uploader — or flagged when unpinned/changed.
+pub async fn list_apworlds() -> Vec<(String, String)> {
+    let season = config::get().season();
+    let custom = ap_adapter::custom_worlds(&season);
+    let pins = ap_adapter::world_pins(&season);
     let mut out = Vec::new();
-    if let Ok(mut rd) = tokio::fs::read_dir(config::get().season().worlds).await {
+    if let Ok(mut rd) = tokio::fs::read_dir(&season.worlds).await {
         while let Ok(Some(entry)) = rd.next_entry().await {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".apworld") {
-                out.push(name);
+            if !name.ends_with(".apworld") {
+                continue;
             }
+            let detail = if !custom.contains(&name) {
+                "shipped with Bifrost".to_string()
+            } else {
+                let actual = tokio::fs::read(entry.path()).await.map(|b| ap_adapter::sha256_hex(&b));
+                match (pins.get(&name), actual) {
+                    (Some(p), Ok(h)) if p.sha256 == h => {
+                        format!("sha256 {}… · uploaded by {}", &h[..12], p.uploaded_by)
+                    }
+                    (Some(_), _) => "⚠ changed on disk since upload — won't run".to_string(),
+                    (None, _) => "⚠ not installed through Bifrost — won't run".to_string(),
+                }
+            };
+            out.push((name, detail));
         }
     }
     out.sort();

@@ -1435,7 +1435,7 @@ pub fn admin_page(
     running: bool,
     gen_msg: &str,
     subs: &[SubmissionRow],
-    apworlds: &[String],
+    apworlds: &[(String, String)],
     acdata: &str,
     archived: Option<&str>,
     outputs: &[crate::generate::OutputFile],
@@ -1643,10 +1643,11 @@ pub fn admin_page(
     if apworlds.is_empty() {
         b.push_str(r#"<div class="empty">None installed.</div>"#);
     } else {
-        for name in apworlds {
+        for (name, detail) in apworlds {
             b.push_str(&format!(
-                r#"<div class="hintrow"><span>{}</span>{}</div>"#,
+                r#"<div class="hintrow"><span>{} <span class="statline">· {}</span></span>{}</div>"#,
                 esc(name),
+                esc(detail),
                 action_btn(
                     "/admin/delete-apworld",
                     &[("name", name)],

@@ -56,6 +56,7 @@ pub async fn bundle_season(seed: &str, season_txt: &str) -> Result<String, Strin
     let _ = tokio::fs::copy(season.current_save(), sp.join("save.apsave")).await;
     let _ = copy_ext(&season.players, &sp.join("players"), "yaml").await;
     let _ = copy_ext(&season.worlds, &sp.join("worlds"), "apworld").await;
+    let _ = tokio::fs::copy(season.worlds_lock(), sp.join("worlds").join("worlds.lock.json")).await;
 
     // Metadata/roster.
     let _ = tokio::fs::write(sp.join("season.txt"), season_txt).await;

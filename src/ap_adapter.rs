@@ -142,6 +142,68 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
+/// A custom apworld's pin: its content hash when it was accepted, and who
+/// uploaded it.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Pin {
+    pub sha256: String,
+    pub uploaded_by: String,
+    pub uploaded_at: i64,
+}
+
+/// The season's pins (`worlds.lock.json`), by file name. Empty if none.
+pub fn world_pins(season: &SeasonDirs) -> std::collections::BTreeMap<String, Pin> {
+    std::fs::read(season.worlds_lock())
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+fn write_pins(
+    season: &SeasonDirs,
+    pins: &std::collections::BTreeMap<String, Pin>,
+) -> Result<(), String> {
+    let path = season.worlds_lock();
+    let tmp = path.with_extension("json.tmp");
+    let json = serde_json::to_vec_pretty(pins).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, json)
+        .and_then(|_| std::fs::rename(&tmp, &path))
+        .map_err(|e| format!("writing {}: {e}", path.display()))
+}
+
+/// Install an uploaded apworld and pin its hash. The only way custom worlds
+/// should enter a season.
+pub fn install_world(
+    season: &SeasonDirs,
+    file: &str,
+    bytes: &[u8],
+    uploaded_by: &str,
+) -> Result<(), String> {
+    let mut pins = world_pins(season);
+    std::fs::write(season.worlds.join(file), bytes).map_err(|e| format!("install: {e}"))?;
+    pins.insert(
+        file.to_string(),
+        Pin {
+            sha256: sha256_hex(bytes),
+            uploaded_by: uploaded_by.to_string(),
+            uploaded_at: crate::auth::now(),
+        },
+    );
+    write_pins(season, &pins)
+}
+
+/// Forget a removed world's pin (`None` = all of them).
+pub fn unpin_world(season: &SeasonDirs, file: Option<&str>) -> Result<(), String> {
+    let mut pins = world_pins(season);
+    match file {
+        Some(f) => {
+            pins.remove(f);
+        }
+        None => pins.clear(),
+    }
+    write_pins(season, &pins)
+}
+
 /// File names in the season's `worlds/` that aren't Bifrost-shipped worlds.
 pub fn custom_worlds(season: &SeasonDirs) -> Vec<String> {
     let trusted = trusted_world_hashes();
@@ -161,14 +223,31 @@ pub fn custom_worlds(season: &SeasonDirs) -> Vec<String> {
     out
 }
 
-/// Refuse to import worlds when custom ones are present and the sandbox can't
-/// contain them (design doc §4's trusted/untrusted split).
+/// Refuse to import worlds when a custom one isn't exactly what was uploaded
+/// (unpinned, or changed on disk since), or when custom ones are present and
+/// the sandbox can't contain them (design doc §4's trusted/untrusted split).
 pub fn check_worlds(season: &SeasonDirs) -> Result<(), String> {
-    if sandbox::get().custom_worlds_allowed() {
-        return Ok(());
-    }
     let custom = custom_worlds(season);
-    if custom.is_empty() {
+    let pins = world_pins(season);
+    for file in &custom {
+        let actual = std::fs::read(season.worlds.join(file)).map(|b| sha256_hex(&b));
+        match (pins.get(file), actual) {
+            (Some(pin), Ok(h)) if pin.sha256 == h => {}
+            (None, _) => {
+                return Err(format!(
+                    "apworld {file} wasn't installed through Bifrost (no pinned hash) — \
+                     delete it or upload it again"
+                ));
+            }
+            _ => {
+                return Err(format!(
+                    "apworld {file} changed on disk since it was uploaded — \
+                     delete it or upload it again"
+                ));
+            }
+        }
+    }
+    if custom.is_empty() || sandbox::get().custom_worlds_allowed() {
         Ok(())
     } else {
         Err(format!(

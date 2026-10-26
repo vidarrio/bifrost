@@ -88,6 +88,11 @@ impl SeasonDirs {
         self.output.join("current.zip")
     }
 
+    /// Pinned SHA-256 (+ uploader) of each custom apworld in `worlds/`.
+    pub fn worlds_lock(&self) -> PathBuf {
+        self.root.join("worlds.lock.json")
+    }
+
     /// The AP server's save for `current.zip` (AP names it after the multidata).
     pub fn current_save(&self) -> PathBuf {
         self.output.join("current.apsave")
