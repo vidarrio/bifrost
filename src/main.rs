@@ -2492,6 +2492,14 @@ async fn seasons_import(State(st): State<AppState>, me: auth::Me, mut mp: Multip
         return render::notice("Sysadmins only.", false, "/").into_response();
     }
     let tmp = config::get().tmp_dir().join(format!("import-{}.tar.gz", auth::new_token()));
+    // Removed however this ends (an aborted upload drops this future).
+    struct Upload(std::path::PathBuf);
+    impl Drop for Upload {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let _upload = Upload(tmp.clone());
     let res = async {
         tokio::fs::create_dir_all(config::get().tmp_dir()).await.map_err(|e| e.to_string())?;
         let mut got = false;
@@ -2508,10 +2516,9 @@ async fn seasons_import(State(st): State<AppState>, me: auth::Me, mut mp: Multip
         if !got {
             return Err("No file received.".to_string());
         }
-        archive::import(&st.db, &tmp, Some(me.id())).await
+        archive::import(&st.db, &tmp, Some(me.id()), true).await
     }
     .await;
-    let _ = tokio::fs::remove_file(&tmp).await;
     match res {
         Ok(id) => {
             tracing::info!("{} imported season {id}", me.username());

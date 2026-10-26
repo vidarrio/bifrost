@@ -85,7 +85,7 @@ pub async fn run(args: &[String], db: &Db) -> Option<i32> {
                 1
             }
         },
-        ["season", "import", file] => match crate::archive::import(db, std::path::Path::new(file), None).await {
+        ["season", "import", file] => match crate::archive::import(db, std::path::Path::new(file), None, false).await {
             Ok(id) => {
                 println!("imported as season {id} (archived)");
                 0

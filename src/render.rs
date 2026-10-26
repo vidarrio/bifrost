@@ -12,10 +12,20 @@ pub fn escape(s: &str) -> String {
     esc(s)
 }
 
+/// HTML-escape text for an element or a quoted attribute value.
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+/// A JavaScript string literal for an inline handler attribute (`onclick`):
+/// JSON-quoted, then HTML-escaped — the browser decodes the attribute back
+/// to the literal, so a quote in `s` can't end the string.
+fn js_attr(s: &str) -> String {
+    esc(&serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into()))
 }
 
 /// Percent-encode a value for use in a query string (AP output filenames are
@@ -1575,7 +1585,7 @@ fn action_btn(
     let onclick = if confirm.is_empty() {
         String::new()
     } else {
-        format!(r#" onclick="return confirm('{}')""#, esc(confirm))
+        format!(r#" onclick="return confirm({})""#, js_attr(confirm))
     };
     format!(
         r#"<form method="post" action="{}" style="display:inline">{hidden}<button class="{cls}" type="submit"{onclick}>{}</button></form>"#,
@@ -1584,10 +1594,6 @@ fn action_btn(
     )
 }
 
-/// The admin control centre: generate, open/close signups, manage the deployed
-/// players + apworlds, reset, and run server commands. Assumes the caller has
-/// already confirmed the viewer is an admin.
-#[allow(clippy::too_many_arguments)]
 /// Under the generate button: whether another live season would fit (before
 /// it goes live), or what its AP server uses (while live).
 fn season_load_line(season: &crate::db::SeasonRow) -> String {
@@ -1608,6 +1614,10 @@ fn season_load_line(season: &crate::db::SeasonRow) -> String {
     }
 }
 
+/// The admin control centre: generate, open/close signups, manage the deployed
+/// players + apworlds, reset, and run server commands. Assumes the caller has
+/// already confirmed the viewer is an admin.
+#[allow(clippy::too_many_arguments)]
 pub fn admin_page(
     season: &crate::db::SeasonRow,
     mods: &SeasonMods,
@@ -3061,7 +3071,7 @@ pub fn mine_leaderboard_html(
     rate: &[(String, i64, i64)],
     min_games: i64,
 ) -> String {
-    let mut out = format!(r#"<h2 class="lbhead">{kind_label} leaderboard</h2>"#);
+    let mut out = format!(r#"<h2 class="lbhead">{} leaderboard</h2>"#, esc(kind_label));
 
     out.push_str(r#"<h3 class="lbsub">Best time</h3>"#);
     if time.is_empty() {
@@ -3982,7 +3992,7 @@ pub fn load_panel(load: Option<&crate::load::Load>, names: &std::collections::Ha
     }
     let (hr, hc, hn) = s.helpers;
     b.push_str(&row(
-        format!("Sandboxed helpers ({hn} running: checks, generation, in-logic)"),
+        format!("Other processes ({hn} running: checks, generation, in-logic, installs)"),
         (hr, hc),
     ));
     b.push_str(&row("Bifrost".into(), s.bifrost));
@@ -4159,4 +4169,46 @@ pub fn catalog_page(
 <p class="statline">You can also add a world straight from a season: its admin page has an “add to catalog” button next to each installed upload.</p>"#,
     );
     auth_page("Console", r#"<a href="/">← home</a>"#, err, &body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attribute_values_cant_be_broken_out_of() {
+        assert_eq!(esc(r#"x" onmouseover="a()"#), "x&quot; onmouseover=&quot;a()");
+        assert_eq!(esc("it's <b>"), "it&#39;s &lt;b&gt;");
+        // In a handler the attribute decodes back to a JSON string literal.
+        assert_eq!(js_attr("Delete O'Brien\"s?"), r#"&quot;Delete O&#39;Brien\&quot;s?&quot;"#);
+        let btn = action_btn("x", &[], "go", true, "Remove ');alert(1);('?");
+        assert!(btn.contains("confirm(&quot;Remove &#39;);alert(1);(&#39;?&quot;)"), "{btn}");
+    }
+
+    #[test]
+    fn imported_summary_fields_are_escaped() {
+        let s = crate::season::SeasonSummary {
+            name: "<s>".into(),
+            games: vec![crate::season::SeasonGame { status: "x\" onmouseover=\"a()".into(), ..Default::default() }],
+            minesweeper: vec![crate::season::MineBoard {
+                label: "<script>bad()</script>".into(),
+                time: vec![("p".into(), 1)],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let f = LogFilter {
+            kinds_selected: [true; 4],
+            classes_selected: [true; 4],
+            sender: "",
+            receiver: "",
+            within: 0,
+            since: None,
+            until: None,
+            participants: &[],
+            qs: "",
+        };
+        let html = season_page(&s, &[], 1, 1, 50, &f).0;
+        assert!(!html.contains("<script>bad()") && !html.contains("x\" onmouseover"), "unescaped field");
+    }
 }

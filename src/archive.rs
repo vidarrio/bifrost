@@ -156,21 +156,39 @@ pub async fn bundle_season(
 
 /// Read a bundle's manifest and summary (without unpacking anything else).
 pub async fn read_bundle(path: &Path) -> Result<(Manifest, SeasonSummary), String> {
+    // A member is read through a cap and a deadline: a bundle is a file from
+    // elsewhere, and a small gzip can expand without bound.
+    const MAX_MEMBER: u64 = 16 << 20;
     let member = |name: &'static str| async move {
-        let out = Command::new("tar")
+        use tokio::io::AsyncReadExt;
+        let mut tar = Command::new("tar")
             .arg("-xzOf")
             .arg(path)
             .arg(format!("./{name}"))
             .stdin(Stdio::null())
-            .output()
-            .await
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
             .map_err(|e| format!("tar: {e}"))?;
-        if !out.status.success() {
+        let mut out = tar.stdout.take().ok_or("tar: no output")?.take(MAX_MEMBER + 1);
+        let (data, status) = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            let mut data = Vec::new();
+            out.read_to_end(&mut data).await.map_err(|e| format!("reading {name}: {e}"))?;
+            if data.len() as u64 > MAX_MEMBER {
+                return Err(format!("{name} is larger than {} MiB", MAX_MEMBER >> 20));
+            }
+            let status = tar.wait().await.map_err(|e| format!("tar: {e}"))?;
+            Ok((data, status))
+        })
+        .await
+        .map_err(|_| format!("reading {name} took too long"))??;
+        if !status.success() {
             return Err(format!(
                 "no {name} in it — not a season bundle from this Bifrost (bundles from before season import existed can't be imported)"
             ));
         }
-        Ok(out.stdout)
+        Ok(data)
     };
     let manifest: Manifest = serde_json::from_slice(&member("bundle.json").await?)
         .map_err(|e| format!("bundle.json: {e}"))?;
@@ -198,26 +216,49 @@ fn valid_seed(seed: &str) -> bool {
 
 /// Import a season bundle as an archived season: its summary shows on Past
 /// Seasons, and the bundle is kept in `archives/` (downloadable again). A
-/// season with the same seed already here is refused. Returns its id.
-pub async fn import(db: &Db, path: &Path, by: Option<i64>) -> Result<i64, String> {
+/// season with the same seed already here is refused (the database enforces
+/// it, so concurrent imports can't both win). `movable`: the caller's file may
+/// be moved into place rather than copied (an upload's temp file). Returns
+/// the new season's id.
+pub async fn import(db: &Db, path: &Path, by: Option<i64>, movable: bool) -> Result<i64, String> {
     let (m, mut summary) = read_bundle(path).await?;
     if let Some(id) = db.season_by_seed(&m.seed).await {
-        return Err(format!("season {id} here already has seed {} — it's imported already", m.seed));
+        return Err(already(id, &m.seed));
     }
     let name = if m.name.trim().is_empty() { summary.name.clone() } else { m.name.clone() };
     summary.name = name.clone();
     let summary_json = serde_json::to_string(&summary).map_err(|e| e.to_string())?;
     let archives = config::get().archives_dir();
     tokio::fs::create_dir_all(&archives).await.map_err(|e| format!("archives dir: {e}"))?;
-    let dest = archives.join(format!("{}.tar.gz", m.seed));
-    if tokio::fs::canonicalize(path).await.ok() != tokio::fs::canonicalize(&dest).await.ok() {
-        let tmp = archives.join(format!(".import-{}", m.seed));
-        tokio::fs::copy(path, &tmp).await.map_err(|e| format!("keeping the bundle: {e}"))?;
-        tokio::fs::rename(&tmp, &dest).await.map_err(|e| format!("keeping the bundle: {e}"))?;
+    // Stage the bundle next to its final place, under a name no other import
+    // uses; it takes that place only once the season row exists.
+    let staged = archives.join(format!(".import-{}-{}", m.seed, crate::auth::new_token()));
+    let moved = movable && tokio::fs::rename(path, &staged).await.is_ok();
+    if !moved {
+        tokio::fs::copy(path, &staged).await.map_err(|e| format!("keeping the bundle: {e}"))?;
     }
-    db.import_season(&name, &m.seed, &summary_json, by, m.created_at, m.live_at, m.archived_at, m.ap_version.as_deref())
-        .await
-        .map_err(|e| e.to_string())
+    let row = db
+        .import_season(&name, &m.seed, &summary_json, by, m.created_at, m.live_at, m.archived_at, m.ap_version.as_deref())
+        .await;
+    let id = match row {
+        Ok(id) => id,
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&staged).await;
+            return Err(match db.season_by_seed(&m.seed).await {
+                Some(id) => already(id, &m.seed),
+                None => e.to_string(),
+            });
+        }
+    };
+    let dest = archives.join(format!("{}.tar.gz", m.seed));
+    if let Err(e) = tokio::fs::rename(&staged, &dest).await {
+        tracing::warn!("imported season {id}, but keeping its bundle failed: {e}");
+    }
+    Ok(id)
+}
+
+fn already(id: i64, seed: &str) -> String {
+    format!("season {id} here already has seed {seed} — it's imported already")
 }
 
 /// The kept bundle of an archived season, if there is one.

@@ -27,7 +27,8 @@ pub struct Sample {
     pub cpu: f32,
     /// Live season → its AP server's (resident bytes, CPU % of one core).
     pub servers: BTreeMap<i64, (u64, f32)>,
-    /// Sandboxed helpers right now: (resident bytes, CPU % of one core, count).
+    /// Bifrost's other child processes right now — sandboxed helpers, release
+    /// installs, archive tar: (resident bytes, CPU % of one core, count).
     pub helpers: (u64, f32, usize),
     /// Bifrost itself: (resident bytes, CPU % of one core).
     pub bifrost: (u64, f32),
@@ -65,6 +66,7 @@ pub fn spawn_sampler(data_dir: std::path::PathBuf) {
     tokio::spawn(async move {
         let mut sampler = Sampler::default();
         let mut tick = tokio::time::interval(EVERY);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
             let dir = data_dir.clone();
@@ -80,12 +82,10 @@ pub fn spawn_sampler(data_dir: std::path::PathBuf) {
             };
             sampler = s;
             let mut guard = LOAD.lock().unwrap();
-            let load = guard.get_or_insert_with(|| Load {
-                cores: std::thread::available_parallelism().map_or(1, |n| n.get()),
-                ..Load::default()
-            });
+            let load = guard.get_or_insert_with(Load::default);
             if let Some(sample) = sample {
                 load.cgroup = sampler.cgroup;
+                load.cores = sampler.cpus;
                 load.history.push_back(sample);
                 while load.history.len() > KEEP {
                     load.history.pop_front();
@@ -152,6 +152,10 @@ struct Sampler {
     ticks: HashMap<u32, u64>,
     /// Host (busy, total) jiffies at the last sample.
     host: Option<(u64, u64)>,
+    /// When the last sample was taken (per-process CPU is ticks over this).
+    last: Option<std::time::Instant>,
+    /// The host's CPU count.
+    cpus: usize,
     cgroup: bool,
 }
 
@@ -165,15 +169,18 @@ impl Sampler {
     fn sample(&mut self) -> Option<Sample> {
         let (mem_used, mem_total, cgroup) = memory()?;
         self.cgroup = cgroup;
-        let (busy, total) = host_cpu()?;
+        let ((busy, total), cpus) = host_cpu()?;
+        self.cpus = cpus;
         let cpu = match self.host.replace((busy, total)) {
             Some((b0, t0)) if total > t0 => (busy - b0) as f32 * 100.0 / (total - t0) as f32,
             _ => 0.0,
         };
         let procs = processes();
         let tck = clock_ticks();
+        let now = std::time::Instant::now();
+        let secs = self.last.replace(now).map_or(EVERY.as_secs_f32(), |t| now.duration_since(t).as_secs_f32()).max(0.1);
         let pct = |pid: u32, p: &Proc, prev: &HashMap<u32, u64>| match prev.get(&pid) {
-            Some(&t0) if p.ticks >= t0 => (p.ticks - t0) as f32 * 100.0 / (tck * EVERY.as_secs_f32()),
+            Some(&t0) if p.ticks >= t0 => (p.ticks - t0) as f32 * 100.0 / (tck * secs),
             _ => 0.0,
         };
         let me = std::process::id();
@@ -257,21 +264,41 @@ fn parse_stat(stat: &str, page: u64) -> Option<Proc> {
     })
 }
 
-/// (used, total, from a cgroup limit). A container's cgroup v2 limit wins
-/// over the host's totals; page cache it could drop doesn't count as used.
+/// (used, total, from a cgroup limit). The nearest cgroup v2 memory limit
+/// over Bifrost — a container's, or a systemd unit's `MemoryMax=` — wins over
+/// the host's totals; page cache it could drop doesn't count as used.
 fn memory() -> Option<(u64, u64, bool)> {
-    let read = |p: &str| std::fs::read_to_string(p).ok();
-    if let Some(max) = read("/sys/fs/cgroup/memory.max").and_then(|m| m.trim().parse::<u64>().ok()) {
-        let current: u64 = read("/sys/fs/cgroup/memory.current")?.trim().parse().ok()?;
-        let inactive = read("/sys/fs/cgroup/memory.stat")
+    let read = |p: &Path| std::fs::read_to_string(p).ok();
+    if let Some(cg) = limited_cgroup() {
+        let max: u64 = read(&cg.join("memory.max"))?.trim().parse().ok()?;
+        let current: u64 = read(&cg.join("memory.current"))?.trim().parse().ok()?;
+        let inactive = read(&cg.join("memory.stat"))
             .and_then(|s| field(&s, "inactive_file"))
             .unwrap_or(0);
         return Some((current.saturating_sub(inactive), max, true));
     }
-    let info = read("/proc/meminfo")?;
+    let info = read(Path::new("/proc/meminfo"))?;
     let kib = |k: &str| field(&info, k).map(|v| v * 1024);
     let total = kib("MemTotal:")?;
     Some((total.saturating_sub(kib("MemAvailable:")?), total, false))
+}
+
+/// The closest cgroup (v2) at or above Bifrost's own that sets a memory limit.
+fn limited_cgroup() -> Option<std::path::PathBuf> {
+    let own = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+    let rel = own.lines().find_map(|l| l.strip_prefix("0::"))?.trim().trim_start_matches('/');
+    let root = Path::new("/sys/fs/cgroup");
+    let mut dir = root.join(rel);
+    loop {
+        let limited = std::fs::read_to_string(dir.join("memory.max"))
+            .is_ok_and(|m| m.trim().parse::<u64>().is_ok());
+        if limited {
+            return Some(dir);
+        }
+        if dir == root || !dir.pop() || !dir.starts_with(root) {
+            return None;
+        }
+    }
 }
 
 /// The number after `key` at the start of a line.
@@ -280,10 +307,15 @@ fn field(text: &str, key: &str) -> Option<u64> {
         .find_map(|l| l.strip_prefix(key)?.split_whitespace().next()?.parse().ok())
 }
 
-/// Host (busy, total) jiffies from `/proc/stat`'s first line.
-fn host_cpu() -> Option<(u64, u64)> {
+/// Host (busy, total) jiffies from `/proc/stat`'s first line, and how many
+/// CPUs that line covers (the host's, like the percentage).
+fn host_cpu() -> Option<((u64, u64), usize)> {
     let stat = std::fs::read_to_string("/proc/stat").ok()?;
-    parse_cpu_line(stat.lines().next()?)
+    let cpus = stat
+        .lines()
+        .filter(|l| l.strip_prefix("cpu").is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit())))
+        .count();
+    Some((parse_cpu_line(stat.lines().next()?)?, cpus.max(1)))
 }
 
 fn parse_cpu_line(line: &str) -> Option<(u64, u64)> {

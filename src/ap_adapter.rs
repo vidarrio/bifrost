@@ -458,8 +458,8 @@ pub struct InLogic {
 }
 
 /// Run Universal Tracker headlessly for one slot against the live room
-/// (`connect` is `host:port`). Killed after `timeout`. The one helper that
-/// keeps network access: it has to reach the AP server.
+/// (`connect` is `host:port`). Killed after `timeout`. Like every helper it
+/// has no network; its one connection, to the AP server, is relayed.
 pub async fn inlogic(
     season: &SeasonDirs,
     slot_name: &str,
@@ -470,12 +470,14 @@ pub async fn inlogic(
     check_worlds(season)?;
     // The helper writes its result to a file (its stdout is UT/AP noise).
     let dir = scratch_dir("inlogic").await?;
+    // Cleans up however this ends — even if the caller is aborted mid-run.
+    let mut run_guard = InLogicRun { dir: dir.clone(), relay: None };
     let out = dir.join("result.json");
     // It runs apworld code, so no network: its one connection — to this
     // season's AP server — goes through a Unix socket in its scratch dir,
     // relayed here to the server.
     let sock = dir.join("ap.sock");
-    let relay = relay_to(&sock, connect.to_string())?;
+    run_guard.relay = Some(relay_to(&sock, connect.to_string())?);
     let mut env = vec![("BIFROST_AP_SOCKET", sock.clone().into_os_string())];
     env.extend(crate::ap::quiet_key().map(|k| ("BIFROST_QUIET_KEY", k.into())));
     let access = Access {
@@ -491,11 +493,25 @@ pub async fn inlogic(
         out.clone().into(),
     ];
     let run = run_helper("bifrost_inlogic.py", args, season, access, timeout).await;
-    relay.abort();
     let data = tokio::fs::read_to_string(&out).await;
-    let _ = tokio::fs::remove_dir_all(&dir).await;
+    drop(run_guard);
     run?;
     parse_inlogic(&data.map_err(|e| format!("no result file: {e}"))?)
+}
+
+/// An in-logic run's scratch dir and relay, torn down on drop.
+struct InLogicRun {
+    dir: PathBuf,
+    relay: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Drop for InLogicRun {
+    fn drop(&mut self) {
+        if let Some(relay) = self.relay.take() {
+            relay.abort();
+        }
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
 }
 
 /// Accept connections on a Unix socket at `path` and pipe each to TCP

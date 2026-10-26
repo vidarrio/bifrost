@@ -50,6 +50,10 @@ pub(super) async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
+    // A seed names one season (and its archive bundle); imports rely on it.
+    sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS season_seed ON season(seed)")
+        .execute(pool)
+        .await?;
     // Co-moderators: besides its creator, who may run a season.
     sqlx::query(
         r#"CREATE TABLE IF NOT EXISTS season_mod (

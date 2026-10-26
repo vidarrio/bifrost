@@ -66,7 +66,8 @@ pub struct Job<'a> {
     pub read: Vec<PathBuf>,
     /// Writable paths.
     pub write: Vec<PathBuf>,
-    /// Needs the network (in-logic talks to the AP server).
+    /// Needs the network (the AP servers, which players connect to; helpers
+    /// never do).
     pub network: bool,
 }
 
@@ -166,7 +167,7 @@ impl Sandbox {
     /// One line for the sysadmin: what protects the host from world code.
     pub fn posture(&self) -> String {
         match self.tier {
-            Tier::Bubblewrap => "strong — bubblewrap: no network for generation/checks, \
+            Tier::Bubblewrap => "strong — bubblewrap: no network for any helper, \
                                  read-only system, only the season's files writable"
                 .into(),
             Tier::Limits => {
