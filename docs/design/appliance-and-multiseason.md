@@ -59,8 +59,49 @@ generate/check invocation, multidata read). AP version bumps then touch one
 place; the bundle pins a known-good AP version and Bifrost owns upgrades.
 
 **De-hardcode first.** Every `/srv/archipelago`, venv path, and script location
-becomes config-driven (resolved relative to a data dir). This is the
+becomes config-driven, resolved relative to the data dir in §3a. This is the
 prerequisite for both portability and bundling; low-risk, do it first.
+
+## 3a. Data layout — one data dir; runtime vs. state
+
+Split **immutable runtime** (shipped in the bundle/image, read-only, replaced on
+upgrade) from **mutable state** (everything else, under a single configurable
+`$BIFROST_DATA` root — the one thing an operator backs up or mounts as a volume):
+
+- **Runtime (bundle/image):** the Bifrost binary, the pinned AP, the vendored
+  Python, the helper scripts. Not under the data dir.
+- **State (`$BIFROST_DATA`):**
+
+```
+$BIFROST_DATA/
+  config.toml                 # §10 (secrets move here); step 1 may stay env-driven
+  bifrost.db                  # embedded SQLite — no system dep, no server
+  packs/<season>/<ap_slot>/   # poptracker packs
+  seasons/<id>/
+    players/                  # staged per-player YAMLs
+    custom_worlds/            # uploaded .apworld (per season → isolated)
+    output/                   # current.zip, *.apsave, multidata
+    logs/
+  uploads/  …                 # other misc state (mc-whitelist, connect-pw request, …)
+```
+
+Why: one dir to back up / mount; per-season `custom_worlds/`+`output/` give the
+data isolation §7/§10 want for free; and the generation sandbox (§4) binds just
+one season dir read-write.
+
+**DB choice — keep SQLite.** It's embedded via `sqlx` (bundled libsqlite3; no
+system package, no separate DB server), which is what keeps "one download, just
+run it" true. A server DB (Postgres…) would only matter for the ruled-out SaaS
+path. (Aside: the box lacks the `sqlite3` *CLI*, a manual-inspection convenience
+only — the engine is compiled into the binary; inspect via `python3`'s `sqlite3`
+module.)
+
+**Live-box compatibility.** The data root is configurable; on the current
+instance the defaults/overrides still resolve to today's split
+(`/var/lib/bifrost` + `/srv/archipelago`'s `Players/custom_worlds/output/logs`),
+so shipping is a no-op. The single-root layout above is the default for **fresh
+appliance installs**, not a forced migration of the running season. Today's flat
+`Players/custom_worlds/output/logs` becomes the per-season `seasons/<id>/…` form.
 
 ## 4. Generation isolation (`sandbox::spawn`)
 
@@ -225,6 +266,8 @@ landing page lists seasons by state. This touches most handlers; do it behind a
 - Per-season apworld pinning (§8) table.
 - Existing season-keyed tables: confirm every query is season-scoped (mostly
   already true); migrate `seed`-keyed assumptions to `season_id`.
+- On-disk: per-season state moves under `$BIFROST_DATA/seasons/<id>/…` (§3a),
+  replacing today's single flat `Players/custom_worlds/output/logs`.
 
 ## 8. Season apworld & YAML management
 
@@ -298,7 +341,10 @@ throughout.
 
 ## 13. Proposed sequencing
 
-1. **De-hardcode paths + `ap_adapter`** (prerequisite; no behavior change).
+1. **De-hardcode paths + `ap_adapter`** (prerequisite; no behavior change) —
+   introduce the `$BIFROST_DATA` seams (§3a) with defaults that reproduce the
+   live split, so config aims at the single-data-dir target rather than just
+   abstracting the current paths in place.
 2. **Auth abstraction + native accounts** (default) and the trust-header
    spoof fix; in-app roles (sysadmin/mod/user) + `authorize()`.
 3. **Security hardening**: `sandbox::spawn` tiers + no-net + trusted/untrusted
