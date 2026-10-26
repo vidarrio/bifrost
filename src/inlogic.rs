@@ -3,8 +3,8 @@
 //! The `/game/<slot>` page shows which of a slot's locations are reachable right
 //! now ("in logic"). AP's multidata has no such field — it has to be derived by
 //! running each world's logic against the slot's current items. We do that out
-//! of band: shell out to `bifrost_inlogic.py` (sibling of `bifrost_check.py`),
-//! which drives the installed Universal Tracker apworld headlessly, connects to
+//! of band: the AP adapter's `inlogic` drives the Universal Tracker apworld
+//! headlessly (`bifrost_inlogic.py`), connects to
 //! the live room as a read-only tracker for one slot, and writes that slot's
 //! in-logic location names as JSON. We cache the result per slot in the DB; the
 //! game page just reads the cache.
@@ -16,14 +16,9 @@
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use tokio::process::Command;
-
 use crate::ap::{ApConfig, Board};
 use crate::db::Db;
-
-const AP_PYTHON: &str = "/srv/archipelago/venv/bin/python";
-const AP_DIR: &str = "/srv/archipelago";
-const SCRIPT: &str = "/srv/archipelago/bifrost_inlogic.py";
+use crate::{ap_adapter, config};
 /// How often to look for slots whose state moved. The actual UT runs only fire
 /// for changed slots, so an idle board costs one cheap state comparison a cycle.
 const POLL: Duration = Duration::from_secs(20);
@@ -86,8 +81,9 @@ async fn tick(
         if db.inlogic_state(&season, ap_slot).await == Some((sent, received)) {
             continue;
         }
-        match run_one(ap_slot, &name, connect, password).await {
-            Ok((ut_game, locs, true)) => {
+        let season_dirs = config::get().season();
+        match ap_adapter::inlogic(&season_dirs, &name, password, connect, RUN_TIMEOUT).await {
+            Ok(ap_adapter::InLogic { game: ut_game, locations: locs, captured: true }) => {
                 let g = if ut_game.is_empty() { game } else { ut_game };
                 let json = serde_json::to_string(&locs).unwrap_or_else(|_| "[]".into());
                 db.inlogic_set(
@@ -104,7 +100,7 @@ async fn tick(
                 )
                 .await;
             }
-            // Failure: ran-but-captured-nothing (Ok(..,false)), timed out, or
+            // Failure: ran-but-captured-nothing (captured: false), timed out, or
             // crashed. Record the CURRENT state with an error so we don't re-run
             // (and jam the serialized loop) until the slot's state actually moves
             // — important for a world like Starcraft 2 whose logic is too large
@@ -142,69 +138,6 @@ async fn tick(
         }
     }
     Ok(())
-}
-
-/// Run UT for one slot and parse the JSON the helper writes. Returns
-/// `(game, in_logic_names, captured)`.
-async fn run_one(
-    ap_slot: i64,
-    name: &str,
-    connect: &str,
-    password: &str,
-) -> Result<(String, Vec<String>, bool), String> {
-    let out = format!("/tmp/bifrost_inlogic_{ap_slot}.json");
-    let _ = tokio::fs::remove_file(&out).await;
-
-    let mut child = Command::new(AP_PYTHON)
-        .arg(SCRIPT)
-        .arg(name)
-        .arg(password)
-        .arg(connect)
-        .arg(&out)
-        .current_dir(AP_DIR)
-        .env("HOME", "/tmp")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| format!("spawn: {e}"))?;
-
-    match tokio::time::timeout(RUN_TIMEOUT, child.wait()).await {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => return Err(format!("wait: {e}")),
-        Err(_) => {
-            let _ = child.start_kill();
-            return Err("timed out".into());
-        }
-    }
-
-    let data = tokio::fs::read_to_string(&out)
-        .await
-        .map_err(|e| format!("no result file: {e}"))?;
-    let _ = tokio::fs::remove_file(&out).await;
-
-    let v: serde_json::Value =
-        serde_json::from_str(&data).map_err(|e| format!("bad json: {e}"))?;
-    if let Some(err) = v.get("error").and_then(|x| x.as_str()) {
-        return Err(err.to_string());
-    }
-    let game = v
-        .get("game")
-        .and_then(|x| x.as_str())
-        .unwrap_or("")
-        .to_string();
-    let captured = v.get("captured").and_then(|x| x.as_bool()).unwrap_or(false);
-    let locs = v
-        .get("in_logic")
-        .and_then(|x| x.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|x| x.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    Ok((game, locs, captured))
 }
 
 fn now() -> i64 {

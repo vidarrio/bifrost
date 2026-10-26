@@ -7,25 +7,16 @@ the network protocol doesn't carry:
     destined for them anywhere), items_for_elsewhere (those outside their world);
   - item/location id -> name maps for each game in play (for the feed + hints).
 
-Run under the AP venv; pins local/user path so custom worlds resolve (same
-reason as bifrost_check.py)."""
+Run under the AP venv; the season's custom worlds resolve via bifrost_ap.
+
+Usage: bifrost_meta.py <seed.zip>"""
 import sys
-import os
 import json
 import zlib
 import zipfile
 
-AP_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, AP_DIR)
-
 try:
-    import Utils
-    Utils.local_path.cached_path = AP_DIR
-    Utils.user_path.cached_path = AP_DIR
-    # Loading the world registry can register setting keys AP would then autosave
-    # into host.yaml at exit — a write the read-only sandbox refuses. Disable it.
-    import settings
-    settings.skip_autosave = True
+    import bifrost_ap  # noqa: F401  (pins AP paths; must precede AP imports)
     from Utils import restricted_loads
     from worlds import AutoWorldRegister
 except Exception as e:  # pragma: no cover

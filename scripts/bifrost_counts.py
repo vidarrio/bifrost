@@ -18,11 +18,11 @@ import sys
 import json
 import zlib
 
-sys.path.insert(0, "/srv/archipelago")
+import bifrost_ap  # noqa: F401  (pins AP paths; must precede AP imports)
 from Utils import restricted_loads  # noqa: E402
 import NetUtils  # noqa: E402,F401  (registers Hint/NetworkItem for unpickling)
 
-save_path = sys.argv[1] if len(sys.argv) > 1 else "/srv/archipelago/output/current.apsave"
+save_path = sys.argv[1]
 
 try:
     with open(save_path, "rb") as f:

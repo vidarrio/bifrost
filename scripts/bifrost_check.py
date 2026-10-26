@@ -5,30 +5,13 @@ the installed worlds, using AP's own roll_settings (the same logic the WebHost
 
   {"ok": bool, "players": [{"name","game","ok","error"?}], "errors": [str]}
 
-Runs under the AP venv; imports only Generate + Utils (no Flask/WebHost)."""
+Runs under the AP venv; imports only Generate + Utils (no Flask/WebHost).
+Validates against the season's custom worlds (see bifrost_ap)."""
 import sys
 import json
-import os
-
-AP_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, AP_DIR)
 
 try:
-    # Pin AP's local_path AND user_path to the install dir *before* importing the
-    # world registry. Otherwise, when the install is read-only (as it is for the
-    # sandboxed bifrost service), user_path() falls back to a home dir that
-    # diverges from local_path(), and worlds/__init__ then scans custom_worlds
-    # in the wrong place — silently dropping every .apworld (see worlds/__init__).
-    import Utils
-    Utils.local_path.cached_path = AP_DIR
-    Utils.user_path.cached_path = AP_DIR
-
-    # Loading the worlds registers their setting keys, which AP would persist to
-    # host.yaml via an atexit autosave — a write the read-only sandbox refuses.
-    # The checker only reads settings, so disable the autosave.
-    import settings
-    settings.skip_autosave = True
-
+    import bifrost_ap  # noqa: F401  (pins AP paths; must precede AP imports)
     from Generate import roll_settings, PlandoOptions
     from Utils import parse_yamls
 except Exception as e:  # pragma: no cover

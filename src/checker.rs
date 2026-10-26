@@ -1,17 +1,13 @@
 //! YAML checker — validates an Archipelago options file against the installed
-//! worlds by shelling out to `bifrost_check.py` in the AP venv (which uses AP's
-//! own `roll_settings`, the same logic the official checker uses).
-//!
-//! Bifrost reads the AP install (`/srv/archipelago`) through the shared
-//! `archipelago` group; the checker runs read-only and persists nothing.
+//! worlds plus the season's custom worlds, via the AP adapter (AP's own
+//! `roll_settings`, the same logic the official checker uses). Persists nothing.
 
 use axum::response::Html;
 use serde::Deserialize;
-use std::process::Stdio;
 use std::sync::OnceLock;
-use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::process::Command;
 use tokio::sync::Semaphore;
+
+use crate::{ap_adapter, config};
 
 /// Each check spawns a Python that loads every world (~300 MB). This box also
 /// runs the game, so we serialize checks — a burst of requests queues instead of
@@ -21,9 +17,6 @@ fn check_gate() -> &'static Semaphore {
     SEM.get_or_init(|| Semaphore::new(1))
 }
 
-const AP_PYTHON: &str = "/srv/archipelago/venv/bin/python";
-const AP_DIR: &str = "/srv/archipelago";
-const CHECK_SCRIPT: &str = "/srv/archipelago/bifrost_check.py";
 /// Guard against someone pasting something enormous into the box.
 const MAX_YAML: usize = 512 * 1024;
 
@@ -46,7 +39,7 @@ pub struct PlayerResult {
     pub error: Option<String>,
 }
 
-/// Run the AP-venv checker over `yaml` (raw file contents).
+/// Validate `yaml` (raw file contents) against the season's worlds.
 pub async fn check_yaml(yaml: &str) -> Result<CheckResult, String> {
     if yaml.len() > MAX_YAML {
         return Err(format!(
@@ -59,37 +52,7 @@ pub async fn check_yaml(yaml: &str) -> Result<CheckResult, String> {
         .acquire()
         .await
         .map_err(|e| format!("checker busy: {e}"))?;
-    // A per-request temp file; PrivateTmp isolates /tmp to this service.
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let path = format!("/tmp/bifrost-check-{nanos}.yaml");
-    tokio::fs::write(&path, yaml)
-        .await
-        .map_err(|e| format!("temp write: {e}"))?;
-
-    let result = Command::new(AP_PYTHON)
-        .arg(CHECK_SCRIPT)
-        .arg(&path)
-        .current_dir(AP_DIR)
-        .env("PYTHONDONTWRITEBYTECODE", "1")
-        .stdin(Stdio::null())
-        .output()
-        .await;
-    let _ = tokio::fs::remove_file(&path).await;
-
-    let output = result.map_err(|e| format!("spawn checker: {e}"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // The checker prints one JSON object as its last stdout line (world-load
-    // warnings go to stderr).
-    let line = stdout
-        .lines()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .unwrap_or("");
-    serde_json::from_str::<CheckResult>(line.trim())
-        .map_err(|e| format!("could not read checker output: {e}"))
+    ap_adapter::check_yaml(&config::get().season(), yaml).await
 }
 
 fn esc(s: &str) -> String {

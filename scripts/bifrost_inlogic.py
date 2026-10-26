@@ -8,16 +8,12 @@ by the caller — all real output goes to the JSON file (robust, no scraping).
 Usage: bifrost_inlogic.py <slot_name> <password> <host:port> <out_json>
 Writes: {"slot","game"?,"count","in_logic":[...],"captured":bool,"error"?}
 
-Runs under the AP venv as the (sandboxed, read-only) bifrost service user, so it
-mirrors bifrost_check.py's path/setting pinning."""
+Runs under the AP venv; AP paths are pinned to the season by bifrost_ap, so UT
+finds the season's custom worlds and regenerates from its Players/ YAMLs."""
 import sys
-import os
 import json
 import asyncio
 import logging
-
-AP_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, AP_DIR)
 
 slot, password, connect, outpath = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 result = {"slot": slot, "in_logic": [], "count": 0, "captured": False}
@@ -32,14 +28,7 @@ def _write():
 
 
 try:
-    # Same read-only-sandbox pinning bifrost_check.py needs: fix local/user path
-    # before the world registry imports (else custom_worlds silently drop), and
-    # disable the host.yaml autosave the read-only FS would refuse.
-    import Utils
-    Utils.local_path.cached_path = AP_DIR
-    Utils.user_path.cached_path = AP_DIR
-    import settings
-    settings.skip_autosave = True
+    import bifrost_ap  # pins AP paths; must precede AP imports
     logging.getLogger().setLevel(logging.ERROR)
     import worlds.tracker.TrackerClient as _tcl
     from worlds.tracker.TrackerClient import TrackerGameContext, server_loop
@@ -77,6 +66,8 @@ async def run():
     # received items + checks, runs the logic once, fires our callback, and exits.
     ctx = TrackerGameContext(connect, password, print_count=True)
     ctx.auth = slot
+    # Regenerate from the season's YAMLs regardless of any host.yaml override.
+    ctx.tracker_core.player_folder_override = bifrost_ap.season_path("Players")
     ctx.set_callback(cb)
     ctx.server_task = asyncio.create_task(server_loop(ctx), name="server loop")
     ctx.run_generator()

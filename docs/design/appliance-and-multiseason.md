@@ -68,24 +68,38 @@ Split **immutable runtime** (shipped in the bundle/image, read-only, replaced on
 upgrade) from **mutable state** (everything else, under a single configurable
 `$BIFROST_DATA` root — the one thing an operator backs up or mounts as a volume):
 
-- **Runtime (bundle/image):** the Bifrost binary, the pinned AP, the vendored
-  Python, the helper scripts. Not under the data dir.
+- **Runtime (bundle/image):** the Bifrost binary, the pinned AP
+  (`BIFROST_AP_DIR`) and its Python (`BIFROST_AP_PYTHON`), and Bifrost's shipped
+  files (`BIFROST_RUNTIME_DIR`: the repo's `scripts/` helper scripts and
+  `vendor/` bundled apworlds). Not under the data dir.
 - **State (`$BIFROST_DATA`):**
 
 ```
 $BIFROST_DATA/
-  config.toml                 # §10 (secrets move here); step 1 may stay env-driven
+  config.toml                 # §10 (secrets move here); step 1 stays env-driven
   bifrost.db                  # embedded SQLite — no system dep, no server
   packs/<season>/<ap_slot>/   # poptracker packs
-  seasons/<id>/
-    players/                  # staged per-player YAMLs
-    custom_worlds/            # uploaded .apworld (per season → isolated)
-    output/                   # current.zip, *.apsave, multidata
+  uploads/                    # submitted player YAMLs
+  common/                     # operator-supplied shared-game assets (MC apworld/YAML/client jars)
+  archives/<seed>.tar.gz      # raw season bundles
+  mc-whitelist.json, connect_password.request
+  seasons/<id>/               # an Archipelago *user dir* per season:
+    Players/                  # staged per-player YAMLs
+    worlds/                   # custom .apworld (per season → isolated)
+    output/                   # AP_<seed>.zip, current.zip, current.apsave
     logs/
-  uploads/  …                 # other misc state (mc-whitelist, connect-pw request, …)
+    host.yaml                 # per-season AP settings (server_options are baked into the seed)
 ```
 
-Why: one dir to back up / mount; per-season `custom_worlds/`+`output/` give the
+The season dir deliberately mirrors AP's own user-dir layout: the helper
+scripts pin AP's `user_path` to it (and `local_path` to the install), so AP and
+Universal Tracker find the season's YAMLs, custom worlds (`worlds/` — AP scans
+`user_path("worlds")` whenever user dir ≠ install dir), output, logs and
+`host.yaml` with their own defaults. Implemented in `src/config.rs`
+(`Config`, `SeasonDirs`) and `scripts/bifrost_ap.py`. Until seasons are
+first-class (§7) the runtime uses a single `seasons/current/`.
+
+Why: one dir to back up / mount; per-season `worlds/`+`output/` give the
 data isolation §7/§10 want for free; and the generation sandbox (§4) binds just
 one season dir read-write.
 
@@ -102,7 +116,9 @@ fresh on the appliance layout (§11). So the single-root layout above is *the*
 layout — no legacy profile, no defaults that mimic today's
 `/var/lib/bifrost` + `/srv/archipelago/{Players,custom_worlds,output,logs}`
 split, no compatibility shims. Today's flat AP-dir state becomes the per-season
-`seasons/<id>/…` form.
+`seasons/<id>/…` form. Whatever starts the AP server must point it at the
+season's `output/current.zip` (until the §7.2 supervisor owns that, it's the
+redeploy's service wiring).
 
 ## 4. Generation isolation (`sandbox::spawn`)
 

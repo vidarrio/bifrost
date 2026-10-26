@@ -1,29 +1,18 @@
 #!/usr/bin/env python3
-"""Run Archipelago generation with local/user paths pinned to the install, so
-custom worlds in custom_worlds/ resolve even under Bifrost's sandbox (same fix
-as bifrost_check.py). Rolls Players/*.yaml into output/AP_<seed>.zip.
+"""Run Archipelago generation for a season: rolls the season's Players/*.yaml
+(against its custom worlds — see bifrost_ap) into <season>/output/AP_<seed>.zip.
 
-Invoked by Bifrost (as the bifrost user) with any extra Generate.py args."""
+Invoked by Bifrost with any extra Generate.py args."""
 import sys
 import os
 import runpy
 
-AP = "/srv/archipelago"
-sys.path.insert(0, AP)
+import bifrost_ap  # pins AP paths; must precede AP imports
 
-import Utils
-
-Utils.local_path.cached_path = AP
-Utils.user_path.cached_path = AP
-os.chdir(AP)
-
-# Generation only READS settings, but loading the worlds registers their setting
-# keys, which AP would then persist back into host.yaml via an atexit autosave
-# (an atomic host.yaml.tmp next to it). Bifrost's sandbox makes /srv/archipelago
-# read-only, so that write fails and aborts the run. Disable the autosave — the
-# in-memory defaults are all generation needs; host.yaml stays as the admin set it.
-import settings
-settings.skip_autosave = True
-
-sys.argv = ["Generate.py"] + sys.argv[1:]
-runpy.run_path(os.path.join(AP, "Generate.py"), run_name="__main__")
+# Explicit paths win over anything a season host.yaml says.
+sys.argv = [
+    "Generate.py",
+    "--player_files_path", bifrost_ap.season_path("Players"),
+    "--outputpath", bifrost_ap.season_path("output"),
+] + sys.argv[1:]
+runpy.run_path(os.path.join(bifrost_ap.AP_DIR, "Generate.py"), run_name="__main__")

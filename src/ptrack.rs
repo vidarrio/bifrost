@@ -10,13 +10,13 @@
 //! `poptracker::Session` holds a Lua VM and is `!Send`, so every compute runs
 //! inside one synchronous call — handlers invoke these from `spawn_blocking`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-const PACK_ROOT: &str = "/var/lib/bifrost/packs";
+use crate::{ap_adapter, config};
 
-/// Per-slot extracted-pack directory: `<root>/<season>/<ap_slot>/`.
+/// Per-slot extracted-pack directory: `<data>/packs/<season>/<ap_slot>/`.
 fn slot_dir(season: &str, ap_slot: i64) -> PathBuf {
-    PathBuf::from(PACK_ROOT).join(sanitize(season)).join(ap_slot.to_string())
+    config::get().packs_dir().join(sanitize(season)).join(ap_slot.to_string())
 }
 
 /// Is a usable pack installed for this slot?
@@ -66,34 +66,11 @@ pub fn install(season: &str, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), Strin
     let r = poptracker::extract_zip(&tmp, &dir).map_err(|e| e.to_string());
     let _ = std::fs::remove_file(&tmp);
     r?;
-    normalize_pngs(&dir);
+    // Browsers can render an indexed PNG with its palette background instead of
+    // honouring `tRNS` transparency (notably under `image-rendering:pixelated`),
+    // leaving transparent icons with a background — convert them to RGBA.
+    ap_adapter::normalize_pngs(&dir);
     Ok(())
-}
-
-/// Convert indexed/palette (and grayscale) PNGs in the pack to RGBA. Browsers
-/// can render an indexed PNG with its palette background instead of honouring
-/// the `tRNS` transparency (notably under `image-rendering:pixelated`), which
-/// left transparent icons showing a background. Uses the AP venv's Pillow.
-fn normalize_pngs(dir: &Path) {
-    const SCRIPT: &str = r#"
-import sys, os
-from PIL import Image
-for r, _, fs in os.walk(sys.argv[1]):
-    for f in fs:
-        if f.lower().endswith('.png'):
-            p = os.path.join(r, f)
-            try:
-                im = Image.open(p)
-                if im.mode in ('P', 'PA', 'L', 'LA', '1'):
-                    im.convert('RGBA').save(p)
-            except Exception:
-                pass
-"#;
-    let _ = std::process::Command::new("/srv/archipelago/venv/bin/python")
-        .arg("-c")
-        .arg(SCRIPT)
-        .arg(dir)
-        .output();
 }
 
 /// Remove a slot's installed pack.

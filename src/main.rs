@@ -23,8 +23,10 @@ use tower_http::trace::TraceLayer;
 
 mod activity;
 mod ap;
+mod ap_adapter;
 mod archive;
 mod checker;
+mod config;
 mod db;
 mod generate;
 mod inlogic;
@@ -62,16 +64,15 @@ async fn main() {
         )
         .init();
 
-    let port: u16 = std::env::var("BIFROST_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(8080);
+    let cfg = config::init(config::Config::from_env());
+    cfg.ensure_dirs()
+        .unwrap_or_else(|e| panic!("create data dirs under {}: {e}", cfg.data_dir.display()));
+    let port = cfg.port;
 
-    let db_path =
-        std::env::var("BIFROST_DB").unwrap_or_else(|_| "/var/lib/bifrost/bifrost.db".into());
-    let db = db::Db::open(&db_path)
+    let db_path = cfg.db_path();
+    let db = db::Db::open(&db_path.to_string_lossy())
         .await
-        .unwrap_or_else(|e| panic!("open db {db_path}: {e}"));
+        .unwrap_or_else(|e| panic!("open db {}: {e}", db_path.display()));
 
     let ap_cfg = ap::ApConfig::from_env();
     let board: Shared = Arc::new(RwLock::new(ap::Board::default()));
@@ -312,23 +313,22 @@ fn mc_addr() -> String {
 /// claimant usernames, one JSON array). The host-side `mc-whitelist-sync`
 /// watches this file (over the Bifrost host's data dir) and reconciles it onto the
 /// Minecraft server — Bifrost itself has no reach across to it.
-/// `/var/lib/bifrost` is in the service's `ReadWritePaths` (same place as the DB
-/// and the connect-password request file).
-const MC_WHITELIST_FILE: &str = "/var/lib/bifrost/mc-whitelist.json";
+/// Lives in the data dir (`config::Config::mc_whitelist_file`).
 
 /// A valid Minecraft (Java) username: 3–16 of `[A-Za-z0-9_]`.
 fn valid_mc_username(s: &str) -> bool {
     (3..=16).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
-/// Recompute the season's whitelist and write it to `MC_WHITELIST_FILE`
+/// Recompute the season's whitelist and write it to the whitelist file
 /// atomically (temp + rename). Best-effort: a failure is logged, not fatal —
 /// the next change (or the host timer) reconciles.
 async fn export_mc_whitelist(st: &AppState, season: &str) {
     let names = st.db.mc_whitelist(season).await;
     let json = serde_json::to_string(&names).unwrap_or_else(|_| "[]".into());
-    let tmp = format!("{MC_WHITELIST_FILE}.tmp");
-    if let Err(e) = std::fs::write(&tmp, &json).and_then(|_| std::fs::rename(&tmp, MC_WHITELIST_FILE))
+    let file = config::get().mc_whitelist_file();
+    let tmp = file.with_extension("json.tmp");
+    if let Err(e) = std::fs::write(&tmp, &json).and_then(|_| std::fs::rename(&tmp, &file))
     {
         tracing::warn!("mc whitelist export failed: {e}");
     }
@@ -1358,11 +1358,6 @@ async fn game_finish(
     }
 }
 
-const UPLOAD_DIR: &str = "/var/lib/bifrost/uploads";
-const CUSTOM_WORLDS: &str = "/srv/archipelago/custom_worlds";
-/// Bifrost writes the requested connect password here; a root `bifrost-connpw`
-/// path unit persists it to host.yaml + the service env and restarts bifrost.
-const CONNPW_REQUEST: &str = "/var/lib/bifrost/connect_password.request";
 
 fn slugify(s: &str) -> String {
     let out: String = s
@@ -1379,8 +1374,8 @@ async fn signup_get(State(st): State<AppState>, headers: HeaderMap) -> Html<Stri
     render::signup_page(&subs, &me, is_admin, open)
 }
 
-/// Step 1 of signup: install an uploaded `.apworld` into the server's
-/// `custom_worlds/` right away, so the checker can validate a custom-game YAML
+/// Step 1 of signup: install an uploaded `.apworld` into the season's
+/// `worlds/` right away, so the checker can validate a custom-game YAML
 /// against it in step 2. Returns JSON for the wizard.
 async fn signup_apworld(mut mp: Multipart) -> Json<serde_json::Value> {
     let mut bytes: Option<Vec<u8>> = None;
@@ -1407,7 +1402,7 @@ async fn signup_apworld(mut mp: Multipart) -> Json<serde_json::Value> {
         .and_then(|s| s.to_str())
         .unwrap_or("world");
     let base = slugify(stem);
-    let dst = format!("{CUSTOM_WORLDS}/{base}.apworld");
+    let dst = config::get().season().worlds.join(format!("{base}.apworld"));
     if tokio::fs::write(&dst, &bytes).await.is_err() {
         return Json(serde_json::json!({
             "ok": false, "error": "Couldn't install the apworld on the server."
@@ -1496,8 +1491,9 @@ async fn signup_post(
     }
 
     let slug = slugify(&slot_name);
-    let _ = tokio::fs::create_dir_all(UPLOAD_DIR).await;
-    let yaml_path = format!("{UPLOAD_DIR}/{slug}.yaml");
+    let uploads = config::get().uploads_dir();
+    let _ = tokio::fs::create_dir_all(&uploads).await;
+    let yaml_path = uploads.join(format!("{slug}.yaml")).to_string_lossy().into_owned();
     if tokio::fs::write(&yaml_path, &yaml).await.is_err() {
         return render::signup_result("Couldn't store the YAML.", false);
     }
@@ -2150,10 +2146,11 @@ async fn admin_connect_password(
         }
     }
     // Persist after a short delay so this response reaches the browser before the
-    // root helper restarts bifrost (writing the request file triggers it).
+    // root helper restarts bifrost (writing the request file triggers it: a
+    // host-side path unit persists it to host.yaml + the service env).
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-        let _ = tokio::fs::write(CONNPW_REQUEST, format!("{pw}\n")).await;
+        let _ = tokio::fs::write(config::get().connpw_request_file(), format!("{pw}\n")).await;
     });
     let msg = if live {
         "Connect password updated. Bifrost is restarting to apply it everywhere — give it a few seconds, then reload."

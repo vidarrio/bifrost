@@ -17,11 +17,10 @@ use std::time::Duration;
 use tokio::process::Command;
 
 use crate::ap::Board;
+use crate::config;
 use crate::db::Db;
 
-const UNIT: &str = "archipelago";
 const POLL: Duration = Duration::from_secs(5);
-const CURRENT_ZIP: &str = "/srv/archipelago/output/current.zip";
 
 /// Spawn the journal ingester. Idles until the board knows a season (seed).
 pub fn spawn(board: Arc<RwLock<Board>>, db: Db) {
@@ -73,7 +72,7 @@ async fn ingest(board: &Arc<RwLock<Board>>, db: &Db) -> Result<(), String> {
     }
 
     let mut cmd = Command::new("journalctl");
-    cmd.args(["-u", UNIT, "-o", "json", "--no-pager"]);
+    cmd.args(["-u", &config::get().ap_journal_unit, "-o", "json", "--no-pager"]);
     match &mode {
         Mode::Incremental(c) => {
             cmd.arg(format!("--after-cursor={c}"));
@@ -158,7 +157,7 @@ async fn ingest(board: &Arc<RwLock<Board>>, db: &Db) -> Result<(), String> {
 
 /// Deploy time of the current season's seed, as epoch seconds (0 if unknown).
 fn current_zip_mtime() -> i64 {
-    std::fs::metadata(CURRENT_ZIP)
+    std::fs::metadata(config::get().season().current_zip())
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
