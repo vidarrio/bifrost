@@ -53,7 +53,7 @@ Offer **two forms**, recommend the first:
 
 **Container image — as built (`Dockerfile`).** Three stages: Bifrost
 (`rust:1.98-trixie`, release build), Archipelago (a pinned build of Bifrost's fork via
-`AP_VERSION`, default 0.6.8-bifrost.1; venv with core + every bundled world's
+`AP_VERSION`, default 0.6.8-bifrost.2; venv with core + every bundled world's
 requirements and `setuptools<81`; `_speedups` prebuilt with Cython), and a
 `debian:trixie-slim` runtime with python3, bubblewrap and tini, running as an
 unprivileged `bifrost` user. Paths match Bifrost's defaults (`/opt/archipelago`,

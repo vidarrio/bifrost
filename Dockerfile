@@ -32,7 +32,7 @@ RUN cargo build --release --locked --bin bifrost
 # ---- Archipelago (source checkout + venv; paths match the runtime stage) ----
 FROM docker.io/library/debian:${DEBIAN}-slim AS archipelago
 ARG APT
-ARG AP_VERSION=0.6.8-bifrost.1
+ARG AP_VERSION=0.6.8-bifrost.2
 ARG AP_REPO=https://github.com/vidarrio/Archipelago
 RUN ${APT} update && ${APT} install -y --no-install-recommends \
         ca-certificates git python3 python3-venv python3-dev build-essential \

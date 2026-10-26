@@ -31,8 +31,8 @@ RUN cargo build --release --locked --bin bifrost --target x86_64-unknown-linux-m
 # ---- the runtime payload ----
 FROM docker.io/library/debian:${DEBIAN}-slim AS runtime
 ARG APT
-ARG AP_VERSION=0.6.8-bifrost.1
-ARG AP_SHA256=3db1707be70ee1951d19a5f0f0fb80311a9f3347e5752e48dd502f7ab057d5b6
+ARG AP_VERSION=0.6.8-bifrost.2
+ARG AP_SHA256=926ef45340c1ed67305ac344240979d4e546c7cab4ba2b42ad8b1404e6d22b44
 ARG AP_REPO=https://github.com/vidarrio/Archipelago
 ARG PY_URL=https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.13.16+20261013-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
 ARG PY_SHA256=d0080766b6b74aeb81e1949ef0d9a20e6c17f7b160fb295a69b936ccb17660be
