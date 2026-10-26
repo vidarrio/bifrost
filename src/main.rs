@@ -344,7 +344,8 @@ async fn board_view(State(st): State<AppState>) -> Html<String> {
     let addr = mc_addr();
     // Board shows the latest slice of the persistent log (journal-sourced).
     let acts = st.db.activity_latest(&season, BOARD_ACTIVITY).await;
-    render::board_page(&snap, &slots, &prios, Some(&addr), &acts)
+    let inlogic = st.db.inlogic_counts(&season).await;
+    render::board_page(&snap, &slots, &prios, Some(&addr), &acts, &inlogic)
 }
 
 /// The board's live-update payload: the `.boardcols` inner HTML (`body`) + the
@@ -360,10 +361,11 @@ async fn board_fragment_view(State(st): State<AppState>) -> Json<serde_json::Val
     let prios = live_priorities(&st, &snap, &season).await;
     let addr = mc_addr();
     let acts = st.db.activity_latest(&season, BOARD_ACTIVITY).await;
+    let inlogic = st.db.inlogic_counts(&season).await;
     Json(serde_json::json!({
         "conn": render::conn_line(&snap),
         "progress": render::season_progress(&snap, &slots),
-        "body": render::board_fragment(&snap, &slots, &prios, Some(&addr), &acts),
+        "body": render::board_fragment(&snap, &slots, &prios, Some(&addr), &acts, &inlogic),
     }))
 }
 
@@ -621,7 +623,8 @@ async fn pt_upload(
 ) -> Response {
     let (me, is_admin) = identity(&headers);
     let season = st.board.read().ok().and_then(|b| b.seed.clone()).unwrap_or_default();
-    let back = format!("/game/{ap_slot}");
+    // Land back on the PopTracker tab (the pack-management tab), not the default.
+    let back = format!("/game/{ap_slot}#tab-pt");
     if season.is_empty() || !pt_can_manage(&st, &season, ap_slot, &me, is_admin).await {
         return render::notice("You can't upload a pack for this game.", false, &back).into_response();
     }
@@ -656,7 +659,7 @@ async fn pt_upload(
 async fn pt_remove(Path(ap_slot): Path<i64>, State(st): State<AppState>, headers: HeaderMap) -> Response {
     let (me, is_admin) = identity(&headers);
     let season = st.board.read().ok().and_then(|b| b.seed.clone()).unwrap_or_default();
-    let back = format!("/game/{ap_slot}");
+    let back = format!("/game/{ap_slot}#tab-pt");
     if !season.is_empty() && pt_can_manage(&st, &season, ap_slot, &me, is_admin).await {
         let s2 = season.clone();
         let _ = tokio::task::spawn_blocking(move || ptrack::remove(&s2, ap_slot)).await;

@@ -783,6 +783,7 @@ pub fn board_page(
     prios: &std::collections::HashSet<(i64, i64, i64)>,
     mc_addr: Option<&str>,
     activity: &[crate::db::ActivityRow],
+    inlogic: &std::collections::HashMap<i64, i64>,
 ) -> Html<String> {
     let mut out = page_head(None);
     out.push_str(BOARD_STYLE);
@@ -796,7 +797,7 @@ pub fn board_page(
         season_progress(snap, slots)
     ));
     out.push_str(r#"<div class="boardcols">"#);
-    board_inner(&mut out, snap, slots, prios, mc_addr, activity);
+    board_inner(&mut out, snap, slots, prios, mc_addr, activity, inlogic);
     out.push_str("</div></main></body></html>");
     Html(out)
 }
@@ -811,6 +812,7 @@ fn board_inner(
     prios: &std::collections::HashSet<(i64, i64, i64)>,
     mc_addr: Option<&str>,
     activity: &[crate::db::ActivityRow],
+    inlogic: &std::collections::HashMap<i64, i64>,
 ) {
     out.push_str(r#"<div class="boardgrid"><h2>Slots — tap one to claim, hint, and see its hints</h2>"#);
     if slots.is_empty() {
@@ -820,9 +822,13 @@ fn board_inner(
         for g in group_by_ap(slots) {
             let live = snap.ap.get(&g.ap_slot).cloned().unwrap_or_default();
             let (cls, label) = card_status(&live);
+            let avail = inlogic
+                .get(&g.ap_slot)
+                .map(|n| format!(" · {n} available"))
+                .unwrap_or_default();
             out.push_str(&format!(
                 r#"<a class="slot cardlink {cls}" href="/game/{}"><span class="st">{label}</span><div class="game">{}</div>
-<div class="meta">{} locations · sent {} · recv {} · {} still to be found</div>"#,
+<div class="meta">{} locations · sent {} · recv {} · {} left{avail}</div>"#,
                 g.ap_slot,
                 esc(g.game),
                 live.world_size,
@@ -887,9 +893,10 @@ pub fn board_fragment(
     prios: &std::collections::HashSet<(i64, i64, i64)>,
     mc_addr: Option<&str>,
     activity: &[crate::db::ActivityRow],
+    inlogic: &std::collections::HashMap<i64, i64>,
 ) -> String {
     let mut out = String::new();
-    board_inner(&mut out, snap, slots, prios, mc_addr, activity);
+    board_inner(&mut out, snap, slots, prios, mc_addr, activity, inlogic);
     out
 }
 
@@ -1912,6 +1919,9 @@ const GAME_STYLE: &str = r#"<style>
 .ptmk{position:absolute;border:1px solid rgba(0,0,0,.65);box-sizing:border-box;border-radius:2px}
 .ptmk.d{transform:rotate(45deg)}
 .ptform{margin:10px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ptform input[type=file]{color:var(--muted);font-size:12.5px;max-width:100%}
+.ptform input[type=file]::file-selector-button{background:transparent;border:1px solid var(--bd);color:var(--muted);border-radius:6px;padding:5px 11px;margin-right:10px;font-family:var(--font);font-size:12px;font-weight:600;cursor:pointer}
+.ptform input[type=file]::file-selector-button:hover{border-color:var(--accent);color:var(--accent)}
 .ptmanage{margin-top:16px;text-align:center}.ptmanage>summary{cursor:pointer;color:var(--muted);font-size:13px}
 .ptmanage .ptform{justify-content:center}
 .ptnest{margin:4px 0}
@@ -1938,11 +1948,14 @@ const GAME_STYLE: &str = r#"<style>
 /// Toggles the game page's tab panels (delegated click on the tab bar).
 const GAME_TAB_JS: &str = r#"<script>
 (function(){var bar=document.querySelector('.gtabs');if(!bar)return;
-bar.addEventListener('click',function(e){var b=e.target.closest('.gtab');if(!b)return;
-bar.querySelectorAll('.gtab').forEach(function(x){x.classList.toggle('on',x===b);});
-var id=b.getAttribute('data-tab');
-document.querySelectorAll('.gtabpanel').forEach(function(p){p.hidden=(p.id!==id);});
-});})();
+function activate(id){var btn=bar.querySelector('.gtab[data-tab="'+id+'"]');if(!btn)return;
+bar.querySelectorAll('.gtab').forEach(function(x){x.classList.toggle('on',x===btn);});
+document.querySelectorAll('.gtabpanel').forEach(function(p){p.hidden=(p.id!==id);});}
+bar.addEventListener('click',function(e){var b=e.target.closest('.gtab');if(!b)return;activate(b.getAttribute('data-tab'));});
+// Open the tab named in the URL hash (e.g. #tab-pt after a pack upload).
+var h=(location.hash||'').slice(1),el=h&&document.getElementById(h);
+if(el&&el.classList.contains('gtabpanel'))activate(h);
+})();
 </script>"#;
 
 /// Tab bar + the opening tag of the (default-visible) Hints panel. The caller
@@ -2264,9 +2277,15 @@ pub fn game_page(
     // The Universal Tracker tab panel is identical for both the common and the
     // regular slot branches; build it once.
     let ut_html = inlogic_panel(inlogic);
+    // "available now" count from the slot's Universal Tracker result (if any).
+    let avail = inlogic
+        .filter(|il| il.err.is_none())
+        .and_then(|il| serde_json::from_str::<Vec<String>>(&il.locations).ok())
+        .map(|v| format!(" · {} available", v.len()))
+        .unwrap_or_default();
     out.push_str(&format!(
         r#"<h1>{}</h1><div class="crumb"><a href="/board">← board</a>{}</div>
-<div class="meta">{} locations · sent {} · received {} · {} still to be found</div>"#,
+<div class="meta">{} locations · sent {} · received {} · {} left{avail}</div>"#,
         esc(game),
         if is_admin { " · admin" } else { "" },
         live.world_size,

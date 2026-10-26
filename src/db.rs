@@ -722,6 +722,20 @@ impl Db {
         .flatten()
     }
 
+    /// Per-slot in-logic ("available now") counts for a season, for the board
+    /// cards. Only slots whose last compute succeeded (no error) are included, so
+    /// a UT-disabled or not-yet-computed slot simply omits the figure.
+    pub async fn inlogic_counts(&self, season: &str) -> std::collections::HashMap<i64, i64> {
+        sqlx::query_as::<_, (i64, i64)>(
+            "SELECT ap_slot, count FROM inlogic WHERE season = ? AND err IS NULL",
+        )
+        .bind(season)
+        .fetch_all(&self.pool)
+        .await
+        .map(|rows| rows.into_iter().collect())
+        .unwrap_or_default()
+    }
+
     /// The `(sent, received)` state a slot's cached in-logic was computed at, so
     /// the recomputer can skip slots whose state hasn't moved. `None` = no row.
     pub async fn inlogic_state(&self, season: &str, ap_slot: i64) -> Option<(i64, i64)> {
