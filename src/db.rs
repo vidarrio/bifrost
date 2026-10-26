@@ -9,7 +9,9 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{FromRow, SqlitePool};
 
 mod auth;
+mod seasons;
 pub use auth::{AccountRow, LinkKind, LinkRow, RedeemError};
+pub use seasons::{SeasonRow, State};
 
 #[derive(Clone)]
 pub struct Db {
@@ -134,27 +136,23 @@ impl Db {
             .max_connections(4)
             .connect_with(opts)
             .await?;
-        // Accounts first: the per-user tables below reference account(id).
+        // Accounts and seasons first: the tables below reference them.
         auth::migrate(&pool).await?;
+        seasons::migrate(&pool).await?;
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS bifrost_slot (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 season TEXT NOT NULL,
+                 season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
                  name TEXT NOT NULL,
                  ap_slot INTEGER NOT NULL,
                  game TEXT NOT NULL,
+                 -- The shared "common game" slot (one AP slot everyone plays).
+                 is_common INTEGER NOT NULL DEFAULT 0,
                  UNIQUE(season, name)
                )"#,
         )
         .execute(&pool)
         .await?;
-        // `is_common` marks the shared "common game" slot (added after launch;
-        // ignore the error when the column already exists).
-        let _ = sqlx::query(
-            "ALTER TABLE bifrost_slot ADD COLUMN is_common INTEGER NOT NULL DEFAULT 0",
-        )
-        .execute(&pool)
-        .await;
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS claim (
                  bifrost_slot_id INTEGER PRIMARY KEY REFERENCES bifrost_slot(id) ON DELETE CASCADE,
@@ -164,18 +162,20 @@ impl Db {
         )
         .execute(&pool)
         .await?;
-        // Signup submissions for the *next* season (before any seed exists).
+        // Signup submissions for a season (before its seed exists).
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS submission (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
                  account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-                 slot_name TEXT NOT NULL UNIQUE,
+                 slot_name TEXT NOT NULL,
                  game TEXT NOT NULL,
                  is_custom INTEGER NOT NULL DEFAULT 0,
                  coop_names TEXT NOT NULL DEFAULT '',
                  yaml_file TEXT NOT NULL,
                  apworld_file TEXT,
-                 created_at INTEGER NOT NULL
+                 created_at INTEGER NOT NULL,
+                 UNIQUE(season, slot_name)
                )"#,
         )
         .execute(&pool)
@@ -192,7 +192,7 @@ impl Db {
         // Bonus hint credits earned via the minesweeper minigame (per season).
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS hint_credit (
-                 season TEXT NOT NULL,
+                 season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
                  account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
                  credits INTEGER NOT NULL DEFAULT 0,
                  PRIMARY KEY (season, account_id)
@@ -203,7 +203,7 @@ impl Db {
         // Hints a player has flagged to surface on the board.
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS hint_priority (
-                 season TEXT NOT NULL,
+                 season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
                  finding INTEGER NOT NULL,
                  location INTEGER NOT NULL,
                  item INTEGER NOT NULL,
@@ -216,7 +216,8 @@ impl Db {
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS mine_result (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 season TEXT NOT NULL,
+                 -- NULL = freeplay (outside any season).
+                 season INTEGER REFERENCES season(id) ON DELETE CASCADE,
                  account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
                  won INTEGER NOT NULL,
                  duration_ms INTEGER NOT NULL,
@@ -226,26 +227,8 @@ impl Db {
         )
         .execute(&pool)
         .await?;
-        // Add `kind` to databases created before board types existed (rows from
-        // back then were all the standard board). Ignore the error if present.
-        let _ = sqlx::query("ALTER TABLE mine_result ADD COLUMN kind TEXT NOT NULL DEFAULT 'standard'")
-            .execute(&pool)
-            .await;
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_mine_result ON mine_result (season, account_id, kind)",
-        )
-        .execute(&pool)
-        .await?;
-        // Frozen per-season summaries for the Past Seasons page. Keyed by the AP
-        // seed so each season is captured once; deliberately NOT touched by the
-        // admin reset, so finished seasons survive the clean slate.
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS season_archive (
-                 seed TEXT PRIMARY KEY,
-                 name TEXT NOT NULL,
-                 finalized_at INTEGER NOT NULL,
-                 summary TEXT NOT NULL
-               )"#,
         )
         .execute(&pool)
         .await?;
@@ -269,15 +252,14 @@ impl Db {
         .execute(&pool)
         .await?;
         // Persistent activity log, one row per kept AP journal event. Scoped by
-        // season (AP seed) so the archived/past-season view can replay it; like
-        // `season_archive`, deliberately NOT cleared by the admin reset. Ordered
-        // by `id` = journal order. De-duplication across runs is handled by the
-        // journal cursor (setting `journal_cursor`), not a UNIQUE constraint, so
+        // season so an archived season can replay it; NOT cleared by the admin
+        // reset. Ordered by `id` = journal order. De-duplication across runs is
+        // handled by the season's journal cursor, not a UNIQUE constraint, so
         // genuine identical events in the same second are never dropped.
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS activity (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 season TEXT NOT NULL,
+                 season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
                  ts INTEGER NOT NULL,
                  kind TEXT NOT NULL,
                  text TEXT NOT NULL,
@@ -291,24 +273,6 @@ impl Db {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_activity ON activity (season, id)")
             .execute(&pool)
             .await?;
-        // Migrate older DBs: add sender/receiver/item_class. If any ADD succeeds
-        // the column was absent (old rows lack it) — and since the whole log is
-        // derived from the AP journal, clear it + the cursor to re-backfill with
-        // the new fields populated. A fresh DB already has the columns (CREATE
-        // above), so the ADDs error and nothing is wiped.
-        let mut added = false;
-        for col in ["sender TEXT", "receiver TEXT", "item_class TEXT"] {
-            added |= sqlx::query(&format!("ALTER TABLE activity ADD COLUMN {col}"))
-                .execute(&pool)
-                .await
-                .is_ok();
-        }
-        if added {
-            let _ = sqlx::query("DELETE FROM activity").execute(&pool).await;
-            let _ = sqlx::query("DELETE FROM setting WHERE key = 'journal_cursor'")
-                .execute(&pool)
-                .await;
-        }
         // Universal-Tracker in-logic cache: one row per (season, ap_slot), holding
         // that slot's currently-reachable location names (computed out-of-band by
         // the `inlogic` recomputer shelling out to UT). `sent`/`received` are the
@@ -316,7 +280,7 @@ impl Db {
         // the slot's state moves.
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS inlogic (
-                 season TEXT NOT NULL,
+                 season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
                  ap_slot INTEGER NOT NULL,
                  ts INTEGER NOT NULL,
                  game TEXT NOT NULL DEFAULT '',
@@ -350,40 +314,8 @@ impl Db {
         Ok(())
     }
 
-    /// Whether the season signup form is open (defaults to open if unset).
-    pub async fn signups_open(&self) -> bool {
-        !matches!(self.get_setting("signups_open").await, Ok(Some(v)) if v == "0")
-    }
-
-    pub async fn set_signups_open(&self, open: bool) -> Result<(), sqlx::Error> {
-        self.set_setting("signups_open", if open { "1" } else { "0" })
-            .await
-    }
-
-    /// Whether the minesweeper minigame is enabled (defaults to off).
-    pub async fn minesweeper_enabled(&self) -> bool {
-        matches!(self.get_setting("minesweeper_enabled").await, Ok(Some(v)) if v == "1")
-    }
-
-    pub async fn set_minesweeper_enabled(&self, on: bool) -> Result<(), sqlx::Error> {
-        self.set_setting("minesweeper_enabled", if on { "1" } else { "0" })
-            .await
-    }
-
-    /// Whether the shared Minecraft common game is enabled for the season (read
-    /// at generation time to decide whether the common slot is included;
-    /// defaults to off).
-    pub async fn mc_enabled(&self) -> bool {
-        matches!(self.get_setting("mc_enabled").await, Ok(Some(v)) if v == "1")
-    }
-
-    pub async fn set_mc_enabled(&self, on: bool) -> Result<(), sqlx::Error> {
-        self.set_setting("mc_enabled", if on { "1" } else { "0" })
-            .await
-    }
-
     /// A player's bonus-hint credits for a season.
-    pub async fn credits(&self, season: &str, account: i64) -> i64 {
+    pub async fn credits(&self, season: i64, account: i64) -> i64 {
         sqlx::query_scalar("SELECT credits FROM hint_credit WHERE season = ? AND account_id = ?")
             .bind(season)
             .bind(account)
@@ -397,7 +329,7 @@ impl Db {
     /// True if this account has claimed a regular (non-common) slot this season.
     /// Communal-hint gate: only players with a game of their own in the season may
     /// spend the common game's shared hint points.
-    pub async fn has_claimed_slot(&self, season: &str, account: i64) -> bool {
+    pub async fn has_claimed_slot(&self, season: i64, account: i64) -> bool {
         let n: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM claim c JOIN bifrost_slot s ON s.id = c.bifrost_slot_id
              WHERE s.season = ? AND c.account_id = ? AND s.is_common = 0",
@@ -456,7 +388,7 @@ impl Db {
     /// The Minecraft whitelist for a season: the registered usernames of everyone
     /// holding a regular (non-common) slot this season. Exported for the
     /// host-side `mc-whitelist-sync` to apply to the Minecraft server.
-    pub async fn mc_whitelist(&self, season: &str) -> Vec<String> {
+    pub async fn mc_whitelist(&self, season: i64) -> Vec<String> {
         sqlx::query_scalar(
             "SELECT a.mc_username FROM mc_account a
              WHERE EXISTS (
@@ -472,7 +404,7 @@ impl Db {
     }
 
     /// Grant `n` bonus-hint credits, returning the new total.
-    pub async fn add_credits(&self, season: &str, account: i64, n: i64) -> Result<i64, sqlx::Error> {
+    pub async fn add_credits(&self, season: i64, account: i64, n: i64) -> Result<i64, sqlx::Error> {
         sqlx::query(
             "INSERT INTO hint_credit (season, account_id, credits) VALUES (?, ?, ?)
              ON CONFLICT(season, account_id) DO UPDATE SET credits = credits + excluded.credits",
@@ -486,7 +418,7 @@ impl Db {
     }
 
     /// Spend one bonus-hint credit if available; returns true if one was spent.
-    pub async fn spend_credit(&self, season: &str, account: i64) -> bool {
+    pub async fn spend_credit(&self, season: i64, account: i64) -> bool {
         let res = sqlx::query(
             "UPDATE hint_credit SET credits = credits - 1
              WHERE season = ? AND account_id = ? AND credits > 0",
@@ -502,7 +434,7 @@ impl Db {
     /// given board kind ("standard" / "expert").
     pub async fn record_mine_result(
         &self,
-        season: &str,
+        season: Option<i64>,
         account: i64,
         kind: &str,
         won: bool,
@@ -524,7 +456,7 @@ impl Db {
     /// Per-kind minesweeper stats for a player. `season = Some(s)` scopes to one
     /// season; `None` is all-time (across every season + freeplay) — the
     /// "permanent" view. Time stats are over wins only; `None` = no wins yet.
-    pub async fn mine_stats(&self, season: Option<&str>, account: i64, kind: &str) -> MineStats {
+    pub async fn mine_stats(&self, season: Option<i64>, account: i64, kind: &str) -> MineStats {
         let mut sql = String::from(
             "SELECT COALESCE(SUM(won),0) AS wins, COALESCE(SUM(1-won),0) AS losses, \
              CAST(AVG(CASE WHEN won=1 THEN duration_ms END) AS INTEGER) AS avg_ms, \
@@ -546,7 +478,7 @@ impl Db {
     /// top `limit`. `season = None` is the all-time (permanent) board.
     pub async fn mine_leaders_time(
         &self,
-        season: Option<&str>,
+        season: Option<i64>,
         kind: &str,
         limit: i64,
     ) -> Vec<(String, i64)> {
@@ -570,7 +502,7 @@ impl Db {
     /// `limit`. `season = None` is the all-time (permanent) board.
     pub async fn mine_leaders_rate(
         &self,
-        season: Option<&str>,
+        season: Option<i64>,
         kind: &str,
         min_games: i64,
         limit: i64,
@@ -598,90 +530,26 @@ impl Db {
 
     /// Delete every signup submission, returning their stored file paths so the
     /// caller can remove the uploads.
-    pub async fn clear_submissions(&self) -> Result<Vec<String>, sqlx::Error> {
-        let files: Vec<String> = sqlx::query_scalar("SELECT yaml_file FROM submission")
-            .fetch_all(&self.pool)
-            .await?;
-        sqlx::query("DELETE FROM submission")
+    pub async fn clear_submissions(&self, season: i64) -> Result<Vec<String>, sqlx::Error> {
+        let files: Vec<String> =
+            sqlx::query_scalar("SELECT yaml_file FROM submission WHERE season = ?")
+                .bind(season)
+                .fetch_all(&self.pool)
+                .await?;
+        sqlx::query("DELETE FROM submission WHERE season = ?")
+            .bind(season)
             .execute(&self.pool)
             .await?;
         Ok(files)
     }
 
-    /// Delete every Bifrost slot (claims cascade). Used by the admin reset.
-    pub async fn clear_all_slots(&self) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM bifrost_slot")
+    /// Delete a season's Bifrost slots (claims cascade). Used by the admin reset.
+    pub async fn clear_all_slots(&self, season: i64) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM bifrost_slot WHERE season = ?")
+            .bind(season)
             .execute(&self.pool)
             .await?;
         Ok(())
-    }
-
-    /// Store (or overwrite) a season's frozen summary for the Past Seasons page.
-    pub async fn archive_season(
-        &self,
-        seed: &str,
-        name: &str,
-        summary: &str,
-    ) -> Result<(), sqlx::Error> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or_default();
-        sqlx::query(
-            "INSERT INTO season_archive (seed, name, finalized_at, summary) VALUES (?, ?, ?, ?)
-             ON CONFLICT(seed) DO UPDATE SET
-                 name = excluded.name,
-                 finalized_at = excluded.finalized_at,
-                 summary = excluded.summary",
-        )
-        .bind(seed)
-        .bind(name)
-        .bind(now)
-        .bind(summary)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    /// Archived seasons as (seed, name, finalized_at), newest first.
-    pub async fn past_seasons(&self) -> Vec<(String, String, i64)> {
-        sqlx::query_as::<_, (String, String, i64)>(
-            "SELECT seed, name, finalized_at FROM season_archive ORDER BY finalized_at DESC",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .unwrap_or_default()
-    }
-
-    /// One archived season's stored summary JSON, if present.
-    pub async fn past_season(&self, seed: &str) -> Option<String> {
-        sqlx::query_scalar::<_, String>("SELECT summary FROM season_archive WHERE seed = ?")
-            .bind(seed)
-            .fetch_optional(&self.pool)
-            .await
-            .ok()
-            .flatten()
-    }
-
-    /// The most recent archived season's finalization time (0 if none). Used as
-    /// the lower bound for the current season's one-time retroactive journal
-    /// backfill: the current season began when the previous one ended.
-    pub async fn last_finalized_at(&self) -> i64 {
-        sqlx::query_scalar::<_, i64>("SELECT MAX(finalized_at) FROM season_archive")
-            .fetch_optional(&self.pool)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(0)
-    }
-
-    /// The saved journal cursor (where incremental ingest resumes), if set.
-    pub async fn journal_cursor(&self) -> Option<String> {
-        self.get_setting("journal_cursor").await.ok().flatten()
-    }
-
-    pub async fn set_journal_cursor(&self, cursor: &str) {
-        let _ = self.set_setting("journal_cursor", cursor).await;
     }
 
     /// Append an activity row (ingest path; dedup is via the cursor). `sender`
@@ -689,7 +557,7 @@ impl Db {
     /// collected); `receiver` is the item's recipient (sends only, else None).
     pub async fn activity_add(
         &self,
-        season: &str,
+        season: i64,
         ts: i64,
         kind: &str,
         text: &str,
@@ -713,7 +581,7 @@ impl Db {
     }
 
     /// Whether any activity rows exist for a season (guards the one-time backfill).
-    pub async fn activity_any(&self, season: &str) -> bool {
+    pub async fn activity_any(&self, season: i64) -> bool {
         sqlx::query_scalar::<_, i64>("SELECT EXISTS(SELECT 1 FROM activity WHERE season = ?)")
             .bind(season)
             .fetch_one(&self.pool)
@@ -723,7 +591,7 @@ impl Db {
     }
 
     /// Cached in-logic result for one slot, if computed this season.
-    pub async fn inlogic_get(&self, season: &str, ap_slot: i64) -> Option<InLogic> {
+    pub async fn inlogic_get(&self, season: i64, ap_slot: i64) -> Option<InLogic> {
         sqlx::query_as::<_, InLogic>(
             "SELECT ts, locations, err FROM inlogic WHERE season = ? AND ap_slot = ?",
         )
@@ -738,7 +606,7 @@ impl Db {
     /// Per-slot in-logic ("available now") counts for a season, for the board
     /// cards. Only slots whose last compute succeeded (no error) are included, so
     /// a UT-disabled or not-yet-computed slot simply omits the figure.
-    pub async fn inlogic_counts(&self, season: &str) -> std::collections::HashMap<i64, i64> {
+    pub async fn inlogic_counts(&self, season: i64) -> std::collections::HashMap<i64, i64> {
         sqlx::query_as::<_, (i64, i64)>(
             "SELECT ap_slot, count FROM inlogic WHERE season = ? AND err IS NULL",
         )
@@ -751,7 +619,7 @@ impl Db {
 
     /// The `(sent, received)` state a slot's cached in-logic was computed at, so
     /// the recomputer can skip slots whose state hasn't moved. `None` = no row.
-    pub async fn inlogic_state(&self, season: &str, ap_slot: i64) -> Option<(i64, i64)> {
+    pub async fn inlogic_state(&self, season: i64, ap_slot: i64) -> Option<(i64, i64)> {
         sqlx::query_as::<_, (i64, i64)>(
             "SELECT sent, received FROM inlogic WHERE season = ? AND ap_slot = ?",
         )
@@ -767,7 +635,7 @@ impl Db {
     #[allow(clippy::too_many_arguments)]
     pub async fn inlogic_set(
         &self,
-        season: &str,
+        season: i64,
         ap_slot: i64,
         ts: i64,
         game: &str,
@@ -801,7 +669,7 @@ impl Db {
     }
 
     /// The newest `limit` activity rows for a season (board preview).
-    pub async fn activity_latest(&self, season: &str, limit: i64) -> Vec<ActivityRow> {
+    pub async fn activity_latest(&self, season: i64, limit: i64) -> Vec<ActivityRow> {
         sqlx::query_as::<_, ActivityRow>(
             "SELECT ts, kind, text, item_class FROM activity
              WHERE season = ? ORDER BY id DESC LIMIT ?",
@@ -850,7 +718,7 @@ impl Db {
     }
 
     /// Total activity rows for a season matching the filter (for pagination).
-    pub async fn activity_count(&self, season: &str, f: &ActFilter<'_>) -> i64 {
+    pub async fn activity_count(&self, season: i64, f: &ActFilter<'_>) -> i64 {
         let mut qb = sqlx::QueryBuilder::new("SELECT COUNT(*) FROM activity WHERE season = ");
         qb.push_bind(season);
         Self::apply_activity_filter(&mut qb, f);
@@ -864,7 +732,7 @@ impl Db {
     /// (page p → offset `(p-1)*limit`). Returns up to `limit` rows.
     pub async fn activity_page(
         &self,
-        season: &str,
+        season: i64,
         f: &ActFilter<'_>,
         offset: i64,
         limit: i64,
@@ -889,7 +757,7 @@ impl Db {
     /// own paginated, searchable "Log" tab.
     pub async fn activity_for_participant(
         &self,
-        season: &str,
+        season: i64,
         name: &str,
         q: &str,
         offset: i64,
@@ -914,7 +782,7 @@ impl Db {
 
     /// Total activity rows involving one participant matching `q` (empty = all),
     /// for the Log tab's pager.
-    pub async fn activity_count_for_participant(&self, season: &str, name: &str, q: &str) -> i64 {
+    pub async fn activity_count_for_participant(&self, season: i64, name: &str, q: &str) -> i64 {
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM activity
              WHERE season = ?1
@@ -931,7 +799,7 @@ impl Db {
 
     /// Distinct participant names (senders ∪ receivers) in a season, for the
     /// filter's sender/receiver autocomplete.
-    pub async fn activity_participants(&self, season: &str) -> Vec<String> {
+    pub async fn activity_participants(&self, season: i64) -> Vec<String> {
         sqlx::query_scalar::<_, String>(
             "SELECT DISTINCT name FROM (
                  SELECT sender AS name FROM activity WHERE season = ?1 AND sender IS NOT NULL
@@ -947,7 +815,7 @@ impl Db {
     /// The set of prioritized hint keys (finding, location, item) for a season.
     pub async fn priorities(
         &self,
-        season: &str,
+        season: i64,
     ) -> Result<std::collections::HashSet<(i64, i64, i64)>, sqlx::Error> {
         let rows = sqlx::query_as::<_, (i64, i64, i64)>(
             "SELECT finding, location, item FROM hint_priority WHERE season = ?",
@@ -961,7 +829,7 @@ impl Db {
     /// Toggle a hint's priority. Returns true if it is now prioritized.
     pub async fn toggle_priority(
         &self,
-        season: &str,
+        season: i64,
         finding: i64,
         location: i64,
         item: i64,
@@ -992,7 +860,7 @@ impl Db {
 
     /// Remove priority rows for the given (finding, location, item) hints — used
     /// to drop the star from hints whose item has since been found.
-    pub async fn unprioritize_many(&self, season: &str, hints: &[(i64, i64, i64)]) {
+    pub async fn unprioritize_many(&self, season: i64, hints: &[(i64, i64, i64)]) {
         for (finding, location, item) in hints {
             let _ = sqlx::query(
                 "DELETE FROM hint_priority WHERE season=? AND finding=? AND location=? AND item=?",
@@ -1010,7 +878,7 @@ impl Db {
     /// co-op extras (`ap_slot_name -> extra_bifrost_name`). Idempotent.
     pub async fn seed_season(
         &self,
-        season: &str,
+        season: i64,
         ap_slots: &[(i64, String, String)],
         coop: &[(String, String)],
     ) -> Result<(), sqlx::Error> {
@@ -1046,7 +914,7 @@ impl Db {
     /// co-op Bifrost slot minted (unclaimed) per co-op name.
     pub async fn seed_from_submissions(
         &self,
-        season: &str,
+        season: i64,
         ap_slots: &[(i64, String, String)],
         subs: &[SubmissionRow],
         common_slot: Option<&str>,
@@ -1109,18 +977,19 @@ impl Db {
         Ok(())
     }
 
-    /// Re-seed a freshly regenerated season from the previous one: recreate every
-    /// Bifrost slot (1:1 AP slots + co-op seats) mapped onto the new AP slot
-    /// numbers by name, and carry each claim over. Player names are stable across
-    /// a re-roll, so claims and co-op grouping survive.
-    pub async fn carry_over_season(
+    /// After a re-roll: rebuild the season's Bifrost slots (1:1 AP slots +
+    /// co-op seats) on the new seed's AP slot numbers by name, carrying each
+    /// claim over. Player names are stable across a re-roll, so claims and
+    /// co-op grouping survive.
+    pub async fn remap_season(
         &self,
-        old_season: &str,
-        new_season: &str,
+        season: i64,
         new_ap_slots: &[(i64, String, String)],
     ) -> Result<(), sqlx::Error> {
         use std::collections::{HashMap, HashSet};
-        let old = self.slots(old_season).await?;
+        let old = self.slots(season).await?;
+        self.clear_all_slots(season).await?;
+        let new_season = season;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -1199,7 +1068,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn slots(&self, season: &str) -> Result<Vec<SlotRow>, sqlx::Error> {
+    pub async fn slots(&self, season: i64) -> Result<Vec<SlotRow>, sqlx::Error> {
         sqlx::query_as::<_, SlotRow>(
             r#"SELECT s.id, s.name, s.ap_slot, s.game, a.username AS claimed_by,
                       c.account_id AS claimed_by_id, s.is_common
@@ -1215,7 +1084,7 @@ impl Db {
 
     /// Claim a slot, enforcing one claim per player per season.
     pub async fn claim_one(&self, slot_id: i64, account: i64) -> Result<ClaimOutcome, sqlx::Error> {
-        let season: Option<String> =
+        let season: Option<i64> =
             sqlx::query_scalar("SELECT season FROM bifrost_slot WHERE id = ?")
                 .bind(slot_id)
                 .fetch_optional(&self.pool)
@@ -1228,7 +1097,7 @@ impl Db {
             "SELECT s.name FROM claim c JOIN bifrost_slot s ON s.id = c.bifrost_slot_id
              WHERE s.season = ? AND c.account_id = ? AND s.id <> ?",
         )
-        .bind(&season)
+        .bind(season)
         .bind(account)
         .bind(slot_id)
         .fetch_optional(&self.pool)
@@ -1268,6 +1137,7 @@ impl Db {
     #[allow(clippy::too_many_arguments)]
     pub async fn add_submission(
         &self,
+        season: i64,
         account: i64,
         slot_name: &str,
         game: &str,
@@ -1281,9 +1151,10 @@ impl Db {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         let res = sqlx::query(
-            "INSERT INTO submission (account_id, slot_name, game, is_custom, coop_names, yaml_file, apworld_file, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO submission (season, account_id, slot_name, game, is_custom, coop_names, yaml_file, apworld_file, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
+        .bind(season)
         .bind(account)
         .bind(slot_name)
         .bind(game)
@@ -1297,12 +1168,14 @@ impl Db {
         Ok(res.last_insert_rowid())
     }
 
-    pub async fn submissions(&self) -> Result<Vec<SubmissionRow>, sqlx::Error> {
+    pub async fn submissions(&self, season: i64) -> Result<Vec<SubmissionRow>, sqlx::Error> {
         sqlx::query_as::<_, SubmissionRow>(
             "SELECT s.id, s.account_id, a.username, s.slot_name, s.game, s.is_custom,
                     s.coop_names, s.yaml_file
-             FROM submission s JOIN account a ON a.id = s.account_id ORDER BY s.created_at",
+             FROM submission s JOIN account a ON a.id = s.account_id
+             WHERE s.season = ? ORDER BY s.created_at",
         )
+        .bind(season)
         .fetch_all(&self.pool)
         .await
     }
@@ -1311,14 +1184,16 @@ impl Db {
     /// row's file paths so the caller can clean them up.
     pub async fn delete_submission(
         &self,
+        season: i64,
         id: i64,
         account: i64,
         is_admin: bool,
     ) -> Result<Option<(String, Option<String>)>, sqlx::Error> {
         let row = sqlx::query_as::<_, (i64, String, Option<String>)>(
-            "SELECT account_id, yaml_file, apworld_file FROM submission WHERE id = ?",
+            "SELECT account_id, yaml_file, apworld_file FROM submission WHERE id = ? AND season = ?",
         )
         .bind(id)
+        .bind(season)
         .fetch_optional(&self.pool)
         .await?;
         let Some((owner, yaml_file, apworld_file)) = row else {
@@ -1335,7 +1210,7 @@ impl Db {
     }
 
     /// Whether `account` claims any Bifrost slot mapping to `ap_slot` this season.
-    pub async fn claims_ap_slot(&self, season: &str, account: i64, ap_slot: i64) -> bool {
+    pub async fn claims_ap_slot(&self, season: i64, account: i64, ap_slot: i64) -> bool {
         let n: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM bifrost_slot s JOIN claim c ON c.bifrost_slot_id = s.id
              WHERE s.season = ? AND s.ap_slot = ? AND c.account_id = ?",

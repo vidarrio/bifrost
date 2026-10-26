@@ -20,6 +20,7 @@
 //!   mc-whitelist.json
 //!   connect_password.request
 //!   seasons/<id>/                 an AP "user dir" per season (see SeasonDirs)
+//!   seasons/_core/                empty user dir for checks before any season
 //! ```
 //!
 //! Every path in the app comes from here; nothing else hardcodes a location.
@@ -70,6 +71,8 @@ pub struct SeasonDirs {
     /// Rolled seeds, the deployed `current.zip` and the server's save.
     pub output: PathBuf,
     pub logs: PathBuf,
+    /// Players' submitted YAMLs (before generation stages them into Players/).
+    pub submissions: PathBuf,
 }
 
 impl SeasonDirs {
@@ -79,8 +82,17 @@ impl SeasonDirs {
             worlds: root.join("worlds"),
             output: root.join("output"),
             logs: root.join("logs"),
+            submissions: root.join("submissions"),
             root,
         }
+    }
+
+    /// Create the season's directories (idempotent).
+    pub fn ensure(&self) -> std::io::Result<()> {
+        for d in [&self.players, &self.worlds, &self.output, &self.logs, &self.submissions] {
+            std::fs::create_dir_all(d)?;
+        }
+        Ok(())
     }
 
     /// The deployed seed the AP server runs.
@@ -98,10 +110,6 @@ impl SeasonDirs {
         self.output.join("current.apsave")
     }
 }
-
-/// The runtime still runs a single season; its state lives under this id until
-/// seasons become first-class (design doc §7).
-const CURRENT_SEASON: &str = "current";
 
 impl Config {
     /// Resolve from the environment and `$BIFROST_DATA/config.toml`, and
@@ -169,9 +177,15 @@ impl Config {
         self.data_dir.join("connect_password.request")
     }
 
-    /// The season the runtime is operating on.
-    pub fn season(&self) -> SeasonDirs {
-        SeasonDirs::new(self.data_dir.join("seasons").join(CURRENT_SEASON))
+    /// A season's directories (`seasons/<id>/`).
+    pub fn season(&self, id: i64) -> SeasonDirs {
+        SeasonDirs::new(self.data_dir.join("seasons").join(id.to_string()))
+    }
+
+    /// An empty AP user dir with no custom worlds: what YAML checks run
+    /// against before any season exists (core worlds only).
+    pub fn core_season(&self) -> SeasonDirs {
+        SeasonDirs::new(self.data_dir.join("seasons").join("_core"))
     }
 
     /// A helper script shipped in the runtime.
@@ -183,22 +197,17 @@ impl Config {
         self.runtime_dir.join("vendor").join(name)
     }
 
-    /// Create the state directories the app writes into (idempotent).
+    /// Create the instance-level state directories (idempotent).
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
-        let s = self.season();
         for d in [
             self.data_dir.clone(),
             self.packs_dir(),
             self.uploads_dir(),
             self.archives_dir(),
-            s.players,
-            s.worlds,
-            s.output,
-            s.logs,
         ] {
             std::fs::create_dir_all(d)?;
         }
-        Ok(())
+        self.core_season().ensure()
     }
 }
 
@@ -413,7 +422,7 @@ mod tests {
     #[test]
     fn all_state_lives_under_the_data_dir() {
         let c = with(&[("BIFROST_DATA", "/data")]);
-        let s = c.season();
+        let s = c.season(7);
         for p in [
             c.db_path(),
             c.packs_dir(),
@@ -438,7 +447,7 @@ mod tests {
         }
         assert_eq!(
             s.current_zip(),
-            Path::new("/data/seasons/current/output/current.zip")
+            Path::new("/data/seasons/7/output/current.zip")
         );
     }
 

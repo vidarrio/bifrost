@@ -8,7 +8,7 @@
 //! is exactly-once, and keep only real gameplay — item sends, goals, releases,
 //! collects — filtering out joins/leaves/connections and all server chatter.
 //!
-//! Rows are tagged with the current season (AP seed) and queried back by it.
+//! Rows are tagged with the live season and queried back by it.
 //! Relative "x ago" and the archive's frozen reference are handled at render.
 
 use std::sync::{Arc, RwLock};
@@ -22,16 +22,17 @@ use crate::db::Db;
 
 const POLL: Duration = Duration::from_secs(5);
 
-/// Spawn the journal ingester. Idles until the board knows a season (seed).
-pub fn spawn(board: Arc<RwLock<Board>>, db: Db) {
+/// Spawn the live season's journal ingester. Idles until the tracker has
+/// seen the season's room (its seed).
+pub fn spawn(season: i64, board: Arc<RwLock<Board>>, db: Db) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         loop {
-            if let Err(e) = ingest(&board, &db).await {
+            if let Err(e) = ingest(season, &board, &db).await {
                 tracing::warn!("activity ingest: {e}");
             }
             tokio::time::sleep(POLL).await;
         }
-    });
+    })
 }
 
 enum Mode {
@@ -43,25 +44,22 @@ enum Mode {
     SeekEnd,
 }
 
-async fn ingest(board: &Arc<RwLock<Board>>, db: &Db) -> Result<(), String> {
-    let season = match board.read().ok().and_then(|b| b.seed.clone()) {
-        Some(s) if !s.is_empty() => s,
-        _ => return Ok(()), // no season yet — nothing to scope events to
-    };
+async fn ingest(season: i64, board: &Arc<RwLock<Board>>, db: &Db) -> Result<(), String> {
+    if !board.read().is_ok_and(|b| b.seed.is_some()) {
+        return Ok(()); // the season's room hasn't been seen yet
+    }
 
     // Season metadata (decoded seed) classifies a sent item's importance from
     // its (sender, location). Loaded async on tracker connect.
     let meta = board.read().ok().and_then(|b| b.meta.clone());
 
-    let mode = match db.journal_cursor().await {
+    let mode = match db.journal_cursor(season).await {
         Some(c) => Mode::Incremental(c),
-        None if db.activity_any(&season).await => Mode::SeekEnd,
-        // One-time retroactive backfill of the current season. The current
-        // season began no earlier than the previous one ended; when no season
-        // has been archived yet, fall back to the current seed's deploy time
-        // (a new season always writes a fresh current.zip) so we don't sweep in
-        // earlier seasons still present in the journal.
-        None => Mode::Backfill(db.last_finalized_at().await.max(current_zip_mtime())),
+        None if db.activity_any(season).await => Mode::SeekEnd,
+        // One-time retroactive backfill of the season. It began no earlier than
+        // the previous season was archived, nor before its seed was deployed
+        // (a fresh current.zip), so earlier games still in the journal stay out.
+        None => Mode::Backfill(db.last_archived_before(season).await.max(current_zip_mtime(season))),
     };
 
     // The one-time backfill waits for meta so historical sends get classified;
@@ -137,7 +135,7 @@ async fn ingest(board: &Arc<RwLock<Board>>, db: &Db) -> Result<(), String> {
                 _ => None,
             };
             db.activity_add(
-                &season,
+                season,
                 ts,
                 kind,
                 &body,
@@ -150,14 +148,14 @@ async fn ingest(board: &Arc<RwLock<Board>>, db: &Db) -> Result<(), String> {
     }
 
     if let Some(c) = last_cursor {
-        db.set_journal_cursor(&c).await;
+        db.set_journal_cursor(season, Some(&c)).await;
     }
     Ok(())
 }
 
-/// Deploy time of the current season's seed, as epoch seconds (0 if unknown).
-fn current_zip_mtime() -> i64 {
-    std::fs::metadata(config::get().season().current_zip())
+/// Deploy time of the season's seed, as epoch seconds (0 if unknown).
+fn current_zip_mtime(season: i64) -> i64 {
+    std::fs::metadata(config::get().season(season).current_zip())
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())

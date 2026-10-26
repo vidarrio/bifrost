@@ -604,8 +604,13 @@ fn unauthenticated(auth: &AuthInner, req: &Request) -> Response {
     }
     match auth.mode {
         AuthMode::Native => {
-            let rd = req
-                .uri()
+            // As requested, before any season-prefix rewrite.
+            let uri = req
+                .extensions()
+                .get::<axum::extract::OriginalUri>()
+                .map(|o| o.0.clone())
+                .unwrap_or_else(|| req.uri().clone());
+            let rd = uri
                 .path_and_query()
                 .map(|pq| pq.as_str())
                 .unwrap_or("/");

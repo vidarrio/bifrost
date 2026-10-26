@@ -35,9 +35,9 @@ async fn copy_ext(src: &Path, dst: &Path, ext: &str) -> std::io::Result<()> {
 /// Build (or rebuild) the raw bundle for `seed`, writing
 /// `<data>/archives/<seed>.tar.gz`. `season_txt` is the human-readable
 /// roster/metadata the caller composed. Returns the bundle path on success.
-pub async fn bundle_season(seed: &str, season_txt: &str) -> Result<String, String> {
+pub async fn bundle_season(season_id: i64, seed: &str, season_txt: &str) -> Result<String, String> {
     let cfg = config::get();
-    let season = cfg.season();
+    let season = cfg.season(season_id);
     let archives = cfg.archives_dir();
     tokio::fs::create_dir_all(&archives)
         .await

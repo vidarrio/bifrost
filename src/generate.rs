@@ -7,8 +7,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::db::Db;
+use crate::db::{Db, State};
 use crate::meta::Meta;
+use crate::runtime::Runtimes;
 use crate::{ap_adapter, config};
 
 /// Assets for the shared Minecraft "common game" (in the data dir's
@@ -63,8 +64,8 @@ async fn clear_ext(dir: &Path, ext: &str) -> Result<(), String> {
 }
 
 /// Remove previously-generated seed archives (AP_*.zip), leaving current.zip.
-async fn clear_old_seeds() {
-    if let Ok(mut rd) = tokio::fs::read_dir(config::get().season().output).await {
+async fn clear_old_seeds(season: i64) {
+    if let Ok(mut rd) = tokio::fs::read_dir(config::get().season(season).output).await {
         while let Ok(Some(entry)) = rd.next_entry().await {
             let name = entry.file_name();
             let name = name.to_string_lossy();
@@ -79,8 +80,8 @@ async fn clear_old_seeds() {
 /// old save. The existing file is removed first rather than overwritten: it may
 /// be owned by the AP server's user, and `std::fs::copy` would try to chmod it
 /// to match the source (EPERM even when group-writable); a fresh file avoids it.
-async fn deploy_seed(seed_zip: &Path) -> Result<(), String> {
-    let season = config::get().season();
+async fn deploy_seed(season: i64, seed_zip: &Path) -> Result<(), String> {
+    let season = config::get().season(season);
     let dst = season.current_zip();
     let _ = tokio::fs::remove_file(&dst).await;
     tokio::fs::copy(seed_zip, &dst)
@@ -98,9 +99,9 @@ async fn deploy_seed(seed_zip: &Path) -> Result<(), String> {
 }
 
 /// The newest AP_*.zip in output/, if any.
-async fn newest_seed() -> Option<PathBuf> {
+async fn newest_seed(season: i64) -> Option<PathBuf> {
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
-    let mut rd = tokio::fs::read_dir(config::get().season().output).await.ok()?;
+    let mut rd = tokio::fs::read_dir(config::get().season(season).output).await.ok()?;
     while let Ok(Some(entry)) = rd.next_entry().await {
         let name = entry.file_name().to_string_lossy().to_string();
         if !(name.starts_with("AP_") && name.ends_with(".zip")) {
@@ -139,8 +140,8 @@ pub struct OutputFile {
 /// (see [`parse_player_file`] for the naming schemes handled) plus the spoiler.
 /// Excludes the `.archipelago` multidata (the server file). Blocking — call from
 /// `spawn_blocking`. Empty if no seed has been generated yet.
-pub fn list_outputs() -> Vec<OutputFile> {
-    let Ok(f) = std::fs::File::open(config::get().season().current_zip()) else {
+pub fn list_outputs(season: i64) -> Vec<OutputFile> {
+    let Ok(f) = std::fs::File::open(config::get().season(season).current_zip()) else {
         return Vec::new();
     };
     let Ok(mut zip) = zip::ZipArchive::new(f) else {
@@ -253,11 +254,11 @@ pub fn read_client_asset(which: &str) -> Option<(&'static str, Vec<u8>)> {
 /// Read one member's bytes out of the current seed zip, but only if `member` is
 /// actually a file in it (so a crafted query can't pull anything arbitrary), and
 /// never the `.archipelago` server file. Blocking — call from `spawn_blocking`.
-pub fn read_output(member: &str) -> Option<Vec<u8>> {
+pub fn read_output(season: i64, member: &str) -> Option<Vec<u8>> {
     if member.ends_with(".archipelago") {
         return None;
     }
-    let f = std::fs::File::open(config::get().season().current_zip()).ok()?;
+    let f = std::fs::File::open(config::get().season(season).current_zip()).ok()?;
     let mut zip = zip::ZipArchive::new(f).ok()?;
     let mut e = zip.by_name(member).ok()?; // errors if not a member
     let mut buf = Vec::with_capacity(e.size() as usize);
@@ -268,8 +269,8 @@ pub fn read_output(member: &str) -> Option<Vec<u8>> {
 // ---- admin maintenance actions (each writes only inside the season dir) ----
 
 /// Remove every installed custom apworld from the season's worlds/.
-pub async fn clear_apworlds() -> Result<(), String> {
-    let season = config::get().season();
+pub async fn clear_apworlds(season: i64) -> Result<(), String> {
+    let season = config::get().season(season);
     clear_ext(&season.worlds, "apworld").await?;
     ap_adapter::unpin_world(&season, None)
 }
@@ -279,10 +280,10 @@ pub async fn clear_apworlds() -> Result<(), String> {
 /// survives a season reset (which clears the custom worlds). Non-fatal: if the
 /// vendored copy is missing, the season still generates — UT in-logic just
 /// won't update.
-async fn stage_tracker_apworld() {
+async fn stage_tracker_apworld(season: i64) {
     let cfg = config::get();
     let src = cfg.vendor_file(TRACKER_APWORLD);
-    let dst = cfg.season().worlds.join(TRACKER_APWORLD);
+    let dst = cfg.season(season).worlds.join(TRACKER_APWORLD);
     if let Err(e) = tokio::fs::copy(&src, &dst).await {
         tracing::warn!(
             "staging Universal Tracker apworld ({} -> {}): {e}",
@@ -293,27 +294,27 @@ async fn stage_tracker_apworld() {
 }
 
 /// Remove every staged player YAML from the season's Players/.
-pub async fn clear_player_yamls() -> Result<(), String> {
-    clear_ext(&config::get().season().players, "yaml").await
+pub async fn clear_player_yamls(season: i64) -> Result<(), String> {
+    clear_ext(&config::get().season(season).players, "yaml").await
 }
 
 /// Delete the running session's save (a fresh start on the next server load).
-pub async fn clear_save() {
-    let _ = tokio::fs::remove_file(config::get().season().current_save()).await;
+pub async fn clear_save(season: i64) {
+    let _ = tokio::fs::remove_file(config::get().season(season).current_save()).await;
 }
 
 /// Delete the deployed world (current.zip) and archived seeds (AP_*.zip).
-pub async fn clear_world() {
-    let _ = tokio::fs::remove_file(config::get().season().current_zip()).await;
-    clear_old_seeds().await;
+pub async fn clear_world(season: i64) {
+    let _ = tokio::fs::remove_file(config::get().season(season).current_zip()).await;
+    clear_old_seeds(season).await;
 }
 
 /// Remove one installed apworld by file name (no path separators allowed).
-pub async fn delete_apworld(name: &str) -> Result<(), String> {
+pub async fn delete_apworld(season: i64, name: &str) -> Result<(), String> {
     if name.is_empty() || name.contains('/') || !name.ends_with(".apworld") {
         return Err("invalid apworld name".into());
     }
-    let season = config::get().season();
+    let season = config::get().season(season);
     tokio::fs::remove_file(season.worlds.join(name))
         .await
         .map_err(|e| format!("remove {name}: {e}"))?;
@@ -322,8 +323,8 @@ pub async fn delete_apworld(name: &str) -> Result<(), String> {
 
 /// The installed apworlds as (file name, provenance line): shipped with
 /// Bifrost, or pinned hash + uploader — or flagged when unpinned/changed.
-pub async fn list_apworlds() -> Vec<(String, String)> {
-    let season = config::get().season();
+pub async fn list_apworlds(season: i64) -> Vec<(String, String)> {
+    let season = config::get().season(season);
     let custom = ap_adapter::custom_worlds(&season);
     let pins = ap_adapter::world_pins(&season);
     let mut out = Vec::new();
@@ -365,8 +366,11 @@ fn ap_slots(meta: &Meta) -> Vec<(i64, String, String)> {
 }
 
 /// Decode a freshly rolled seed: its name and AP roster.
-async fn read_seed(seed_zip: &Path) -> Result<(String, Vec<(i64, String, String)>), String> {
-    let meta = ap_adapter::decode_meta(&config::get().season(), seed_zip).await?;
+async fn read_seed(
+    season: i64,
+    seed_zip: &Path,
+) -> Result<(String, Vec<(i64, String, String)>), String> {
+    let meta = ap_adapter::decode_meta(&config::get().season(season), seed_zip).await?;
     let seed_name = meta
         .seed
         .clone()
@@ -374,29 +378,77 @@ async fn read_seed(seed_zip: &Path) -> Result<(String, Vec<(i64, String, String)
     Ok((seed_name, ap_slots(&meta)))
 }
 
-/// Entry point: run the whole flow, updating `state` as it goes.
-pub async fn run(db: Db, state: GenState) {
-    match run_inner(&db, &state).await {
+/// Entry point: generate `season` from its signups, moving it through
+/// `generating` to `live` (and starting its workers) — or back to where it was
+/// on failure. Updates `state` as it goes.
+pub async fn run(db: Db, rts: Arc<Runtimes>, season: i64) {
+    let state = rts.get(season).genstate.clone();
+    let Some(prev) = db.season(season).await.map(|s| s.state()) else {
+        return set(&state, false, "Failed — no such season");
+    };
+    // Refuse up front rather than generate a world that can't go live.
+    if let Some(live) = db
+        .seasons()
+        .await
+        .into_iter()
+        .find(|s| s.state() == State::Live && s.id != season)
+    {
+        return set(
+            &state,
+            false,
+            format!(
+                "Failed — season “{}” is live; only one season can be live at a time for now",
+                live.name
+            ),
+        );
+    }
+    if let Err(e) = db.transition(season, State::Generating, now()).await {
+        return set(&state, false, format!("Failed — {e}"));
+    }
+    match run_inner(&db, &state, season).await {
+        Ok(msg) => match db.transition(season, State::Live, now()).await {
+            Ok(()) => {
+                rts.start_live(season);
+                set(&state, false, msg)
+            }
+            Err(e) => {
+                let _ = db.transition(season, prev, now()).await;
+                set(&state, false, format!("Generated, but couldn't go live — {e}"))
+            }
+        },
+        Err(e) => {
+            let _ = db.transition(season, prev, now()).await;
+            set(&state, false, format!("Failed — {e}"))
+        }
+    }
+}
+
+/// Re-roll a live season's lineup: reuse its staged Players/ + installed
+/// worlds/, generate a fresh seed (and fresh save, picking up the current
+/// host.yaml), and remap its slots + claims onto it. Doesn't touch
+/// submissions.
+pub async fn regenerate(db: Db, rts: Arc<Runtimes>, season: i64) {
+    let state = rts.get(season).genstate.clone();
+    if let Err(e) = db.transition(season, State::Generating, now()).await {
+        return set(&state, false, format!("Failed — {e}"));
+    }
+    let r = regen_inner(&db, &state, season).await;
+    // Live either way: on failure the previous seed is still deployed.
+    let _ = db.transition(season, State::Live, now()).await;
+    match r {
         Ok(msg) => set(&state, false, msg),
         Err(e) => set(&state, false, format!("Failed — {e}")),
     }
 }
 
-/// Re-roll the *current* lineup: reuse the already-staged Players/ + installed
-/// custom_worlds/, generate a fresh seed (and fresh save, picking up the current
-/// host.yaml), and carry the existing slots + claims onto it. Doesn't touch
-/// submissions or signups.
-pub async fn regenerate(db: Db, state: GenState, old_season: String) {
-    match regen_inner(&db, &state, &old_season).await {
-        Ok(msg) => set(&state, false, msg),
-        Err(e) => set(&state, false, format!("Failed — {e}")),
-    }
+fn now() -> i64 {
+    crate::auth::now()
 }
 
-async fn regen_inner(db: &Db, state: &GenState, old_season: &str) -> Result<String, String> {
+async fn regen_inner(db: &Db, state: &GenState, season: i64) -> Result<String, String> {
     // Must have a staged lineup to re-roll.
     let mut has_yaml = false;
-    if let Ok(mut rd) = tokio::fs::read_dir(config::get().season().players).await {
+    if let Ok(mut rd) = tokio::fs::read_dir(config::get().season(season).players).await {
         while let Ok(Some(e)) = rd.next_entry().await {
             if e.path().extension().and_then(|x| x.to_str()) == Some("yaml") {
                 has_yaml = true;
@@ -405,7 +457,7 @@ async fn regen_inner(db: &Db, state: &GenState, old_season: &str) -> Result<Stri
         }
     }
     if !has_yaml {
-        return Err("no staged player YAMLs to re-roll — generate a season first".into());
+        return Err("no staged player YAMLs to re-roll — generate the season first".into());
     }
 
     set(
@@ -413,20 +465,22 @@ async fn regen_inner(db: &Db, state: &GenState, old_season: &str) -> Result<Stri
         true,
         "Re-rolling the current lineup… (this can take a minute)",
     );
-    clear_old_seeds().await;
+    clear_old_seeds(season).await;
     // Always keep the Universal Tracker apworld present for the in-logic feature.
-    stage_tracker_apworld().await;
-    ap_adapter::generate(&config::get().season()).await?;
+    stage_tracker_apworld(season).await;
+    ap_adapter::generate(&config::get().season(season)).await?;
 
-    let seed_zip = newest_seed().await.ok_or("no seed was produced")?;
+    let seed_zip = newest_seed(season).await.ok_or("no seed was produced")?;
     set(state, true, "Mapping slots and carrying over claims…");
-    let (seed_name, ap_slots) = read_seed(&seed_zip).await?;
-    db.carry_over_season(old_season, &seed_name, &ap_slots)
-        .await
-        .map_err(|e| e.to_string())?;
+    let (seed_name, ap_slots) = read_seed(season, &seed_zip).await?;
+    // The new seed is the season's from here: the tracker accepts the restarted
+    // server, and data derived from the old seed is dropped.
+    db.set_season_seed(season, &seed_name).await.map_err(|e| e.to_string())?;
+    db.clear_seed_data(season).await.map_err(|e| e.to_string())?;
+    db.remap_season(season, &ap_slots).await.map_err(|e| e.to_string())?;
 
     set(state, true, "Deploying…");
-    deploy_seed(&seed_zip).await?;
+    deploy_seed(season, &seed_zip).await?;
 
     Ok(format!(
         "Regenerated seed {seed_name} — {} AP slots, claims carried over. The game is restarting on a fresh save.",
@@ -434,8 +488,8 @@ async fn regen_inner(db: &Db, state: &GenState, old_season: &str) -> Result<Stri
     ))
 }
 
-async fn run_inner(db: &Db, state: &GenState) -> Result<String, String> {
-    let subs = db.submissions().await.map_err(|e| e.to_string())?;
+async fn run_inner(db: &Db, state: &GenState, season: i64) -> Result<String, String> {
+    let subs = db.submissions(season).await.map_err(|e| e.to_string())?;
     if subs.is_empty() {
         return Err("no submissions to generate from".into());
     }
@@ -444,10 +498,12 @@ async fn run_inner(db: &Db, state: &GenState) -> Result<String, String> {
     // Only the player YAMLs are staged here; custom apworlds are installed into
     // the season's worlds/ at signup time (so the checker can validate against them),
     // so we leave that directory alone.
-    let season = config::get().season();
+    let mc = db.season(season).await.is_some_and(|s| s.mc_enabled);
+    let season_id = season;
+    let season = config::get().season(season);
     let common = config::get().common_dir();
     clear_ext(&season.players, "yaml").await?;
-    clear_old_seeds().await;
+    clear_old_seeds(season_id).await;
     for sub in &subs {
         let dst = season.players.join(format!("{}.yaml", slug(&sub.slot_name)));
         tokio::fs::copy(&sub.yaml_file, &dst)
@@ -458,7 +514,6 @@ async fn run_inner(db: &Db, state: &GenState) -> Result<String, String> {
     // Shared Minecraft common game: if the admin enabled it before generating,
     // stage its apworld + YAML so the roll includes the communal slot. The
     // resulting .apmc is shipped to the Minecraft LXC afterwards by `mc-deploy`.
-    let mc = db.mc_enabled().await;
     if mc {
         set(state, true, "Adding the Minecraft common game…");
         tokio::fs::copy(
@@ -473,20 +528,21 @@ async fn run_inner(db: &Db, state: &GenState) -> Result<String, String> {
     }
 
     // Always keep the Universal Tracker apworld present for the in-logic feature.
-    stage_tracker_apworld().await;
+    stage_tracker_apworld(season_id).await;
 
     set(
         state,
         true,
         "Generating the multiworld… (this can take a minute)",
     );
-    ap_adapter::generate(&config::get().season()).await?;
+    ap_adapter::generate(&season).await?;
 
-    let seed_zip = newest_seed().await.ok_or("no seed was produced")?;
+    let seed_zip = newest_seed(season_id).await.ok_or("no seed was produced")?;
     set(state, true, "Mapping slots and claims…");
-    let (seed_name, ap_slots) = read_seed(&seed_zip).await?;
+    let (seed_name, ap_slots) = read_seed(season_id, &seed_zip).await?;
+    db.set_season_seed(season_id, &seed_name).await.map_err(|e| e.to_string())?;
     db.seed_from_submissions(
-        &seed_name,
+        season_id,
         &ap_slots,
         &subs,
         mc.then_some(COMMON_SLOT_NAME),
@@ -495,11 +551,7 @@ async fn run_inner(db: &Db, state: &GenState) -> Result<String, String> {
     .map_err(|e| e.to_string())?;
 
     set(state, true, "Deploying…");
-    deploy_seed(&seed_zip).await?;
-
-    // A clean generate closes signups for the season now under way; the admin
-    // reopens them for the next signup period.
-    let _ = db.set_signups_open(false).await;
+    deploy_seed(season_id, &seed_zip).await?;
 
     let common = if mc {
         " The Minecraft common game is included — run “Deploy common game” (manage → archipelago) to ship it to the Minecraft server."

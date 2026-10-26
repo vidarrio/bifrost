@@ -381,6 +381,50 @@ landing page lists seasons by state. This touches most handlers; do it behind a
 - On-disk: per-season state moves under `$BIFROST_DATA/seasons/<id>/…` (§3a),
   replacing today's single flat `Players/custom_worlds/output/logs`.
 
+### 7.7 Implementation notes (step 4, on `appliance`)
+
+Built (everything except the AP instance fleet, which waits on §7.3):
+
+- **Season entity** (`src/db/seasons.rs`): `season` table — name at creation,
+  creator, lifecycle state, seed, live/archived times, per-season toggles
+  (minesweeper, common game), journal cursor, frozen summary. Lifecycle rules
+  are a pure, tested `State::can_go`; `Db::transition` enforces them plus the
+  **one-live-season rule** (until the fleet exists, the configured AP endpoint
+  serves the single live season). A crash mid-generation can't strand a
+  season in `generating`.
+- **Re-keyed data:** every season-scoped table (`bifrost_slot`, `submission`,
+  `hint_credit`, `hint_priority`, `activity`, `inlogic`, `mine_result`) is keyed
+  `season INTEGER REFERENCES season(id) ON DELETE CASCADE` (freeplay
+  minesweeper = NULL); `season_archive` and the global settings rows are gone.
+  A re-roll stays in its season: `clear_seed_data` drops what the old seed
+  produced (activity, cursor, priorities, in-logic) and `remap_season` carries
+  slots + claims onto the new AP slot numbers; minesweeper results and hint
+  credits now survive a re-roll.
+- **Per-season runtime** (`src/runtime.rs`): board + generation state per
+  season; the live season's workers (tracker, counts, activity, in-logic) start
+  on going live and stop on archive. The tracker refuses an AP server running
+  a different seed than the season deployed.
+- **Per-season dirs:** `seasons/<id>/{Players,worlds,output,logs,submissions}`
+  (+ `host.yaml`, `worlds.lock.json`); `seasons/_core/` for YAML checks before
+  any season exists.
+- **Season-scoped URLs** (`src/scope.rs`): `/s/{id}/…` is rewritten before
+  routing (auth tiers and rate limits keep matching plain paths); handlers take
+  a `SeasonCtx`; unscoped URLs resolve to the default season (live → generating
+  → signup → draft → latest archived). Every page carries `<base href="/s/{id}/">`
+  for the season it was rendered for, and season links are base-relative, so a
+  page never drifts to another season mid-flow; server redirects and form
+  `back` targets go through `SeasonCtx::url` / `back`; post-login redirects keep
+  the scoped URL.
+- **Lifecycle UI:** `/admin/seasons` lists seasons and creates them (named up
+  front); a season's admin page drives draft⇄signup, generate (→ live),
+  re-roll, and **archive** (live → archived: frozen summary + raw bundle +
+  workers stopped; replaces the manual archive). Signups and apworld uploads
+  are accepted only in `signup`. Archived seasons' boards show their summary
+  at `/s/{id}/season`; the landing page lists them.
+
+Not built yet: the AP fleet / per-season ports (§7.2–7.3), co-moderators
+(`season_mod`) and moderator ownership, and the tabbed console (§9).
+
 ## 8. Season apworld & YAML management
 
 Per-season, owned by the moderator, surfaced in the season console:

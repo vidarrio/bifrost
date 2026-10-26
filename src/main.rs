@@ -5,7 +5,7 @@
 //! `/admin` for sysadmins. Who's signed in, and which routes need it, is
 //! decided once per request by the `auth` middleware (design doc §5, §14).
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use axum::{
     Json, Router,
@@ -35,20 +35,20 @@ mod mine;
 mod net;
 mod ratelimit;
 mod render;
+mod runtime;
 mod sandbox;
+mod scope;
 mod season;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-type Shared = Arc<RwLock<ap::Board>>;
-
 #[derive(Clone)]
 struct AppState {
-    board: Shared,
     db: db::Db,
     ap_cfg: Option<ap::ApConfig>,
-    genstate: generate::GenState,
+    /// Per-season boards, generation state and live workers.
+    seasons: Arc<runtime::Runtimes>,
     /// Active minesweeper games keyed by (player account, board kind). One
     /// in-progress board per player *per difficulty*, held server-side so each
     /// difficulty tab survives a tab close/reopen and difficulty switches.
@@ -97,30 +97,20 @@ async fn main() {
     let auth = init_auth(&db).await;
 
     let ap_cfg = ap::ApConfig::from_env();
-    let board: Shared = Arc::new(RwLock::new(ap::Board::default()));
-    match ap_cfg.clone() {
-        Some(cfg) => {
-            let coop = parse_coop();
-            tracing::info!("AP tracker: watching {} as slot {}", cfg.url, cfg.slot);
-            ap::spawn(board.clone(), cfg, db.clone(), coop);
+    let seasons = Arc::new(runtime::Runtimes::new(db.clone(), ap_cfg.clone(), parse_coop()));
+    for season in db.seasons().await {
+        if season.state() != db::State::Archived {
+            let _ = config::get().season(season.id).ensure();
         }
-        None => tracing::info!("AP tracker idle (set BIFROST_SLOT to enable the live board)"),
+        if season.state() == db::State::Live {
+            seasons.start_live(season.id);
+        }
     }
 
-    // Persistent activity log: ingest the AP server journal (independent of the
-    // tracker connection; idles until the board knows a season).
-    activity::spawn(board.clone(), db.clone());
-
-    // Universal-Tracker in-logic recomputer: keeps each slot's reachable-location
-    // cache fresh (shells out to UT when a slot's state moves). Needs the AP conn.
-    inlogic::spawn(board.clone(), db.clone(), ap_cfg.clone());
-
-    let genstate: generate::GenState = Arc::new(std::sync::Mutex::new((false, "idle".into())));
     let state = AppState {
-        board,
         db,
         ap_cfg,
-        genstate,
+        seasons,
         mine_games: Arc::new(Mutex::new(HashMap::new())),
         auth: auth.clone(),
     };
@@ -153,6 +143,7 @@ async fn main() {
         .route("/signup/check", post(signup_check))
         .route("/signup/delete", post(signup_delete))
         .route("/admin", get(admin_view))
+        .route("/admin/seasons", get(seasons_view).post(seasons_create))
         .route("/admin/signups", post(admin_signups))
         .route("/admin/generate", post(admin_generate))
         .route("/admin/regenerate", post(admin_regenerate))
@@ -165,7 +156,7 @@ async fn main() {
         .route("/admin/mc", post(admin_mc))
         .route("/admin/output", get(admin_output))
         .route("/admin/archive-season", post(admin_archive_season))
-        .route("/season/{seed}", get(season_view))
+        .route("/season", get(season_view))
         .route("/minesweeper", get(minesweeper_page))
         .route("/minesweeper/new", post(mine_new))
         .route("/minesweeper/reveal", post(mine_reveal))
@@ -222,10 +213,14 @@ async fn main() {
         .await
         .unwrap_or_else(|e| panic!("bind {addr}: {e}"));
     tracing::info!("Bifrost listening on {addr}");
-    // Peer addresses feed the forward-auth trusted-proxy allowlist.
+    // `/s/{id}/…` → season-scoped routes: rewritten before routing, so it
+    // wraps the whole router. Peer addresses feed the trusted-proxy checks.
+    let app = tower::Layer::layer(&axum::middleware::from_fn(scope::rewrite), app);
     axum::serve(
         listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        axum::ServiceExt::<axum::extract::Request>::into_make_service_with_connect_info::<
+            std::net::SocketAddr,
+        >(app),
     )
     .await
     .expect("serve");
@@ -313,36 +308,47 @@ async fn api_me(State(st): State<AppState>, me: auth::Me) -> Json<serde_json::Va
 }
 
 async fn landing(State(st): State<AppState>) -> Html<String> {
-    // The season roster is rendered live from the current game so it never needs
-    // hand-editing between seasons: AP slot names come from the live board, the
-    // people (incl. co-op) from the DB.
-    let (season, ap_names) = match st.board.read() {
-        Ok(b) => {
-            let season = b.seed.clone().unwrap_or_default();
-            let names: std::collections::HashMap<i64, String> =
-                b.slots.iter().map(|(k, s)| (*k, s.name.clone())).collect();
-            (season, names)
+    // The roster is rendered live so it never needs hand-editing between
+    // seasons: AP slot names from the default season's live board, the people
+    // (incl. co-op) from the DB. Before its seed exists, the section shows the
+    // season's sign-up queue, filling in live as people register.
+    let (label, roster) = match st.db.default_season().await {
+        Some(season) if season.state() != db::State::Archived => {
+            let slots = st.db.slots(season.id).await.unwrap_or_default();
+            if slots.is_empty() {
+                let subs = st.db.submissions(season.id).await.unwrap_or_default();
+                (
+                    format!("{} — who's signed up", season.name),
+                    render::landing_signups(&subs),
+                )
+            } else {
+                let ap_names: std::collections::HashMap<i64, String> = st
+                    .seasons
+                    .get(season.id)
+                    .board
+                    .read()
+                    .map(|b| b.slots.iter().map(|(k, s)| (*k, s.name.clone())).collect())
+                    .unwrap_or_default();
+                (
+                    format!("{} — who's playing what", season.name),
+                    render::landing_roster(&slots, &ap_names),
+                )
+            }
         }
-        Err(_) => (String::new(), std::collections::HashMap::new()),
+        _ => ("No season under way".to_string(), String::new()),
     };
-    let slots = st.db.slots(&season).await.unwrap_or_default();
-    // A live season shows who's playing what; between seasons (no slots yet) the
-    // section flips to the next-season sign-up queue so it fills in live as
-    // people register, until a new seed is generated.
-    let (label, roster) = if slots.is_empty() {
-        let subs = st.db.submissions().await.unwrap_or_default();
-        ("Next season — who's signed up", render::landing_signups(&subs))
-    } else {
-        (
-            "This season — who's playing what",
-            render::landing_roster(&slots, &ap_names),
-        )
-    };
-    let past = st.db.past_seasons().await;
+    let past: Vec<(i64, String, i64)> = st
+        .db
+        .seasons()
+        .await
+        .into_iter()
+        .filter(|s| s.state() == db::State::Archived)
+        .map(|s| (s.id, s.name, s.archived_at.unwrap_or(s.created_at)))
+        .collect();
     let past_html = render::past_seasons_section(&past);
     Html(
         LANDING
-            .replace("<!--SEASONLABEL-->", label)
+            .replace("<!--SEASONLABEL-->", &render::escape(&label))
             .replace("<!--ROSTER-->", &roster)
             .replace("<!--PASTSEASONS-->", &past_html),
     )
@@ -353,12 +359,15 @@ struct CheckForm {
     yaml: String,
 }
 
-async fn check_form() -> Html<String> {
+async fn check_form(_ctx: Option<scope::SeasonCtx>) -> Html<String> {
     checker::form_page()
 }
 
-async fn check_run(Form(form): Form<CheckForm>) -> Html<String> {
-    match checker::check_yaml(&form.yaml).await {
+/// Check a YAML against the season's worlds (core worlds only when there's no
+/// season at all).
+async fn check_run(ctx: Option<scope::SeasonCtx>, Form(form): Form<CheckForm>) -> Html<String> {
+    let dirs = ctx.map(|c| c.dirs()).unwrap_or_else(|| config::get().core_season());
+    match checker::check_yaml(&dirs, &form.yaml).await {
         Ok(res) => checker::result_page(&res),
         Err(e) => checker::error_page(&e),
     }
@@ -370,7 +379,7 @@ async fn check_run(Form(form): Form<CheckForm>) -> Html<String> {
 async fn live_priorities(
     st: &AppState,
     snap: &ap::BoardSnapshot,
-    season: &str,
+    season: i64,
 ) -> std::collections::HashSet<(i64, i64, i64)> {
     let mut prios = st.db.priorities(season).await.unwrap_or_default();
     if prios.is_empty() {
@@ -413,7 +422,7 @@ fn valid_mc_username(s: &str) -> bool {
 /// Recompute the season's whitelist and write it to the whitelist file
 /// atomically (temp + rename). Best-effort: a failure is logged, not fatal —
 /// the next change (or the host timer) reconciles.
-async fn export_mc_whitelist(st: &AppState, season: &str) {
+async fn export_mc_whitelist(st: &AppState, season: i64) {
     let names = st.db.mc_whitelist(season).await;
     let json = serde_json::to_string(&names).unwrap_or_else(|_| "[]".into());
     let file = config::get().mc_whitelist_file();
@@ -424,35 +433,39 @@ async fn export_mc_whitelist(st: &AppState, season: &str) {
     }
 }
 
-async fn board_view(State(st): State<AppState>) -> Html<String> {
-    let snap = match st.board.read() {
+async fn board_view(State(st): State<AppState>, ctx: scope::SeasonCtx) -> Response {
+    // A finished season's board is its frozen summary.
+    if ctx.state() == db::State::Archived {
+        return Redirect::to(&ctx.url("/season")).into_response();
+    }
+    let snap = match ctx.rt.board.read() {
         Ok(b) => b.snapshot(),
-        Err(_) => return Html("board unavailable".into()),
+        Err(_) => return Html("board unavailable".to_string()).into_response(),
     };
-    let season = snap.seed.clone().unwrap_or_default();
-    let slots = st.db.slots(&season).await.unwrap_or_default();
-    let prios = live_priorities(&st, &snap, &season).await;
+    let season = ctx.id;
+    let slots = st.db.slots(season).await.unwrap_or_default();
+    let prios = live_priorities(&st, &snap, season).await;
     let addr = mc_addr();
     // Board shows the latest slice of the persistent log (journal-sourced).
-    let acts = st.db.activity_latest(&season, BOARD_ACTIVITY).await;
-    let inlogic = st.db.inlogic_counts(&season).await;
-    render::board_page(&snap, &slots, &prios, addr.as_deref(), &acts, &inlogic)
+    let acts = st.db.activity_latest(season, BOARD_ACTIVITY).await;
+    let inlogic = st.db.inlogic_counts(season).await;
+    render::board_page(&snap, &slots, &prios, addr.as_deref(), &acts, &inlogic).into_response()
 }
 
 /// The board's live-update payload: the `.boardcols` inner HTML (`body`) + the
 /// current connection line (`conn`), as JSON so the poller can update both
 /// without a full refresh. Same data as `board_view`; public like `/board`.
-async fn board_fragment_view(State(st): State<AppState>) -> Json<serde_json::Value> {
-    let snap = match st.board.read() {
+async fn board_fragment_view(State(st): State<AppState>, ctx: scope::SeasonCtx) -> Json<serde_json::Value> {
+    let snap = match ctx.rt.board.read() {
         Ok(b) => b.snapshot(),
         Err(_) => return Json(serde_json::json!({})),
     };
-    let season = snap.seed.clone().unwrap_or_default();
-    let slots = st.db.slots(&season).await.unwrap_or_default();
-    let prios = live_priorities(&st, &snap, &season).await;
+    let season = ctx.id;
+    let slots = st.db.slots(season).await.unwrap_or_default();
+    let prios = live_priorities(&st, &snap, season).await;
     let addr = mc_addr();
-    let acts = st.db.activity_latest(&season, BOARD_ACTIVITY).await;
-    let inlogic = st.db.inlogic_counts(&season).await;
+    let acts = st.db.activity_latest(season, BOARD_ACTIVITY).await;
+    let inlogic = st.db.inlogic_counts(season).await;
     Json(serde_json::json!({
         "conn": render::conn_line(&snap),
         "progress": render::season_progress(&snap, &slots),
@@ -462,22 +475,18 @@ async fn board_fragment_view(State(st): State<AppState>) -> Json<serde_json::Val
 
 /// The `#logbody` (feed + pager) for the full-log live poller, for the current
 /// filters/page/rpp (query carried through). The filter form is not re-sent.
-async fn log_fragment_view(State(st): State<AppState>, Query(q): Query<LogQuery>) -> Html<String> {
-    let season = st
-        .board
-        .read()
-        .ok()
-        .and_then(|b| b.seed.clone())
-        .unwrap_or_default();
+async fn log_fragment_view(State(st): State<AppState>,
+    ctx: scope::SeasonCtx, Query(q): Query<LogQuery>) -> Html<String> {
+    let season = ctx.id;
     let kinds = selected_kinds(&q);
     let classes = selected_classes(&q);
     let filter = act_filter(&q, &kinds, &classes);
-    let total = st.db.activity_count(&season, &filter).await;
+    let total = st.db.activity_count(season, &filter).await;
     let (rpp, page, pages, offset) = paginate(&q, total);
-    let rows = st.db.activity_page(&season, &filter, offset, rpp).await;
+    let rows = st.db.activity_page(season, &filter, offset, rpp).await;
     let qs = filter_qs(&q);
     let lf = log_filter(&q, &[], &qs);
-    render::log_body_fragment(&rows, page, pages, rpp, None, "/log", &lf)
+    render::log_body_fragment(&rows, page, pages, rpp, None, "log", &lf)
 }
 
 /// How many activity rows the board previews; the full log lives at `/log`.
@@ -669,23 +678,19 @@ fn log_filter<'a>(q: &'a LogQuery, participants: &'a [String], qs: &'a str) -> r
 }
 
 /// The full, paginated, filterable activity log for the current (live) season.
-async fn log_view(State(st): State<AppState>, Query(q): Query<LogQuery>) -> Html<String> {
-    let season = st
-        .board
-        .read()
-        .ok()
-        .and_then(|b| b.seed.clone())
-        .unwrap_or_default();
+async fn log_view(State(st): State<AppState>,
+    ctx: scope::SeasonCtx, Query(q): Query<LogQuery>) -> Html<String> {
+    let season = ctx.id;
     let kinds = selected_kinds(&q);
     let classes = selected_classes(&q);
     let filter = act_filter(&q, &kinds, &classes);
-    let total = st.db.activity_count(&season, &filter).await;
+    let total = st.db.activity_count(season, &filter).await;
     let (rpp, page, pages, offset) = paginate(&q, total);
-    let rows = st.db.activity_page(&season, &filter, offset, rpp).await;
-    let participants = st.db.activity_participants(&season).await;
+    let rows = st.db.activity_page(season, &filter, offset, rpp).await;
+    let participants = st.db.activity_participants(season).await;
     let qs = filter_qs(&q);
     let lf = log_filter(&q, &participants, &qs);
-    render::log_page(&rows, page, pages, rpp, None, "/log", &lf)
+    render::log_page(&rows, page, pages, rpp, None, "log", &lf)
 }
 
 /// A safe local redirect target (must be an absolute path, not protocol-relative).
@@ -693,7 +698,7 @@ async fn log_view(State(st): State<AppState>, Query(q): Query<LogQuery>) -> Html
 
 /// Whether the viewer may upload/remove the slot's pack: a claimant of the slot
 /// or an admin.
-async fn pt_can_manage(st: &AppState, season: &str, ap_slot: i64, account: i64, is_admin: bool) -> bool {
+async fn pt_can_manage(st: &AppState, season: i64, ap_slot: i64, account: i64, is_admin: bool) -> bool {
     if is_admin {
         return true;
     }
@@ -709,15 +714,16 @@ async fn pt_can_manage(st: &AppState, season: &str, ap_slot: i64, account: i64, 
 async fn pt_upload(
     Path(ap_slot): Path<i64>,
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     mut mp: Multipart,
 ) -> Response {
     let my_id = me.id();
     let (_me, is_admin) = me.ident();
-    let season = st.board.read().ok().and_then(|b| b.seed.clone()).unwrap_or_default();
+    let season = ctx.id;
     // Land back on the PopTracker tab (the pack-management tab), not the default.
-    let back = format!("/game/{ap_slot}#tab-pt");
-    if season.is_empty() || !pt_can_manage(&st, &season, ap_slot, my_id, is_admin).await {
+    let back = ctx.url(&format!("/game/{ap_slot}#tab-pt"));
+    if !ctx.state().is_live() || !pt_can_manage(&st, season, ap_slot, my_id, is_admin).await {
         return render::notice("You can't upload a pack for this game.", false, &back).into_response();
     }
     let mut bytes: Option<Vec<u8>> = None;
@@ -735,9 +741,9 @@ async fn pt_upload(
         return render::notice("That doesn't look like a .zip pack file.", false, &back).into_response();
     }
     // validate + install off the async runtime (runs pack Lua + filesystem).
-    let season2 = season.clone();
+    let season2 = season;
     let res = tokio::task::spawn_blocking(move || {
-        ptrack::validate(&bytes).and_then(|_sum| ptrack::install(&season2, ap_slot, &bytes))
+        ptrack::validate(&bytes).and_then(|_sum| ptrack::install(season2, ap_slot, &bytes))
     })
     .await;
     match res {
@@ -748,34 +754,35 @@ async fn pt_upload(
 }
 
 /// Claimant (or admin) removes the slot's pack.
-async fn pt_remove(Path(ap_slot): Path<i64>, State(st): State<AppState>, me: auth::Me) -> Response {
+async fn pt_remove(Path(ap_slot): Path<i64>, State(st): State<AppState>,
+    ctx: scope::SeasonCtx, me: auth::Me) -> Response {
     let my_id = me.id();
     let (_me, is_admin) = me.ident();
-    let season = st.board.read().ok().and_then(|b| b.seed.clone()).unwrap_or_default();
-    let back = format!("/game/{ap_slot}#tab-pt");
-    if !season.is_empty() && pt_can_manage(&st, &season, ap_slot, my_id, is_admin).await {
-        let s2 = season.clone();
-        let _ = tokio::task::spawn_blocking(move || ptrack::remove(&s2, ap_slot)).await;
+    let season = ctx.id;
+    let back = ctx.url(&format!("/game/{ap_slot}#tab-pt"));
+    if ctx.state().is_live() && pt_can_manage(&st, season, ap_slot, my_id, is_admin).await {
+        let s2 = season;
+        let _ = tokio::task::spawn_blocking(move || ptrack::remove(s2, ap_slot)).await;
     }
     Redirect::to(&back).into_response()
 }
 
 /// Computed tracker state (maps + markers + items) for the slot's pack, as JSON
 /// for the PopTracker tab + its poller. `{pack:false}` when no pack is installed.
-async fn pt_state(Path(ap_slot): Path<i64>, State(st): State<AppState>) -> Json<serde_json::Value> {
-    let (season, game, received, checked, meta) = {
-        let Ok(b) = st.board.read() else {
+async fn pt_state(Path(ap_slot): Path<i64>, ctx: scope::SeasonCtx) -> Json<serde_json::Value> {
+    let season = ctx.id;
+    let (game, received, checked, meta) = {
+        let Ok(b) = ctx.rt.board.read() else {
             return Json(serde_json::json!({"pack": false}));
         };
-        let season = b.seed.clone().unwrap_or_default();
         let (game, received, checked) = b
             .slots
             .get(&ap_slot)
             .map(|s| (s.game.clone(), s.received_items.clone(), s.checked_locations.clone()))
             .unwrap_or_default();
-        (season, game, received, checked, b.meta.clone())
+        (game, received, checked, b.meta.clone())
     };
-    if season.is_empty() || !ptrack::has_pack(&season, ap_slot) {
+    if !ctx.state().is_live() || !ptrack::has_pack(season, ap_slot) {
         return Json(serde_json::json!({"pack": false}));
     }
     let name_of = |item: i64| {
@@ -805,10 +812,10 @@ async fn pt_state(Path(ap_slot): Path<i64>, State(st): State<AppState>) -> Json<
         .and_then(|m| m.totals(ap_slot))
         .map(|s| s.all_locations.clone())
         .unwrap_or_default();
-    let version = ptrack::pack_version(&season, ap_slot);
-    let season2 = season.clone();
+    let version = ptrack::pack_version(season, ap_slot);
+    let season2 = season;
     let state = tokio::task::spawn_blocking(move || {
-        ptrack::compute(&season2, ap_slot, &items, &checked, &valid_locations, ap_slot)
+        ptrack::compute(season2, ap_slot, &items, &checked, &valid_locations, ap_slot)
     })
     .await;
     match state {
@@ -836,13 +843,13 @@ struct PtAssetQuery {
 /// Serve a file (e.g. a map image) from the slot's installed pack.
 async fn pt_asset(
     Path(ap_slot): Path<i64>,
-    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     Query(q): Query<PtAssetQuery>,
 ) -> Response {
-    let season = st.board.read().ok().and_then(|b| b.seed.clone()).unwrap_or_default();
+    let season = ctx.id;
     let file = q.file.clone();
-    let season2 = season.clone();
-    let bytes = tokio::task::spawn_blocking(move || ptrack::read_pack_asset(&season2, ap_slot, &file))
+    let season2 = season;
+    let bytes = tokio::task::spawn_blocking(move || ptrack::read_pack_asset(season2, ap_slot, &file))
         .await
         .ok()
         .flatten();
@@ -879,21 +886,16 @@ fn pt_content_type(f: &str) -> &'static str {
     }
 }
 
-fn safe_back(b: Option<&str>, default: &str) -> String {
-    match b {
-        Some(p) if p.starts_with('/') && !p.starts_with("//") => p.to_string(),
-        _ => default.to_string(),
-    }
-}
 
 async fn game_view(
     Path(ap_slot): Path<i64>,
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
 ) -> Html<String> {
     let my_id = me.id();
     let (me, is_admin) = me.ident();
-    let (snap, game, item_names, connect_name) = match st.board.read() {
+    let (snap, game, item_names, connect_name) = match ctx.rt.board.read() {
         Ok(b) => {
             let (game, cn) = b
                 .slots
@@ -909,9 +911,9 @@ async fn game_view(
     if game.is_empty() {
         return Html("<p>Unknown game slot.</p>".into());
     }
-    let season = snap.seed.clone().unwrap_or_default();
-    let slots = st.db.slots(&season).await.unwrap_or_default();
-    let prios = live_priorities(&st, &snap, &season).await;
+    let season = ctx.id;
+    let slots = st.db.slots(season).await.unwrap_or_default();
+    let prios = live_priorities(&st, &snap, season).await;
 
     // Cost to hint (per AP: hint_cost% of a world's locations).
     let world_size = snap.ap.get(&ap_slot).map(|a| a.world_size).unwrap_or(0) as i64;
@@ -940,14 +942,14 @@ async fn game_view(
         _ => None,
     };
     let credits = if i_claim {
-        st.db.credits(&season, my_id).await
+        st.db.credits(season, my_id).await
     } else {
         0
     };
     // Generated files for THIS slot, shown only to a claimant of it (or admin).
     // Don't even read the zip for anyone else.
     let my_files = if i_claim || is_admin {
-        tokio::task::spawn_blocking(generate::list_outputs)
+        tokio::task::spawn_blocking(move || generate::list_outputs(season))
             .await
             .unwrap_or_default()
             .into_iter()
@@ -962,21 +964,21 @@ async fn game_view(
 
     // Cached Universal-Tracker in-logic locations for this slot (computed by the
     // inlogic recomputer; may be absent until the first run completes).
-    let inlogic = st.db.inlogic_get(&season, ap_slot).await;
+    let inlogic = st.db.inlogic_get(season, ap_slot).await;
 
     // This slot's own activity (sent/received/goaled…) for its paginated "Log"
     // tab: first page of rows + the total for the pager (unfiltered).
     let log = st
         .db
-        .activity_for_participant(&season, &connect_name, "", 0, render::GAME_LOG_RPP)
+        .activity_for_participant(season, &connect_name, "", 0, render::GAME_LOG_RPP)
         .await;
     let log_total = st
         .db
-        .activity_count_for_participant(&season, &connect_name, "")
+        .activity_count_for_participant(season, &connect_name, "")
         .await;
 
     // PopTracker: is a pack installed, and may the viewer manage it?
-    let pt_has = ptrack::has_pack(&season, ap_slot);
+    let pt_has = ptrack::has_pack(season, ap_slot);
     let pt_can_manage = i_claim || is_admin;
 
     render::game_page(
@@ -1020,16 +1022,15 @@ struct LogPageQuery {
 async fn game_log_fragment(
     Path(ap_slot): Path<i64>,
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     Query(q): Query<LogPageQuery>,
 ) -> Html<String> {
-    let (season, name) = match st.board.read() {
-        Ok(b) => (
-            b.seed.clone().unwrap_or_default(),
-            b.slots.get(&ap_slot).map(|s| s.name.clone()).unwrap_or_default(),
-        ),
+    let season = ctx.id;
+    let name = match ctx.rt.board.read() {
+        Ok(b) => b.slots.get(&ap_slot).map(|s| s.name.clone()).unwrap_or_default(),
         Err(_) => return Html(String::new()),
     };
-    if season.is_empty() || name.is_empty() {
+    if !ctx.state().is_live() || name.is_empty() {
         return Html(String::new());
     }
     let term = q.q.as_deref().unwrap_or("").trim();
@@ -1037,13 +1038,13 @@ async fn game_log_fragment(
         .rpp
         .unwrap_or(render::GAME_LOG_RPP)
         .clamp(render::GAME_LOG_RPP_MIN, render::GAME_LOG_RPP_MAX);
-    let total = st.db.activity_count_for_participant(&season, &name, term).await;
+    let total = st.db.activity_count_for_participant(season, &name, term).await;
     let pages = render::game_log_pages(total, rpp);
     let page = q.page.unwrap_or(1).clamp(1, pages);
     let offset = (page - 1) * rpp;
     let rows = st
         .db
-        .activity_for_participant(&season, &name, term, offset, rpp)
+        .activity_for_participant(season, &name, term, offset, rpp)
         .await;
     let qs = if term.is_empty() {
         String::new()
@@ -1064,44 +1065,42 @@ struct PrioForm {
 
 async fn prioritize_post(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<PrioForm>,
 ) -> Redirect {
     let my_id = me.id();
     let (_me, is_admin) = me.ident();
-    let (season, is_found) = match st.board.read() {
-        Ok(b) => {
-            let season = b.seed.clone().unwrap_or_default();
-            // Already-found hints are non-prioritizable.
-            let found = b.snapshot().ap.values().any(|a| {
-                a.hint_views.iter().any(|h| {
-                    h.found && h.finding == f.finding && h.location == f.location && h.item == f.item
-                })
-            });
-            (season, found)
-        }
-        Err(_) => (String::new(), false),
-    };
+    let season = ctx.id;
+    // Already-found hints are non-prioritizable.
+    let is_found = ctx.rt.board.read().is_ok_and(|b| {
+        b.snapshot().ap.values().any(|a| {
+            a.hint_views.iter().any(|h| {
+                h.found && h.finding == f.finding && h.location == f.location && h.item == f.item
+            })
+        })
+    });
     // A hint is prioritized by the item's owner: a claimant of the receiving
     // slot (whose items the hint is about), or an admin. The finder's world can
     // be someone else's, so we gate on `receiving`, not `finding`.
-    if !is_found && (is_admin || st.db.claims_ap_slot(&season, my_id, f.receiving).await) {
+    if !is_found && (is_admin || st.db.claims_ap_slot(season, my_id, f.receiving).await) {
         let _ = st
             .db
-            .toggle_priority(&season, f.finding, f.location, f.item)
+            .toggle_priority(season, f.finding, f.location, f.item)
             .await;
     }
-    Redirect::to(&safe_back(f.back.as_deref(), "/board"))
+    Redirect::to(&ctx.back(f.back.as_deref(), "/board"))
 }
 
-async fn claim_get(State(st): State<AppState>, me: auth::Me) -> Html<String> {
+async fn claim_get(State(st): State<AppState>,
+    ctx: scope::SeasonCtx, me: auth::Me) -> Html<String> {
     let (me, is_admin) = me.ident();
-    let snap = match st.board.read() {
+    let snap = match ctx.rt.board.read() {
         Ok(b) => b.snapshot(),
         Err(_) => return Html("board unavailable".into()),
     };
-    let season = snap.seed.clone().unwrap_or_default();
-    let slots = st.db.slots(&season).await.unwrap_or_default();
+    let season = ctx.id;
+    let slots = st.db.slots(season).await.unwrap_or_default();
     render::claim_page(&snap, &slots, &me, is_admin)
 }
 
@@ -1114,18 +1113,14 @@ struct ClaimForm {
 
 async fn claim_post(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<ClaimForm>,
 ) -> Response {
     let my_id = me.id();
     let (_me, is_admin) = me.ident();
-    let back = safe_back(f.back.as_deref(), "/claim");
-    let season = st
-        .board
-        .read()
-        .ok()
-        .and_then(|b| b.seed.clone())
-        .unwrap_or_default();
+    let back = ctx.back(f.back.as_deref(), "/claim");
+    let season = ctx.id;
     match f.op.as_str() {
         "claim" => match st.db.claim_one(f.slot_id, my_id).await {
             Ok(db::ClaimOutcome::AlreadyHave(name)) => render::notice(
@@ -1139,13 +1134,13 @@ async fn claim_post(
             }
             _ => {
                 // Claimant set changed → refresh the MC whitelist export.
-                export_mc_whitelist(&st, &season).await;
+                export_mc_whitelist(&st, season).await;
                 Redirect::to(&back).into_response()
             }
         },
         "unclaim" => {
             let _ = st.db.unclaim(f.slot_id, my_id, is_admin).await;
-            export_mc_whitelist(&st, &season).await;
+            export_mc_whitelist(&st, season).await;
             Redirect::to(&back).into_response()
         }
         _ => Redirect::to(&back).into_response(),
@@ -1164,20 +1159,16 @@ struct McUsernameForm {
 /// Minecraft server by the host-side syncer that watches the export.
 async fn mc_username_post(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<McUsernameForm>,
 ) -> Response {
     let my_id = me.id();
     let (_me, _is_admin) = me.ident();
-    let season = st
-        .board
-        .read()
-        .ok()
-        .and_then(|b| b.seed.clone())
-        .unwrap_or_default();
-    let back = safe_back(f.back.as_deref(), "/board");
+    let season = ctx.id;
+    let back = ctx.back(f.back.as_deref(), "/board");
     let name = f.mc_username.trim();
-    if !st.db.has_claimed_slot(&season, my_id).await {
+    if !st.db.has_claimed_slot(season, my_id).await {
         return render::notice(
             "Claim a game this season first — the whitelist is for players with a slot of their own.",
             false,
@@ -1201,7 +1192,7 @@ async fn mc_username_post(
         )
         .into_response(),
         Ok(db::SetMcOutcome::Ok) => {
-            export_mc_whitelist(&st, &season).await;
+            export_mc_whitelist(&st, season).await;
             Redirect::to(&back).into_response()
         }
         Err(_) => render::notice("Couldn't save that right now — try again.", false, &back)
@@ -1233,6 +1224,7 @@ fn hint_rejected(text: &str) -> bool {
 
 async fn hint_post(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<HintForm>,
 ) -> Json<serde_json::Value> {
@@ -1243,12 +1235,7 @@ async fn hint_post(
     let Some((ap_slot, claimant, is_common)) = detail else {
         return reject("Unknown slot.");
     };
-    let season = st
-        .board
-        .read()
-        .ok()
-        .and_then(|b| b.seed.clone())
-        .unwrap_or_default();
+    let season = ctx.id;
     // The common game is shared: any signed-in player who has CLAIMED a game this
     // season may hint, spending the slot's own (communal) AP points — requiring a
     // claim keeps the shared pool to players with skin in the game. Every other
@@ -1257,13 +1244,13 @@ async fn hint_post(
         if me == "unknown" {
             return reject("Sign in to hint on the common game.");
         }
-        if !st.db.has_claimed_slot(&season, my_id).await {
+        if !st.db.has_claimed_slot(season, my_id).await {
             return reject("Claim one of the season's games before hinting on the common game.");
         }
     } else if claimant != Some(my_id) {
         return reject("Only the player who claimed this slot can hint on it.");
     }
-    let connect_name = st
+    let connect_name = ctx.rt
         .board
         .read()
         .ok()
@@ -1274,10 +1261,10 @@ async fn hint_post(
     let Some(cfg) = st.ap_cfg.as_ref() else {
         return reject("Hinting isn't configured.");
     };
-    let creds = st.db.credits(&season, my_id).await;
+    let creds = st.db.credits(season, my_id).await;
     match ap::send_hint(&cfg.url, &cfg.password, &name, f.item.trim()).await {
         Ok(parts) => {
-            let text = st
+            let text = ctx.rt
                 .board
                 .read()
                 .map(|b| ap::resolve_parts(&b, &parts))
@@ -1298,7 +1285,7 @@ async fn hint_post(
                 // item — via /hint_location, so a multi-copy item doesn't reveal
                 // every copy for a single credit. Fall back to /hint by name if
                 // we can't resolve a specific location.
-                let admin_cmd = st
+                let admin_cmd = ctx.rt
                     .board
                     .read()
                     .ok()
@@ -1322,7 +1309,7 @@ async fn hint_post(
                 .await
                 {
                     Ok(lists) => {
-                        let msg = st
+                        let msg = ctx.rt
                             .board
                             .read()
                             .map(|b| {
@@ -1338,8 +1325,8 @@ async fn hint_post(
                                 "ok": false, "message": msg, "credits": creds
                             }));
                         }
-                        st.db.spend_credit(&season, my_id).await;
-                        let newc = st.db.credits(&season, my_id).await;
+                        st.db.spend_credit(season, my_id).await;
+                        let newc = st.db.credits(season, my_id).await;
                         let points = ap::slot_points(&cfg.url, &cfg.password, &name).await;
                         // The admin /hint returns no text on success, so confirm
                         // it ourselves; the new hint shows in the list below.
@@ -1382,16 +1369,18 @@ fn rejected_for_points(text: &str) -> bool {
 async fn game_hints(
     Path(ap_slot): Path<i64>,
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
 ) -> Html<String> {
     let my_id = me.id();
     let (_me, is_admin) = me.ident();
-    let (snap, season) = match st.board.read() {
-        Ok(b) => (b.snapshot(), b.seed.clone().unwrap_or_default()),
+    let season = ctx.id;
+    let snap = match ctx.rt.board.read() {
+        Ok(b) => b.snapshot(),
         Err(_) => return Html(String::new()),
     };
-    let prios = live_priorities(&st, &snap, &season).await;
-    let can_prioritize = is_admin || st.db.claims_ap_slot(&season, my_id, ap_slot).await;
+    let prios = live_priorities(&st, &snap, season).await;
+    let can_prioritize = is_admin || st.db.claims_ap_slot(season, my_id, ap_slot).await;
     let (views, found_items) = snap
         .ap
         .get(&ap_slot)
@@ -1408,8 +1397,8 @@ async fn game_hints(
 
 /// The hint-search suggestion list for one slot, as JSON — the game page polls
 /// this after a hint so a name whose last copy was just hinted drops out.
-async fn game_items(Path(ap_slot): Path<i64>, State(st): State<AppState>) -> Json<Vec<String>> {
-    let items = st
+async fn game_items(Path(ap_slot): Path<i64>, ctx: scope::SeasonCtx) -> Json<Vec<String>> {
+    let items = ctx.rt
         .board
         .read()
         .map(|b| {
@@ -1431,15 +1420,16 @@ struct FinishForm {
 async fn game_finish(
     Path(ap_slot): Path<i64>,
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<FinishForm>,
 ) -> Response {
     let (_me, is_admin) = me.ident();
-    let back = safe_back(f.back.as_deref(), &format!("/game/{ap_slot}"));
+    let back = ctx.back(f.back.as_deref(), &format!("/game/{ap_slot}"));
     if !is_admin {
         return render::notice("Admins only.", false, &back).into_response();
     }
-    let slot = st
+    let slot = ctx.rt
         .board
         .read()
         .ok()
@@ -1468,17 +1458,22 @@ fn slugify(s: &str) -> String {
     if out.is_empty() { "slot".into() } else { out }
 }
 
-async fn signup_get(State(st): State<AppState>, me: auth::Me) -> Html<String> {
+async fn signup_get(State(st): State<AppState>, ctx: scope::SeasonCtx, me: auth::Me) -> Html<String> {
     let (me, is_admin) = me.ident();
-    let subs = st.db.submissions().await.unwrap_or_default();
-    let open = st.db.signups_open().await;
+    let subs = st.db.submissions(ctx.id).await.unwrap_or_default();
+    let open = ctx.state().accepts_signups();
     render::signup_page(&subs, &me, is_admin, open)
 }
 
 /// Step 1 of signup: install an uploaded `.apworld` into the season's
 /// `worlds/` right away, so the checker can validate a custom-game YAML
 /// against it in step 2. Returns JSON for the wizard.
-async fn signup_apworld(me: auth::Me, mut mp: Multipart) -> Json<serde_json::Value> {
+async fn signup_apworld(ctx: scope::SeasonCtx, me: auth::Me, mut mp: Multipart) -> Json<serde_json::Value> {
+    // Worlds change only while the season takes signups — never under a
+    // season that's being played.
+    if !ctx.state().accepts_signups() {
+        return Json(serde_json::json!({"ok": false, "error": "Signups are closed right now."}));
+    }
     let mut bytes: Option<Vec<u8>> = None;
     let mut fname = String::new();
     while let Ok(Some(field)) = mp.next_field().await {
@@ -1518,8 +1513,9 @@ async fn signup_apworld(me: auth::Me, mut mp: Multipart) -> Json<serde_json::Val
     }
     let file = format!("{base}.apworld");
     let (uploader, _) = me.ident();
+    let ctx = ctx.clone();
     let installed = tokio::task::spawn_blocking(move || {
-        ap_adapter::install_world(&config::get().season(), &file, &bytes, &uploader)
+        ap_adapter::install_world(&config::get().season(ctx.id), &file, &bytes, &uploader)
     })
     .await;
     if !matches!(installed, Ok(Ok(()))) {
@@ -1533,7 +1529,7 @@ async fn signup_apworld(me: auth::Me, mut mp: Multipart) -> Json<serde_json::Val
 
 /// Step 2 of signup: validate a YAML live against the installed worlds (incl. an
 /// apworld just installed in step 1). Returns JSON for the wizard.
-async fn signup_check(mut mp: Multipart) -> Json<serde_json::Value> {
+async fn signup_check(ctx: scope::SeasonCtx, mut mp: Multipart) -> Json<serde_json::Value> {
     let mut yaml: Option<Vec<u8>> = None;
     while let Ok(Some(field)) = mp.next_field().await {
         if field.name() == Some("yaml") {
@@ -1546,7 +1542,7 @@ async fn signup_check(mut mp: Multipart) -> Json<serde_json::Value> {
         return Json(serde_json::json!({"ok": false, "error": "No YAML received."}));
     };
     let yaml_str = String::from_utf8_lossy(&yaml).to_string();
-    match checker::check_yaml(&yaml_str).await {
+    match checker::check_yaml(&ctx.dirs(), &yaml_str).await {
         Ok(r) => {
             let (name, game) = r
                 .players
@@ -1563,12 +1559,13 @@ async fn signup_check(mut mp: Multipart) -> Json<serde_json::Value> {
 
 async fn signup_post(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     mut mp: Multipart,
 ) -> Html<String> {
     let my_id = me.id();
     let (_me, _) = me.ident();
-    if !st.db.signups_open().await {
+    if !ctx.state().accepts_signups() {
         return render::signup_result("Signups are closed right now.", false);
     }
     let mut yaml: Option<Vec<u8>> = None;
@@ -1592,7 +1589,7 @@ async fn signup_post(
     // Trust-but-verify: the wizard already checked, but re-roll server-side so a
     // hand-crafted POST can't slip an invalid YAML through. Custom worlds are
     // installed by now, so everything must pass.
-    let result = match checker::check_yaml(&yaml_str).await {
+    let result = match checker::check_yaml(&ctx.dirs(), &yaml_str).await {
         Ok(r) => r,
         Err(e) => return render::signup_result(&format!("Checker error: {e}"), false),
     };
@@ -1612,7 +1609,7 @@ async fn signup_post(
     }
 
     let slug = slugify(&slot_name);
-    let uploads = config::get().uploads_dir();
+    let uploads = ctx.dirs().submissions;
     let _ = tokio::fs::create_dir_all(&uploads).await;
     let yaml_path = uploads.join(format!("{slug}.yaml")).to_string_lossy().into_owned();
     if tokio::fs::write(&yaml_path, &yaml).await.is_err() {
@@ -1628,6 +1625,7 @@ async fn signup_post(
     match st
         .db
         .add_submission(
+            ctx.id,
             my_id,
             &slot_name,
             &game,
@@ -1653,24 +1651,25 @@ struct DelForm {
 
 async fn signup_delete(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<DelForm>,
 ) -> Redirect {
     let my_id = me.id();
     let (_me, is_admin) = me.ident();
-    if let Ok(Some((yaml_file, apworld_file))) = st.db.delete_submission(f.id, my_id, is_admin).await
+    if let Ok(Some((yaml_file, apworld_file))) = st.db.delete_submission(ctx.id, f.id, my_id, is_admin).await
     {
         let _ = tokio::fs::remove_file(&yaml_file).await;
         if let Some(a) = apworld_file {
             let _ = tokio::fs::remove_file(&a).await;
         }
     }
-    Redirect::to("/signup")
+    Redirect::to(&ctx.url("/signup"))
 }
 
 /// Gather everything the admin page shows and render it.
-async fn render_admin(st: &AppState) -> Html<String> {
-    let (connected, seed, acdata) = st
+async fn render_admin(ctx: &scope::SeasonCtx, st: &AppState) -> Html<String> {
+    let (connected, seed, acdata) = ctx.rt
         .board
         .read()
         .map(|b| {
@@ -1681,43 +1680,32 @@ async fn render_admin(st: &AppState) -> Html<String> {
             )
         })
         .unwrap_or((false, None, "{}".into()));
-    let signups_open = st.db.signups_open().await;
-    let minesweeper_on = st.db.minesweeper_enabled().await;
-    let mc_on = st.db.mc_enabled().await;
+    let signups_open = ctx.state().accepts_signups();
+    let minesweeper_on = ctx.row.minesweeper_enabled;
+    let mc_on = ctx.row.mc_enabled;
     let connect_pw = st
         .ap_cfg
         .as_ref()
         .map(|c| c.password.clone())
         .unwrap_or_default();
-    let (running, gen_msg) = st
+    let (running, gen_msg) = ctx.rt
         .genstate
         .lock()
         .map(|g| (g.0, g.1.clone()))
         .unwrap_or((false, "unknown".into()));
-    let subs = st.db.submissions().await.unwrap_or_default();
-    let apworlds = generate::list_apworlds().await;
+    let subs = st.db.submissions(ctx.id).await.unwrap_or_default();
+    let apworlds = generate::list_apworlds(ctx.id).await;
     // Per-player files the generator produced, with each slot's game resolved
     // from the Bifrost slots for the current seed (filename carries the slot
     // name; db carries name→game).
-    let outputs = tokio::task::spawn_blocking(generate::list_outputs)
+    let id = ctx.id;
+    let outputs = tokio::task::spawn_blocking(move || generate::list_outputs(id))
         .await
         .unwrap_or_default();
-    let out_slots = match seed.as_deref() {
-        Some(s) if !s.is_empty() => st.db.slots(s).await.unwrap_or_default(),
-        _ => Vec::new(),
-    };
-    // If the live season is already archived, surface its name so the admin
-    // knows the capture is done (and re-archiving would just refresh it).
-    let archived = match seed.as_deref() {
-        Some(s) if !s.is_empty() => st
-            .db
-            .past_season(s)
-            .await
-            .and_then(|j| serde_json::from_str::<season::SeasonSummary>(&j).ok())
-            .map(|sm| sm.name),
-        _ => None,
-    };
+    let out_slots = st.db.slots(ctx.id).await.unwrap_or_default();
+    let archived = (ctx.state() == db::State::Archived).then(|| ctx.row.name.clone());
     render::admin_page(
+        &ctx.row,
         connected,
         seed.as_deref(),
         signups_open,
@@ -1735,12 +1723,12 @@ async fn render_admin(st: &AppState) -> Html<String> {
     )
 }
 
-async fn admin_view(State(st): State<AppState>, me: auth::Me) -> Response {
+async fn admin_view(State(st): State<AppState>, ctx: scope::SeasonCtx, me: auth::Me) -> Response {
     let (_me, is_admin) = me.ident();
     if !is_admin {
-        return render::notice("Admins only.", false, "/board").into_response();
+        return render::notice("Admins only.", false, "board").into_response();
     }
-    render_admin(&st).await.into_response()
+    render_admin(&ctx, &st).await.into_response()
 }
 
 #[derive(Deserialize)]
@@ -1748,22 +1736,30 @@ struct SignupsForm {
     open: String,
 }
 
+/// Open (draft → signup) or close (signup → draft) the season's signups.
 async fn admin_signups(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<SignupsForm>,
-) -> Redirect {
+) -> Response {
     let (_me, is_admin) = me.ident();
     if is_admin {
-        let _ = st.db.set_signups_open(f.open == "1").await;
+        let to = if f.open == "1" { db::State::Signup } else { db::State::Draft };
+        if ctx.state() != to
+            && let Err(e) = st.db.transition(ctx.id, to, auth::now()).await
+        {
+            return render::notice(&e.to_string(), false, "admin").into_response();
+        }
     }
-    Redirect::to("/admin")
+    Redirect::to(&ctx.url("/admin")).into_response()
 }
 
-async fn admin_generate(State(st): State<AppState>, me: auth::Me) -> Redirect {
+async fn admin_generate(State(st): State<AppState>,
+    ctx: scope::SeasonCtx, me: auth::Me) -> Redirect {
     let (_me, is_admin) = me.ident();
     if is_admin {
-        let start = match st.genstate.lock() {
+        let start = match ctx.rt.genstate.lock() {
             Ok(mut g) if !g.0 => {
                 g.0 = true;
                 g.1 = "Starting…".into();
@@ -1772,34 +1768,27 @@ async fn admin_generate(State(st): State<AppState>, me: auth::Me) -> Redirect {
             _ => false,
         };
         if start {
-            let (db, genstate) = (st.db.clone(), st.genstate.clone());
-            tokio::spawn(async move { generate::run(db, genstate).await });
+            let (db, rts, id) = (st.db.clone(), st.seasons.clone(), ctx.id);
+            tokio::spawn(async move { generate::run(db, rts, id).await });
         }
     }
-    Redirect::to("/admin")
+    Redirect::to(&ctx.url("/admin"))
 }
 
-async fn admin_regenerate(State(st): State<AppState>, me: auth::Me) -> Redirect {
+async fn admin_regenerate(State(st): State<AppState>,
+    ctx: scope::SeasonCtx, me: auth::Me) -> Redirect {
     let (_me, is_admin) = me.ident();
     if is_admin {
-        let old_season = st
-            .board
-            .read()
-            .ok()
-            .and_then(|b| b.seed.clone())
-            .unwrap_or_default();
-        // Need the live board's current seed to carry claims over; refuse if the
-        // tracker hasn't populated it yet (e.g. right after a restart).
-        if old_season.is_empty() {
-            if let Ok(mut g) = st.genstate.lock()
+        // A re-roll replaces a live season's seed.
+        if !ctx.state().is_live() {
+            if let Ok(mut g) = ctx.rt.genstate.lock()
                 && !g.0
             {
-                g.1 = "Regenerate needs the live board connected first — try again in a moment."
-                    .into();
+                g.1 = "Regenerate re-rolls a live season — generate it first.".into();
             }
-            return Redirect::to("/admin");
+            return Redirect::to(&ctx.url("/admin"));
         }
-        let start = match st.genstate.lock() {
+        let start = match ctx.rt.genstate.lock() {
             Ok(mut g) if !g.0 => {
                 g.0 = true;
                 g.1 = "Starting…".into();
@@ -1808,16 +1797,16 @@ async fn admin_regenerate(State(st): State<AppState>, me: auth::Me) -> Redirect 
             _ => false,
         };
         if start {
-            let (db, genstate) = (st.db.clone(), st.genstate.clone());
-            tokio::spawn(async move { generate::regenerate(db, genstate, old_season).await });
+            let (db, rts, id) = (st.db.clone(), st.seasons.clone(), ctx.id);
+            tokio::spawn(async move { generate::regenerate(db, rts, id).await });
         }
     }
-    Redirect::to("/admin")
+    Redirect::to(&ctx.url("/admin"))
 }
 
-/// Delete the signup queue: all `submission` rows and their uploaded files.
-async fn clear_signups(st: &AppState) {
-    if let Ok(files) = st.db.clear_submissions().await {
+/// Delete the season's signup queue: its `submission` rows and their files.
+async fn clear_signups(st: &AppState, season: i64) {
+    if let Ok(files) = st.db.clear_submissions(season).await {
         for f in files {
             let _ = tokio::fs::remove_file(&f).await;
         }
@@ -1826,9 +1815,9 @@ async fn clear_signups(st: &AppState) {
 
 /// Delete the current season's players: every Bifrost slot (claims cascade) and
 /// the staged Players/ YAMLs.
-async fn clear_current_players(st: &AppState) {
-    let _ = st.db.clear_all_slots().await;
-    let _ = generate::clear_player_yamls().await;
+async fn clear_current_players(st: &AppState, season: i64) {
+    let _ = st.db.clear_all_slots(season).await;
+    let _ = generate::clear_player_yamls(season).await;
 }
 
 #[derive(Deserialize)]
@@ -1838,43 +1827,42 @@ struct ClearForm {
 
 async fn admin_clear(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<ClearForm>,
 ) -> Response {
     let (_me, is_admin) = me.ident();
     if !is_admin {
-        return render::notice("Admins only.", false, "/board").into_response();
+        return render::notice("Admins only.", false, "board").into_response();
     }
+    let id = ctx.id;
     match f.what.as_str() {
         "apworlds" => {
-            let _ = generate::clear_apworlds().await;
+            let _ = generate::clear_apworlds(id).await;
         }
-        "signups" => clear_signups(&st).await,
-        "players" => clear_current_players(&st).await,
-        "save" => generate::clear_save().await,
-        "world" => generate::clear_world().await,
+        "signups" => clear_signups(&st, id).await,
+        "players" => clear_current_players(&st, id).await,
+        "save" => generate::clear_save(id).await,
+        "world" => generate::clear_world(id).await,
         "reset" => {
-            let _ = generate::clear_apworlds().await;
-            clear_signups(&st).await;
-            clear_current_players(&st).await;
-            generate::clear_save().await;
-            generate::clear_world().await;
-            let _ = st.db.set_signups_open(false).await;
+            let _ = generate::clear_apworlds(id).await;
+            clear_signups(&st, id).await;
+            clear_current_players(&st, id).await;
+            generate::clear_save(id).await;
+            generate::clear_world(id).await;
+            if ctx.state() == db::State::Signup {
+                let _ = st.db.transition(id, db::State::Draft, auth::now()).await;
+            }
         }
         _ => {}
     }
     // Clearing players/claims empties the season's whitelist — refresh the export
     // so the host syncer drops the old names.
     if matches!(f.what.as_str(), "players" | "reset") {
-        let season = st
-            .board
-            .read()
-            .ok()
-            .and_then(|b| b.seed.clone())
-            .unwrap_or_default();
-        export_mc_whitelist(&st, &season).await;
+        let season = ctx.id;
+        export_mc_whitelist(&st, season).await;
     }
-    Redirect::to("/admin").into_response()
+    Redirect::to(&ctx.url("/admin")).into_response()
 }
 
 #[derive(Deserialize)]
@@ -1882,38 +1870,35 @@ struct ArchiveForm {
     name: Option<String>,
 }
 
-/// Capture the current (still-live) season into the Past Seasons archive:
-/// roster, per-game standings (goaled + checks), and this season's frozen
-/// minesweeper leaderboards. Must run before a Full reset wipes the live data.
+/// Archive a live season (live → archived): freeze its roster, per-game
+/// standings (goaled + checks) and minesweeper leaderboards for the Past
+/// Seasons page, write the raw replayable bundle, and stop its workers.
 async fn admin_archive_season(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<ArchiveForm>,
 ) -> Response {
     let (_me, is_admin) = me.ident();
     if !is_admin {
-        return render::notice("Admins only.", false, "/admin").into_response();
+        return render::notice("Admins only.", false, "admin").into_response();
     }
     // Snapshot the live board under one lock: seed, per-slot figures, and the
     // AP slot -> primary player name map (to put the lead seat first).
-    let Ok((seed, snap, ap_names)) = st.board.read().map(|b| {
+    let Ok((snap, ap_names)) = ctx.rt.board.read().map(|b| {
         let names: HashMap<i64, String> =
             b.slots.iter().map(|(k, s)| (*k, s.name.clone())).collect();
-        (b.seed.clone().unwrap_or_default(), b.snapshot(), names)
+        (b.snapshot(), names)
     }) else {
-        return render::notice("Board is busy — try again.", false, "/admin").into_response();
+        return render::notice("Board is busy — try again.", false, "admin").into_response();
     };
-    if seed.is_empty() {
-        return render::notice(
-            "No live season to archive — Bifrost must be connected to a running game.",
-            false,
-            "/admin",
-        )
-        .into_response();
+    if !ctx.state().is_live() {
+        return render::notice("Only a live season can be archived.", false, "admin").into_response();
     }
-    let slots = st.db.slots(&seed).await.unwrap_or_default();
+    let seed = ctx.row.seed.clone().unwrap_or_default();
+    let slots = st.db.slots(ctx.id).await.unwrap_or_default();
     if slots.is_empty() {
-        return render::notice("No slots to archive for the current season.", false, "/admin")
+        return render::notice("No slots to archive for the current season.", false, "admin")
             .into_response();
     }
 
@@ -1970,8 +1955,8 @@ async fn admin_archive_season(
     // seasonal board: top 10, rate needs ≥5 games).
     let mut minesweeper = Vec::new();
     for (kind, label) in [("standard", "Normal"), ("expert", "Expert")] {
-        let time = st.db.mine_leaders_time(Some(&seed), kind, 10).await;
-        let rate = st.db.mine_leaders_rate(Some(&seed), kind, 5, 10).await;
+        let time = st.db.mine_leaders_time(Some(ctx.id), kind, 10).await;
+        let rate = st.db.mine_leaders_rate(Some(ctx.id), kind, 5, 10).await;
         minesweeper.push(season::MineBoard {
             kind: kind.to_string(),
             label: label.to_string(),
@@ -1986,7 +1971,7 @@ async fn admin_archive_season(
         .map(str::trim)
         .filter(|n| !n.is_empty())
         .map(str::to_string)
-        .unwrap_or_else(default_season_name);
+        .unwrap_or_else(|| ctx.row.name.clone());
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -2000,8 +1985,11 @@ async fn admin_archive_season(
         minesweeper,
     };
     let json = serde_json::to_string(&summary).unwrap_or_default();
-    if let Err(e) = st.db.archive_season(&seed, &name, &json).await {
-        return render::notice(&format!("Archive failed: {e}"), false, "/admin").into_response();
+    if name != ctx.row.name {
+        let _ = st.db.rename_season(ctx.id, &name).await;
+    }
+    if let Err(e) = st.db.set_season_summary(ctx.id, &json).await {
+        return render::notice(&format!("Archive failed: {e}"), false, "admin").into_response();
     }
 
     // Also produce the raw replayable bundle (multidata, save, YAMLs, apworlds,
@@ -2024,12 +2012,60 @@ async fn admin_archive_season(
         }
         t
     };
-    match archive::bundle_season(&seed, &season_txt).await {
+    match archive::bundle_season(ctx.id, &seed, &season_txt).await {
         Ok(path) => tracing::info!("season bundle written: {path}"),
         Err(e) => tracing::warn!("season bundle failed (summary saved): {e}"),
     }
+    if let Err(e) = st.db.transition(ctx.id, db::State::Archived, now).await {
+        return render::notice(&format!("Summary saved, but archiving failed: {e}"), false, "admin")
+            .into_response();
+    }
+    st.seasons.stop(ctx.id);
 
-    Redirect::to(&format!("/season/{seed}")).into_response()
+    Redirect::to(&ctx.url("/season")).into_response()
+}
+
+/// Every season, plus the create form (instance level: no season scope).
+async fn seasons_view(State(st): State<AppState>, me: auth::Me) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return render::notice("Sysadmins only.", false, "/").into_response();
+    }
+    render::seasons_page(&st.db.seasons().await, &default_season_name(), None).into_response()
+}
+
+#[derive(Deserialize)]
+struct SeasonForm {
+    name: String,
+}
+
+/// Create a season (a draft, named up front) and open its admin page.
+async fn seasons_create(State(st): State<AppState>, me: auth::Me, Form(f): Form<SeasonForm>) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return render::notice("Sysadmins only.", false, "/").into_response();
+    }
+    let name: String = f.name.trim().chars().take(80).collect();
+    if name.is_empty() {
+        let seasons = st.db.seasons().await;
+        return render::seasons_page(&seasons, &default_season_name(), Some("Give the season a name."))
+            .into_response();
+    }
+    let created = st
+        .db
+        .create_season(&name, me.principal().map(|p| p.account_id), auth::now())
+        .await;
+    match created {
+        Ok(id) => {
+            if let Err(e) = config::get().season(id).ensure() {
+                tracing::warn!("season {id} dirs: {e}");
+            }
+            tracing::info!("season {id} “{name}” created");
+            Redirect::to(&format!("/s/{id}/admin")).into_response()
+        }
+        Err(e) => {
+            let seasons = st.db.seasons().await;
+            render::seasons_page(&seasons, &name, Some(&e.to_string())).into_response()
+        }
+    }
 }
 
 /// A unix timestamp (seconds) as an ISO-8601 UTC string, for season.txt.
@@ -2075,49 +2111,51 @@ fn default_season_name() -> String {
 }
 
 /// Render an archived season's detail page.
+/// An archived season's frozen summary + its replayed activity log.
 async fn season_view(
-    Path(seed): Path<String>,
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     Query(q): Query<LogQuery>,
 ) -> Response {
-    match st.db.past_season(&seed).await {
-        Some(json) => match serde_json::from_str::<season::SeasonSummary>(&json) {
-            Ok(summary) => {
-                // The season's activity log, replayed with "x ago" frozen to the
-                // season-end time (finalized_at) rather than now.
-                let kinds = selected_kinds(&q);
-                let classes = selected_classes(&q);
-                let filter = act_filter(&q, &kinds, &classes);
-                let total = st.db.activity_count(&seed, &filter).await;
-                let (rpp, page, pages, offset) = paginate(&q, total);
-                let rows = st.db.activity_page(&seed, &filter, offset, rpp).await;
-                let participants = st.db.activity_participants(&seed).await;
-                let qs = filter_qs(&q);
-                let lf = log_filter(&q, &participants, &qs);
-                render::season_page(&summary, &rows, page, pages, rpp, &lf).into_response()
-            }
-            Err(_) => render::notice("That season's archive is unreadable.", false, "/").into_response(),
-        },
-        None => render::notice("No such archived season.", false, "/").into_response(),
+    let Some(json) = st.db.season_summary(ctx.id).await else {
+        return render::notice("This season hasn't been archived yet.", false, "board").into_response();
+    };
+    match serde_json::from_str::<season::SeasonSummary>(&json) {
+        Ok(summary) => {
+            // The season's activity log, replayed with "x ago" frozen to the
+            // season-end time rather than now.
+            let kinds = selected_kinds(&q);
+            let classes = selected_classes(&q);
+            let filter = act_filter(&q, &kinds, &classes);
+            let total = st.db.activity_count(ctx.id, &filter).await;
+            let (rpp, page, pages, offset) = paginate(&q, total);
+            let rows = st.db.activity_page(ctx.id, &filter, offset, rpp).await;
+            let participants = st.db.activity_participants(ctx.id).await;
+            let qs = filter_qs(&q);
+            let lf = log_filter(&q, &participants, &qs);
+            render::season_page(&summary, &rows, page, pages, rpp, &lf).into_response()
+        }
+        Err(_) => render::notice("That season's archive is unreadable.", false, "/").into_response(),
     }
 }
 
 async fn admin_delete_player(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<DelForm>,
 ) -> Redirect {
     let my_id = me.id();
     let (_me, is_admin) = me.ident();
     if is_admin
-        && let Ok(Some((yaml_file, apworld_file))) = st.db.delete_submission(f.id, my_id, true).await
+        && let Ok(Some((yaml_file, apworld_file))) = st.db.delete_submission(ctx.id, f.id, my_id, true).await
     {
         let _ = tokio::fs::remove_file(&yaml_file).await;
         if let Some(a) = apworld_file {
             let _ = tokio::fs::remove_file(&a).await;
         }
     }
-    Redirect::to("/admin")
+    Redirect::to(&ctx.url("/admin"))
 }
 
 #[derive(Deserialize)]
@@ -2125,12 +2163,12 @@ struct ApworldForm {
     name: String,
 }
 
-async fn admin_delete_apworld(me: auth::Me, Form(f): Form<ApworldForm>) -> Redirect {
+async fn admin_delete_apworld(ctx: scope::SeasonCtx, me: auth::Me, Form(f): Form<ApworldForm>) -> Redirect {
     let (_me, is_admin) = me.ident();
     if is_admin {
-        let _ = generate::delete_apworld(&f.name).await;
+        let _ = generate::delete_apworld(ctx.id, &f.name).await;
     }
-    Redirect::to("/admin")
+    Redirect::to(&ctx.url("/admin"))
 }
 
 #[derive(Deserialize)]
@@ -2142,6 +2180,7 @@ struct ConsoleForm {
 /// page can append it to a live log without a page reload.
 async fn admin_console(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<ConsoleForm>,
 ) -> Json<serde_json::Value> {
@@ -2154,7 +2193,7 @@ async fn admin_console(
     // location (and any hint) untouched. If that item has an active hint, deliver
     // it from its real location instead (`/send_location`), which also marks the
     // hint found — matching the expectation that sending an item resolves it.
-    let effective = st
+    let effective = ctx.rt
         .board
         .read()
         .ok()
@@ -2177,7 +2216,7 @@ async fn admin_console(
             .await
             {
                 Ok(lists) => {
-                    let text = st
+                    let text = ctx.rt
                         .board
                         .read()
                         .map(|b| {
@@ -2213,11 +2252,12 @@ struct ConnPwForm {
 
 async fn admin_connect_password(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<ConnPwForm>,
 ) -> Response {
     if !me.can(auth::Action::ManageInstance) {
-        return render::notice("Admins only.", false, "/board").into_response();
+        return render::notice("Admins only.", false, "board").into_response();
     }
     let pw = f.password.trim().to_string();
     if !(3..=64).contains(&pw.len())
@@ -2228,17 +2268,17 @@ async fn admin_connect_password(
         return render::notice(
             "Password must be 3–64 characters: letters, numbers, - or _ only.",
             false,
-            "/admin",
+            "admin",
         )
         .into_response();
     }
     let Some(cfg) = st.ap_cfg.as_ref() else {
-        return render::notice("AP connection isn't configured.", false, "/admin").into_response();
+        return render::notice("AP connection isn't configured.", false, "admin").into_response();
     };
     // Is a season actually live right now (tracker connected to a running
     // server)? Between seasons there's nothing to set the password ON — the
     // value just needs persisting so the next generated/loaded season uses it.
-    let live = st
+    let live = ctx.rt
         .board
         .read()
         .map(|b| b.snapshot().connected)
@@ -2262,7 +2302,7 @@ async fn admin_connect_password(
             return render::notice(
                 &format!("Couldn't set it on the running server: {e}"),
                 false,
-                "/admin",
+                "admin",
             )
             .into_response();
         }
@@ -2279,31 +2319,33 @@ async fn admin_connect_password(
     } else {
         "No season is live, so the connect password was saved to the server config — it'll apply to the next season you generate. Bifrost is restarting; give it a few seconds, then reload."
     };
-    render::notice(msg, true, "/admin").into_response()
+    render::notice(msg, true, "admin").into_response()
 }
 
 async fn admin_minesweeper(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<SignupsForm>,
 ) -> Redirect {
     let (_me, is_admin) = me.ident();
     if is_admin {
-        let _ = st.db.set_minesweeper_enabled(f.open == "1").await;
+        let _ = st.db.set_minesweeper_enabled(ctx.id, f.open == "1").await;
     }
-    Redirect::to("/admin")
+    Redirect::to(&ctx.url("/admin"))
 }
 
 async fn admin_mc(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<SignupsForm>,
 ) -> Redirect {
     let (_me, is_admin) = me.ident();
     if is_admin {
-        let _ = st.db.set_mc_enabled(f.open == "1").await;
+        let _ = st.db.set_mc_enabled(ctx.id, f.open == "1").await;
     }
-    Redirect::to("/admin")
+    Redirect::to(&ctx.url("/admin"))
 }
 
 #[derive(Deserialize)]
@@ -2315,21 +2357,22 @@ struct OutputQuery {
 /// seed zip as a download. Admin-only (also behind the admin-gated Traefik
 /// router); `generate::read_output` validates the member is really in the zip.
 async fn admin_output(
-    State(_st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Query(q): Query<OutputQuery>,
 ) -> Response {
     let (_me, is_admin) = me.ident();
     if !is_admin {
-        return render::notice("Admins only.", false, "/board").into_response();
+        return render::notice("Admins only.", false, "board").into_response();
     }
     let member = q.file.clone();
-    let bytes = tokio::task::spawn_blocking(move || generate::read_output(&member))
+    let id = ctx.id;
+    let bytes = tokio::task::spawn_blocking(move || generate::read_output(id, &member))
         .await
         .ok()
         .flatten();
     let Some(data) = bytes else {
-        return render::notice("No such output file in the current seed.", false, "/admin")
+        return render::notice("No such output file in the current seed.", false, "admin")
             .into_response();
     };
     download_response(&q.file, data)
@@ -2365,19 +2408,15 @@ fn download_response(member: &str, data: Vec<u8>) -> Response {
 /// so a claimant can't pull another game's file.
 async fn game_output(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Path(ap_slot): Path<i64>,
     Query(q): Query<OutputQuery>,
 ) -> Response {
     let my_id = me.id();
     let (_me, is_admin) = me.ident();
-    let season = st
-        .board
-        .read()
-        .ok()
-        .and_then(|b| b.seed.clone())
-        .unwrap_or_default();
-    let slots = st.db.slots(&season).await.unwrap_or_default();
+    let season = ctx.id;
+    let slots = st.db.slots(season).await.unwrap_or_default();
     let i_claim = slots
         .iter()
         .any(|r| r.ap_slot == ap_slot && r.claimed_by_id == Some(my_id));
@@ -2390,7 +2429,8 @@ async fn game_output(
         return render::notice("That file isn't for this game.", false, &back).into_response();
     }
     let member = q.file.clone();
-    let bytes = tokio::task::spawn_blocking(move || generate::read_output(&member))
+    let id = ctx.id;
+    let bytes = tokio::task::spawn_blocking(move || generate::read_output(id, &member))
         .await
         .ok()
         .flatten();
@@ -2414,7 +2454,7 @@ async fn mc_asset(Path(which): Path<String>) -> Response {
         None => render::notice(
             "That download isn't available yet — ask an admin to stage it.",
             false,
-            "/board",
+            "board",
         )
         .into_response(),
     }
@@ -2422,6 +2462,7 @@ async fn mc_asset(Path(which): Path<String>) -> Response {
 
 async fn minesweeper_page(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Query(q): Query<KindQuery>,
 ) -> Html<String> {
@@ -2430,19 +2471,14 @@ async fn minesweeper_page(
     let free = q.free;
     // Freeplay (minigame section) is always available and ignores the admin
     // toggle, which only gates the seasonal bonus-hint board.
-    let enabled = free || st.db.minesweeper_enabled().await;
-    let season = st
-        .board
-        .read()
-        .ok()
-        .and_then(|b| b.seed.clone())
-        .unwrap_or_default();
+    let enabled = free || ctx.row.minesweeper_enabled;
+    let season = ctx.id;
     // Freeplay: no bonus hints; stats are all-time. Seasonal: credits + seasonal.
-    let credits = if free { 0 } else { st.db.credits(&season, my_id).await };
-    let stat_scope: Option<&str> = if free { None } else { Some(&season) };
+    let credits = if free { 0 } else { st.db.credits(season, my_id).await };
+    let stat_scope: Option<i64> = if free { None } else { Some(season) };
     let standard = st.db.mine_stats(stat_scope, my_id, "standard").await;
     let expert = st.db.mine_stats(stat_scope, my_id, "expert").await;
-    let back = safe_back(q.back.as_deref(), "/board");
+    let back = ctx.back(q.back.as_deref(), "/board");
     render::minesweeper_page(enabled, free, credits, &standard, &expert, &back)
 }
 
@@ -2453,10 +2489,6 @@ fn now_nanos() -> u64 {
         .unwrap_or(0)
 }
 
-/// Season value recorded for freeplay (minigame-section) games: a sentinel that
-/// can never be a real seed name, so freeplay stays out of the seasonal
-/// leaderboard/stats but still counts toward the all-time (permanent) board.
-const FREEPLAY_SEASON: &str = "__freeplay__";
 
 #[derive(Deserialize)]
 struct KindQuery {
@@ -2489,6 +2521,7 @@ struct NewForm {
 
 async fn mine_new(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<NewForm>,
 ) -> Json<serde_json::Value> {
@@ -2496,7 +2529,7 @@ async fn mine_new(
     let (_me, _) = me.ident();
     // Freeplay (the standalone minigame) is always available; the admin toggle
     // only gates the seasonal, bonus-hint-earning board.
-    if !f.free && !st.db.minesweeper_enabled().await {
+    if !f.free && !ctx.row.minesweeper_enabled {
         return Json(serde_json::json!({"ok": false, "error": "Minesweeper is disabled."}));
     }
     let kind = mine::Kind::parse(&f.kind);
@@ -2553,17 +2586,13 @@ const LEADERBOARD_TOP: i64 = 10;
 /// as an HTML fragment the minesweeper page loads when a 🏆 tab is opened.
 async fn mine_leaderboard(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     Query(q): Query<KindQuery>,
 ) -> Html<String> {
     let kind = mine::Kind::parse(&q.kind);
     // Freeplay shows the all-time (permanent) board; the seasonal board scopes to
-    // the current seed.
-    let season = st.board.read().ok().and_then(|b| b.seed.clone());
-    let scope: Option<&str> = if q.free {
-        None
-    } else {
-        Some(season.as_deref().unwrap_or(""))
-    };
+    // the season.
+    let scope: Option<i64> = if q.free { None } else { Some(ctx.id) };
     let time = st.db.mine_leaders_time(scope, kind.id(), LEADERBOARD_TOP).await;
     let rate = st
         .db
@@ -2617,6 +2646,7 @@ struct RevealForm {
 
 async fn mine_reveal(
     State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<RevealForm>,
 ) -> Json<serde_json::Value> {
@@ -2648,29 +2678,21 @@ async fn mine_reveal(
     };
     let mut credits: Option<i64> = None;
     // On a finished game (win or loss), record the result and return fresh stats.
-    // Seasonal games record under the current seed, count toward the seasonal
-    // leaderboard/stats, and a win earns a bonus hint. Freeplay (minigame section)
-    // records under a sentinel season, earns no hint, and stays out of the
+    // Seasonal games record under the season, count toward the seasonal
+    // leaderboard/stats, and a win earns a bonus hint. Freeplay (minigame
+    // section) records outside any season, earns no hint, and stays out of the
     // seasonal board — but both feed the all-time (permanent) board, and the
     // stats panel shows the matching scope.
     let stats_html = if over {
-        let scope = if f.free {
-            FREEPLAY_SEASON.to_string()
-        } else {
-            st.board
-                .read()
-                .ok()
-                .and_then(|b| b.seed.clone())
-                .unwrap_or_default()
-        };
+        let scope: Option<i64> = if f.free { None } else { Some(ctx.id) };
         st.db
-            .record_mine_result(&scope, my_id, kind, won, elapsed_ms)
+            .record_mine_result(scope, my_id, kind, won, elapsed_ms)
             .await;
         if won && !f.free {
-            credits = st.db.add_credits(&scope, my_id, 1).await.ok();
+            credits = st.db.add_credits(ctx.id, my_id, 1).await.ok();
         }
-        // Freeplay stats are all-time; seasonal stats scope to the current seed.
-        let stat_scope: Option<&str> = if f.free { None } else { Some(&scope) };
+        // Freeplay stats are all-time; seasonal stats scope to the season.
+        let stat_scope = scope;
         let standard = st.db.mine_stats(stat_scope, my_id, "standard").await;
         let expert = st.db.mine_stats(stat_scope, my_id, "expert").await;
         Some(render::mine_stats_html(&standard, &expert))

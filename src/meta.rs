@@ -25,8 +25,8 @@ pub struct SlotCounts {
 /// Read every slot's true sent/received totals from the season's save
 /// (blocks on a Python subprocess). Returns an empty map before the server has
 /// written a save.
-pub async fn load_counts() -> Result<HashMap<i64, SlotCounts>, String> {
-    ap_adapter::load_counts(&config::get().season()).await
+pub async fn load_counts(season: i64) -> Result<HashMap<i64, SlotCounts>, String> {
+    ap_adapter::load_counts(&config::get().season(season)).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,7 +111,7 @@ impl Meta {
 }
 
 /// Decode the current seed's metadata (blocks on a Python subprocess).
-pub async fn load() -> Result<Meta, String> {
-    let season = config::get().season();
-    ap_adapter::decode_meta(&season, &season.current_zip()).await
+pub async fn load(season: i64) -> Result<Meta, String> {
+    let dirs = config::get().season(season);
+    ap_adapter::decode_meta(&dirs, &dirs.current_zip()).await
 }

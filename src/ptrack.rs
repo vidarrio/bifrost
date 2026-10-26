@@ -15,19 +15,19 @@ use std::path::PathBuf;
 use crate::{ap_adapter, config};
 
 /// Per-slot extracted-pack directory: `<data>/packs/<season>/<ap_slot>/`.
-fn slot_dir(season: &str, ap_slot: i64) -> PathBuf {
-    config::get().packs_dir().join(sanitize(season)).join(ap_slot.to_string())
+fn slot_dir(season: i64, ap_slot: i64) -> PathBuf {
+    config::get().packs_dir().join(season.to_string()).join(ap_slot.to_string())
 }
 
 /// Is a usable pack installed for this slot?
-pub fn has_pack(season: &str, ap_slot: i64) -> bool {
+pub fn has_pack(season: i64, ap_slot: i64) -> bool {
     poptracker::pack_root(&slot_dir(season, ap_slot)).is_ok()
 }
 
 /// A version stamp for the slot's pack (install dir mtime, epoch secs), used to
 /// cache-bust asset URLs when a pack is (re)installed — browsers otherwise keep
 /// showing cached images even across a hard refresh.
-pub fn pack_version(season: &str, ap_slot: i64) -> u64 {
+pub fn pack_version(season: i64, ap_slot: i64) -> u64 {
     std::fs::metadata(slot_dir(season, ap_slot))
         .and_then(|m| m.modified())
         .ok()
@@ -57,7 +57,7 @@ pub fn validate(zip_bytes: &[u8]) -> Result<poptracker::Summary, String> {
 }
 
 /// Install (extract) an uploaded pack zip for a slot, replacing any existing one.
-pub fn install(season: &str, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), String> {
+pub fn install(season: i64, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), String> {
     let dir = slot_dir(season, ap_slot);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
@@ -75,7 +75,7 @@ pub fn install(season: &str, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), Strin
 }
 
 /// Remove a slot's installed pack.
-pub fn remove(season: &str, ap_slot: i64) {
+pub fn remove(season: i64, ap_slot: i64) {
     let _ = std::fs::remove_dir_all(slot_dir(season, ap_slot));
 }
 
@@ -83,7 +83,7 @@ pub fn remove(season: &str, ap_slot: i64) {
 /// items (`(item_id, item_name)`), with the slot's AP player number.
 /// Synchronous (holds a Lua VM) — call via `spawn_blocking`.
 pub fn compute(
-    season: &str,
+    season: i64,
     ap_slot: i64,
     items: &[(i64, String)],
     checked: &[i64],
@@ -115,16 +115,10 @@ pub fn compute(
 }
 
 /// Read a pack asset (e.g. a map image) for serving to the browser.
-pub fn read_pack_asset(season: &str, ap_slot: i64, rel: &str) -> Option<Vec<u8>> {
+pub fn read_pack_asset(season: i64, ap_slot: i64, rel: &str) -> Option<Vec<u8>> {
     let root = poptracker::pack_root(&slot_dir(season, ap_slot)).ok()?;
     let pack = poptracker::Pack::load(&root).ok()?;
     pack.asset(rel)
-}
-
-fn sanitize(s: &str) -> String {
-    s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
-        .collect()
 }
 
 fn tempfile_path(tag: &str) -> PathBuf {

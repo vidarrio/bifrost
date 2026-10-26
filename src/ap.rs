@@ -357,24 +357,27 @@ impl ApConfig {
     }
 }
 
-/// Spawn the reconnecting tracker task. `coop` maps an AP slot name to an extra
-/// Bifrost-slot name (co-op seats), used when seeding a new season.
+/// Spawn the reconnecting tracker task (and the savefile counts refresher)
+/// for `season`; returns their handles so the season can stop them. `coop`
+/// maps an AP slot name to an extra Bifrost-slot name (co-op seats), used when
+/// seeding the season's slots.
 pub fn spawn(
+    season: i64,
     board: Arc<RwLock<Board>>,
     cfg: ApConfig,
     db: crate::db::Db,
     coop: Vec<(String, String)>,
-) {
+) -> Vec<tokio::task::JoinHandle<()>> {
     // Refresh authoritative sent/received totals from the server savefile. An
     // external tracker only sees live item events, so these counts would reset
     // on every reconnect and undercount a mid-season board; the savefile holds
     // the true tallies (location_checks / received_items). Runs independently of
     // the tracker connection so it survives reconnects.
-    {
+    let counts = {
         let board = board.clone();
         tokio::spawn(async move {
             loop {
-                match crate::meta::load_counts().await {
+                match crate::meta::load_counts(season).await {
                     Ok(counts) if !counts.is_empty() => {
                         if let Ok(mut b) = board.write() {
                             for (slot, c) in counts {
@@ -396,12 +399,12 @@ pub fn spawn(
                 }
                 tokio::time::sleep(Duration::from_secs(15)).await;
             }
-        });
-    }
+        })
+    };
 
-    tokio::spawn(async move {
+    let tracker = tokio::spawn(async move {
         loop {
-            if let Err(e) = run_once(&board, &cfg, &db, &coop).await {
+            if let Err(e) = run_once(season, &board, &cfg, &db, &coop).await {
                 tracing::warn!("AP tracker disconnected: {e}");
             }
             if let Ok(mut b) = board.write() {
@@ -410,9 +413,11 @@ pub fn spawn(
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
     });
+    vec![counts, tracker]
 }
 
 async fn run_once(
+    season: i64,
     board: &Arc<RwLock<Board>>,
     cfg: &ApConfig,
     db: &crate::db::Db,
@@ -481,8 +486,10 @@ async fn run_once(
                     tx.send(Message::Text(sub.to_string()))
                         .await
                         .map_err(|e| format!("send Get/SetNotify: {e}"))?;
-                    // Seed this season's Bifrost slots (1:1 + co-op extras).
-                    let (season, ap_slots) = {
+                    // Seed this season's Bifrost slots (1:1 + co-op extras) —
+                    // but only from the seed the season deployed: an AP server
+                    // running some other world must not be attributed to it.
+                    let (room_seed, ap_slots) = {
                         let b = board.read().map_err(|_| "lock")?;
                         (
                             b.seed.clone(),
@@ -492,17 +499,29 @@ async fn run_once(
                                 .collect::<Vec<_>>(),
                         )
                     };
-                    if let Some(season) = season {
-                        match db.seed_season(&season, &ap_slots, coop).await {
-                            Ok(()) => {}
-                            Err(e) => tracing::warn!("season seed failed: {e}"),
+                    let expected = db.season(season).await.and_then(|s| s.seed);
+                    match (&room_seed, &expected) {
+                        (Some(room), Some(want)) if room != want => {
+                            return Err(format!(
+                                "the AP server is running seed {room}, but this season deployed {want}"
+                            ));
                         }
+                        (Some(room), None) => {
+                            // A world generated outside Bifrost: adopt its seed.
+                            let _ = db.set_season_seed(season, room).await;
+                        }
+                        _ => {}
+                    }
+                    if room_seed.is_some()
+                        && let Err(e) = db.seed_season(season, &ap_slots, coop).await
+                    {
+                        tracing::warn!("season seed failed: {e}");
                     }
                     // Load season metadata (item names + per-slot totals) in the
                     // background — it decodes the seed via a Python subprocess.
                     let bclone = board.clone();
                     tokio::spawn(async move {
-                        match crate::meta::load().await {
+                        match crate::meta::load(season).await {
                             Ok(m) => {
                                 if let Ok(mut b) = bclone.write() {
                                     b.meta = Some(std::sync::Arc::new(m));

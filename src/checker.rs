@@ -54,7 +54,7 @@ pub struct PlayerResult {
 }
 
 /// Validate `yaml` (raw file contents) against the season's worlds.
-pub async fn check_yaml(yaml: &str) -> Result<CheckResult, String> {
+pub async fn check_yaml(season: &config::SeasonDirs, yaml: &str) -> Result<CheckResult, String> {
     if yaml.len() > MAX_YAML {
         return Err(format!(
             "file too large ({} bytes; max {MAX_YAML})",
@@ -71,7 +71,7 @@ pub async fn check_yaml(yaml: &str) -> Result<CheckResult, String> {
         .acquire()
         .await
         .map_err(|e| format!("checker busy: {e}"))?;
-    ap_adapter::check_yaml(&config::get().season(), yaml).await
+    ap_adapter::check_yaml(season, yaml).await
 }
 
 fn esc(s: &str) -> String {
@@ -108,10 +108,10 @@ font-weight:600;font-size:14px;cursor:pointer}button:hover{filter:brightness(1.0
 const FOOT: &str = "</main></body></html>";
 
 pub fn form_page() -> Html<String> {
-    let mut b = String::from(HEAD);
+    let mut b = crate::render::with_base(HEAD);
     b.push_str(
         r#"<p class="lede">Paste your Archipelago options YAML and check it against the worlds installed on the server — before you submit it. Catches version drift and invalid option values.</p>
-<form method="post" action="/check">
+<form method="post" action="check">
 <textarea name="yaml" placeholder="name: MyName&#10;game: ...&#10;..." required></textarea>
 <div><button type="submit">Check it</button></div>
 </form>"#,
@@ -121,7 +121,7 @@ pub fn form_page() -> Html<String> {
 }
 
 pub fn result_page(res: &CheckResult) -> Html<String> {
-    let mut body = String::from(HEAD);
+    let mut body = crate::render::with_base(HEAD);
     if res.ok {
         body.push_str(r#"<div class="banner ok">Looks good — every slot rolled cleanly.</div>"#);
     } else {
@@ -152,15 +152,15 @@ pub fn result_page(res: &CheckResult) -> Html<String> {
             ));
         }
     }
-    body.push_str(r#"<div style="margin-top:18px"><a href="/check">← check another</a></div>"#);
+    body.push_str(r#"<div style="margin-top:18px"><a href="check">← check another</a></div>"#);
     body.push_str(FOOT);
     Html(body)
 }
 
 pub fn error_page(msg: &str) -> Html<String> {
-    let mut body = String::from(HEAD);
+    let mut body = crate::render::with_base(HEAD);
     body.push_str(&format!(
-        r#"<div class="banner bad">Checker error: {}</div><div><a href="/check">← back</a></div>"#,
+        r#"<div class="banner bad">Checker error: {}</div><div><a href="check">← back</a></div>"#,
         esc(msg)
     ));
     body.push_str(FOOT);

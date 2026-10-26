@@ -7,6 +7,11 @@ use axum::response::Html;
 use crate::ap::BoardSnapshot;
 use crate::db::{SlotRow, SubmissionRow};
 
+/// HTML-escape (for callers outside this module).
+pub fn escape(s: &str) -> String {
+    esc(s)
+}
+
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -216,7 +221,7 @@ function bifApplyMe(m){
  var w=document.getElementById('who');
  if(w){if(m&&m.user){w.innerHTML='signed in as <b></b>'+(m.sign_out?' · <a href="'+m.sign_out+'" id="signout">sign out</a>':'');w.querySelector('b').textContent=m.user;var so=document.getElementById('signout');if(so)so.onclick=function(e){e.preventDefault();if(m.sign_out==='/logout'){var f=document.createElement('form');f.method='post';f.action='/logout';document.body.appendChild(f);f.submit()}else location.href=m.sign_out}}else{w.innerHTML='<a href="'+((m&&m.sign_in)||'/login')+'">sign in</a>'}}
  var a=document.getElementById('adminslot');
- if(a)a.innerHTML=(m&&m.admin)?'<a class="pill" href="/admin">admin</a>':'';
+ if(a)a.innerHTML=(m&&m.admin)?'<a class="pill" href="admin">admin</a>':'';
 }
 try{var _m=localStorage.getItem('bifme');if(_m)bifApplyMe(JSON.parse(_m));}catch(e){}
 fetch('/api/me').then(function(r){return r.json()}).then(function(m){
@@ -321,7 +326,7 @@ document.addEventListener('DOMContentLoaded',bifAutocomplete);
 function bifBoardLive(){
  var cols=document.querySelector('.boardcols');if(!cols)return;
  setInterval(function(){
-  fetch('/board/fragment').then(function(r){return r.json()}).then(function(j){
+  fetch('board/fragment').then(function(r){return r.json()}).then(function(j){
    if(j&&j.body&&j.body.indexOf('boardgrid')>-1){
     cols.innerHTML=j.body;
     var c=document.getElementById('connline');if(c&&typeof j.conn==='string')c.innerHTML=j.conn;
@@ -337,7 +342,7 @@ document.addEventListener('DOMContentLoaded',bifBoardLive);
 function bifLogLive(){
  var body=document.getElementById('logbody');if(!body||!body.hasAttribute('data-live'))return;
  setInterval(function(){
-  fetch('/log/fragment'+window.location.search).then(function(r){return r.text()}).then(function(h){
+  fetch('log/fragment'+window.location.search).then(function(r){return r.text()}).then(function(h){
    if(h!=null){body.innerHTML=h;bifTick();}
   }).catch(function(){});
  },10000);
@@ -445,7 +450,7 @@ pub fn landing_roster(
 /// (who + game) so the section looks identical whether a season is live or not.
 pub fn landing_signups(subs: &[SubmissionRow]) -> String {
     if subs.is_empty() {
-        return r#"<div class="empty" style="grid-column:1/-1">No sign-ups yet — be the first to <a href="/signup">claim a game for next season</a>.</div>"#
+        return r#"<div class="empty" style="grid-column:1/-1">No sign-ups yet — be the first to <a href="signup">claim a game for next season</a>.</div>"#
             .to_string();
     }
     struct Entry {
@@ -607,15 +612,14 @@ fn render_feed(out: &mut String, rows: &[crate::db::ActivityRow], ref_ts: Option
 
 /// The frontpage "Past seasons" block — a card per archived season linking to
 /// its detail page. Empty string when there are none (so the section hides).
-pub fn past_seasons_section(seasons: &[(String, String, i64)]) -> String {
+pub fn past_seasons_section(seasons: &[(i64, String, i64)]) -> String {
     if seasons.is_empty() {
         return String::new();
     }
     let mut out = String::from(r#"<h2 class="sec">Past seasons</h2><div class="grid roster">"#);
-    for (seed, name, ts) in seasons {
+    for (id, name, ts) in seasons {
         out.push_str(&format!(
-            r#"<a class="slot cardlink" href="/season/{}"><div class="game">{}</div><div class="who">{}</div></a>"#,
-            esc(seed),
+            r#"<a class="slot cardlink" href="/s/{id}/season"><div class="game">{}</div><div class="who">{}</div></a>"#,
             esc(name),
             fmt_date(*ts),
         ));
@@ -681,7 +685,7 @@ pub fn season_page(
         out.push_str(r#"<h2>Activity log</h2>"#);
         render_log_section(
             &mut out,
-            &format!("/season/{}", esc(&s.seed)),
+            "season",
             activity,
             page,
             pages,
@@ -827,7 +831,7 @@ fn board_inner(
                 .map(|n| format!(" · {n} available"))
                 .unwrap_or_default();
             out.push_str(&format!(
-                r#"<a class="slot cardlink {cls}" href="/game/{}"><span class="st">{label}</span><div class="game">{}</div>
+                r#"<a class="slot cardlink {cls}" href="game/{}"><span class="st">{label}</span><div class="game">{}</div>
 <div class="meta">{} locations · sent {} · recv {} · {} left{avail}</div>"#,
                 g.ap_slot,
                 esc(g.game),
@@ -875,7 +879,7 @@ fn board_inner(
         out.push_str("</div>");
     }
 
-    out.push_str(r#"</div><aside class="boardlog"><h2 class="loghdr"><span>Activity</span><a href="/log">full log →</a></h2>"#);
+    out.push_str(r#"</div><aside class="boardlog"><h2 class="loghdr"><span>Activity</span><a href="log">full log →</a></h2>"#);
     if activity.is_empty() {
         out.push_str(r#"<div class="empty">Quiet so far. Item sends, goals, releases and collects show up here.</div>"#);
     } else {
@@ -1145,7 +1149,7 @@ pub fn log_page(
     let mut out = page_head(None);
     out.push_str(LOG_STYLE);
     out.push_str(
-        r#"<h1>Activity log</h1><div class="crumb"><a href="/board">← board</a> · item sends, goals, releases</div>"#,
+        r#"<h1>Activity log</h1><div class="crumb"><a href="board">← board</a> · item sends, goals, releases</div>"#,
     );
     render_log_section(&mut out, base, rows, page, pages, rpp, ref_ts, f, true);
     out.push_str("</main></body></html>");
@@ -1160,7 +1164,7 @@ pub fn claim_page(
 ) -> Html<String> {
     let mut out = page_head(Some(me));
     out.push_str(&format!(
-        r#"<h1>Claim a slot</h1><div class="crumb"><a href="/board">← board</a>{}</div>
+        r#"<h1>Claim a slot</h1><div class="crumb"><a href="board">← board</a>{}</div>
 <p class="empty">Claim your slot so only you can hint on it. You can unclaim it again if you grabbed the wrong one.</p>"#,
         if is_admin { " · admin" } else { "" },
     ));
@@ -1209,7 +1213,7 @@ pub fn claim_page(
             ));
             if mine {
                 out.push_str(&format!(
-                    r#"<form class="hintform" method="post" action="/hint">
+                    r#"<form class="hintform" method="post" action="hint">
 <input type="hidden" name="slot_id" value="{}"><input name="item" placeholder="hint one of your items…" required>
 <button type="submit">Hint</button></form><div class="inlinemsg"></div>"#,
                     r.id
@@ -1233,7 +1237,7 @@ document.querySelectorAll('form.hintform').forEach(function(f){
   var inp=f.querySelector('input[name=item]'),btn=f.querySelector('button'),msg=f.nextElementSibling;
   var item=inp.value.trim();if(!item)return;
   btn.disabled=true;if(msg){msg.className='inlinemsg';msg.textContent='Hinting…';}
-  fetch('/hint',{method:'POST',body:new URLSearchParams(new FormData(f))}).then(function(r){return r.json()}).then(function(j){
+  fetch('hint',{method:'POST',body:new URLSearchParams(new FormData(f))}).then(function(r){return r.json()}).then(function(j){
    btn.disabled=false;
    if(msg){msg.className='inlinemsg '+(j&&j.ok?'ok':'bad');msg.textContent=(j&&j.message)?j.message:(j&&j.ok?'Hinted.':'Hint failed.');}
    if(j&&j.ok)inp.value='';
@@ -1260,7 +1264,7 @@ pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool, open: bool)
   <li data-step="2"><span class="n">2</span> YAML</li>
   <li data-step="3"><span class="n">3</span> Players</li>
 </ol>
-<form id="wiz" method="post" action="/signup" enctype="multipart/form-data">
+<form id="wiz" method="post" action="signup" enctype="multipart/form-data">
   <section class="wstep" data-step="1">
     <h2>Your game</h2>
     <div class="choice">
@@ -1317,7 +1321,7 @@ pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool, open: bool)
    if(!f){apmsg.className='inlinemsg bad';apmsg.textContent='Choose an .apworld file first.';return;}
    apmsg.className='inlinemsg';apmsg.textContent='Installing…';apbtn.disabled=true;
    var fd=new FormData();fd.append('apworld',f);
-   fetch('/signup/apworld',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(j){
+   fetch('signup/apworld',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(j){
      apbtn.disabled=false;
      if(j.ok){installed=true;apmsg.className='inlinemsg ok';apmsg.textContent='Installed '+j.world+'. You can continue.';next1.disabled=false;}
      else{installed=false;apmsg.className='inlinemsg bad';apmsg.textContent=j.error||'Install failed.';next1.disabled=true;}
@@ -1330,7 +1334,7 @@ pub fn signup_page(subs: &[SubmissionRow], me: &str, is_admin: bool, open: bool)
    if(!f){chkmsg.className='inlinemsg bad';chkmsg.textContent='Choose your YAML first.';return;}
    chkmsg.className='inlinemsg';chkmsg.textContent='Checking…';chkbtn.disabled=true;
    var fd=new FormData();fd.append('yaml',f);
-   fetch('/signup/check',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(j){
+   fetch('signup/check',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(j){
      chkbtn.disabled=false;
      if(j.ok){chkmsg.className='inlinemsg ok';chkmsg.textContent='✓ '+(j.name||'slot')+' — '+(j.game||'?')+' rolled cleanly.';var mn=document.getElementById('myname');if(mn&&j.name)mn.textContent=j.name;next2.disabled=false;}
      else{next2.disabled=true;chkmsg.className='inlinemsg bad';chkmsg.textContent=(j.errors&&j.errors.length?j.errors.join('; '):(j.error||'Did not pass.'));}
@@ -1370,7 +1374,7 @@ fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool) -> String {
         };
         let del = if is_admin || s.username == me {
             format!(
-                r#"<form method="post" action="/signup/delete" style="display:inline">
+                r#"<form method="post" action="signup/delete" style="display:inline">
 <input type="hidden" name="id" value="{}"><button class="ghost" type="submit">Remove</button></form>"#,
                 s.id
             )
@@ -1426,6 +1430,7 @@ fn action_btn(
 /// already confirmed the viewer is an admin.
 #[allow(clippy::too_many_arguments)]
 pub fn admin_page(
+    season: &crate::db::SeasonRow,
     connected: bool,
     seed: Option<&str>,
     signups_open: bool,
@@ -1442,9 +1447,11 @@ pub fn admin_page(
     out_slots: &[SlotRow],
 ) -> Html<String> {
     let mut b = page_head(None);
-    b.push_str(
-        r#"<h1>Season admin</h1><div class="crumb"><a href="/board">← board</a> · admin · <a href="/admin/users">users &amp; links</a></div>"#,
-    );
+    b.push_str(&format!(
+        r#"<h1>{}</h1><div class="crumb"><a href="board">← board</a> · season admin · <span class="tag">{}</span> · <a href="/admin/seasons">all seasons</a> · <a href="/admin/users">users &amp; links</a></div>"#,
+        esc(&season.name),
+        season.state().as_str(),
+    ));
 
     let conn = if connected { "connected" } else { "waiting" };
     let seed_txt = seed.filter(|s| !s.is_empty()).unwrap_or("—");
@@ -1460,7 +1467,7 @@ pub fn admin_page(
         b.push_str(&format!(
             r#"<div class="btnrow">{}</div>"#,
             action_btn(
-                "/admin/signups",
+                "admin/signups",
                 &[("open", "0")],
                 "Close signups",
                 false,
@@ -1472,7 +1479,7 @@ pub fn admin_page(
         b.push_str(&format!(
             r#"<div class="btnrow">{}</div>"#,
             action_btn(
-                "/admin/signups",
+                "admin/signups",
                 &[("open", "1")],
                 "Open signups",
                 false,
@@ -1488,7 +1495,7 @@ pub fn admin_page(
         b.push_str(&format!(
             r#"<div class="btnrow">{}</div>"#,
             action_btn(
-                "/admin/minesweeper",
+                "admin/minesweeper",
                 &[("open", "0")],
                 "Disable minesweeper",
                 false,
@@ -1500,7 +1507,7 @@ pub fn admin_page(
         b.push_str(&format!(
             r#"<div class="btnrow">{}</div>"#,
             action_btn(
-                "/admin/minesweeper",
+                "admin/minesweeper",
                 &[("open", "1")],
                 "Enable minesweeper",
                 false,
@@ -1516,13 +1523,13 @@ pub fn admin_page(
         b.push_str(r#"<div class="statline">The shared Minecraft common game is <b>enabled</b> — the next season generated will include the communal slot.</div>"#);
         b.push_str(&format!(
             r#"<div class="btnrow">{}</div>"#,
-            action_btn("/admin/mc", &[("open", "0")], "Disable common game", false, "")
+            action_btn("admin/mc", &[("open", "0")], "Disable common game", false, "")
         ));
     } else {
         b.push_str(r#"<div class="statline">The shared Minecraft common game is <b>disabled</b> — toggle this <b>before generating</b> to include it in the season.</div>"#);
         b.push_str(&format!(
             r#"<div class="btnrow">{}</div>"#,
-            action_btn("/admin/mc", &[("open", "1")], "Enable common game", false, "")
+            action_btn("admin/mc", &[("open", "1")], "Enable common game", false, "")
         ));
     }
 
@@ -1533,7 +1540,7 @@ pub fn admin_page(
         esc(connect_pw)
     ));
     b.push_str(
-        r#"<form class="console" method="post" action="/admin/connect-password" autocomplete="off" onsubmit="return confirm('Change the connect password? Bifrost will restart briefly to apply it.')"><input type="text" name="password" placeholder="new connect password" style="flex:1;min-width:0" autocomplete="off" required><button type="submit">Set</button></form>
+        r#"<form class="console" method="post" action="admin/connect-password" autocomplete="off" onsubmit="return confirm('Change the connect password? Bifrost will restart briefly to apply it.')"><input type="text" name="password" placeholder="new connect password" style="flex:1;min-width:0" autocomplete="off" required><button type="submit">Set</button></form>
 <p class="warnnote">Letters, numbers, - or _ (3–64 chars). Sets it on the running server and in host.yaml; Bifrost restarts to reconnect.</p>"#,
     );
 
@@ -1555,14 +1562,14 @@ pub fn admin_page(
         b.push_str(&format!(
             r#"<div class="btnrow">{}{}</div>"#,
             action_btn(
-                "/admin/generate",
+                "admin/generate",
                 &[],
                 "Generate the season",
                 false,
                 "Generate a NEW season from the signups now? This restarts the game and closes signups."
             ),
             action_btn(
-                "/admin/regenerate",
+                "admin/regenerate",
                 &[],
                 "Regenerate (re-roll current)",
                 false,
@@ -1579,7 +1586,7 @@ pub fn admin_page(
         b.push_str(r#"<p class="empty">Files the generator produced for specific slots — give each to the right player (Discord, etc.). The slot name and game are taken straight from the filename, so there's no guessing which goes where.</p>"#);
         for o in outputs {
             let link = format!(
-                r#"<a class="ghost" href="/admin/output?file={}">download</a>"#,
+                r#"<a class="ghost" href="admin/output?file={}">download</a>"#,
                 urlq(&o.member)
             );
             if o.is_spoiler {
@@ -1618,7 +1625,7 @@ pub fn admin_page(
                 esc(&s.game),
                 esc(&s.username),
                 action_btn(
-                    "/admin/delete-player",
+                    "admin/delete-player",
                     &[("id", &s.id.to_string())],
                     "delete",
                     true,
@@ -1630,7 +1637,7 @@ pub fn admin_page(
     b.push_str(&format!(
         r#"<div class="btnrow">{}</div>"#,
         action_btn(
-            "/admin/clear",
+            "admin/clear",
             &[("what", "signups")],
             "Clear all signups",
             true,
@@ -1649,7 +1656,7 @@ pub fn admin_page(
                 esc(name),
                 esc(detail),
                 action_btn(
-                    "/admin/delete-apworld",
+                    "admin/delete-apworld",
                     &[("name", name)],
                     "delete",
                     true,
@@ -1661,7 +1668,7 @@ pub fn admin_page(
     b.push_str(&format!(
         r#"<div class="btnrow">{}</div>"#,
         action_btn(
-            "/admin/clear",
+            "admin/clear",
             &[("what", "apworlds")],
             "Clear all apworlds",
             true,
@@ -1674,13 +1681,13 @@ pub fn admin_page(
     b.push_str(r#"<p class="empty">Freeze this season for <b>Past Seasons</b> — the roster, each game's final standing (goaled + checks), and this season's minesweeper leaderboards — <b>before</b> you reset, while the data is still live. Re-archiving just refreshes the snapshot.</p>"#);
     if let Some(name) = archived {
         b.push_str(&format!(
-            r#"<div class="statline">✓ Archived as <b>{}</b>. <a href="/season/{}">View</a></div>"#,
+            r#"<div class="statline">✓ Archived as <b>{}</b>. <a href="season/{}">View</a></div>"#,
             esc(name),
             esc(seed.unwrap_or("")),
         ));
     }
     b.push_str(
-        r#"<form class="console" method="post" action="/admin/archive-season" autocomplete="off"><input type="text" name="name" placeholder="Season name (e.g. Season Sept 2026)" style="flex:1;min-width:0"><button type="submit">Archive &amp; finalize season</button></form>
+        r#"<form class="console" method="post" action="admin/archive-season" autocomplete="off"><input type="text" name="name" placeholder="Season name (e.g. Season Sept 2026)" style="flex:1;min-width:0"><button type="submit">Archive &amp; finalize season</button></form>
 <p class="warnnote">Also run the host season bundle (raw multidata, save, YAMLs, apworlds + log → Nextcloud) before reset — that's the replayable archive this snapshot can't hold.</p>"#,
     );
 
@@ -1689,21 +1696,21 @@ pub fn admin_page(
     b.push_str(&format!(
         r#"<div class="btnrow">{}{}{}</div>"#,
         action_btn(
-            "/admin/clear",
+            "admin/clear",
             &[("what", "players")],
             "Clear current players",
             true,
             "Delete this season's players — all Bifrost slots, their claims, and the staged YAMLs? (Signups stay.)"
         ),
         action_btn(
-            "/admin/clear",
+            "admin/clear",
             &[("what", "save")],
             "Clear session save",
             true,
             "Delete the running session's save? Progress resets on next server load."
         ),
         action_btn(
-            "/admin/clear",
+            "admin/clear",
             &[("what", "world")],
             "Clear generated world",
             true,
@@ -1714,7 +1721,7 @@ pub fn admin_page(
     b.push_str(&format!(
         r#"<div class="btnrow">{}</div>"#,
         action_btn(
-            "/admin/clear",
+            "admin/clear",
             &[("what", "reset")],
             "Full reset",
             true,
@@ -1728,7 +1735,7 @@ pub fn admin_page(
     b.push_str(r#"<p class="empty">Run a server command as admin — e.g. <code>/send Player Item</code>, <code>/hint Player Item</code>, <code>/players</code>. The <code>!admin</code> prefix is added for you.</p>"#);
     b.push_str(r#"<pre class="out" id="conlog" hidden></pre>"#);
     b.push_str(
-        r#"<form class="console" id="conform" method="post" action="/admin/console" autocomplete="off"><div class="acwrap"><input type="text" name="cmd" id="concmd" placeholder="/players" autocomplete="off" required><div class="acmenu" id="accands" hidden></div></div><button type="submit">Run</button></form>"#,
+        r#"<form class="console" id="conform" method="post" action="admin/console" autocomplete="off"><div class="acwrap"><input type="text" name="cmd" id="concmd" placeholder="/players" autocomplete="off" required><div class="acmenu" id="accands" hidden></div></div><button type="submit">Run</button></form>"#,
     );
     // Command autocomplete: ACDATA (players/games/items/locations) is embedded,
     // then CONSOLE_JS reads it. Split so the JS's braces don't fight format!.
@@ -1770,16 +1777,16 @@ var hback=hform.querySelector('input[name=back]').value,hbtn=hform.querySelector
 function refreshHints(){
  var el=document.getElementById('worldhints');
  [0,1200,2800].forEach(function(d){setTimeout(function(){
-  if(el)fetch(hback+'/hints').then(function(r){return r.text()}).then(function(h){el.innerHTML=h;}).catch(function(){});
+  if(el)fetch(hback.slice(1)+'/hints').then(function(r){return r.text()}).then(function(h){el.innerHTML=h;}).catch(function(){});
   // Refresh the search pool too: a name whose last copy was just hinted drops out.
-  fetch(hback+'/items').then(function(r){return r.json()}).then(function(a){if(Array.isArray(a))ITEMS=a;}).catch(function(){});
+  fetch(hback.slice(1)+'/items').then(function(r){return r.json()}).then(function(a){if(Array.isArray(a))ITEMS=a;}).catch(function(){});
  },d);});
 }
 hform.addEventListener('submit',function(e){
  e.preventDefault();
  var item=q.value.trim();if(!item)return;
  hits=[];box.innerHTML='';hbtn.disabled=true;hstatus.className='inlinemsg';hstatus.textContent='Hinting…';
- fetch('/hint',{method:'POST',body:new URLSearchParams(new FormData(hform))}).then(function(r){return r.json()}).then(function(j){
+ fetch('hint',{method:'POST',body:new URLSearchParams(new FormData(hform))}).then(function(r){return r.json()}).then(function(j){
   hbtn.disabled=false;
   hstatus.className='inlinemsg '+(j&&j.ok?'ok':'bad');
   hstatus.textContent=(j&&j.message)?j.message:(j&&j.ok?'Hinted.':'Hint failed.');
@@ -1844,7 +1851,7 @@ form.addEventListener('submit',function(e){
  e.preventDefault();
  var cmd=inp.value.trim();if(!cmd)return;
  menu.hidden=true;append('$ '+cmd);run.disabled=true;
- fetch('/admin/console',{method:'POST',body:new URLSearchParams({cmd:cmd})}).then(function(r){return r.json()}).then(function(j){
+ fetch('admin/console',{method:'POST',body:new URLSearchParams({cmd:cmd})}).then(function(r){return r.json()}).then(function(j){
   append(j&&j.output?j.output:'(no output)');run.disabled=false;inp.value='';inp.focus();cands=[];render();
  }).catch(function(){append('error: request failed');run.disabled=false;});
 });"#;
@@ -1853,7 +1860,7 @@ pub fn signup_result(text: &str, ok: bool) -> Html<String> {
     let mut b = page_head(None);
     let cls = if ok { "banner ok" } else { "banner bad" };
     b.push_str(&format!(
-        r#"<h1>Signup</h1><div class="crumb"><a href="/signup">← signup</a></div>
+        r#"<h1>Signup</h1><div class="crumb"><a href="signup">← signup</a></div>
 <div class="{cls}">{}</div>"#,
         esc(text)
     ));
@@ -1878,7 +1885,7 @@ pub fn notice(text: &str, ok: bool, back: &str) -> Html<String> {
 fn claim_button(id: i64, op: &str, label: &str, ghost: bool, back: &str) -> String {
     let cls = if ghost { "ghost" } else { "" };
     format!(
-        r#"<form method="post" action="/claim" style="display:inline;margin-left:6px">
+        r#"<form method="post" action="claim" style="display:inline;margin-left:6px">
 <input type="hidden" name="slot_id" value="{id}"><input type="hidden" name="op" value="{op}">
 <input type="hidden" name="back" value="{back}">
 <button class="{cls}" type="submit">{label}</button></form>"#
@@ -1976,7 +1983,7 @@ function fit(){ // how many rows fit below the feed's top, within sane bounds
  var n=Math.floor((window.innerHeight-top-64)/row);
  if(n<8)n=8;if(n>200)n=200;return n;}
 function reload(page){rpp=fit();var q=search?search.value.trim():'';
- into('/game/'+slot+'/log/fragment?page='+(page||1)+'&rpp='+rpp+(q?('&q='+encodeURIComponent(q)):''));}
+ into('game/'+slot+'/log/fragment?page='+(page||1)+'&rpp='+rpp+(q?('&q='+encodeURIComponent(q)):''));}
 host.addEventListener('click',function(e){var a=e.target.closest('a.pg');if(!a)return;e.preventDefault();into(a.getAttribute('href'));});
 if(search){search.addEventListener('input',function(){clearTimeout(tmr);tmr=setTimeout(function(){reload(1);},200);});}
 var bar=document.querySelector('.gtabs');
@@ -2042,7 +2049,7 @@ const PT_JS: &str = r#"<script>
   secs.forEach(function(s){ lines.push('• '+(s.name||'(section)')+': '+s.cleared+'/'+s.item_count+' ('+secWord(s)+')'); });
   return lines.join('\n');
  }
- function assetUrl(f){ return '/game/'+slot+'/poptracker/asset?file='+encodeURIComponent(f)+(ver?('&v='+ver):''); }
+ function assetUrl(f){ return 'game/'+slot+'/poptracker/asset?file='+encodeURIComponent(f)+(ver?('&v='+ver):''); }
  function drawMap(mapName){
   var m=(st.maps||[]).filter(function(x){return x.name===mapName;})[0];
   var wrap=document.createElement('div'); wrap.className='ptmapwrap';
@@ -2198,7 +2205,7 @@ const PT_JS: &str = r#"<script>
   else { host.textContent='This pack has no maps to show.'; return; }
   host.dataset.built='1';
  }
- function load(){ fetch('/game/'+slot+'/poptracker/state').then(function(r){return r.json();}).then(draw).catch(function(){}); }
+ function load(){ fetch('game/'+slot+'/poptracker/state').then(function(r){return r.json();}).then(draw).catch(function(){}); }
  var panel=document.getElementById('tab-pt'); var bar=document.querySelector('.gtabs');
  if(bar){ bar.addEventListener('click',function(e){var b=e.target.closest('.gtab'); if(b&&b.getAttribute('data-tab')==='tab-pt') load();}); }
  load();
@@ -2217,16 +2224,16 @@ fn poptracker_panel(ap_slot: i64, has_pack: bool, can_manage: bool) -> String {
         if can_manage {
             s.push_str(&format!(
                 r#"<details class="ptmanage"><summary>Manage pack</summary>
-<form method="post" action="/game/{ap_slot}/poptracker" enctype="multipart/form-data" class="ptform">
+<form method="post" action="game/{ap_slot}/poptracker" enctype="multipart/form-data" class="ptform">
 <input type="file" name="pack" accept=".zip,application/zip" required><button type="submit">Replace pack</button></form>
-<form method="post" action="/game/{ap_slot}/poptracker/remove" onsubmit="return confirm('Remove this pack?')"><button type="submit" class="ghost">Remove pack</button></form></details>"#
+<form method="post" action="game/{ap_slot}/poptracker/remove" onsubmit="return confirm('Remove this pack?')"><button type="submit" class="ghost">Remove pack</button></form></details>"#
             ));
         }
         s.push_str(PT_JS);
     } else if can_manage {
         s.push_str(&format!(
             r#"<p class="empty">Upload a <a href="https://github.com/black-sliver/PopTracker" target="_blank" rel="noopener">PopTracker</a> pack (.zip) for this game to get its map here, auto-tracked from the server — no setup for anyone viewing. The pack must support Archipelago auto-tracking.</p>
-<form method="post" action="/game/{ap_slot}/poptracker" enctype="multipart/form-data" class="ptform">
+<form method="post" action="game/{ap_slot}/poptracker" enctype="multipart/form-data" class="ptform">
 <input type="file" name="pack" accept=".zip,application/zip" required><button type="submit">Upload pack</button></form>"#
         ));
     } else {
@@ -2265,7 +2272,7 @@ pub fn game_log_feed(
         return s;
     }
     render_feed(&mut s, rows, None);
-    let base = format!("/game/{ap_slot}/log/fragment");
+    let base = format!("game/{ap_slot}/log/fragment");
     s.push_str(&activity_pager(&base, qs, page, pages, rpp));
     s
 }
@@ -2363,7 +2370,7 @@ pub fn game_page(
         .map(|v| format!(" · {} available", v.len()))
         .unwrap_or_default();
     out.push_str(&format!(
-        r#"<h1>{}</h1><div class="crumb"><a href="/board">← board</a>{}</div>
+        r#"<h1>{}</h1><div class="crumb"><a href="board">← board</a>{}</div>
 <div class="meta">{} locations · sent {} · received {} · {} left{avail}</div>"#,
         esc(game),
         if is_admin { " · admin" } else { "" },
@@ -2380,7 +2387,7 @@ pub fn game_page(
             out.push_str(r#"<div class="adminfin"><span class="finnote">✓ Marked finished (goaled).</span></div>"#);
         } else {
             out.push_str(&format!(
-                r#"<form class="adminfin" method="post" action="/game/{ap_slot}/finish" onsubmit="return confirm('Mark this game as finished? It registers their goal (announces it) and collects/releases their items per the server settings. This can\'t be undone from here.')">
+                r#"<form class="adminfin" method="post" action="game/{ap_slot}/finish" onsubmit="return confirm('Mark this game as finished? It registers their goal (announces it) and collects/releases their items per the server settings. This can\'t be undone from here.')">
 <input type="hidden" name="back" value="{back}">
 <button type="submit" class="finish">Mark finished</button></form>"#
             ));
@@ -2410,8 +2417,8 @@ pub fn game_page(
             r#"<h3>How to join</h3>
 <ol class="mcjoin">
 <li>Get <b>Minecraft: Java Edition {ver}</b> on a genuine Mojang/Microsoft account (the server runs online-mode).</li>
-<li>Install <b>{loader}</b> — <a href="/game/mc/neoforge">download the installer</a>, run it, and it creates a launch profile set to the matching Minecraft version.</li>
-<li>Drop the mod <code>{mod_jar}</code> — <a href="/game/mc/mod">download</a> — into that profile's <code>mods/</code> folder. It's the <b>exact</b> jar the server runs; NeoForge drops you on any version mismatch.</li>
+<li>Install <b>{loader}</b> — <a href="game/mc/neoforge">download the installer</a>, run it, and it creates a launch profile set to the matching Minecraft version.</li>
+<li>Drop the mod <code>{mod_jar}</code> — <a href="game/mc/mod">download</a> — into that profile's <code>mods/</code> folder. It's the <b>exact</b> jar the server runs; NeoForge drops you on any version mismatch.</li>
 <li>{addr_step}</li>
 </ol>
 <p class="statline">The official Minecraft launcher and Prism both fetch the right Java for you; only a bare manual setup needs you to install <b>Java 25</b> yourself.</p>
@@ -2420,7 +2427,7 @@ pub fn game_page(
 <li>Install <b>Prism Launcher</b> from <b>prismlauncher.org</b> and open it.</li>
 <li>Top-right accounts button → <b>Manage Accounts</b> → <b>Add Microsoft</b> and sign in (the server is online-mode, so a genuine account is required).</li>
 <li><b>Add Instance</b> → pick Minecraft <b>{ver}</b>, then in the <b>Mod Loader</b> section below the version list choose <b>NeoForge</b> → <b>{loader_ver}</b> → create. Prism downloads the matching Java (25) itself — accept if it offers. <i>(Already made the instance? Instead: <b>Edit → Version → Install Loader</b> in the right panel → NeoForge → {loader_ver}.)</i></li>
-<li>Select the instance → <b>Edit</b> → <b>Mods</b> → <b>Add file…</b> and choose <code>{mod_jar}</code> (grab it from the <a href="/game/mc/mod">download</a> above). Nothing else goes in there.</li>
+<li>Select the instance → <b>Edit</b> → <b>Mods</b> → <b>Add file…</b> and choose <code>{mod_jar}</code> (grab it from the <a href="game/mc/mod">download</a> above). Nothing else goes in there.</li>
 <li><b>Launch</b> the instance → <b>Multiplayer</b> → <b>Add Server</b> → address <b>{addr}</b> → join.</li>
 </ol></details>"#,
             ver = MC_GAME_VERSION,
@@ -2445,7 +2452,7 @@ pub fn game_page(
             let btn = if cur.is_empty() { "Whitelist me" } else { "Update" };
             out.push_str(&format!(
                 r#"<p class="empty">The server is whitelisted. Set the exact username of the Mojang/Microsoft account you'll join on — you'll be let in within a minute or so.</p>
-{status}<form method="post" action="/mc/username" class="hintform">
+{status}<form method="post" action="mc/username" class="hintform">
 <input type="hidden" name="back" value="{back}">
 <input name="mc_username" value="{cur}" placeholder="YourMinecraftName" pattern="[A-Za-z0-9_]{{3,16}}" maxlength="16" autocomplete="off" required>
 <button type="submit">{btn}</button></form>"#,
@@ -2456,7 +2463,7 @@ pub fn game_page(
             ));
         } else {
             out.push_str(
-                r#"<p class="empty">The server is whitelisted. <a href="/claim">Claim a game</a> this season, then come back here to register your Minecraft username and get let in.</p>"#,
+                r#"<p class="empty">The server is whitelisted. <a href="claim">Claim a game</a> this season, then come back here to register your Minecraft username and get let in.</p>"#,
             );
         }
 
@@ -2480,7 +2487,7 @@ pub fn game_page(
                 out.push_str(&format!(
                     r#"<h2>Send a hint</h2>
 <p class="empty">{have}Each hint in this world costs <b>{cost}</b> points. Any player with a game this season can spend them — they're the common game's own, earned as the group checks its locations. Search the pool and hint one.</p>
-<form method="post" action="/hint" class="hintform" id="hintform">
+<form method="post" action="hint" class="hintform" id="hintform">
 <input type="hidden" name="slot_id" value="{sid}"><input type="hidden" name="back" value="{back}">
 <input id="hintq" name="item" placeholder="search the common game's items…" autocomplete="off" required>
 <button type="submit">Hint</button></form>
@@ -2558,7 +2565,7 @@ pub fn game_page(
         out.push_str(r#"<div class="grid">"#);
         for f in files {
             out.push_str(&format!(
-                r#"<div class="slot idle"><div class="prow"><span class="who"><code>.{}</code> file · {}</span><a class="ghost" href="/game/{ap_slot}/output?file={}">download</a></div></div>"#,
+                r#"<div class="slot idle"><div class="prow"><span class="who"><code>.{}</code> file · {}</span><a class="ghost" href="game/{ap_slot}/output?file={}">download</a></div></div>"#,
                 esc(&f.ext),
                 human_size(f.size),
                 urlq(&f.member),
@@ -2594,8 +2601,8 @@ pub fn game_page(
         out.push_str(&format!(
             r#"<h2>Send a hint</h2>
 <p class="empty">{have}Each hint in this world costs <b>{cost}</b> points.{bonus} Search your pool and hint one.</p>
-<p class="empty"><a href="/minesweeper?back={back}">Play minesweeper to earn bonus hints →</a></p>
-<form method="post" action="/hint" class="hintform" id="hintform">
+<p class="empty"><a href="minesweeper?back={back}">Play minesweeper to earn bonus hints →</a></p>
+<form method="post" action="hint" class="hintform" id="hintform">
 <input type="hidden" name="slot_id" value="{sid}"><input type="hidden" name="back" value="{back}">
 <input id="hintq" name="item" placeholder="search your items…" autocomplete="off" required>
 <button type="submit">Hint</button></form>
@@ -2692,7 +2699,7 @@ pub fn hint_rows(
             ("ghost", "☆ prioritize")
         };
         out.push_str(&format!(
-            r#"<div class="hintrow"><span>{}</span><form method="post" action="/prioritize" style="display:inline">
+            r#"<div class="hintrow"><span>{}</span><form method="post" action="prioritize" style="display:inline">
 <input type="hidden" name="finding" value="{}"><input type="hidden" name="location" value="{}">
 <input type="hidden" name="item" value="{}"><input type="hidden" name="receiving" value="{}">
 <input type="hidden" name="back" value="{}">
@@ -2964,7 +2971,7 @@ function showLb(kind){
  if(view==='board'&&!over)pauseKind(activeKind);
  view='lb';lbKind=kind;playview.style.display='none';lbview.style.display='';updateTabUI();
  lbview.innerHTML='<p class="empty">Loading…</p>';
- fetch('/minesweeper/leaderboard?kind='+kind+FB).then(function(r){return r.text()}).then(function(h){
+ fetch('minesweeper/leaderboard?kind='+kind+FB).then(function(r){return r.text()}).then(function(h){
   if(view==='lb'&&lbKind===kind)lbview.innerHTML=h;
  }).catch(function(){lbview.innerHTML='<p class="empty">Could not load leaderboard.</p>';});
 }
@@ -3034,7 +3041,7 @@ function chordReveal(r,c){
 function reveal(r,c){
  if(over)return Promise.resolve();var btn=cells[r][c];
  if(btn.classList.contains('open')||btn.classList.contains('flag'))return Promise.resolve();
- return post('/minesweeper/reveal',wf({r:r,c:c,kind:activeKind})).then(function(j){
+ return post('minesweeper/reveal',wf({r:r,c:c,kind:activeKind})).then(function(j){
   if(over)return;
   if(!j.ok){msg.className='inlinemsg bad';msg.textContent=j.error||'Invalid.';return;}
   if(j.state==='lost'){over=true;(j.mines||[]).forEach(function(m){var mb=cells[m.r][m.c];mb.classList.add('open','mine');mb.textContent='✱';});msg.className='inlinemsg bad';msg.textContent='Boom — try again.';setStats(j.stats);setTimer(j.elapsed_ms,false);showNewBtn(true);return;}
@@ -3047,7 +3054,7 @@ function startBoard(w,h,mn){W=w;H=h;minesN=mn;over=false;flags=0;buildGrid();upd
 // Start a fresh board for the active difficulty.
 function newGame(){
  msg.textContent='';msg.className='inlinemsg';showNewBtn(false);
- post('/minesweeper/new',wf({kind:activeKind})).then(function(j){
+ post('minesweeper/new',wf({kind:activeKind})).then(function(j){
   if(!j.ok){msg.className='inlinemsg bad';msg.textContent=j.error||'Could not start.';grid.innerHTML='';return;}
   startBoard(j.w,j.h,j.mines);setTimer(0,false);
  }).catch(function(){msg.className='inlinemsg bad';msg.textContent='Could not start.';});
@@ -3057,7 +3064,7 @@ function newGame(){
 // comes back paused and resumes on the next reveal; an untouched board shows no
 // "resumed" notice.
 function loadGame(){
- fetch('/minesweeper/state?kind='+activeKind+FB).then(function(r){return r.json()}).then(function(j){
+ fetch('minesweeper/state?kind='+activeKind+FB).then(function(r){return r.json()}).then(function(j){
   if(!j||!j.active){newGame();return;}
   startBoard(j.w,j.h,j.mines);showNewBtn(false);
   var cs=j.cells||[];cs.forEach(openCell);setTimer(j.elapsed_ms,false);
@@ -3067,7 +3074,7 @@ function loadGame(){
 // Pause the active difficulty's clock (tab hidden/closed, or leaving for the
 // other difficulty); it resumes on the next reveal of that board.
 function pauseKind(kind){
- try{if(!navigator.sendBeacon('/minesweeper/pause?kind='+kind+FB))post('/minesweeper/pause?kind='+kind+FB);}catch(e){post('/minesweeper/pause?kind='+kind+FB);}
+ try{if(!navigator.sendBeacon('minesweeper/pause?kind='+kind+FB))post('minesweeper/pause?kind='+kind+FB);}catch(e){post('minesweeper/pause?kind='+kind+FB);}
 }
 function pauseNow(){
  if(view!=='board'||over)return;
@@ -3095,7 +3102,20 @@ loadGame();
 /// Page shell. The header bar (brand · "signed in as …" · home) lives in `HEAD`
 /// and is filled client-side from `/api/me`, so the identity isn't needed here.
 fn page_head(_me: Option<&str>) -> String {
-    String::from(HEAD)
+    with_base(HEAD)
+}
+
+/// A page head with `<base>` set: season links are base-relative, and the base
+/// pins them to the season the page was rendered for (see `scope`).
+pub fn with_base(head: &str) -> String {
+    head.replacen(
+        "<meta charset=\"utf-8\">",
+        &format!(
+            "<meta charset=\"utf-8\"><base href=\"{}/\">",
+            esc(&crate::scope::link_base())
+        ),
+        1,
+    )
 }
 
 // ---- accounts (native sign-in, setup, invites, resets, users console) ----
@@ -3353,8 +3373,49 @@ pub fn users_page(v: &UsersView) -> Html<String> {
 
     auth_page(
         "Users & links",
-        r#"<a href="/admin">← admin</a>"#,
+        r#"<a href="admin">← admin</a>"#,
         v.err,
         &body,
     )
+}
+
+// ---- seasons (instance-level list + create) ----
+
+pub fn seasons_page(seasons: &[crate::db::SeasonRow], default_name: &str, err: Option<&str>) -> Html<String> {
+    let mut body = String::new();
+    body.push_str(&format!(
+        r#"<h2>New season</h2>
+<form class="linkform" method="post" action="/admin/seasons">
+<label>Name<input type="text" name="name" value="{}" maxlength="80" required></label>
+<button type="submit">Create season</button></form>
+<p class="statline">A new season starts as a <b>draft</b>: set it up in its admin page, open signups, then generate it to go live. One season can be live at a time for now.</p>"#,
+        esc(default_name)
+    ));
+    body.push_str("<h2>Seasons</h2>");
+    if seasons.is_empty() {
+        body.push_str(r#"<div class="empty">No seasons yet.</div>"#);
+    } else {
+        body.push_str(r#"<table class="utable"><tr><th>Season</th><th>State</th><th>Created</th><th></th></tr>"#);
+        for s in seasons {
+            let when = match (s.archived_at, s.live_at) {
+                (Some(t), _) => format!("archived {}", fmt_date(t)),
+                (None, Some(t)) => format!("live since {}", fmt_date(t)),
+                _ => fmt_date(s.created_at),
+            };
+            let links = if s.state() == crate::db::State::Archived {
+                format!(r#"<a href="/s/{0}/season">summary</a>"#, s.id)
+            } else {
+                format!(r#"<a href="/s/{0}/board">board</a> · <a href="/s/{0}/admin">admin</a>"#, s.id)
+            };
+            body.push_str(&format!(
+                r#"<tr class="{}"><td>{}</td><td><span class="tag">{}</span></td><td class="mono">{}</td><td>{links}</td></tr>"#,
+                if s.state() == crate::db::State::Archived { "dead" } else { "" },
+                esc(&s.name),
+                s.state().as_str(),
+                when,
+            ));
+        }
+        body.push_str("</table>");
+    }
+    auth_page("Seasons", r#"<a href="/">← home</a> · <a href="/admin/users">users &amp; links</a>"#, err, &body)
 }

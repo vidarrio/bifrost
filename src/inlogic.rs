@@ -27,10 +27,12 @@ const POLL: Duration = Duration::from_secs(20);
 const RUN_TIMEOUT: Duration = Duration::from_secs(150);
 
 /// Spawn the recomputer. No-op without an AP config (nothing to connect to).
-pub fn spawn(board: Arc<RwLock<Board>>, db: Db, cfg: Option<ApConfig>) {
-    let Some(cfg) = cfg else {
-        return;
-    };
+pub fn spawn(
+    season: i64,
+    board: Arc<RwLock<Board>>,
+    db: Db,
+    cfg: &ApConfig,
+) -> Option<tokio::task::JoinHandle<()>> {
     // UT connects with host:port, not the ws:// URL Bifrost uses for its own
     // client, so strip the scheme once.
     let connect = cfg
@@ -41,17 +43,18 @@ pub fn spawn(board: Arc<RwLock<Board>>, db: Db, cfg: Option<ApConfig>) {
         .trim_end_matches('/')
         .to_string();
     let password = cfg.password.clone();
-    tokio::spawn(async move {
+    Some(tokio::spawn(async move {
         loop {
-            if let Err(e) = tick(&board, &db, &connect, &password).await {
+            if let Err(e) = tick(season, &board, &db, &connect, &password).await {
                 tracing::warn!("inlogic: {e}");
             }
             tokio::time::sleep(POLL).await;
         }
-    });
+    }))
 }
 
 async fn tick(
+    season: i64,
     board: &Arc<RwLock<Board>>,
     db: &Db,
     connect: &str,
@@ -59,18 +62,17 @@ async fn tick(
 ) -> Result<(), String> {
     // Snapshot season + per-slot (ap_slot, name, game, sent, received) under one
     // short lock; never hold it across a subprocess.
-    let (season, slots) = {
+    let slots = {
         let b = board.read().map_err(|_| "board lock poisoned")?;
-        let season = match &b.seed {
-            Some(s) if !s.is_empty() => s.clone(),
-            _ => return Ok(()), // no season yet
-        };
+        if b.seed.is_none() {
+            return Ok(()); // the season's room hasn't been seen yet
+        }
         let slots: Vec<(i64, String, String, i64, i64)> = b
             .slots
             .iter()
             .map(|(k, s)| (*k, s.name.clone(), s.game.clone(), s.sent as i64, s.received as i64))
             .collect();
-        (season, slots)
+        slots
     };
 
     for (ap_slot, name, game, sent, received) in slots {
@@ -78,16 +80,16 @@ async fn tick(
             continue; // can't connect a tracker without the slot's name
         }
         // Skip slots whose state matches the cached result (nothing to recompute).
-        if db.inlogic_state(&season, ap_slot).await == Some((sent, received)) {
+        if db.inlogic_state(season, ap_slot).await == Some((sent, received)) {
             continue;
         }
-        let season_dirs = config::get().season();
+        let season_dirs = config::get().season(season);
         match ap_adapter::inlogic(&season_dirs, &name, password, connect, RUN_TIMEOUT).await {
             Ok(ap_adapter::InLogic { game: ut_game, locations: locs, captured: true }) => {
                 let g = if ut_game.is_empty() { game } else { ut_game };
                 let json = serde_json::to_string(&locs).unwrap_or_else(|_| "[]".into());
                 db.inlogic_set(
-                    &season,
+                    season,
                     ap_slot,
                     now(),
                     &g,
@@ -112,7 +114,7 @@ async fn tick(
                     _ => "could not compute (world too large or unsupported)".to_string(),
                 };
                 tracing::warn!("inlogic {name}: {msg}");
-                let (count, locs_json) = match db.inlogic_get(&season, ap_slot).await {
+                let (count, locs_json) = match db.inlogic_get(season, ap_slot).await {
                     Some(p) if p.err.is_none() => {
                         let n = serde_json::from_str::<Vec<String>>(&p.locations)
                             .map(|v| v.len())
@@ -122,7 +124,7 @@ async fn tick(
                     _ => (0, "[]".to_string()),
                 };
                 db.inlogic_set(
-                    &season,
+                    season,
                     ap_slot,
                     now(),
                     &game,
