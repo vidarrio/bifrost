@@ -94,12 +94,15 @@ impl AuthMode {
     }
 }
 
-/// Things a principal may do. The single place authorization is decided;
-/// grows with the role model (season ownership arrives with §7).
+/// Things a principal may do (design doc §6). The single place authorization
+/// is decided.
 #[derive(Clone, Copy, Debug)]
-pub enum Action {
-    /// Run the current season: signups, apworlds, generate, console, archive.
-    ManageSeason,
+pub enum Action<'a> {
+    /// Start a new season (its creator then runs it).
+    CreateSeason,
+    /// Run a season — signups, apworlds, generate, console, archive, co-mods —
+    /// given who runs it (its creator and co-moderators).
+    ManageSeason { mods: &'a [i64] },
     /// Instance-level: users, links, auth, connect password.
     ManageInstance,
 }
@@ -107,9 +110,10 @@ pub enum Action {
 pub fn authorize(p: Option<&Principal>, action: Action) -> bool {
     let Some(p) = p else { return false };
     match action {
-        // Until seasons have owners (§7), only sysadmins run the season — the
-        // `/admin` tier is sysadmin-only (§14); moderators layer on with §7.
-        Action::ManageSeason => p.role >= Role::Sysadmin,
+        Action::CreateSeason => p.role >= Role::Moderator,
+        Action::ManageSeason { mods } => {
+            p.role >= Role::Sysadmin || (p.role >= Role::Moderator && mods.contains(&p.account_id))
+        }
         Action::ManageInstance => p.role >= Role::Sysadmin,
     }
 }
@@ -122,14 +126,17 @@ impl Me {
     pub fn principal(&self) -> Option<&Principal> {
         self.0.as_ref()
     }
-    /// `(username, may manage the season)` — the pair the handlers branch on.
-    /// The username is `"unknown"` when anonymous.
+    /// `(username, is sysadmin)` for instance-level pages; season handlers use
+    /// `SeasonCtx::ident` (may manage *that* season). The username is
+    /// `"unknown"` when anonymous.
     pub fn ident(&self) -> (String, bool) {
-        let name = match &self.0 {
+        (self.username(), self.can(Action::ManageInstance))
+    }
+    pub fn username(&self) -> String {
+        match &self.0 {
             Some(p) => p.username.clone(),
             None => "unknown".into(),
-        };
-        (name, self.can(Action::ManageSeason))
+        }
     }
     /// The account id — what per-user rows are keyed by. `0` when anonymous
     /// (never a real account), so it matches and owns nothing.
@@ -465,11 +472,16 @@ pub fn session_token(headers: &HeaderMap) -> Option<String> {
 pub enum Tier {
     Public,
     LoggedIn,
+    /// Season administration: moderators and up (handlers then check that the
+    /// moderator runs *this* season).
     Admin,
+    /// Instance administration: sysadmins only.
+    Sysadmin,
 }
 
 /// Route tiers of design doc §14: plain path-prefix match (as the proxy's
 /// `PathPrefix` did), most specific first, public by default.
+const SYSADMIN_PREFIXES: &[&str] = &["/admin/users", "/admin/links"];
 const ADMIN_PREFIXES: &[&str] = &["/admin"];
 const LOGGED_IN_PREFIXES: &[&str] = &[
     "/claim",
@@ -483,7 +495,9 @@ const LOGGED_IN_PREFIXES: &[&str] = &[
 ];
 
 pub fn tier(path: &str) -> Tier {
-    if ADMIN_PREFIXES.iter().any(|p| path.starts_with(p)) {
+    if SYSADMIN_PREFIXES.iter().any(|p| path.starts_with(p)) {
+        Tier::Sysadmin
+    } else if ADMIN_PREFIXES.iter().any(|p| path.starts_with(p)) {
         Tier::Admin
     } else if LOGGED_IN_PREFIXES.iter().any(|p| path.starts_with(p)) {
         Tier::LoggedIn
@@ -546,8 +560,11 @@ pub async fn middleware(State(auth): State<Auth>, mut req: Request, next: Next) 
     match (tier, &principal) {
         (Tier::Public, _) => {}
         (_, None) => return unauthenticated(&auth, &req),
-        (Tier::Admin, Some(p)) if p.role < Role::Sysadmin => {
-            return (StatusCode::FORBIDDEN, "Admins only.").into_response();
+        (Tier::Admin, Some(p)) if p.role < Role::Moderator => {
+            return (StatusCode::FORBIDDEN, "Moderators only.").into_response();
+        }
+        (Tier::Sysadmin, Some(p)) if p.role < Role::Sysadmin => {
+            return (StatusCode::FORBIDDEN, "Sysadmins only.").into_response();
         }
         _ => {}
     }
@@ -649,7 +666,9 @@ mod tests {
     #[test]
     fn tiers_match_design_14() {
         assert_eq!(tier("/admin"), Tier::Admin);
-        assert_eq!(tier("/admin/users"), Tier::Admin);
+        assert_eq!(tier("/admin/seasons"), Tier::Admin);
+        assert_eq!(tier("/admin/users"), Tier::Sysadmin);
+        assert_eq!(tier("/admin/links/invite"), Tier::Sysadmin);
         for p in [
             "/claim",
             "/hint",
@@ -682,6 +701,21 @@ mod tests {
         }
         // Plain prefix semantics, like the proxy's PathPrefix: gate more, never less.
         assert_eq!(tier("/gameboy"), Tier::LoggedIn);
+    }
+
+    #[test]
+    fn season_management_is_owners_and_sysadmins() {
+        let p = |id, role| Principal { account_id: id, username: String::new(), role };
+        let mods = [7, 9];
+        let manage = Action::ManageSeason { mods: &mods };
+        assert!(authorize(Some(&p(1, Role::Sysadmin)), manage), "sysadmin: any season");
+        assert!(authorize(Some(&p(9, Role::Moderator)), manage), "co-mod");
+        assert!(!authorize(Some(&p(2, Role::Moderator)), manage), "someone else's season");
+        assert!(!authorize(Some(&p(7, Role::User)), manage), "demoted owner");
+        assert!(authorize(Some(&p(2, Role::Moderator)), Action::CreateSeason));
+        assert!(!authorize(Some(&p(2, Role::User)), Action::CreateSeason));
+        assert!(!authorize(Some(&p(2, Role::Moderator)), Action::ManageInstance));
+        assert!(!authorize(None, Action::CreateSeason));
     }
 
     #[test]

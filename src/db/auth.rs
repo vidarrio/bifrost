@@ -173,6 +173,15 @@ impl Db {
         .flatten()
     }
 
+    pub async fn username(&self, id: i64) -> Option<String> {
+        sqlx::query_scalar("SELECT username FROM account WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten()
+    }
+
     /// Create a native account. Errors if the username is taken.
     pub async fn create_account(
         &self,

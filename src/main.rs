@@ -144,6 +144,8 @@ async fn main() {
         .route("/signup/delete", post(signup_delete))
         .route("/admin", get(admin_view))
         .route("/admin/seasons", get(seasons_view).post(seasons_create))
+        .route("/admin/mods/add", post(mods_add))
+        .route("/admin/mods/remove", post(mods_remove))
         .route("/admin/signups", post(admin_signups))
         .route("/admin/generate", post(admin_generate))
         .route("/admin/regenerate", post(admin_regenerate))
@@ -298,10 +300,11 @@ async fn favicon() -> impl IntoResponse {
 /// Identity for the header bar, filled client-side. `/api` is a signed-in
 /// tier, so anonymous callers get the middleware's 401 JSON (with `sign_in`).
 async fn api_me(State(st): State<AppState>, me: auth::Me) -> Json<serde_json::Value> {
-    let (user, is_admin) = me.ident();
+    let (user, _) = me.ident();
     Json(serde_json::json!({
         "user": user,
-        "admin": is_admin,
+        // Moderators and up: the header's way into season administration.
+        "admin": me.can(auth::Action::CreateSeason),
         "sign_in": st.auth.sign_in_url(),
         "sign_out": st.auth.sign_out_url(),
     }))
@@ -719,7 +722,7 @@ async fn pt_upload(
     mut mp: Multipart,
 ) -> Response {
     let my_id = me.id();
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     let season = ctx.id;
     // Land back on the PopTracker tab (the pack-management tab), not the default.
     let back = ctx.url(&format!("/game/{ap_slot}#tab-pt"));
@@ -757,7 +760,7 @@ async fn pt_upload(
 async fn pt_remove(Path(ap_slot): Path<i64>, State(st): State<AppState>,
     ctx: scope::SeasonCtx, me: auth::Me) -> Response {
     let my_id = me.id();
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     let season = ctx.id;
     let back = ctx.url(&format!("/game/{ap_slot}#tab-pt"));
     if ctx.state().is_live() && pt_can_manage(&st, season, ap_slot, my_id, is_admin).await {
@@ -894,7 +897,7 @@ async fn game_view(
     me: auth::Me,
 ) -> Html<String> {
     let my_id = me.id();
-    let (me, is_admin) = me.ident();
+    let (me, is_admin) = ctx.ident(&me);
     let (snap, game, item_names, connect_name) = match ctx.rt.board.read() {
         Ok(b) => {
             let (game, cn) = b
@@ -1070,7 +1073,7 @@ async fn prioritize_post(
     Form(f): Form<PrioForm>,
 ) -> Redirect {
     let my_id = me.id();
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     let season = ctx.id;
     // Already-found hints are non-prioritizable.
     let is_found = ctx.rt.board.read().is_ok_and(|b| {
@@ -1094,7 +1097,7 @@ async fn prioritize_post(
 
 async fn claim_get(State(st): State<AppState>,
     ctx: scope::SeasonCtx, me: auth::Me) -> Html<String> {
-    let (me, is_admin) = me.ident();
+    let (me, is_admin) = ctx.ident(&me);
     let snap = match ctx.rt.board.read() {
         Ok(b) => b.snapshot(),
         Err(_) => return Html("board unavailable".into()),
@@ -1118,7 +1121,7 @@ async fn claim_post(
     Form(f): Form<ClaimForm>,
 ) -> Response {
     let my_id = me.id();
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     let back = ctx.back(f.back.as_deref(), "/claim");
     let season = ctx.id;
     match f.op.as_str() {
@@ -1164,7 +1167,7 @@ async fn mc_username_post(
     Form(f): Form<McUsernameForm>,
 ) -> Response {
     let my_id = me.id();
-    let (_me, _is_admin) = me.ident();
+    let (_me, _is_admin) = ctx.ident(&me);
     let season = ctx.id;
     let back = ctx.back(f.back.as_deref(), "/board");
     let name = f.mc_username.trim();
@@ -1229,7 +1232,7 @@ async fn hint_post(
     Form(f): Form<HintForm>,
 ) -> Json<serde_json::Value> {
     let my_id = me.id();
-    let (me, _is_admin) = me.ident();
+    let (me, _is_admin) = ctx.ident(&me);
     let reject = |msg: &str| Json(serde_json::json!({"ok": false, "message": msg}));
     let detail = st.db.slot_detail(f.slot_id).await.ok().flatten();
     let Some((ap_slot, claimant, is_common)) = detail else {
@@ -1373,7 +1376,7 @@ async fn game_hints(
     me: auth::Me,
 ) -> Html<String> {
     let my_id = me.id();
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     let season = ctx.id;
     let snap = match ctx.rt.board.read() {
         Ok(b) => b.snapshot(),
@@ -1424,7 +1427,7 @@ async fn game_finish(
     me: auth::Me,
     Form(f): Form<FinishForm>,
 ) -> Response {
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     let back = ctx.back(f.back.as_deref(), &format!("/game/{ap_slot}"));
     if !is_admin {
         return render::notice("Admins only.", false, &back).into_response();
@@ -1459,7 +1462,7 @@ fn slugify(s: &str) -> String {
 }
 
 async fn signup_get(State(st): State<AppState>, ctx: scope::SeasonCtx, me: auth::Me) -> Html<String> {
-    let (me, is_admin) = me.ident();
+    let (me, is_admin) = ctx.ident(&me);
     let subs = st.db.submissions(ctx.id).await.unwrap_or_default();
     let open = ctx.state().accepts_signups();
     render::signup_page(&subs, &me, is_admin, open)
@@ -1512,7 +1515,7 @@ async fn signup_apworld(ctx: scope::SeasonCtx, me: auth::Me, mut mp: Multipart) 
         }));
     }
     let file = format!("{base}.apworld");
-    let (uploader, _) = me.ident();
+    let (uploader, _) = ctx.ident(&me);
     let ctx = ctx.clone();
     let installed = tokio::task::spawn_blocking(move || {
         ap_adapter::install_world(&config::get().season(ctx.id), &file, &bytes, &uploader)
@@ -1564,7 +1567,7 @@ async fn signup_post(
     mut mp: Multipart,
 ) -> Html<String> {
     let my_id = me.id();
-    let (_me, _) = me.ident();
+    let (_me, _) = ctx.ident(&me);
     if !ctx.state().accepts_signups() {
         return render::signup_result("Signups are closed right now.", false);
     }
@@ -1656,7 +1659,7 @@ async fn signup_delete(
     Form(f): Form<DelForm>,
 ) -> Redirect {
     let my_id = me.id();
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     if let Ok(Some((yaml_file, apworld_file))) = st.db.delete_submission(ctx.id, f.id, my_id, is_admin).await
     {
         let _ = tokio::fs::remove_file(&yaml_file).await;
@@ -1704,8 +1707,14 @@ async fn render_admin(ctx: &scope::SeasonCtx, st: &AppState) -> Html<String> {
         .unwrap_or_default();
     let out_slots = st.db.slots(ctx.id).await.unwrap_or_default();
     let archived = (ctx.state() == db::State::Archived).then(|| ctx.row.name.clone());
+    let owner = match ctx.row.created_by {
+        Some(id) => st.db.username(id).await,
+        None => None,
+    };
+    let mods = render::SeasonMods { owner, co_mods: st.db.co_mods(ctx.id).await };
     render::admin_page(
         &ctx.row,
+        &mods,
         connected,
         seed.as_deref(),
         signups_open,
@@ -1724,7 +1733,7 @@ async fn render_admin(ctx: &scope::SeasonCtx, st: &AppState) -> Html<String> {
 }
 
 async fn admin_view(State(st): State<AppState>, ctx: scope::SeasonCtx, me: auth::Me) -> Response {
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     if !is_admin {
         return render::notice("Admins only.", false, "board").into_response();
     }
@@ -1743,7 +1752,7 @@ async fn admin_signups(
     me: auth::Me,
     Form(f): Form<SignupsForm>,
 ) -> Response {
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     if is_admin {
         let to = if f.open == "1" { db::State::Signup } else { db::State::Draft };
         if ctx.state() != to
@@ -1757,7 +1766,7 @@ async fn admin_signups(
 
 async fn admin_generate(State(st): State<AppState>,
     ctx: scope::SeasonCtx, me: auth::Me) -> Redirect {
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     if is_admin {
         let start = match ctx.rt.genstate.lock() {
             Ok(mut g) if !g.0 => {
@@ -1777,7 +1786,7 @@ async fn admin_generate(State(st): State<AppState>,
 
 async fn admin_regenerate(State(st): State<AppState>,
     ctx: scope::SeasonCtx, me: auth::Me) -> Redirect {
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     if is_admin {
         // A re-roll replaces a live season's seed.
         if !ctx.state().is_live() {
@@ -1831,7 +1840,7 @@ async fn admin_clear(
     me: auth::Me,
     Form(f): Form<ClearForm>,
 ) -> Response {
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     if !is_admin {
         return render::notice("Admins only.", false, "board").into_response();
     }
@@ -1879,7 +1888,7 @@ async fn admin_archive_season(
     me: auth::Me,
     Form(f): Form<ArchiveForm>,
 ) -> Response {
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     if !is_admin {
         return render::notice("Admins only.", false, "admin").into_response();
     }
@@ -2026,11 +2035,22 @@ async fn admin_archive_season(
 }
 
 /// Every season, plus the create form (instance level: no season scope).
+/// Moderators see them all but get admin links only for the ones they run.
 async fn seasons_view(State(st): State<AppState>, me: auth::Me) -> Response {
-    if !me.can(auth::Action::ManageInstance) {
-        return render::notice("Sysadmins only.", false, "/").into_response();
+    if !me.can(auth::Action::CreateSeason) {
+        return render::notice("Moderators only.", false, "/").into_response();
     }
-    render::seasons_page(&st.db.seasons().await, &default_season_name(), None).into_response()
+    seasons_page(&st, &me, &default_season_name(), None).await
+}
+
+async fn seasons_page(st: &AppState, me: &auth::Me, name: &str, err: Option<&str>) -> Response {
+    let seasons = st.db.seasons().await;
+    let mut manage = Vec::with_capacity(seasons.len());
+    for s in &seasons {
+        let mods = st.db.season_mods(s.id).await;
+        manage.push(me.can(auth::Action::ManageSeason { mods: &mods }));
+    }
+    render::seasons_page(&seasons, &manage, name, err).into_response()
 }
 
 #[derive(Deserialize)]
@@ -2038,16 +2058,15 @@ struct SeasonForm {
     name: String,
 }
 
-/// Create a season (a draft, named up front) and open its admin page.
+/// Create a season (a draft, named up front, owned by its creator) and open
+/// its admin page.
 async fn seasons_create(State(st): State<AppState>, me: auth::Me, Form(f): Form<SeasonForm>) -> Response {
-    if !me.can(auth::Action::ManageInstance) {
-        return render::notice("Sysadmins only.", false, "/").into_response();
+    if !me.can(auth::Action::CreateSeason) {
+        return render::notice("Moderators only.", false, "/").into_response();
     }
     let name: String = f.name.trim().chars().take(80).collect();
     if name.is_empty() {
-        let seasons = st.db.seasons().await;
-        return render::seasons_page(&seasons, &default_season_name(), Some("Give the season a name."))
-            .into_response();
+        return seasons_page(&st, &me, &default_season_name(), Some("Give the season a name.")).await;
     }
     let created = st
         .db
@@ -2058,14 +2077,60 @@ async fn seasons_create(State(st): State<AppState>, me: auth::Me, Form(f): Form<
             if let Err(e) = config::get().season(id).ensure() {
                 tracing::warn!("season {id} dirs: {e}");
             }
-            tracing::info!("season {id} “{name}” created");
+            tracing::info!("season {id} “{name}” created by {}", me.username());
             Redirect::to(&format!("/s/{id}/admin")).into_response()
         }
-        Err(e) => {
-            let seasons = st.db.seasons().await;
-            render::seasons_page(&seasons, &name, Some(&e.to_string())).into_response()
-        }
+        Err(e) => seasons_page(&st, &me, &name, Some(&e.to_string())).await,
     }
+}
+
+#[derive(Deserialize)]
+struct ModAddForm {
+    username: String,
+}
+
+/// Add a co-moderator (an account with the moderator role or higher).
+async fn mods_add(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Form(f): Form<ModAddForm>,
+) -> Response {
+    if !ctx.can_manage(&me) {
+        return render::notice("Only this season's moderators can do that.", false, "admin").into_response();
+    }
+    let target = st.db.account_by_name(f.username.trim()).await;
+    match target {
+        Some(a) if auth::Role::parse(&a.role) >= auth::Role::Moderator && !a.disabled => {
+            let _ = st.db.add_co_mod(ctx.id, a.id).await;
+            Redirect::to(&ctx.url("/admin")).into_response()
+        }
+        Some(_) => render::notice(
+            "That account isn't a moderator — a sysadmin can change its role under users & links.",
+            false,
+            "admin",
+        )
+        .into_response(),
+        None => render::notice("No such account.", false, "admin").into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct ModRemoveForm {
+    account_id: i64,
+}
+
+async fn mods_remove(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Form(f): Form<ModRemoveForm>,
+) -> Response {
+    if !ctx.can_manage(&me) {
+        return render::notice("Only this season's moderators can do that.", false, "admin").into_response();
+    }
+    let _ = st.db.remove_co_mod(ctx.id, f.account_id).await;
+    Redirect::to(&ctx.url("/admin")).into_response()
 }
 
 /// A unix timestamp (seconds) as an ISO-8601 UTC string, for season.txt.
@@ -2146,7 +2211,7 @@ async fn admin_delete_player(
     Form(f): Form<DelForm>,
 ) -> Redirect {
     let my_id = me.id();
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     if is_admin
         && let Ok(Some((yaml_file, apworld_file))) = st.db.delete_submission(ctx.id, f.id, my_id, true).await
     {
@@ -2164,7 +2229,7 @@ struct ApworldForm {
 }
 
 async fn admin_delete_apworld(ctx: scope::SeasonCtx, me: auth::Me, Form(f): Form<ApworldForm>) -> Redirect {
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     if is_admin {
         let _ = generate::delete_apworld(ctx.id, &f.name).await;
     }
@@ -2184,7 +2249,7 @@ async fn admin_console(
     me: auth::Me,
     Form(f): Form<ConsoleForm>,
 ) -> Json<serde_json::Value> {
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     if !is_admin {
         return Json(serde_json::json!({"ok": false, "output": "Admins only."}));
     }
@@ -2328,7 +2393,7 @@ async fn admin_minesweeper(
     me: auth::Me,
     Form(f): Form<SignupsForm>,
 ) -> Redirect {
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     if is_admin {
         let _ = st.db.set_minesweeper_enabled(ctx.id, f.open == "1").await;
     }
@@ -2341,7 +2406,7 @@ async fn admin_mc(
     me: auth::Me,
     Form(f): Form<SignupsForm>,
 ) -> Redirect {
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     if is_admin {
         let _ = st.db.set_mc_enabled(ctx.id, f.open == "1").await;
     }
@@ -2361,7 +2426,7 @@ async fn admin_output(
     me: auth::Me,
     Query(q): Query<OutputQuery>,
 ) -> Response {
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     if !is_admin {
         return render::notice("Admins only.", false, "board").into_response();
     }
@@ -2414,7 +2479,7 @@ async fn game_output(
     Query(q): Query<OutputQuery>,
 ) -> Response {
     let my_id = me.id();
-    let (_me, is_admin) = me.ident();
+    let (_me, is_admin) = ctx.ident(&me);
     let season = ctx.id;
     let slots = st.db.slots(season).await.unwrap_or_default();
     let i_claim = slots
@@ -2467,7 +2532,7 @@ async fn minesweeper_page(
     Query(q): Query<KindQuery>,
 ) -> Html<String> {
     let my_id = me.id();
-    let (_me, _is_admin) = me.ident();
+    let (_me, _is_admin) = ctx.ident(&me);
     let free = q.free;
     // Freeplay (minigame section) is always available and ignores the admin
     // toggle, which only gates the seasonal bonus-hint board.
@@ -2526,7 +2591,7 @@ async fn mine_new(
     Form(f): Form<NewForm>,
 ) -> Json<serde_json::Value> {
     let my_id = me.id();
-    let (_me, _) = me.ident();
+    let (_me, _) = ctx.ident(&me);
     // Freeplay (the standalone minigame) is always available; the admin toggle
     // only gates the seasonal, bonus-hint-earning board.
     if !f.free && !ctx.row.minesweeper_enabled {
@@ -2651,7 +2716,7 @@ async fn mine_reveal(
     Form(f): Form<RevealForm>,
 ) -> Json<serde_json::Value> {
     let my_id = me.id();
-    let (_me, _) = me.ident();
+    let (_me, _) = ctx.ident(&me);
     let key = mine_key(my_id, f.free, mine::Kind::parse(&f.kind));
     // Reveal under the lock, then release it before any await.
     let outcome = {

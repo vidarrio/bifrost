@@ -300,6 +300,14 @@ implicitly authorized on everything. Authorization checks move to a central
 `authorize(principal, action, resource)` helper rather than ad-hoc
 `is_admin`/`i_claim` scattered through handlers.
 
+*Implemented:* `auth::authorize` with `CreateSeason` (moderator+),
+`ManageSeason { mods }` (sysadmin, or a moderator who created or co-mods the
+season — `season.created_by` + `season_mod`) and `ManageInstance` (sysadmin).
+Season handlers branch on `SeasonCtx::ident` ("may run *this* season");
+co-mods are managed on the season's admin page (moderator accounts only).
+Moderators reach administration through `/admin/seasons`, which lists every
+season with admin links only for the ones they run.
+
 ## 7. Multi-season architecture
 
 This is the deepest change. Today the system assumes a single "current" season:
@@ -554,7 +562,8 @@ prefix, matched most-specific-first, with an implicit public catch-all.
 
 | Tier | Route prefixes | Who |
 |---|---|---|
-| **Admin** | `/admin` | admin role only |
+| **Sysadmin** | `/admin/users` `/admin/links` | sysadmin only |
+| **Admin** | `/admin` (season admin, `/admin/seasons`) | moderators and up — the handler then requires that they run *this* season |
 | **Authenticated** | `/claim` `/hint` `/signup` `/game` `/prioritize` `/minesweeper` `/api` `/mc` | any logged-in user (user or admin) |
 | **Public** | everything else — `/`, `/board`, `/check`, `/log`, static assets | anyone, no login |
 

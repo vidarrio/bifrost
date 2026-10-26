@@ -73,6 +73,8 @@ pub struct SeasonCtx {
     pub id: i64,
     pub row: SeasonRow,
     pub rt: Arc<SeasonRt>,
+    /// Who runs this season besides sysadmins (creator + co-moderators).
+    pub mods: Vec<i64>,
 }
 
 impl SeasonCtx {
@@ -89,6 +91,14 @@ impl SeasonCtx {
             }
             _ => self.url(default),
         }
+    }
+    /// May `me` run this season?
+    pub fn can_manage(&self, me: &crate::auth::Me) -> bool {
+        me.can(crate::auth::Action::ManageSeason { mods: &self.mods })
+    }
+    /// `(username, may run this season)` — the pair season handlers branch on.
+    pub fn ident(&self, me: &crate::auth::Me) -> (String, bool) {
+        (me.username(), self.can_manage(me))
     }
     pub fn state(&self) -> State {
         self.row.state()
@@ -124,6 +134,7 @@ impl FromRequestParts<AppState> for SeasonCtx {
         Ok(SeasonCtx {
             id,
             rt: st.seasons.get(id),
+            mods: st.db.season_mods(id).await,
             row,
         })
     }

@@ -221,7 +221,7 @@ function bifApplyMe(m){
  var w=document.getElementById('who');
  if(w){if(m&&m.user){w.innerHTML='signed in as <b></b>'+(m.sign_out?' · <a href="'+m.sign_out+'" id="signout">sign out</a>':'');w.querySelector('b').textContent=m.user;var so=document.getElementById('signout');if(so)so.onclick=function(e){e.preventDefault();if(m.sign_out==='/logout'){var f=document.createElement('form');f.method='post';f.action='/logout';document.body.appendChild(f);f.submit()}else location.href=m.sign_out}}else{w.innerHTML='<a href="'+((m&&m.sign_in)||'/login')+'">sign in</a>'}}
  var a=document.getElementById('adminslot');
- if(a)a.innerHTML=(m&&m.admin)?'<a class="pill" href="admin">admin</a>':'';
+ if(a)a.innerHTML=(m&&m.admin)?'<a class="pill" href="/admin/seasons">admin</a>':'';
 }
 try{var _m=localStorage.getItem('bifme');if(_m)bifApplyMe(JSON.parse(_m));}catch(e){}
 fetch('/api/me').then(function(r){return r.json()}).then(function(m){
@@ -1431,6 +1431,7 @@ fn action_btn(
 #[allow(clippy::too_many_arguments)]
 pub fn admin_page(
     season: &crate::db::SeasonRow,
+    mods: &SeasonMods,
     connected: bool,
     seed: Option<&str>,
     signups_open: bool,
@@ -1452,6 +1453,7 @@ pub fn admin_page(
         esc(&season.name),
         season.state().as_str(),
     ));
+    b.push_str(&mods_section(mods));
 
     let conn = if connected { "connected" } else { "waiting" };
     let seed_txt = seed.filter(|s| !s.is_empty()).unwrap_or("—");
@@ -3379,9 +3381,41 @@ pub fn users_page(v: &UsersView) -> Html<String> {
     )
 }
 
+/// Who runs a season, for its admin page.
+pub struct SeasonMods {
+    pub owner: Option<String>,
+    pub co_mods: Vec<(i64, String)>,
+}
+
+fn mods_section(m: &SeasonMods) -> String {
+    let mut out = String::from("<h2>Moderators</h2><div class=\"statline\">");
+    out.push_str(&format!(
+        "Owner: <b>{}</b>",
+        esc(m.owner.as_deref().unwrap_or("—"))
+    ));
+    out.push_str("</div>");
+    for (id, name) in &m.co_mods {
+        out.push_str(&format!(
+            r#"<div class="hintrow"><span>{}</span>{}</div>"#,
+            esc(name),
+            action_btn("admin/mods/remove", &[("account_id", &id.to_string())], "remove", true, "")
+        ));
+    }
+    out.push_str(
+        r#"<form class="hintform" method="post" action="admin/mods/add"><input type="text" name="username" placeholder="add a co-moderator (moderator username)" required><button type="submit">Add</button></form>"#,
+    );
+    out
+}
+
 // ---- seasons (instance-level list + create) ----
 
-pub fn seasons_page(seasons: &[crate::db::SeasonRow], default_name: &str, err: Option<&str>) -> Html<String> {
+/// `manage[i]`: may the viewer run `seasons[i]`?
+pub fn seasons_page(
+    seasons: &[crate::db::SeasonRow],
+    manage: &[bool],
+    default_name: &str,
+    err: Option<&str>,
+) -> Html<String> {
     let mut body = String::new();
     body.push_str(&format!(
         r#"<h2>New season</h2>
@@ -3396,7 +3430,7 @@ pub fn seasons_page(seasons: &[crate::db::SeasonRow], default_name: &str, err: O
         body.push_str(r#"<div class="empty">No seasons yet.</div>"#);
     } else {
         body.push_str(r#"<table class="utable"><tr><th>Season</th><th>State</th><th>Created</th><th></th></tr>"#);
-        for s in seasons {
+        for (s, can) in seasons.iter().zip(manage.iter().chain(std::iter::repeat(&false))) {
             let when = match (s.archived_at, s.live_at) {
                 (Some(t), _) => format!("archived {}", fmt_date(t)),
                 (None, Some(t)) => format!("live since {}", fmt_date(t)),
@@ -3404,8 +3438,10 @@ pub fn seasons_page(seasons: &[crate::db::SeasonRow], default_name: &str, err: O
             };
             let links = if s.state() == crate::db::State::Archived {
                 format!(r#"<a href="/s/{0}/season">summary</a>"#, s.id)
-            } else {
+            } else if *can {
                 format!(r#"<a href="/s/{0}/board">board</a> · <a href="/s/{0}/admin">admin</a>"#, s.id)
+            } else {
+                format!(r#"<a href="/s/{0}/board">board</a>"#, s.id)
             };
             body.push_str(&format!(
                 r#"<tr class="{}"><td>{}</td><td><span class="tag">{}</span></td><td class="mono">{}</td><td>{links}</td></tr>"#,

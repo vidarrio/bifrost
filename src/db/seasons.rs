@@ -39,6 +39,16 @@ pub(super) async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
+    // Co-moderators: besides its creator, who may run a season.
+    sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS season_mod (
+             season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
+             account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+             PRIMARY KEY (season, account_id)
+           )"#,
+    )
+    .execute(pool)
+    .await?;
     // A crash mid-generation must not strand a season in `generating`.
     sqlx::query(
         "UPDATE season SET state = CASE WHEN seed IS NULL THEN 'signup' ELSE 'live' END
@@ -105,6 +115,8 @@ pub struct SeasonRow {
     pub name: String,
     #[sqlx(try_from = "String")]
     pub state: StateCol,
+    /// The creator — the season's owning moderator.
+    pub created_by: Option<i64>,
     pub created_at: i64,
     pub seed: Option<String>,
     pub live_at: Option<i64>,
@@ -130,7 +142,7 @@ impl SeasonRow {
     }
 }
 
-const COLS: &str = "id, name, state, created_at, seed, live_at, archived_at,
+const COLS: &str = "id, name, state, created_by, created_at, seed, live_at, archived_at,
                     minesweeper_enabled, mc_enabled";
 
 /// Why a transition was refused.
@@ -212,6 +224,50 @@ impl Db {
         .await
         .ok()
         .flatten()
+    }
+
+    /// Everyone who may run the season besides sysadmins: its creator and its
+    /// co-moderators.
+    pub async fn season_mods(&self, id: i64) -> Vec<i64> {
+        sqlx::query_scalar(
+            "SELECT created_by FROM season WHERE id = ? AND created_by IS NOT NULL
+             UNION SELECT account_id FROM season_mod WHERE season = ?",
+        )
+        .bind(id)
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default()
+    }
+
+    /// Co-moderators (not the creator) as (account id, username).
+    pub async fn co_mods(&self, id: i64) -> Vec<(i64, String)> {
+        sqlx::query_as(
+            "SELECT a.id, a.username FROM season_mod m JOIN account a ON a.id = m.account_id
+             WHERE m.season = ? ORDER BY a.username COLLATE NOCASE",
+        )
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default()
+    }
+
+    pub async fn add_co_mod(&self, id: i64, account: i64) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT OR IGNORE INTO season_mod (season, account_id) VALUES (?, ?)")
+            .bind(id)
+            .bind(account)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn remove_co_mod(&self, id: i64, account: i64) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM season_mod WHERE season = ? AND account_id = ?")
+            .bind(id)
+            .bind(account)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn rename_season(&self, id: i64, name: &str) -> Result<(), sqlx::Error> {
@@ -387,6 +443,29 @@ mod tests {
             std::env::temp_dir().join(format!("bifrost-seasontest-{}-{n}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
         Db::open(&path.to_string_lossy()).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn creator_and_co_mods_run_a_season() {
+        let db = db().await;
+        let owner = db
+            .create_account("owner", "h", crate::auth::Role::Moderator, 0)
+            .await
+            .unwrap();
+        let co = db
+            .create_account("co", "h", crate::auth::Role::Moderator, 0)
+            .await
+            .unwrap();
+        let s = db.create_season("S", Some(owner), 0).await.unwrap();
+        assert_eq!(db.season_mods(s).await, vec![owner]);
+        db.add_co_mod(s, co).await.unwrap();
+        db.add_co_mod(s, co).await.unwrap();
+        let mut mods = db.season_mods(s).await;
+        mods.sort();
+        assert_eq!(mods, vec![owner, co]);
+        assert_eq!(db.co_mods(s).await, vec![(co, "co".to_string())]);
+        db.remove_co_mod(s, co).await.unwrap();
+        assert_eq!(db.season_mods(s).await, vec![owner]);
     }
 
     #[tokio::test]
