@@ -17,7 +17,8 @@
         "children": [
           { "name": "Child", "sections": [ { "item_count": 1 } ],
             "map_locations": [ { "map": "example", "x": 60, "y": 60 } ] }
-        ] }
+        ] },
+      { "name": "NeedsCStage2", "access_rules": ["cstage2"], "sections": [ { "item_count": 1 } ] }
     ]
   }
 ]

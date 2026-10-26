@@ -294,7 +294,10 @@ struct Eng {
     dir: PathBuf,
     code_to_key: HashMap<String, String>,
     kind: HashMap<String, String>,
-    stage_codes: HashMap<String, Vec<String>>,
+    /// For a staged item: the codes at each stage (index = stage). A code is
+    /// "provided" once the current stage reaches the first stage it appears in,
+    /// so a stage-N code isn't granted while the item sits below stage N.
+    stage_codes: HashMap<String, Vec<Vec<String>>>,
     /// key -> display name.
     names: HashMap<String, String>,
     /// key -> all codes (for item-grid cell lookup).
@@ -678,7 +681,13 @@ fn provider_count(lua: &Lua, eng: &E, code: &str) -> i64 {
         "progressive_toggle" | "progressive" => {
             let active = it.get::<bool>("Active").unwrap_or(false);
             let stage = it.get::<i64>("CurrentStage").unwrap_or(0);
-            let idx = stages.iter().position(|c| c == &code).unwrap_or(0) as i64;
+            // The earliest stage this code appears at; a base (non-stage) code
+            // not listed in any stage is treated as stage 0 (always provided
+            // while active).
+            let idx = stages
+                .iter()
+                .position(|cs| cs.iter().any(|c| c == &code))
+                .unwrap_or(0) as i64;
             (active && stage >= idx) as i64
         }
         _ => 0,
@@ -1098,7 +1107,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                 for item in json.as_array().cloned().unwrap_or_default() {
                     let kind = item.get("type").and_then(|v| v.as_str()).unwrap_or("toggle").to_string();
                     let mut all_codes: Vec<String> = Vec::new();
-                    let mut stage_codes: Vec<String> = Vec::new();
+                    let mut stage_codes: Vec<Vec<String>> = Vec::new();
                     let mut imgs: Vec<String> = Vec::new();
                     // Codes are matched case-insensitively in PopTracker (grids
                     // and logic may reference a differently-cased code than the
@@ -1109,9 +1118,13 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                     if let Some(stages) = item.get("stages").and_then(|v| v.as_array()) {
                         for st in stages {
                             if let Some(c) = st.get("codes").and_then(|v| v.as_str()) {
-                                let first = c.split(',').next().unwrap_or("").trim().to_lowercase();
-                                stage_codes.push(first);
-                                all_codes.extend(c.split(',').map(|s| s.trim().to_lowercase()));
+                                let scodes: Vec<String> =
+                                    c.split(',').map(|s| s.trim().to_lowercase()).collect();
+                                all_codes.extend(scodes.iter().cloned());
+                                stage_codes.push(scodes);
+                            } else {
+                                // keep stage indices aligned even for an imageless/codeless stage
+                                stage_codes.push(Vec::new());
                             }
                             // one image per stage (index-aligned), "" if none
                             imgs.push(st.get("img").and_then(|v| v.as_str()).map(img_path).unwrap_or_default());

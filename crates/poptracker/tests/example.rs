@@ -37,7 +37,7 @@ fn summary_reports_ap_autotracking_and_counts() {
     assert!(sum.archipelago_autotracking, "fixture registers AP handlers");
     assert_eq!(sum.items, 3);
     assert_eq!(sum.maps, 1);
-    assert_eq!(sum.locations, 8);
+    assert_eq!(sum.locations, 9);
 }
 
 #[test]
@@ -139,6 +139,26 @@ fn checked_location_marks_section_and_marker_done() {
     let m = after.markers.iter().find(|m| m.location == "Tests/NeedsA").unwrap();
     assert!(m.checked, "location Done -> marker renders grey");
     assert!(m.sections[0].checked, "marker's section state is Done too");
+}
+
+#[test]
+fn progressive_stage_gates_secondary_codes() {
+    // Regression: a progressive item's higher-stage code (here `cstage2`, the
+    // second code of the upper stage) must not count as held while the item
+    // sits below that stage — the bug that let a Big Barn satisfy a Deluxe
+    // Barn gate because only each stage's *first* code was indexed.
+    let s = Session::new(&fixture()).unwrap();
+    s.on_clear(&serde_json::json!({})).unwrap();
+    s.on_retrieved("c", &serde_json::json!([true, 0])).unwrap(); // active, stage 0
+    assert!(
+        !accessibility(&s)["Tests/NeedsCStage2"],
+        "stage-2 code not provided at stage 0"
+    );
+    s.on_retrieved("c", &serde_json::json!([true, 1])).unwrap(); // bump to stage 1 (== c2/cstage2 stage)
+    assert!(
+        accessibility(&s)["Tests/NeedsCStage2"],
+        "stage-2 code provided once the stage is reached"
+    );
 }
 
 #[test]

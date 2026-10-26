@@ -17,11 +17,11 @@
 		"stages": [
             {
                 "img": "images/c1.png",
-                "codes": "c"
+                "codes": "c, cstage1"
             },
             {
                 "img": "images/c2.png",
-                "codes": "c2"
+                "codes": "c2, cstage2"
             }
         ]
     }
