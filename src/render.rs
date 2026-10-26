@@ -1912,7 +1912,7 @@ const GAME_STYLE: &str = r#"<style>
 .ptmk{position:absolute;border:1px solid rgba(0,0,0,.65);box-sizing:border-box;border-radius:2px}
 .ptmk.d{transform:rotate(45deg)}
 .ptform{margin:10px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.ptmanage{margin-top:16px}.ptmanage>summary{cursor:pointer;color:var(--muted);font-size:13px}
+.ptmanage{margin-top:16px}.ptmanage>summary{cursor:pointer;color:var(--muted);font-size:13px;text-align:center}
 .ptnest{margin:4px 0}
 .pttabs{display:inline-flex;flex-wrap:wrap;gap:2px;justify-content:center;border-bottom:1px solid var(--bd);margin:0 0 10px}
 .pttab{background:none;color:var(--muted);border:0;border-bottom:2px solid transparent;border-radius:0;padding:5px 11px;font-family:var(--font);font-size:13px;font-weight:600;cursor:pointer;margin-bottom:-1px}
