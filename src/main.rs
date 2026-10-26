@@ -244,12 +244,15 @@ async fn main() {
     .with_graceful_shutdown(shutdown_signal())
     .await
     .expect("serve");
-    // Let live seasons' AP servers save and exit before Bifrost does.
-    for season in shutdown_db.seasons().await {
-        if season.state() == db::State::Live {
-            shutdown_seasons.stop(season.id).await;
-        }
-    }
+    // Let live seasons' AP servers save and exit before Bifrost does — all at
+    // once, so shutdown takes one server's grace period, not one per season.
+    let stops = shutdown_db
+        .seasons()
+        .await
+        .into_iter()
+        .filter(|s| s.state() == db::State::Live)
+        .map(|s| shutdown_seasons.stop(s.id));
+    futures_util::future::join_all(stops).await;
     tracing::info!("Bifrost stopped");
 }
 

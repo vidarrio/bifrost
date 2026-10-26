@@ -51,6 +51,21 @@ Offer **two forms**, recommend the first:
    the cost of per-OS build/maintenance of the embedded runtime and weaker
    isolation off-Linux.
 
+**Container image — as built (`Dockerfile`).** Three stages: Bifrost
+(`rust:1.98-trixie`, release build), Archipelago (a pinned release tag via
+`AP_VERSION`, default 0.6.8; venv with core + every bundled world's
+requirements and `setuptools<81`; `_speedups` prebuilt with Cython), and a
+`debian:trixie-slim` runtime with python3, bubblewrap and tini, running as an
+unprivileged `bifrost` user. Paths match Bifrost's defaults (`/opt/archipelago`,
+`/opt/bifrost/{scripts,vendor}`, data volume `/var/lib/bifrost`); exposes 8080
+and the AP port range. Run with `--security-opt unmask=/proc/*` (podman) /
+`systempaths=unconfined` (docker) so bubblewrap can mount its own `/proc` —
+without it Bifrost drops to the limits tier and says which flag to add — and
+`--stop-timeout 30` (live seasons' servers are stopped in parallel, each with a
+15 s save grace). Verified rootless under podman 5.4 in an unprivileged LXC:
+strong tier active, the managed-server and multi-season end-to-end suites pass
+against the container, and stop/start keeps every season's port and save.
+
 **AP coupling → one adapter.** Today we touch AP internals directly (pickled
 `current.apsave` via `restricted_loads`, `AutoWorldRegister`, helper scripts
 pinned to `/srv/archipelago`). Before bundling, isolate *all* AP-internals
@@ -486,8 +501,7 @@ the Archipelago version read from the managed install's `Utils.py`
 (`ap_adapter::ap_version`), as does the settings page alongside the port
 range. The board shows its season's address.
 
-Not built yet: the tabbed console (§9).
-Co-moderators and moderator ownership are in (§6).
+The tabbed consoles (§9) and co-moderators/moderator ownership (§6) are in.
 
 ## 8. Season apworld & YAML management
 
@@ -528,6 +542,17 @@ Split today's flat admin page into a **tabbed console**, scoped by role:
 
 Season creation form takes the **name up front** (and signup window). Archiving
 is a button that drives the managed transition in §7.1 — no manual copying.
+
+**As built:** the season console is one page with client-side tabs —
+Overview (signups window, generate/re-roll, moderators) · Signups & apworlds ·
+Player files · Connection (address, connect password, server console) ·
+Options (minesweeper, common game) · Archive & reset. The open tab lives in the
+URL hash and is stamped onto every form action, so post→redirect lands on the
+same tab. The instance console is three linked pages under one tab bar —
+Seasons · Users & links · Settings (connect host, home-page content, plus
+read-only AP version, port range, auth mode, isolation); moderators see only
+Seasons. Not yet: backups, AP upgrade, auth-provider settings in the UI (the
+CLI owns auth mode).
 
 ## 10. Security hardening checklist
 

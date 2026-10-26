@@ -167,6 +167,12 @@ impl Sandbox {
                     .unwrap_or("no namespace sandbox");
                 let custom = if self.allow_unsandboxed_custom {
                     "custom apworlds ALLOWED anyway (BIFROST_ALLOW_UNSANDBOXED_CUSTOM_WORLDS=1)"
+                } else if in_container() {
+                    // Container runtimes mask parts of /proc, so bwrap can't
+                    // mount a fresh one for its jail.
+                    "custom apworlds are refused — run the container with \
+                     `--security-opt unmask=/proc/*` (podman) or \
+                     `--security-opt systempaths=unconfined` (docker)"
                 } else {
                     "custom apworlds are refused — install bubblewrap or use the container image"
                 };
@@ -226,6 +232,11 @@ impl Sandbox {
         }
         cmd
     }
+}
+
+/// Running inside a podman/docker container?
+fn in_container() -> bool {
+    std::path::Path::new("/run/.containerenv").exists() || std::path::Path::new("/.dockerenv").exists()
 }
 
 fn set_limit(resource: libc::__rlimit_resource_t, value: u64) {
