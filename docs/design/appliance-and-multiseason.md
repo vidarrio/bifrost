@@ -173,9 +173,21 @@ Providers:
   POST; login throttling; first-run creates the sysadmin. Recovery: the
   sysadmin mints a single-use, expiring reset link from the console and hands
   it to the user out of band.
+  **Account creation is invite-only** (no open registration), via two link
+  kinds the sysadmin mints:
+  - **single-use invite** — one account, then dead (also expires);
+  - **community invite** — multi-use with a timed expiry, for posting in e.g.
+    a Discord server; revocable early, shows how many accounts it created.
 - **IdP-managed (first-class alternative).** The instance delegates identity to
   an external IdP; Bifrost keeps only the in-app user record (for roles,
-  claims, ownership) keyed by the IdP's stable subject. Two transports:
+  claims, ownership) keyed by the IdP's stable subject. **Auth mode is
+  exclusive per instance**: in IdP mode there are no native logins at all.
+  Break-glass is a **local CLI** on the host (mint a reset link, switch the
+  mode back) — never a web backdoor. **Roles**: config may map IdP groups →
+  roles (like today's `archipelago_admins`); where a mapping is set the IdP is
+  authoritative for that role, otherwise roles are assigned in Bifrost's
+  console. Two transports (**forward-auth is built first**, OIDC follows behind
+  the same provider interface):
   - **Trust-header / forward-auth** — the current kanidm/oauth2-proxy mode, but
     **explicitly opt-in and bound to a configured trusted proxy** (shared
     secret or source allowlist). Trusting identity headers unconditionally is a
