@@ -1900,6 +1900,7 @@ const GAME_STYLE: &str = r#"<style>
 .utlist{display:flex;flex-direction:column;gap:4px;max-height:70vh;overflow:auto}
 .utloc{font-size:13px;line-height:1.35;padding:6px 10px;background:var(--panel);border:1px solid var(--bd);border-radius:7px}
 .utnote{font-size:12px;color:var(--muted);margin-top:14px;font-style:italic}
+#tab-pt>h2{text-align:center}
 .ptmap{width:100vw;max-width:100vw;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);padding-inline:clamp(16px,3vw,48px);box-sizing:border-box;text-align:center}
 .ptmapwrap{position:relative;display:inline-block;max-width:100%;vertical-align:top;margin:0 7px 16px}
 .ptgroup .ptgh{text-align:center}
@@ -1919,8 +1920,10 @@ const GAME_STYLE: &str = r#"<style>
 .ptgroup{margin:6px 0}.ptgh{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:10px 0 4px}
 .ptdock{display:flex;flex-direction:column;gap:14px}
 .ptdockmid{display:flex;flex-direction:row;flex-wrap:wrap;gap:16px;justify-content:center;align-items:flex-start}
-/* A bottom-docked strip (e.g. the item panels) gets a divider from the map above it. */
-.ptdock>.ptdockmid+.ptdock,.ptdockmid+.ptdock{border-top:1px solid var(--bd);padding-top:12px}
+/* A bottom-docked strip (e.g. the item panels) gets a divider from the map
+   above it. Shrink the strip to its content and center it so the divider line
+   spans the item strip, not the full map width. */
+.ptdockmid+.ptdock{border-top:1px solid var(--bd);padding-top:12px;align-self:center;width:fit-content;max-width:100%}
 .ptarr{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
 .ptgrid{display:inline-block;margin:4px 0}
 .ptgrow{display:flex;gap:3px;justify-content:flex-start}
