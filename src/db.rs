@@ -870,26 +870,42 @@ impl Db {
             .unwrap_or_default()
     }
 
-    /// Latest activity involving one participant — as sender OR receiver —
-    /// newest first. Powers a game page's own "Log" tab, scoped to that slot.
+    /// A page of activity involving one participant — as sender OR receiver —
+    /// newest first. Powers a game page's own paginated "Log" tab.
     pub async fn activity_for_participant(
         &self,
         season: &str,
         name: &str,
+        offset: i64,
         limit: i64,
     ) -> Vec<ActivityRow> {
         sqlx::query_as::<_, ActivityRow>(
             "SELECT ts, kind, text, item_class FROM activity
              WHERE season = ?1
                AND (sender = ?2 COLLATE NOCASE OR receiver = ?2 COLLATE NOCASE)
-             ORDER BY id DESC LIMIT ?3",
+             ORDER BY id DESC LIMIT ?3 OFFSET ?4",
         )
         .bind(season)
         .bind(name)
         .bind(limit)
+        .bind(offset.max(0))
         .fetch_all(&self.pool)
         .await
         .unwrap_or_default()
+    }
+
+    /// Total activity rows involving one participant (for the Log tab's pager).
+    pub async fn activity_count_for_participant(&self, season: &str, name: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM activity
+             WHERE season = ?1
+               AND (sender = ?2 COLLATE NOCASE OR receiver = ?2 COLLATE NOCASE)",
+        )
+        .bind(season)
+        .bind(name)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0)
     }
 
     /// Distinct participant names (senders ∪ receivers) in a season, for the

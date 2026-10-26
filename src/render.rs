@@ -1956,13 +1956,17 @@ bar.addEventListener('click',function(e){var b=e.target.closest('.gtab');if(!b)r
 var h=(location.hash||'').slice(1),el=h&&document.getElementById(h);
 if(el&&el.classList.contains('gtabpanel'))activate(h);
 })();
-// Live-refresh the game's Log tab while it's open (feed is server-rendered first).
+// The game's Log tab: paginated, with live refresh of the current page while
+// open. Pager links point at the fragment endpoint; intercept them to swap in
+// place rather than navigate away. The feed's first page is server-rendered.
 (function(){var host=document.getElementById('gamelog');if(!host)return;
 var slot=host.getAttribute('data-slot'),panel=document.getElementById('tab-log');
-function load(){fetch('/game/'+slot+'/log/fragment').then(function(r){return r.text();}).then(function(x){host.innerHTML=x;if(window.bifTick)bifTick();}).catch(function(){});}
+var cur='/game/'+slot+'/log/fragment';
+function load(url){cur=url;fetch(url).then(function(r){return r.text();}).then(function(x){host.innerHTML=x;if(window.bifTick)bifTick();}).catch(function(){});}
+host.addEventListener('click',function(e){var a=e.target.closest('a.pg');if(!a)return;e.preventDefault();load(a.getAttribute('href'));});
 var bar=document.querySelector('.gtabs');
-if(bar){bar.addEventListener('click',function(e){var b=e.target.closest('.gtab');if(b&&b.getAttribute('data-tab')==='tab-log')load();});}
-setInterval(function(){if(panel&&!panel.hidden)load();},12000);
+if(bar){bar.addEventListener('click',function(e){var b=e.target.closest('.gtab');if(b&&b.getAttribute('data-tab')==='tab-log')load(cur);});}
+setInterval(function(){if(panel&&!panel.hidden)load(cur);},12000);
 })();
 </script>"#;
 
@@ -2216,26 +2220,37 @@ fn poptracker_panel(ap_slot: i64, has_pack: bool, can_manage: bool) -> String {
     s
 }
 
-/// Inner HTML of a game's Log feed (the `#gamelog` contents), reused by the tab
-/// and its live-refresh fragment.
-pub fn game_log_feed(rows: &[crate::db::ActivityRow]) -> String {
+/// Rows per page in a game page's Log tab.
+pub const GAME_LOG_RPP: i64 = 25;
+
+/// Pages for a given total at [`GAME_LOG_RPP`] (at least 1).
+pub fn game_log_pages(total: i64) -> i64 {
+    ((total + GAME_LOG_RPP - 1) / GAME_LOG_RPP).max(1)
+}
+
+/// Inner HTML of a game's Log feed (the `#gamelog` contents): one page of rows
+/// plus a numbered pager. Reused by the tab and its live-refresh fragment; the
+/// pager links point at the fragment endpoint and are intercepted client-side.
+pub fn game_log_feed(ap_slot: i64, rows: &[crate::db::ActivityRow], page: i64, pages: i64) -> String {
     let mut s = String::new();
     if rows.is_empty() {
         s.push_str(r#"<p class="empty">No activity involving this game yet.</p>"#);
-    } else {
-        render_feed(&mut s, rows, None);
+        return s;
     }
+    render_feed(&mut s, rows, None);
+    let base = format!("/game/{ap_slot}/log/fragment");
+    s.push_str(&activity_pager(&base, "", page, pages, GAME_LOG_RPP));
     s
 }
 
 /// The game page's "Log" tab: this slot's own activity (items it sent or
-/// received, its goals/releases/collects), newest first.
-fn log_panel(ap_slot: i64, rows: &[crate::db::ActivityRow]) -> String {
+/// received, its goals/releases/collects), newest first, paginated.
+fn log_panel(ap_slot: i64, rows: &[crate::db::ActivityRow], total: i64) -> String {
     let mut s = String::from(
         r#"<div class="gtabpanel" id="tab-log" hidden><h2>This game's activity</h2>"#,
     );
     s.push_str(&format!(r#"<div id="gamelog" class="gamelog" data-slot="{ap_slot}">"#));
-    s.push_str(&game_log_feed(rows));
+    s.push_str(&game_log_feed(ap_slot, rows, 1, game_log_pages(total)));
     s.push_str("</div></div>");
     s
 }
@@ -2298,6 +2313,7 @@ pub fn game_page(
     files: &[crate::generate::OutputFile],
     inlogic: Option<&crate::db::InLogic>,
     log: &[crate::db::ActivityRow],
+    log_total: i64,
     pt_has_pack: bool,
     pt_can_manage: bool,
 ) -> Html<String> {
@@ -2310,7 +2326,7 @@ pub fn game_page(
     // The UT and Log tab panels are the same for the common and regular slot
     // branches; build them once.
     let ut_html = inlogic_panel(inlogic);
-    let log_html = log_panel(ap_slot, log);
+    let log_html = log_panel(ap_slot, log, log_total);
     // "available now" count from the slot's Universal Tracker result (if any).
     let avail = inlogic
         .filter(|il| il.err.is_none())
