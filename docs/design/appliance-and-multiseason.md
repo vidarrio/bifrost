@@ -155,6 +155,43 @@ Design rules:
   "Isolation: strong (bwrap, no network)" vs "minimal (limits only) — install
   bubblewrap or use the container image to allow custom worlds."
 
+**Implementation notes (step 3a, on `appliance`).** `src/sandbox.rs` is the
+launcher; `ap_adapter` runs every helper through it with a per-helper policy.
+
+- Tiers built so far: **bubblewrap** (strong) and **limits** (the floor).
+  Detected at startup (`BIFROST_SANDBOX=auto|bwrap|none`; `bwrap` fails startup
+  if unusable) and shown in the log and the sysadmin console. The container
+  tier (1), the no-bwrap seccomp tier (3) and macOS/Windows (4) are not built —
+  the container image (§3, step 5) should be made bwrap-capable instead.
+- Both tiers: empty environment plus only what the helper needs (Bifrost's AP
+  passwords / proxy secret never reach world code — they did before), own
+  session, `RLIMIT_AS/CPU/FSIZE` (`BIFROST_SANDBOX_MEM_MB` 4096,
+  `_CPU_SECS` 1800, `_FILE_MB` 1024), per-helper wall-clock timeout that kills
+  the whole process group.
+- bubblewrap policy: all namespaces unshared, caps dropped, `/usr` + a short
+  `/etc` allowlist read-only (never all of `/etc`: service drop-ins hold
+  secrets), private `/tmp`, AP install + scripts + season dir read-only.
+  Writable: generation → season `output/` + `logs/`; check/in-logic → a private
+  scratch dir; PNG normalization → the pack dir. **No network**, except
+  **in-logic**, which must reach the AP server (`--share-net`): world code
+  there runs sandboxed but networked — a known gap until the AP server is
+  reachable over a socket bound into the sandbox.
+- A season `host.yaml` is created on demand by a step that imports only AP's
+  `settings` (no worlds), so world-importing helpers can keep the season
+  read-only.
+- Trusted vs custom worlds: worlds Bifrost ships (vendored Universal Tracker,
+  the operator's common-game apworld) are recognised **by SHA-256**; anything
+  else in `worlds/` is custom. On the limits tier, custom worlds are refused
+  (upload and every world-importing helper) unless
+  `BIFROST_ALLOW_UNSANDBOXED_CUSTOM_WORLDS=1`. Uploads can no longer use the
+  shipped worlds' file names (previously an upload named `tracker.apworld`
+  replaced the trusted copy).
+- Verified: unit tests attack the bubblewrap jail from inside (network, unbound
+  files, read-only writes, `/etc`, `/home`, env secrets — all blocked) and the
+  floor (env scrub, group kill on timeout, file-size cap); end to end, the
+  binary ran check, generate, meta, counts and a networked in-logic against a
+  real MultiServer, all inside bubblewrap.
+
 ## 5. Identity & authentication
 
 Introduce an **auth abstraction**: one internal `Principal` + session the app

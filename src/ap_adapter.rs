@@ -3,35 +3,180 @@
 //! decode, Universal Tracker in-logic — goes through here, as a helper script
 //! (`scripts/bifrost_*.py`) run under the AP interpreter. Nothing else in the
 //! crate spawns AP's Python or knows the helper scripts exist, so an AP upgrade
-//! (or the generation sandbox, design doc §4) touches only this module.
+//! touches only this module.
 //!
-//! Every helper runs with `BIFROST_AP_DIR` (the install) and
-//! `BIFROST_SEASON_DIR` (the season's AP user dir) set and the season dir as its
-//! cwd; `scripts/bifrost_ap.py` pins AP's paths from those.
+//! Helpers import worlds, i.e. run apworld code, so every one is started
+//! through the [`sandbox`](crate::sandbox) with the narrowest access it needs:
+//! no network (except in-logic, which must reach the AP server), the AP install
+//! and scripts read-only, the season dir read-only, and only its own output
+//! paths writable. Each helper gets `BIFROST_AP_DIR` / `BIFROST_SEASON_DIR`
+//! and runs in the season dir; `scripts/bifrost_ap.py` pins AP's paths.
+//!
+//! Custom (uploaded) apworlds only run when the sandbox is strong enough
+//! ([`check_worlds`]); worlds shipped with Bifrost are recognised by hash.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::{Output, Stdio};
+use std::process::Output;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
-use tokio::process::Command;
+use sha2::{Digest, Sha256};
 
 use crate::checker::CheckResult;
 use crate::config::{self, SeasonDirs};
 use crate::meta::{Meta, SlotCounts};
+use crate::sandbox::{self, Job};
 
-/// A helper-script invocation against `season`, ready to run.
-fn helper(script: &str, season: &SeasonDirs) -> Command {
+const CHECK_TIMEOUT: Duration = Duration::from_secs(180);
+const META_TIMEOUT: Duration = Duration::from_secs(300);
+const COUNTS_TIMEOUT: Duration = Duration::from_secs(120);
+const GENERATE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const SETTINGS_TIMEOUT: Duration = Duration::from_secs(60);
+const PNG_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// What a helper may touch besides the AP install, scripts and season dir
+/// (all read-only).
+#[derive(Default)]
+struct Access {
+    write: Vec<PathBuf>,
+    read: Vec<PathBuf>,
+    network: bool,
+}
+
+/// A sandboxed helper-script run against `season`.
+async fn run_helper(
+    script: &str,
+    args: Vec<OsString>,
+    season: &SeasonDirs,
+    access: Access,
+    timeout: Duration,
+) -> Result<Output, String> {
     let cfg = config::get();
-    let mut cmd = Command::new(&cfg.ap_python);
-    cmd.arg(cfg.script(script))
-        .current_dir(&season.root)
-        .env("BIFROST_AP_DIR", &cfg.ap_dir)
-        .env("BIFROST_SEASON_DIR", &season.root)
-        .env("PYTHONDONTWRITEBYTECODE", "1")
-        .stdin(Stdio::null());
-    cmd
+    ensure_host_yaml(season).await?;
+    let mut all_args = vec![cfg.script(script).into_os_string()];
+    all_args.extend(args);
+    let mut read = vec![
+        cfg.ap_dir.clone(),
+        cfg.runtime_dir.join("scripts"),
+        season.root.clone(),
+    ];
+    read.extend(access.read);
+    let job = Job {
+        program: &cfg.ap_python,
+        args: all_args,
+        cwd: &season.root,
+        env: helper_env(season),
+        read,
+        write: access.write,
+        network: access.network,
+    };
+    sandbox::run(sandbox::get().command(&job), timeout).await
+}
+
+fn helper_env(season: &SeasonDirs) -> Vec<(&'static str, OsString)> {
+    vec![
+        (
+            "BIFROST_AP_DIR",
+            config::get().ap_dir.clone().into_os_string(),
+        ),
+        ("BIFROST_SEASON_DIR", season.root.clone().into_os_string()),
+        ("PYTHONDONTWRITEBYTECODE", "1".into()),
+    ]
+}
+
+/// AP writes a default `host.yaml` when it finds none, which a read-only
+/// season dir would refuse. Create it up front in a step that imports only
+/// AP's settings module (no worlds, so no world code runs with write access).
+async fn ensure_host_yaml(season: &SeasonDirs) -> Result<(), String> {
+    if season.root.join("host.yaml").exists() {
+        return Ok(());
+    }
+    let cfg = config::get();
+    const INIT: &str = "import bifrost_ap, settings\nsettings.get_settings()\n";
+    let job = Job {
+        program: &cfg.ap_python,
+        args: vec!["-c".into(), INIT.into()],
+        cwd: &season.root,
+        env: {
+            let mut e = helper_env(season);
+            e.push((
+                "PYTHONPATH",
+                cfg.runtime_dir.join("scripts").into_os_string(),
+            ));
+            e
+        },
+        read: vec![cfg.ap_dir.clone(), cfg.runtime_dir.join("scripts")],
+        write: vec![season.root.clone()],
+        network: false,
+    };
+    let out = sandbox::run(sandbox::get().command(&job), SETTINGS_TIMEOUT).await?;
+    if !season.root.join("host.yaml").exists() {
+        return Err(format!(
+            "couldn't create the season's host.yaml: {}",
+            stderr_tail(&out, 2)
+        ));
+    }
+    Ok(())
+}
+
+/// The apworlds Bifrost itself ships (vendored or operator-supplied common
+/// game), by SHA-256. Anything else in a season's `worlds/` is custom.
+fn trusted_world_hashes() -> Vec<String> {
+    let cfg = config::get();
+    [
+        cfg.vendor_file("tracker.apworld"),
+        cfg.common_dir().join("minecraft.apworld"),
+    ]
+    .iter()
+    .filter_map(|p| std::fs::read(p).ok())
+    .map(|b| sha256_hex(&b))
+    .collect()
+}
+
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// File names in the season's `worlds/` that aren't Bifrost-shipped worlds.
+pub fn custom_worlds(season: &SeasonDirs) -> Vec<String> {
+    let trusted = trusted_world_hashes();
+    let mut out: Vec<String> = std::fs::read_dir(&season.worlds)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("apworld"))
+        .filter(|e| {
+            std::fs::read(e.path())
+                .map(|b| !trusted.contains(&sha256_hex(&b)))
+                .unwrap_or(true)
+        })
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    out.sort();
+    out
+}
+
+/// Refuse to import worlds when custom ones are present and the sandbox can't
+/// contain them (design doc §4's trusted/untrusted split).
+pub fn check_worlds(season: &SeasonDirs) -> Result<(), String> {
+    if sandbox::get().custom_worlds_allowed() {
+        return Ok(());
+    }
+    let custom = custom_worlds(season);
+    if custom.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "custom apworlds ({}) can't run without a sandbox on this host — install bubblewrap, \
+             use the container image, or remove them",
+            custom.join(", ")
+        ))
+    }
 }
 
 /// Helpers print one JSON object as their last non-empty stdout line (AP and
@@ -53,46 +198,82 @@ fn stderr_tail(out: &Output, n: usize) -> String {
     tail.split_off(tail.len().saturating_sub(n)).join(" | ")
 }
 
-/// A unique scratch path in the system temp dir (not state; never kept).
-fn scratch_file(stem: &str, ext: &str) -> PathBuf {
+/// A fresh private scratch dir in the system temp dir (bound writable into
+/// the sandbox; removed after the run).
+async fn scratch_dir(stem: &str) -> Result<PathBuf, String> {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    std::env::temp_dir().join(format!("bifrost-{stem}-{nanos}.{ext}"))
+    let dir = std::env::temp_dir().join(format!("bifrost-{stem}-{}-{nanos}", std::process::id()));
+    tokio::fs::create_dir(&dir)
+        .await
+        .map_err(|e| format!("scratch dir: {e}"))?;
+    Ok(dir)
 }
 
 /// Validate a player YAML (raw contents) against the season's worlds with AP's
 /// own `roll_settings`. The caller serializes runs (each loads every world).
 pub async fn check_yaml(season: &SeasonDirs, yaml: &str) -> Result<CheckResult, String> {
-    let path = scratch_file("check", "yaml");
-    tokio::fs::write(&path, yaml)
+    check_worlds(season)?;
+    let dir = scratch_dir("check").await?;
+    let path = dir.join("player.yaml");
+    let result = async {
+        tokio::fs::write(&path, yaml)
+            .await
+            .map_err(|e| format!("temp write: {e}"))?;
+        let access = Access {
+            read: vec![dir.clone()],
+            ..Default::default()
+        };
+        run_helper(
+            "bifrost_check.py",
+            vec![path.clone().into()],
+            season,
+            access,
+            CHECK_TIMEOUT,
+        )
         .await
-        .map_err(|e| format!("temp write: {e}"))?;
-    let result = helper("bifrost_check.py", season).arg(&path).output().await;
-    let _ = tokio::fs::remove_file(&path).await;
-    let out = result.map_err(|e| format!("spawn checker: {e}"))?;
+        .map_err(|e| format!("checker: {e}"))
+    }
+    .await;
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+    let out = result?;
     last_json_line(&out.stdout, "").map_err(|e| format!("could not read checker output: {e}"))
 }
 
 /// Decode a seed zip's multidata into the season facts the board needs.
 pub async fn decode_meta(season: &SeasonDirs, seed_zip: &Path) -> Result<Meta, String> {
-    let out = helper("bifrost_meta.py", season)
-        .arg(seed_zip)
-        .output()
-        .await
-        .map_err(|e| format!("spawn meta: {e}"))?;
+    check_worlds(season)?;
+    let access = Access {
+        read: vec![seed_zip.to_path_buf()],
+        ..Default::default()
+    };
+    let out = run_helper(
+        "bifrost_meta.py",
+        vec![seed_zip.into()],
+        season,
+        access,
+        META_TIMEOUT,
+    )
+    .await
+    .map_err(|e| format!("meta: {e}"))?;
     last_json_line(&out.stdout, "").map_err(|e| format!("parse meta: {e}"))
 }
 
 /// Every slot's authoritative sent/received state from the server's save.
 /// Empty before the server has written one.
 pub async fn load_counts(season: &SeasonDirs) -> Result<HashMap<i64, SlotCounts>, String> {
-    let out = helper("bifrost_counts.py", season)
-        .arg(season.current_save())
-        .output()
-        .await
-        .map_err(|e| format!("spawn counts: {e}"))?;
+    let save = season.current_save();
+    let out = run_helper(
+        "bifrost_counts.py",
+        vec![save.clone().into()],
+        season,
+        Access::default(),
+        COUNTS_TIMEOUT,
+    )
+    .await
+    .map_err(|e| format!("counts: {e}"))?;
     // Keys are stringified slot numbers; collect into an i64-keyed map.
     let raw: HashMap<String, SlotCounts> =
         last_json_line(&out.stdout, "{}").map_err(|e| format!("parse counts: {e}"))?;
@@ -104,10 +285,20 @@ pub async fn load_counts(season: &SeasonDirs) -> Result<HashMap<i64, SlotCounts>
 
 /// Roll the season's staged `Players/` into `output/AP_<seed>.zip`.
 pub async fn generate(season: &SeasonDirs) -> Result<(), String> {
-    let out = helper("bifrost_generate.py", season)
-        .output()
-        .await
-        .map_err(|e| format!("spawn generate: {e}"))?;
+    check_worlds(season)?;
+    let access = Access {
+        write: vec![season.output.clone(), season.logs.clone()],
+        ..Default::default()
+    };
+    let out = run_helper(
+        "bifrost_generate.py",
+        vec![],
+        season,
+        access,
+        GENERATE_TIMEOUT,
+    )
+    .await
+    .map_err(|e| format!("generate: {e}"))?;
     if !out.status.success() {
         return Err(format!("generation error: {}", stderr_tail(&out, 3)));
     }
@@ -123,7 +314,8 @@ pub struct InLogic {
 }
 
 /// Run Universal Tracker headlessly for one slot against the live room
-/// (`connect` is `host:port`). Killed after `timeout`.
+/// (`connect` is `host:port`). Killed after `timeout`. The one helper that
+/// keeps network access: it has to reach the AP server.
 pub async fn inlogic(
     season: &SeasonDirs,
     slot_name: &str,
@@ -131,35 +323,26 @@ pub async fn inlogic(
     connect: &str,
     timeout: Duration,
 ) -> Result<InLogic, String> {
+    check_worlds(season)?;
     // The helper writes its result to a file (its stdout is UT/AP noise).
-    let out = scratch_file("inlogic", "json");
-    let mut child = helper("bifrost_inlogic.py", season)
-        .arg(slot_name)
-        .arg(password)
-        .arg(connect)
-        .arg(&out)
-        .env("HOME", std::env::temp_dir())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| format!("spawn: {e}"))?;
-
-    match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => return Err(format!("wait: {e}")),
-        Err(_) => {
-            let _ = child.start_kill();
-            let _ = tokio::fs::remove_file(&out).await;
-            return Err("timed out".into());
-        }
-    }
-
-    let data = tokio::fs::read_to_string(&out)
-        .await
-        .map_err(|e| format!("no result file: {e}"))?;
-    let _ = tokio::fs::remove_file(&out).await;
-    parse_inlogic(&data)
+    let dir = scratch_dir("inlogic").await?;
+    let out = dir.join("result.json");
+    let access = Access {
+        write: vec![dir.clone()],
+        network: true,
+        ..Default::default()
+    };
+    let args = vec![
+        slot_name.into(),
+        password.into(),
+        connect.into(),
+        out.clone().into(),
+    ];
+    let run = run_helper("bifrost_inlogic.py", args, season, access, timeout).await;
+    let data = tokio::fs::read_to_string(&out).await;
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+    run?;
+    parse_inlogic(&data.map_err(|e| format!("no result file: {e}"))?)
 }
 
 fn parse_inlogic(data: &str) -> Result<InLogic, String> {
@@ -187,9 +370,9 @@ fn parse_inlogic(data: &str) -> Result<InLogic, String> {
 }
 
 /// Convert indexed/palette (and grayscale) PNGs under `dir` to RGBA, using the
-/// Pillow that ships in the AP interpreter. Best-effort and blocking — call from
-/// `spawn_blocking`.
-pub fn normalize_pngs(dir: &Path) {
+/// Pillow that ships in the AP interpreter — sandboxed (untrusted images), with
+/// only `dir` writable. Best-effort; call from async code.
+pub async fn normalize_pngs(dir: &Path) {
     const SCRIPT: &str = r#"
 import sys, os
 from PIL import Image
@@ -204,12 +387,19 @@ for r, _, fs in os.walk(sys.argv[1]):
             except Exception:
                 pass
 "#;
-    let _ = std::process::Command::new(&config::get().ap_python)
-        .arg("-c")
-        .arg(SCRIPT)
-        .arg(dir)
-        .stdin(Stdio::null())
-        .output();
+    let cfg = config::get();
+    let job = Job {
+        program: &cfg.ap_python,
+        args: vec!["-c".into(), SCRIPT.into(), dir.into()],
+        cwd: dir,
+        env: vec![("PYTHONDONTWRITEBYTECODE", "1".into())],
+        read: vec![],
+        write: vec![dir.to_path_buf()],
+        network: false,
+    };
+    if let Err(e) = sandbox::run(sandbox::get().command(&job), PNG_TIMEOUT).await {
+        tracing::warn!("normalizing pack PNGs: {e}");
+    }
 }
 
 #[cfg(test)]

@@ -69,7 +69,8 @@ pub fn install(season: &str, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), Strin
     // Browsers can render an indexed PNG with its palette background instead of
     // honouring `tRNS` transparency (notably under `image-rendering:pixelated`),
     // leaving transparent icons with a background — convert them to RGBA.
-    ap_adapter::normalize_pngs(&dir);
+    // (Called from `spawn_blocking`, where blocking on the runtime is fine.)
+    tokio::runtime::Handle::current().block_on(ap_adapter::normalize_pngs(&dir));
     Ok(())
 }
 

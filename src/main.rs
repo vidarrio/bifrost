@@ -33,6 +33,7 @@ mod meta;
 mod ptrack;
 mod mine;
 mod render;
+mod sandbox;
 mod season;
 
 use std::collections::HashMap;
@@ -77,6 +78,14 @@ async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(code) = cli::run(&args, &db).await {
         std::process::exit(code);
+    }
+
+    // How AP helpers (which run apworld code) are contained on this host.
+    let sb = sandbox::init(sandbox::Sandbox::detect(&cfg.ap_python).await);
+    if sb.strong() {
+        tracing::info!("isolation: {}", sb.posture());
+    } else {
+        tracing::warn!("isolation: {}", sb.posture());
     }
 
     let auth = init_auth(&db).await;
@@ -1408,6 +1417,9 @@ async fn game_finish(
 }
 
 
+/// Season `worlds/` file stems Bifrost itself stages (`generate.rs`).
+const RESERVED_WORLDS: &[&str] = &["tracker", "minecraft"];
+
 fn slugify(s: &str) -> String {
     let out: String = s
         .chars()
@@ -1437,6 +1449,12 @@ async fn signup_apworld(mut mp: Multipart) -> Json<serde_json::Value> {
             let _ = field.bytes().await;
         }
     }
+    if !sandbox::get().custom_worlds_allowed() {
+        return Json(serde_json::json!({
+            "ok": false,
+            "error": "Custom apworlds are disabled on this server (no sandbox available to run them safely). Ask an admin."
+        }));
+    }
     let Some(bytes) = bytes.filter(|b| !b.is_empty()) else {
         return Json(serde_json::json!({"ok": false, "error": "No file received."}));
     };
@@ -1451,6 +1469,13 @@ async fn signup_apworld(mut mp: Multipart) -> Json<serde_json::Value> {
         .and_then(|s| s.to_str())
         .unwrap_or("world");
     let base = slugify(stem);
+    // Never let an upload replace a world Bifrost ships (Universal Tracker, the
+    // common game): those are trusted by content, and run in-logic/generation.
+    if RESERVED_WORLDS.contains(&base.to_lowercase().as_str()) {
+        return Json(serde_json::json!({
+            "ok": false, "error": "That apworld name is reserved — rename the file and try again."
+        }));
+    }
     let dst = config::get().season().worlds.join(format!("{base}.apworld"));
     if tokio::fs::write(&dst, &bytes).await.is_err() {
         return Json(serde_json::json!({

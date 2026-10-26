@@ -29,6 +29,7 @@ poptracker = { path = "crates/poptracker" }  # PopTracker-pack engine (runs pack
 zip = { version = "9", default-features = false, features = ["deflate"] }  # read per-player files out of the generated seed zip + uploaded pack assets
 argon2 = "0.5"  # native-account password hashing (argon2id)
 sha2 = "0.10"  # session/link tokens are stored as SHA-256, never in the clear
+libc = "0.2"  # sandbox floor: setrlimit / setsid / killpg for AP helper processes
 
 # Planned, added as each phase lands:
 #   reqwest     # the Discord bot / kanidm integration

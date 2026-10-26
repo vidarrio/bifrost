@@ -3221,10 +3221,20 @@ pub struct UsersView<'a> {
     pub minted: Option<&'a crate::account::Minted>,
     pub err: Option<&'a str>,
     pub now: i64,
+    /// Active auth mode and the sandbox posture line.
+    pub auth_mode: &'a str,
+    pub isolation: &'a str,
+    pub strong_isolation: bool,
 }
 
 pub fn users_page(v: &UsersView) -> Html<String> {
     let mut body = String::new();
+    body.push_str(&format!(
+        r#"<h2>Instance</h2><p class="statline">Auth: <b>{}</b><br>Isolation: <span style="color:var({})">{}</span></p>"#,
+        esc(v.auth_mode),
+        if v.strong_isolation { "--ok" } else { "--warn" },
+        esc(v.isolation)
+    ));
     if let Some(m) = v.minted {
         body.push_str(&format!(
             r#"<div class="banner ok minted"><b>{}</b> — copy it now; it won't be shown again.
