@@ -161,23 +161,27 @@ Introduce an **auth abstraction**: one internal `Principal` + session the app
 derives from a pluggable provider. Today `identity(&headers)` trusts upstream
 proxy headers with no in-app auth; that must become one provider among several.
 
+**Decided (2026-10-26):** native auth is **username + password only** — no
+passkeys/WebAuthn, no 2FA. Switching an instance to **IdP-managed auth is a
+first-class path**, not an afterthought. **Password resets are reset links
+minted by the sysadmin** (no email/SMTP, no self-serve recovery).
+
 Providers:
 
-- **Native accounts (new default).** argon2id password hashing; signed,
+- **Native accounts (default).** Username + password; argon2id hashing; signed,
   HttpOnly/Secure/SameSite session cookies; CSRF tokens on every state-changing
-  POST; login throttling; first-run creates the sysadmin.
-- **Trust-header / forward-auth (opt-in).** The current kanidm/oauth2-proxy
-  mode, kept verbatim for operators who have SSO — but **explicitly opt-in and
-  bound to a configured trusted proxy** (shared secret or source allowlist).
-  Trusting identity headers unconditionally is a spoofing flaw the moment the
-  app is reachable without the proxy; fix regardless of the appliance work.
-- **OIDC (optional).** Direct OIDC client for operators who want SSO without a
-  forward-auth proxy.
-
-**Account recovery** is the landmine for a distributable tool: the homelab runs
-no SMTP by design, and we shouldn't force every operator to run mail. Default to
-**passkeys/WebAuthn + sysadmin-initiated resets**; make SMTP optional config for
-operators who want self-serve email reset.
+  POST; login throttling; first-run creates the sysadmin. Recovery: the
+  sysadmin mints a single-use, expiring reset link from the console and hands
+  it to the user out of band.
+- **IdP-managed (first-class alternative).** The instance delegates identity to
+  an external IdP; Bifrost keeps only the in-app user record (for roles,
+  claims, ownership) keyed by the IdP's stable subject. Two transports:
+  - **Trust-header / forward-auth** — the current kanidm/oauth2-proxy mode, but
+    **explicitly opt-in and bound to a configured trusted proxy** (shared
+    secret or source allowlist). Trusting identity headers unconditionally is a
+    spoofing flaw the moment the app is reachable without the proxy.
+  - **OIDC** — direct OIDC client for operators who want SSO without a
+    forward-auth proxy.
 
 Authorization becomes an **in-app role model** (next section), independent of
 kanidm groups.
@@ -350,8 +354,6 @@ new data dir, new config, new service wiring. Consequences:
   ongoing work.
 - **Connections** — port-per-season vs. proxy routing (§7.3): decide before the
   fleet lands.
-- **Account recovery** without mandatory SMTP (§5): confirm passkeys + admin
-  reset as the default.
 - **Single-binary AP bundling cost** — accepted as a convenience tier; container
   is primary.
 - **Resource ceilings** for concurrent live seasons — need an operator-visible
