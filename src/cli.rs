@@ -57,11 +57,11 @@ async fn set_mode(db: &Db, mode: &str) -> i32 {
         return 2;
     };
     if mode == AuthMode::ForwardAuth {
-        match ForwardAuth::from_env() {
+        match ForwardAuth::from_env(crate::config::get().trusted_proxies.clone()) {
             Ok(f) if f.configured() => {}
             Ok(_) => eprintln!(
                 "warning: no trusted proxy configured (BIFROST_FWD_SECRET_HEADER/BIFROST_FWD_SECRET \
-                 or BIFROST_FWD_TRUSTED_PROXIES) — nobody will be able to sign in"
+                 or BIFROST_TRUSTED_PROXIES) — nobody will be able to sign in"
             ),
             Err(e) => eprintln!("warning: forward-auth config: {e}"),
         }

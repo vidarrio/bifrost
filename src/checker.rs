@@ -5,6 +5,7 @@
 use axum::response::Html;
 use serde::Deserialize;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::Semaphore;
 
 use crate::{ap_adapter, config};
@@ -15,6 +16,19 @@ use crate::{ap_adapter, config};
 fn check_gate() -> &'static Semaphore {
     static SEM: OnceLock<Semaphore> = OnceLock::new();
     SEM.get_or_init(|| Semaphore::new(1))
+}
+
+/// Checks queued behind the gate (plus the running one). Beyond
+/// [`MAX_QUEUED`] new checks are refused rather than piling up a backlog.
+static QUEUED: AtomicUsize = AtomicUsize::new(0);
+const MAX_QUEUED: usize = 8;
+
+/// Decrements [`QUEUED`] however the check ends.
+struct QueueSlot;
+impl Drop for QueueSlot {
+    fn drop(&mut self) {
+        QUEUED.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 /// Guard against someone pasting something enormous into the box.
@@ -47,6 +61,11 @@ pub async fn check_yaml(yaml: &str) -> Result<CheckResult, String> {
             yaml.len()
         ));
     }
+    if QUEUED.fetch_add(1, Ordering::SeqCst) >= MAX_QUEUED {
+        QUEUED.fetch_sub(1, Ordering::SeqCst);
+        return Err("the checker is busy — try again in a minute".into());
+    }
+    let _slot = QueueSlot;
     // Serialize checks (see check_gate). Held for the whole subprocess run.
     let _permit = check_gate()
         .acquire()

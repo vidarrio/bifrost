@@ -27,6 +27,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use sha2::{Digest, Sha256};
 
 use crate::db::Db;
+use crate::net::Cidr;
 
 // ---------------------------------------------------------------- identity
 
@@ -235,8 +236,9 @@ pub const SESSION_TTL: Duration = Duration::from_secs(30 * 24 * 3600);
 pub struct ForwardAuth {
     /// `(header name, expected value)` the proxy adds to every request.
     pub secret: Option<(String, String)>,
-    /// Peer addresses / CIDRs the proxy connects from.
-    pub trusted: Vec<(IpAddr, u8)>,
+    /// Peer addresses / CIDRs the proxy connects from
+    /// (`BIFROST_TRUSTED_PROXIES`, shared with rate limiting).
+    pub trusted: Vec<Cidr>,
     pub subject_header: String,
     pub username_header: String,
     pub groups_header: String,
@@ -248,21 +250,12 @@ pub struct ForwardAuth {
 }
 
 impl ForwardAuth {
-    pub fn from_env() -> Result<Self, String> {
+    pub fn from_env(trusted: Vec<Cidr>) -> Result<Self, String> {
         let var = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
         let secret = match (var("BIFROST_FWD_SECRET_HEADER"), var("BIFROST_FWD_SECRET")) {
             (Some(h), Some(v)) => Some((h, v)),
             (None, None) => None,
             _ => return Err("set both BIFROST_FWD_SECRET_HEADER and BIFROST_FWD_SECRET".into()),
-        };
-        let trusted = match var("BIFROST_FWD_TRUSTED_PROXIES") {
-            Some(list) => list
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(parse_cidr)
-                .collect::<Result<_, _>>()?,
-            None => Vec::new(),
         };
         let role_groups = match var("BIFROST_FWD_ROLE_GROUPS") {
             Some(list) => parse_role_groups(&list)?,
@@ -305,11 +298,7 @@ impl ForwardAuth {
         }
         if !self.trusted.is_empty() {
             let Some(ip) = peer else { return false };
-            if !self
-                .trusted
-                .iter()
-                .any(|&(net, bits)| cidr_contains(net, bits, ip))
-            {
+            if !self.trusted.iter().any(|c| c.contains(ip)) {
                 return false;
             }
         }
@@ -348,43 +337,6 @@ fn parse_role_groups(list: &str) -> Result<Vec<(Role, String)>, String> {
             Ok((role, g.trim().to_string()))
         })
         .collect()
-}
-
-fn parse_cidr(s: &str) -> Result<(IpAddr, u8), String> {
-    let (ip, bits) = match s.split_once('/') {
-        Some((ip, bits)) => (ip, Some(bits)),
-        None => (s, None),
-    };
-    let ip: IpAddr = ip.parse().map_err(|_| format!("bad proxy address {s:?}"))?;
-    let max = if ip.is_ipv4() { 32 } else { 128 };
-    let bits = match bits {
-        Some(b) => b
-            .parse::<u8>()
-            .ok()
-            .filter(|&b| b <= max)
-            .ok_or(format!("bad prefix in {s:?}"))?,
-        None => max,
-    };
-    Ok((ip, bits))
-}
-
-fn cidr_contains(net: IpAddr, bits: u8, ip: IpAddr) -> bool {
-    // An IPv4 peer may arrive IPv4-mapped on a dual-stack socket.
-    let ip = match ip {
-        IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(ip),
-        v4 => v4,
-    };
-    match (net, ip) {
-        (IpAddr::V4(n), IpAddr::V4(a)) => {
-            let mask = u32::MAX.checked_shl(32 - bits as u32).unwrap_or(0);
-            u32::from(n) & mask == u32::from(a) & mask
-        }
-        (IpAddr::V6(n), IpAddr::V6(a)) => {
-            let mask = u128::MAX.checked_shl(128 - bits as u32).unwrap_or(0);
-            u128::from(n) & mask == u128::from(a) & mask
-        }
-        _ => false,
-    }
 }
 
 fn ct_eq(a: &[u8], b: &[u8]) -> bool {
@@ -822,7 +774,7 @@ mod tests {
             !f.trusts(&hm(&[]), ip("10.0.0.1")),
             "unconfigured trusts no one"
         );
-        f.trusted = vec![parse_cidr("10.0.0.0/24").unwrap()];
+        f.trusted = vec![Cidr::parse("10.0.0.0/24").unwrap()];
         assert!(f.trusts(&hm(&[]), ip("10.0.0.86")));
         assert!(f.trusts(&hm(&[]), ip("::ffff:10.0.0.86")));
         assert!(!f.trusts(&hm(&[]), ip("10.0.1.1")));
@@ -833,8 +785,6 @@ mod tests {
             "both checks must pass"
         );
         assert!(f.trusts(&hm(&[("x-proxy-secret", "s3cret")]), ip("10.0.0.86")));
-        assert!(parse_cidr("10.0.0.0/33").is_err());
-        assert!(parse_cidr("::1").is_ok());
     }
 
     #[test]

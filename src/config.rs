@@ -27,6 +27,8 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+use crate::net::Cidr;
+
 pub struct Config {
     /// HTTP listen port (`BIFROST_PORT`).
     pub port: u16,
@@ -41,6 +43,10 @@ pub struct Config {
     /// systemd unit whose journal carries the AP server's log
     /// (`BIFROST_AP_JOURNAL_UNIT`). Goes away once Bifrost supervises AP itself.
     pub ap_journal_unit: String,
+    /// Reverse proxies in front of Bifrost (`BIFROST_TRUSTED_PROXIES`, IPs or
+    /// CIDRs): their `X-Forwarded-For` is believed for client addresses, and in
+    /// forward-auth mode they're the only source of identity headers.
+    pub trusted_proxies: Vec<Cidr>,
 }
 
 /// The directories of one season. Laid out exactly like an Archipelago *user
@@ -110,6 +116,9 @@ impl Config {
                 .unwrap_or_else(|| "/opt/bifrost".into())
                 .into(),
             ap_journal_unit: var("BIFROST_AP_JOURNAL_UNIT").unwrap_or_else(|| "archipelago".into()),
+            trusted_proxies: var("BIFROST_TRUSTED_PROXIES")
+                .map(|l| Cidr::parse_list(&l).unwrap_or_else(|e| panic!("BIFROST_TRUSTED_PROXIES: {e}")))
+                .unwrap_or_default(),
         }
     }
 

@@ -265,7 +265,7 @@ kanidm groups.
   per username (5 free failures, then 30 s doubling to 15 min), and unknown
   usernames cost the same argon2 work as wrong passwords.
 - Forward-auth config (`BIFROST_FWD_*`): `SECRET_HEADER` + `SECRET` (a header
-  the proxy adds) and/or `TRUSTED_PROXIES` (IPs/CIDRs) — every configured
+  the proxy adds) and/or `BIFROST_TRUSTED_PROXIES` (IPs/CIDRs) — every configured
   check must pass, and with neither configured nobody is trusted;
   `SUBJECT_HEADER` / `USERNAME_HEADER` / `GROUPS_HEADER` (oauth2-proxy
   defaults); `ROLE_GROUPS` (`sysadmin=<group>,user=<group>`; when set, the IdP
@@ -415,6 +415,15 @@ Beyond §4 isolation:
 
 - **Header-spoof fix** (trust-header provider bound to a trusted proxy) — do now.
 - **Rate limiting** on auth + expensive endpoints (generation, checks).
+  *Done (3c):* `src/ratelimit.rs` token buckets, keyed by account (signed in)
+  or client IP; login/setup/invite/reset always by IP. YAML checks 10/10 min,
+  signups 10/10 min, apworld uploads 10/h, login 20/10 min, link redemption
+  10/10 min, hints 30/10 min; 429 + `Retry-After`. The checker queue is capped
+  (8) so a burst can't build an unbounded backlog behind its one-at-a-time
+  gate. Client IP = TCP peer, or the right-most untrusted `X-Forwarded-For`
+  hop when the peer is in `BIFROST_TRUSTED_PROXIES` — the same list
+  forward-auth trusts (replaces `BIFROST_FWD_TRUSTED_PROXIES`). Generation is
+  sysadmin-only and already single-flight.
 - **Secrets**: move off host env to a config file / first-run setup; no secrets
   in world-visible state.
 - **CSRF** on all state-changing POSTs (comes with native sessions).

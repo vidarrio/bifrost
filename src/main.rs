@@ -32,6 +32,8 @@ mod inlogic;
 mod meta;
 mod ptrack;
 mod mine;
+mod net;
+mod ratelimit;
 mod render;
 mod sandbox;
 mod season;
@@ -168,6 +170,11 @@ async fn main() {
         .route("/minesweeper/leaderboard", get(mine_leaderboard))
         .route("/api/me", get(api_me))
         .merge(account::routes())
+        // Rate-limit auth + expensive endpoints (inside auth: knows the account).
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::new(ratelimit::Limiter::new(cfg.trusted_proxies.clone())),
+            ratelimit::middleware,
+        ))
         // Authenticate + enforce the route tiers before any handler runs.
         .layer(axum::middleware::from_fn_with_state(auth, auth::middleware))
         .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
@@ -200,7 +207,7 @@ async fn main() {
 /// print the one-time first-run setup link.
 async fn init_auth(db: &db::Db) -> auth::Auth {
     let mode = db.auth_mode().await;
-    let fwd = match auth::ForwardAuth::from_env() {
+    let fwd = match auth::ForwardAuth::from_env(config::get().trusted_proxies.clone()) {
         Ok(f) => f,
         Err(e) if mode == auth::AuthMode::ForwardAuth => panic!("forward-auth config: {e}"),
         Err(_) => auth::ForwardAuth::default(),
@@ -208,7 +215,7 @@ async fn init_auth(db: &db::Db) -> auth::Auth {
     if mode == auth::AuthMode::ForwardAuth && !fwd.configured() {
         tracing::error!(
             "auth mode is forward-auth but no trusted proxy is configured \
-             (BIFROST_FWD_SECRET_HEADER/BIFROST_FWD_SECRET or BIFROST_FWD_TRUSTED_PROXIES): \
+             (BIFROST_FWD_SECRET_HEADER/BIFROST_FWD_SECRET or BIFROST_TRUSTED_PROXIES): \
              nobody can sign in"
         );
     }
