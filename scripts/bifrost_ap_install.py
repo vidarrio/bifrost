@@ -90,7 +90,7 @@ def filtered(req_file, out_file):
 
 
 def pip(venv_py, *args):
-    r = subprocess.run([venv_py, "-m", "pip", "--disable-pip-version-check", "--no-input", *args],
+    r = subprocess.run([venv_py, "-m", "pip", "--disable-pip-version-check", "--no-input", "--no-cache-dir", *args],
                        capture_output=True, text=True)
     return r.returncode == 0, (r.stderr or r.stdout).strip().splitlines()[-3:]
 

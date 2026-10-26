@@ -4,9 +4,9 @@
 //! A backup is one zip, `bifrost-YYYYMMDD-HHMMSS.zip` (UTC), holding a
 //! consistent copy of the database (SQLite `VACUUM INTO`) and every other
 //! file under `$BIFROST_DATA` — except the backups themselves, installed
-//! Archipelago releases (`ap/`, reinstallable and large) and `tmp/`. It's
-//! everything needed to bring an instance back, `config.toml` secrets
-//! included, so backups are written owner-only.
+//! Archipelago releases (`ap/`, reinstallable and large), `tmp/` and
+//! `.cache/`. It's everything needed to bring an instance back,
+//! `config.toml` secrets included, so backups are written owner-only.
 //!
 //! Retention keeps the newest backup of each of the last `daily` days, the
 //! last `weekly` weeks and the last `monthly` months that have one, then
@@ -211,7 +211,8 @@ fn free_bytes(dir: &Path) -> Option<u64> {
 /// What a backup leaves out, relative to the data dir.
 fn excluded(data: &Path, rel: &Path, backups: &Path) -> bool {
     let top = rel.components().next().map(|c| c.as_os_str().to_string_lossy().into_owned());
-    matches!(top.as_deref(), Some("ap" | "tmp"))
+    // `.cache`: tools that treat the data dir as $HOME (the container's user).
+    matches!(top.as_deref(), Some("ap" | "tmp" | ".cache"))
         || rel.to_str().is_some_and(|r| r == "bifrost.db" || r.starts_with("bifrost.db-"))
         || data.join(rel).starts_with(backups)
         || top.as_deref().is_some_and(|t| t.starts_with(".restore-") || t.starts_with(".pre-restore-"))
@@ -511,6 +512,7 @@ mod tests {
         let bk = Path::new("/data/backups");
         assert!(excluded(d, Path::new("ap/0.6.9/Utils.py"), bk));
         assert!(excluded(d, Path::new("tmp/x"), bk));
+        assert!(excluded(d, Path::new(".cache/pip/x"), bk));
         assert!(excluded(d, Path::new("bifrost.db-wal"), bk));
         assert!(excluded(d, Path::new("backups/bifrost-x.zip"), bk));
         assert!(!excluded(d, Path::new("seasons/1/output/current.zip"), bk));
