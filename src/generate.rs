@@ -425,6 +425,17 @@ fn now() -> i64 {
     crate::auth::now()
 }
 
+/// Roll with the active Archipelago install, then pin the season to it: from
+/// here its server and helpers run the version that made its seed.
+async fn roll(db: &Db, season: i64) -> Result<(), String> {
+    let ap = crate::apinstall::active();
+    let dirs = config::get().season(season).with_install(ap.clone());
+    ap_adapter::generate(&dirs).await?;
+    db.set_season_ap_version(season, &ap.version).await.map_err(|e| e.to_string())?;
+    crate::apinstall::pin(season, Some(ap.version));
+    Ok(())
+}
+
 async fn regen_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> Result<String, String> {
     // Must have a staged lineup to re-roll.
     let mut has_yaml = false;
@@ -448,7 +459,7 @@ async fn regen_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> 
     clear_old_seeds(season).await;
     // Always keep the Universal Tracker apworld present for the in-logic feature.
     stage_tracker_apworld(season).await;
-    ap_adapter::generate(&config::get().season(season)).await?;
+    roll(db, season).await?;
 
     let seed_zip = newest_seed(season).await.ok_or("no seed was produced")?;
     set(state, true, "Mapping slots and carrying over claims…");
@@ -522,7 +533,7 @@ async fn run_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> Re
         true,
         "Generating the multiworld… (this can take a minute)",
     );
-    ap_adapter::generate(&season).await?;
+    roll(db, season_id).await?;
 
     let seed_zip = newest_seed(season_id).await.ok_or("no seed was produced")?;
     set(state, true, "Mapping slots and claims…");

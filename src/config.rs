@@ -65,14 +65,23 @@ pub struct Config {
     /// The ports live seasons' AP servers get, one each (`BIFROST_AP_PORTS`,
     /// e.g. `38281-38300`). Its size caps how many seasons can be live at once.
     pub ap_ports: RangeInclusive<u16>,
+    /// The GitHub repo further Archipelago releases are installed from.
+    pub ap_repo: String,
+    /// The Python that builds an installed release's venv.
+    pub base_python: PathBuf,
 }
 
 /// The directories of one season. Laid out exactly like an Archipelago *user
 /// dir* (AP's `user_path`), so AP — and Universal Tracker — resolve the
 /// season's YAMLs, custom worlds, output, logs and `host.yaml` with their own
 /// defaults once the helper scripts point `user_path` here.
+#[derive(Clone)]
 pub struct SeasonDirs {
     pub root: PathBuf,
+    /// The season these dirs belong to (`None` for scratch dirs).
+    pub id: Option<i64>,
+    /// Run this AP install rather than the season's own (test runs).
+    pub install: Option<crate::apinstall::Install>,
     /// Staged per-player YAMLs (AP default `Players`).
     pub players: PathBuf,
     /// Custom `.apworld`s. AP scans `user_path("worlds")` whenever the user dir
@@ -89,8 +98,10 @@ pub struct SeasonDirs {
 }
 
 impl SeasonDirs {
-    fn new(root: PathBuf) -> Self {
+    fn new(root: PathBuf, id: Option<i64>) -> Self {
         Self {
+            id,
+            install: None,
             players: root.join("Players"),
             worlds: root.join("worlds"),
             output: root.join("output"),
@@ -99,6 +110,11 @@ impl SeasonDirs {
             pending: root.join("pending"),
             root,
         }
+    }
+
+    pub fn with_install(mut self, install: crate::apinstall::Install) -> Self {
+        self.install = Some(install);
+        self
     }
 
     /// Create the season's directories (idempotent).
@@ -163,6 +179,8 @@ impl Config {
             ap_ports: var("BIFROST_AP_PORTS")
                 .map(|r| parse_port_range(&r).unwrap_or_else(|e| panic!("BIFROST_AP_PORTS: {e}")))
                 .unwrap_or(38281..=38300),
+            ap_repo: var("BIFROST_AP_REPO").unwrap_or_else(|| "ArchipelagoMW/Archipelago".into()),
+            base_python: var("BIFROST_PYTHON").unwrap_or_else(|| "python3".into()).into(),
             trusted_proxies: var("BIFROST_TRUSTED_PROXIES")
                 .map(|l| {
                     Cidr::parse_list(&l).unwrap_or_else(|e| panic!("BIFROST_TRUSTED_PROXIES: {e}"))
@@ -202,13 +220,23 @@ impl Config {
 
     /// A season's directories (`seasons/<id>/`).
     pub fn season(&self, id: i64) -> SeasonDirs {
-        SeasonDirs::new(self.data_dir.join("seasons").join(id.to_string()))
+        SeasonDirs::new(self.data_dir.join("seasons").join(id.to_string()), Some(id))
     }
 
     /// An empty AP user dir with no custom worlds: what YAML checks run
     /// against before any season exists (core worlds only).
     pub fn core_season(&self) -> SeasonDirs {
-        SeasonDirs::new(self.data_dir.join("seasons").join("_core"))
+        SeasonDirs::new(self.data_dir.join("seasons").join("_core"), None)
+    }
+
+    /// Scratch space (`tmp/`), cleared at startup.
+    pub fn tmp_dir(&self) -> PathBuf {
+        self.data_dir.join("tmp")
+    }
+
+    /// A throwaway AP user dir under `tmp/` (e.g. an install's test run).
+    pub fn scratch_season(&self, name: &str) -> SeasonDirs {
+        SeasonDirs::new(self.tmp_dir().join(name), None)
     }
 
     /// A helper script shipped in the runtime.
@@ -278,12 +306,20 @@ const FILE_KEYS: &[(&str, &str, &str)] = &[
     ("archipelago", "ports", "BIFROST_AP_PORTS"),
     ("archipelago", "dir", "BIFROST_AP_DIR"),
     ("archipelago", "python", "BIFROST_AP_PYTHON"),
+    ("archipelago", "repo", "BIFROST_AP_REPO"),
+    ("archipelago", "base_python", "BIFROST_PYTHON"),
     ("archipelago", "journal_unit", "BIFROST_AP_JOURNAL_UNIT"),
     ("archipelago", "url", "BIFROST_AP_URL"),
     ("archipelago", "slot", "BIFROST_SLOT"),
     ("archipelago", "password", "BIFROST_AP_PASSWORD"),
     ("archipelago", "admin_password", "BIFROST_AP_ADMIN_PASSWORD"),
     ("runtime", "dir", "BIFROST_RUNTIME_DIR"),
+    ("backup", "dir", "BIFROST_BACKUP_DIR"),
+    ("backup", "hour", "BIFROST_BACKUP_HOUR"),
+    ("backup", "keep_daily", "BIFROST_BACKUP_KEEP_DAILY"),
+    ("backup", "keep_weekly", "BIFROST_BACKUP_KEEP_WEEKLY"),
+    ("backup", "keep_monthly", "BIFROST_BACKUP_KEEP_MONTHLY"),
+    ("backup", "max_mb", "BIFROST_BACKUP_MAX_MB"),
     ("sandbox", "mode", "BIFROST_SANDBOX"),
     ("sandbox", "bwrap", "BIFROST_BWRAP"),
     ("sandbox", "mem_mb", "BIFROST_SANDBOX_MEM_MB"),
@@ -397,6 +433,9 @@ pub const EXAMPLE: &str = r#"# $BIFROST_DATA/config.toml — every setting here 
 # (The host players connect to is set on the instance settings page.)
 # dir = "/opt/archipelago"           # BIFROST_AP_DIR
 # python = "/opt/archipelago/venv/bin/python"  # BIFROST_AP_PYTHON
+# — installing further releases from the settings page:
+# repo = "ArchipelagoMW/Archipelago"  # BIFROST_AP_REPO (GitHub owner/name)
+# base_python = "python3"            # BIFROST_PYTHON (builds each release's venv; needs venv + pip)
 # — external mode only (managed mode generates per-season passwords):
 # url = "ws://127.0.0.1:38281"       # BIFROST_AP_URL
 # slot = "Tracker"                   # BIFROST_SLOT (tracker's slot; managed: first slot)
@@ -406,6 +445,14 @@ pub const EXAMPLE: &str = r#"# $BIFROST_DATA/config.toml — every setting here 
 
 [runtime]
 # dir = "/opt/bifrost"               # BIFROST_RUNTIME_DIR (scripts/ + vendor/)
+
+[backup]
+# dir = "/var/lib/bifrost/backups"   # BIFROST_BACKUP_DIR (another disk is better)
+# hour = 4                           # BIFROST_BACKUP_HOUR: nightly, UTC (0–23) | "off"
+# keep_daily = 7                     # BIFROST_BACKUP_KEEP_DAILY: newest of each of the last N days
+# keep_weekly = 4                    # BIFROST_BACKUP_KEEP_WEEKLY: … of the last N weeks
+# keep_monthly = 3                   # BIFROST_BACKUP_KEEP_MONTHLY: … of the last N months
+# max_mb = 5120                      # BIFROST_BACKUP_MAX_MB: drop the oldest beyond this total
 
 [sandbox]
 # mode = "auto"                      # BIFROST_SANDBOX: auto | bwrap | none

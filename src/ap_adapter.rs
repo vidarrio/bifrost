@@ -25,6 +25,7 @@ use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 
 use crate::checker::CheckResult;
+use crate::apinstall::{self, Install};
 use crate::config::{self, SeasonDirs};
 use crate::meta::{Meta, SlotCounts};
 use crate::sandbox::{self, Job};
@@ -54,20 +55,21 @@ async fn run_helper(
     timeout: Duration,
 ) -> Result<Output, String> {
     let cfg = config::get();
-    ensure_host_yaml(season).await?;
+    let ap = apinstall::for_dirs(season);
+    ensure_host_yaml(season, &ap).await?;
     let mut all_args = vec![cfg.script(script).into_os_string()];
     all_args.extend(args);
     let mut read = vec![
-        cfg.ap_dir.clone(),
+        ap.dir.clone(),
         cfg.runtime_dir.join("scripts"),
         season.root.clone(),
     ];
     read.extend(access.read);
     let job = Job {
-        program: &cfg.ap_python,
+        program: &ap.python,
         args: all_args,
         cwd: &season.root,
-        env: helper_env(season),
+        env: helper_env(season, &ap),
         read,
         write: access.write,
         network: access.network,
@@ -75,39 +77,43 @@ async fn run_helper(
     sandbox::run(sandbox::get().command(&job), timeout).await
 }
 
-fn helper_env(season: &SeasonDirs) -> Vec<(&'static str, OsString)> {
+/// The environment every AP process gets (see also `apserver`). Bifrost owns
+/// the install's dependencies, so AP's own pip-on-startup is off.
+pub fn ap_env(season: &SeasonDirs, ap: &Install) -> Vec<(&'static str, OsString)> {
     vec![
-        (
-            "BIFROST_AP_DIR",
-            config::get().ap_dir.clone().into_os_string(),
-        ),
+        ("BIFROST_AP_DIR", ap.dir.clone().into_os_string()),
         ("BIFROST_SEASON_DIR", season.root.clone().into_os_string()),
         ("PYTHONDONTWRITEBYTECODE", "1".into()),
+        ("SKIP_REQUIREMENTS_UPDATE", "1".into()),
     ]
+}
+
+fn helper_env(season: &SeasonDirs, ap: &Install) -> Vec<(&'static str, OsString)> {
+    ap_env(season, ap)
 }
 
 /// AP writes a default `host.yaml` when it finds none, which a read-only
 /// season dir would refuse. Create it up front in a step that imports only
 /// AP's settings module (no worlds, so no world code runs with write access).
-async fn ensure_host_yaml(season: &SeasonDirs) -> Result<(), String> {
+async fn ensure_host_yaml(season: &SeasonDirs, ap: &Install) -> Result<(), String> {
     if season.root.join("host.yaml").exists() {
         return Ok(());
     }
     let cfg = config::get();
     const INIT: &str = "import bifrost_ap, settings\nsettings.get_settings()\n";
     let job = Job {
-        program: &cfg.ap_python,
+        program: &ap.python,
         args: vec!["-c".into(), INIT.into()],
         cwd: &season.root,
         env: {
-            let mut e = helper_env(season);
+            let mut e = helper_env(season, ap);
             e.push((
                 "PYTHONPATH",
                 cfg.runtime_dir.join("scripts").into_os_string(),
             ));
             e
         },
-        read: vec![cfg.ap_dir.clone(), cfg.runtime_dir.join("scripts")],
+        read: vec![ap.dir.clone(), cfg.runtime_dir.join("scripts")],
         write: vec![season.root.clone()],
         network: false,
     };
@@ -133,27 +139,6 @@ fn trusted_world_hashes() -> Vec<String> {
     .filter_map(|p| std::fs::read(p).ok())
     .map(|b| sha256_hex(&b))
     .collect()
-}
-
-/// The version of the Archipelago install Bifrost runs (`__version__` in its
-/// `Utils.py`), read once. `None` if it can't be determined.
-pub fn ap_version() -> Option<&'static str> {
-    static V: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    V.get_or_init(|| {
-        let src = std::fs::read_to_string(config::get().ap_dir.join("Utils.py")).ok()?;
-        parse_version(&src)
-    })
-    .as_deref()
-}
-
-fn parse_version(utils_py: &str) -> Option<String> {
-    utils_py.lines().find_map(|l| {
-        let v = l.strip_prefix("__version__")?.trim_start().strip_prefix('=')?.trim();
-        let v = v.strip_prefix('"').and_then(|v| v.strip_suffix('"'))
-            .or_else(|| v.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))?;
-        (!v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric() || ".-+".contains(c)))
-            .then(|| v.to_string())
-    })
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -513,15 +498,6 @@ for r, _, fs in os.walk(sys.argv[1]):
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn ap_version_is_read_from_utils() {
-        let src = "import os\n__version__ = \"0.6.9\"\nversion_tuple = tuplize_version(__version__)\n";
-        assert_eq!(parse_version(src).as_deref(), Some("0.6.9"));
-        assert_eq!(parse_version("__version__ = '0.7.0-rc1'").as_deref(), Some("0.7.0-rc1"));
-        assert_eq!(parse_version("__version__ = get()"), None);
-        assert_eq!(parse_version("x = 1"), None);
-    }
 
     #[test]
     fn json_is_read_from_the_last_non_empty_line() {

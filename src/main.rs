@@ -21,9 +21,12 @@ mod account;
 mod activity;
 mod ap;
 mod ap_adapter;
+mod apinstall;
+mod apupdate;
 mod apserver;
 mod archive;
 mod auth;
+mod backup;
 mod checker;
 mod cli;
 mod config;
@@ -77,6 +80,9 @@ async fn main() {
     cfg.ensure_dirs()
         .unwrap_or_else(|e| panic!("create data dirs under {}: {e}", cfg.data_dir.display()));
     let port = cfg.port;
+    if let Some(code) = cli::run_offline(&args) {
+        std::process::exit(code);
+    }
 
     let db_path = cfg.db_path();
     let mut db = db::Db::open(&db_path.to_string_lossy())
@@ -110,9 +116,23 @@ async fn main() {
             tracing::error!("season “{name}” is live but every AP port is taken; widen BIFROST_AP_PORTS");
         }
     }
-    match ap_adapter::ap_version() {
-        Some(v) => tracing::info!("Archipelago {v} at {}", cfg.ap_dir.display()),
-        None => tracing::warn!("couldn't read the Archipelago version from {}", cfg.ap_dir.display()),
+    // Which Archipelago install is active, and which one each season's seed
+    // was generated with (it keeps running on that one).
+    let _ = std::fs::remove_dir_all(cfg.tmp_dir());
+    apinstall::load(
+        db.ap_active().await,
+        db.seasons()
+            .await
+            .into_iter()
+            .filter(|s| s.state() != db::State::Archived)
+            .filter_map(|s| Some((s.id, s.ap_version?)))
+            .collect(),
+    );
+    let bundled = apinstall::bundled();
+    tracing::info!("Archipelago {} bundled at {}", bundled.version, bundled.dir.display());
+    let active = apinstall::active();
+    if !active.bundled {
+        tracing::info!("Archipelago {} active (new seasons use it), at {}", active.version, active.dir.display());
     }
     for season in db.seasons().await {
         if season.state() != db::State::Archived {
@@ -122,6 +142,8 @@ async fn main() {
             seasons.start_live(season.id).await;
         }
     }
+
+    backup::spawn_nightly(db.clone());
 
     let shutdown_seasons = seasons.clone();
     let shutdown_db = db.clone();
@@ -162,6 +184,13 @@ async fn main() {
         .route("/admin", get(admin_view))
         .route("/admin/seasons", get(seasons_view).post(seasons_create))
         .route("/admin/settings", get(settings_view).post(settings_save))
+        .route("/admin/settings/ap/check", post(ap_check))
+        .route("/admin/settings/ap/install", post(ap_install))
+        .route("/admin/settings/ap/use", post(ap_use))
+        .route("/admin/settings/ap/remove", post(ap_remove))
+        .route("/admin/settings/backups/now", post(backup_now))
+        .route("/admin/settings/backups/download", get(backup_download))
+        .route("/admin/settings/backups/delete", post(backup_delete))
         .route("/admin/mods/add", post(mods_add))
         .route("/admin/mods/remove", post(mods_remove))
         .route("/admin/signups", post(admin_signups))
@@ -420,11 +449,7 @@ async fn landing(State(st): State<AppState>) -> Html<String> {
             .replace("<!--TAG-->", &render::landing_tag(&inst.domain))
             .replace(
                 "<!--APVERSION-->",
-                &render::escape(
-                    &ap_adapter::ap_version()
-                        .map(|v| format!("Archipelago {v}"))
-                        .unwrap_or_else(|| "Archipelago".into()),
-                ),
+                &render::escape(&format!("Archipelago {}", apinstall::active().version)),
             )
             .replace("<!--DISCORDS-->", &render::landing_discords(&inst.discords)),
     )
@@ -2135,6 +2160,7 @@ async fn admin_archive_season(
             .into_response();
     }
     st.seasons.stop(ctx.id).await;
+    apinstall::pin(ctx.id, None);
 
     Redirect::to(&ctx.url("/season")).into_response()
 }
@@ -2146,20 +2172,145 @@ async fn settings_view(State(st): State<AppState>, me: auth::Me) -> Response {
         return render::notice("Sysadmins only.", false, "/").into_response();
     }
     let inst = st.db.instance().await;
-    render::settings_page(&inst, &settings_status(&st), None, false).into_response()
+    render::settings_page(&inst, &settings_status(&st).await, None, false).into_response()
 }
 
 /// What the settings page reports about the deployment (read-only there).
-fn settings_status(st: &AppState) -> render::SettingsStatus {
+async fn settings_status(st: &AppState) -> render::SettingsStatus {
     let cfg = config::get();
     let sb = sandbox::get();
+    let seasons = st.db.seasons().await;
+    let installs = apinstall::installed()
+        .into_iter()
+        .map(|i| {
+            let users = apinstall::pinned_to(&i.version)
+                .into_iter()
+                .filter_map(|id| seasons.iter().find(|s| s.id == id))
+                .map(|s| format!("{} ({})", s.name, s.state().as_str()))
+                .collect();
+            (i, users)
+        })
+        .collect();
     render::SettingsStatus {
+        installs,
+        active_ap: apinstall::active().version,
+        updates: apupdate::snapshot(),
+        backups: backup::list(),
+        backup_policy: backup::Policy::from_config(),
+        backup_dir: backup::dir().display().to_string(),
+        backup_running: backup::running(),
+        backup_last: backup::last(),
         auth_mode: st.auth.mode.as_str().to_string(),
         isolation: sb.posture(),
         strong_isolation: sb.strong(),
-        ap_version: ap_adapter::ap_version().map(str::to_string),
         managed: cfg.ap_managed,
         ports: (*cfg.ap_ports.start(), *cfg.ap_ports.end()),
+    }
+}
+
+// ---- Archipelago installs (settings page) ----
+
+async fn settings_notice(st: &AppState, err: Option<&str>) -> Response {
+    let inst = st.db.instance().await;
+    render::settings_page(&inst, &settings_status(st).await, err, false).into_response()
+}
+
+async fn ap_check(me: auth::Me) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return render::notice("Sysadmins only.", false, "/").into_response();
+    }
+    apupdate::check_releases().await;
+    Redirect::to("/admin/settings#ap").into_response()
+}
+
+#[derive(Deserialize)]
+struct ApVersionForm {
+    version: String,
+}
+
+async fn ap_install(State(st): State<AppState>, me: auth::Me, Form(f): Form<ApVersionForm>) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return render::notice("Sysadmins only.", false, "/").into_response();
+    }
+    match apupdate::start_install(f.version.trim()) {
+        Ok(()) => Redirect::to("/admin/settings#ap").into_response(),
+        Err(e) => settings_notice(&st, Some(&e)).await,
+    }
+}
+
+/// Make a version the active one: signup checks and new generations use it.
+async fn ap_use(State(st): State<AppState>, me: auth::Me, Form(f): Form<ApVersionForm>) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return render::notice("Sysadmins only.", false, "/").into_response();
+    }
+    let Some(i) = apinstall::find(f.version.trim()) else {
+        return settings_notice(&st, Some("That version isn't installed.")).await;
+    };
+    let v = (!i.bundled).then_some(i.version.clone());
+    if let Err(e) = st.db.set_ap_active(v.as_deref()).await {
+        return settings_notice(&st, Some(&e.to_string())).await;
+    }
+    apinstall::set_active(v);
+    tracing::info!("{} made Archipelago {} active", me.username(), i.version);
+    Redirect::to("/admin/settings#ap").into_response()
+}
+
+async fn ap_remove(State(st): State<AppState>, me: auth::Me, Form(f): Form<ApVersionForm>) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return render::notice("Sysadmins only.", false, "/").into_response();
+    }
+    match apupdate::remove(f.version.trim()).await {
+        Ok(()) => Redirect::to("/admin/settings#ap").into_response(),
+        Err(e) => settings_notice(&st, Some(&e)).await,
+    }
+}
+
+// ---- backups (settings page) ----
+
+async fn backup_now(State(st): State<AppState>, me: auth::Me) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return render::notice("Sysadmins only.", false, "/").into_response();
+    }
+    if !backup::running() {
+        let db = st.db.clone();
+        tokio::spawn(async move {
+            let _ = backup::create(&db, &backup::Policy::from_config()).await;
+        });
+    }
+    Redirect::to("/admin/settings#backups").into_response()
+}
+
+#[derive(Deserialize)]
+struct BackupName {
+    name: String,
+}
+
+async fn backup_download(me: auth::Me, Query(q): Query<BackupName>, req: axum::extract::Request) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return render::notice("Sysadmins only.", false, "/").into_response();
+    }
+    let Some(path) = backup::path(&q.name) else {
+        return (axum::http::StatusCode::NOT_FOUND, "no such backup").into_response();
+    };
+    let disposition = format!("attachment; filename=\"{}\"", q.name);
+    match tower::ServiceExt::oneshot(tower_http::services::ServeFile::new(path), req).await {
+        Ok(mut r) => {
+            if let Ok(v) = axum::http::HeaderValue::from_str(&disposition) {
+                r.headers_mut().insert(axum::http::header::CONTENT_DISPOSITION, v);
+            }
+            r.map(axum::body::Body::new).into_response()
+        }
+        Err(e) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn backup_delete(State(st): State<AppState>, me: auth::Me, Form(f): Form<BackupName>) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return render::notice("Sysadmins only.", false, "/").into_response();
+    }
+    match backup::delete(&f.name) {
+        Ok(()) => Redirect::to("/admin/settings#backups").into_response(),
+        Err(e) => settings_notice(&st, Some(&e)).await,
     }
 }
 
@@ -2182,7 +2333,7 @@ async fn settings_save(State(st): State<AppState>, me: auth::Me, Form(f): Form<S
     }
     match parse_settings(&f) {
         Ok(inst) => match st.db.set_instance(&inst).await {
-            Ok(()) => render::settings_page(&inst, &settings_status(&st), None, true).into_response(),
+            Ok(()) => render::settings_page(&inst, &settings_status(&st).await, None, true).into_response(),
             Err(e) => render::notice(&format!("Couldn't save: {e}"), false, "/admin/settings").into_response(),
         },
         Err(e) => {
@@ -2198,7 +2349,7 @@ async fn settings_save(State(st): State<AppState>, me: auth::Me, Form(f): Form<S
                     .map(|l| db::Discord { name: l.to_string(), url: String::new(), note: String::new() })
                     .collect(),
             };
-            render::settings_page(&typed, &settings_status(&st), Some(&e), false).into_response()
+            render::settings_page(&typed, &settings_status(&st).await, Some(&e), false).into_response()
         }
     }
 }

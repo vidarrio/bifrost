@@ -102,6 +102,15 @@ impl Db {
         Ok(())
     }
 
+    /// A consistent copy of the whole database at `path` (for backups).
+    pub async fn snapshot_to(&self, path: &std::path::Path) -> Result<(), sqlx::Error> {
+        sqlx::query("VACUUM INTO ?")
+            .bind(path.to_string_lossy().into_owned())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// How uploaded apworlds are approved (manual until a sysadmin changes it).
     pub async fn approval(&self) -> Approval {
         self.setting("apworld_approval")

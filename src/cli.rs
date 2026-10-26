@@ -22,7 +22,10 @@ const USAGE: &str = "usage:
   bifrost admin reset-link <username>       mint a 24 h password-reset link
   bifrost admin create-sysadmin <username>  create a sysadmin + reset link
   bifrost admin set-role <username> <role>  user|moderator|sysadmin (e.g. promote
-                                            the first IdP user when no group mapping)";
+                                            the first IdP user when no group mapping)
+  bifrost backup now                        take a backup (also runs nightly)
+  bifrost backup list                       list backups
+  bifrost backup restore <file.zip>         restore one (stop Bifrost first)";
 
 /// Commands that need no data dir or database (run before startup touches
 /// either). Returns the exit code if `args` named one.
@@ -41,6 +44,24 @@ pub fn run_early(args: &[String]) -> Option<i32> {
     }
 }
 
+/// Commands that need the data dir but must run before the database is
+/// opened (restoring replaces it).
+pub fn run_offline(args: &[String]) -> Option<i32> {
+    match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        ["backup", "restore", file] => Some(match crate::backup::restore(std::path::Path::new(file)) {
+            Ok(msg) => {
+                println!("{msg}");
+                0
+            }
+            Err(e) => {
+                eprintln!("restore failed: {e}");
+                1
+            }
+        }),
+        _ => None,
+    }
+}
+
 /// Run a CLI command if `args` (after the program name) name one. Returns the
 /// process exit code, or `None` to start the server.
 pub async fn run(args: &[String], db: &Db) -> Option<i32> {
@@ -52,6 +73,22 @@ pub async fn run(args: &[String], db: &Db) -> Option<i32> {
         ["admin", "reset-link", user] => reset_link(db, user).await,
         ["admin", "create-sysadmin", user] => create_sysadmin(db, user).await,
         ["admin", "set-role", user, role] => set_role(db, user, role).await,
+        ["backup", "now"] => match crate::backup::create(db, &crate::backup::Policy::from_config()).await {
+            Ok(b) => {
+                println!("{}", crate::backup::dir().join(&b.name).display());
+                0
+            }
+            Err(e) => {
+                eprintln!("backup failed: {e}");
+                1
+            }
+        },
+        ["backup", "list"] => {
+            for b in crate::backup::list() {
+                println!("{}  {:>10}", b.name, b.size);
+            }
+            0
+        }
         _ => {
             eprintln!("{USAGE}");
             2

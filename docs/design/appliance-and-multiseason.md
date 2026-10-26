@@ -569,8 +569,39 @@ URL hash and is stamped onto every form action, so post→redirect lands on the
 same tab. The instance console is three linked pages under one tab bar —
 Seasons · Users & links · Settings (connect host, home-page content, plus
 read-only AP version, port range, auth mode, isolation); moderators see only
-Seasons. Not yet: backups, AP upgrade, auth-provider settings in the UI (the
-CLI owns auth mode).
+Seasons. Not yet: auth-provider settings in the UI (the CLI owns auth mode).
+
+**Archipelago upgrades — as built (`src/apinstall.rs`, `src/apupdate.rs`,
+`scripts/bifrost_ap_install.py`).** Buttons on the settings page, no console.
+*Check for releases* asks GitHub (`BIFROST_AP_REPO`) for recent releases;
+*install* runs the installer under `BIFROST_PYTHON` (outside the sandbox: it
+needs the network) into `$BIFROST_DATA/ap/.partial-<tag>/` — source tarball,
+its own venv, core + per-world requirements (GUI-only Kivy/KivyMD skipped; a
+world whose extras fail is reported, not fatal; Cython speedups when a
+compiler + headers exist, else AP's pure-Python fallback) — then a sandboxed
+test check + one-player generation with it; only then is it moved to
+`ap/<version>/` and marked ready. The page shows progress and refreshes until
+done. *Use for new seasons* makes an install **active** (signup checks and new
+generations use it). Each generation **pins** its season to the install it ran
+with (`season.ap_version`), so a live season's server and helpers keep that
+version through restarts until it's re-rolled or archived — switching never
+changes a live game. *Remove* is refused for the bundled install, the active
+one, and any a non-archived season is pinned to. AP's own pip-on-startup is
+off (`SKIP_REQUIREMENTS_UPDATE`): Bifrost owns each install's dependencies.
+
+**Backups — as built (`src/backup.rs`).** Nightly at `[backup] hour` (UTC,
+default 04:00; `off` disables), plus *Back up now* on the settings page and
+`bifrost backup now`. One owner-only zip per backup in `[backup] dir`
+(default `$BIFROST_DATA/backups`; another disk is better): a `VACUUM INTO`
+snapshot of the database plus every file under the data dir except backups,
+`ap/` (reinstallable) and `tmp/`. Retention keeps the newest backup of each of
+the last 7 days, 4 weeks and 3 months that have one, then drops the oldest
+while the total exceeds `max_mb` (default 5 GiB) — never the newest; a backup
+is skipped when the disk couldn't fit another one plus 512 MiB headroom. The
+page lists backups with download/delete. Restore is offline:
+`bifrost backup restore <zip>` refuses while something listens on Bifrost's
+port, and moves the current contents to `.pre-restore-<time>/` instead of
+deleting them.
 
 ## 10. Security hardening checklist
 

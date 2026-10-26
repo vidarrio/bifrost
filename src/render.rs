@@ -3724,9 +3724,169 @@ pub struct SettingsStatus {
     /// The sandbox posture line, and whether it's the strong tier.
     pub isolation: String,
     pub strong_isolation: bool,
-    pub ap_version: Option<String>,
     pub managed: bool,
     pub ports: (u16, u16),
+    /// Ready Archipelago installs, each with the seasons pinned to it.
+    pub installs: Vec<(crate::apinstall::Install, Vec<String>)>,
+    pub active_ap: String,
+    pub updates: crate::apupdate::Updates,
+    pub backups: Vec<crate::backup::Backup>,
+    pub backup_policy: crate::backup::Policy,
+    pub backup_dir: String,
+    pub backup_running: bool,
+    /// The last run's (when, message, ok).
+    pub backup_last: Option<(i64, String, bool)>,
+}
+
+fn backups_panel(status: &SettingsStatus) -> String {
+    let p = &status.backup_policy;
+    let when = match p.hour {
+        Some(h) => format!("Nightly at {h:02}:00 UTC"),
+        None => "Nightly backups are off".into(),
+    };
+    let mut b = format!(
+        r#"<h2 id="backups">Backups</h2><p class="statline">{when}, to <span class="mono">{}</span>. Keeps the newest backup of each of the last {} days, {} weeks and {} months, and drops the oldest beyond {} MiB in total (never the newest). Restore with <span class="mono">bifrost backup restore &lt;file&gt;</span> while Bifrost is stopped. Settings: <span class="mono">[backup]</span> in config.toml.</p>"#,
+        esc(&status.backup_dir),
+        p.daily,
+        p.weekly,
+        p.monthly,
+        p.max_bytes >> 20,
+    );
+    if status.backup_running {
+        b.push_str(r#"<meta http-equiv="refresh" content="3"><div class="banner">Backing up…</div>"#);
+    } else if let Some((at, msg, ok)) = &status.backup_last {
+        b.push_str(&format!(
+            r#"<div class="banner {}">{} <span class="statline">({})</span></div>"#,
+            if *ok { "ok" } else { "bad" },
+            esc(msg),
+            fmt_date(*at)
+        ));
+    }
+    if status.backups.is_empty() {
+        b.push_str(r#"<div class="empty">No backups yet.</div>"#);
+    } else {
+        let total: u64 = status.backups.iter().map(|x| x.size).sum();
+        b.push_str(&format!(
+            r#"<p class="statline">{} backups, {} in total.</p>"#,
+            status.backups.len(),
+            human_size(total)
+        ));
+        for x in &status.backups {
+            b.push_str(&format!(
+                r#"<div class="hintrow"><span class="mono">{} <span class="statline">· {}</span></span><span><a class="ghost" href="/admin/settings/backups/download?name={}">download</a> {}</span></div>"#,
+                esc(&x.name),
+                human_size(x.size),
+                urlq(&x.name),
+                action_btn(
+                    "/admin/settings/backups/delete",
+                    &[("name", &x.name)],
+                    "delete",
+                    true,
+                    &format!("Delete {}?", x.name)
+                ),
+            ));
+        }
+    }
+    b.push_str(r#"<div class="btnrow">"#);
+    if !status.backup_running {
+        b.push_str(&action_btn("/admin/settings/backups/now", &[], "Back up now", false, ""));
+    }
+    b.push_str("</div>");
+    b
+}
+
+/// The Archipelago panel: installed versions, the install job, releases.
+fn ap_panel(status: &SettingsStatus) -> String {
+    let job = status.updates.job.as_ref();
+    let busy = job.is_some_and(|j| j.outcome.is_none());
+    let mut b = String::from(
+        r#"<h2 id="ap">Archipelago</h2><p class="statline">Signup checks and new generations use the <b>active</b> version. A season keeps running on the version that generated its seed until it's re-rolled or archived, so switching never changes a live game.</p>"#,
+    );
+    b.push_str(r#"<table class="utable"><tr><th>Version</th><th>Location</th><th>Used by</th><th></th></tr>"#);
+    for (i, users) in &status.installs {
+        let active = i.version == status.active_ap;
+        let mut used = Vec::new();
+        if active {
+            used.push(r#"<span class="tag">active</span>"#.to_string());
+        }
+        used.extend(users.iter().map(|u| esc(u)));
+        let mut acts = String::new();
+        if !active {
+            acts.push_str(&action_btn("/admin/settings/ap/use", &[("version", &i.version)], "use for new seasons", false, ""));
+        }
+        if !i.bundled && !active && users.is_empty() {
+            acts.push(' ');
+            acts.push_str(&action_btn(
+                "/admin/settings/ap/remove",
+                &[("version", &i.version)],
+                "remove",
+                true,
+                &format!("Remove Archipelago {}?", i.version),
+            ));
+        }
+        b.push_str(&format!(
+            r#"<tr><td class="mono">{}{}</td><td class="mono">{}</td><td>{}</td><td>{acts}</td></tr>"#,
+            esc(&i.version),
+            if i.bundled { " · bundled" } else { "" },
+            esc(&i.dir.display().to_string()),
+            if used.is_empty() { "—".into() } else { used.join(" · ") },
+        ));
+    }
+    b.push_str("</table>");
+
+    if let Some(j) = job {
+        match &j.outcome {
+            None => b.push_str(&format!(
+                r#"<meta http-equiv="refresh" content="4"><div class="banner">Installing Archipelago {} (started {}) — this page refreshes until it's done.</div>"#,
+                esc(&j.version),
+                fmt_date(j.started)
+            )),
+            Some(Ok(m)) => b.push_str(&format!(r#"<div class="banner ok">{}</div>"#, esc(m))),
+            Some(Err(e)) => b.push_str(&format!(
+                r#"<div class="banner bad">Installing Archipelago {} failed: {}</div>"#,
+                esc(&j.version),
+                esc(e)
+            )),
+        }
+        if !j.log.is_empty() {
+            b.push_str(&format!(
+                r#"<pre class="mono" style="max-height:220px;overflow:auto;white-space:pre-wrap;font-size:12px">{}</pre>"#,
+                esc(&j.log.join("\n"))
+            ));
+        }
+    }
+
+    b.push_str(r#"<div class="btnrow">"#);
+    b.push_str(&action_btn("/admin/settings/ap/check", &[], "Check for releases", false, ""));
+    b.push_str("</div>");
+    match &status.updates.releases {
+        None => {}
+        Some((_, Err(e))) => b.push_str(&format!(r#"<div class="banner bad">Couldn't check: {}</div>"#, esc(e))),
+        Some((at, Ok(rels))) => {
+            let installed = |t: &str| status.installs.iter().any(|(i, _)| i.version == t);
+            let fresh: Vec<_> = rels.iter().filter(|r| !installed(&r.tag)).collect();
+            b.push_str(&format!(r#"<p class="statline">Checked {}.</p>"#, fmt_date(*at)));
+            if fresh.is_empty() {
+                b.push_str(r#"<div class="empty">Every recent release is installed.</div>"#);
+            }
+            for r in fresh {
+                let pre = if r.prerelease { r#" <span class="tag">pre-release</span>"# } else { "" };
+                let date = r.published.get(..10).unwrap_or("");
+                let btn = if busy {
+                    String::new()
+                } else {
+                    action_btn("/admin/settings/ap/install", &[("version", &r.tag)], "install", false, "")
+                };
+                b.push_str(&format!(
+                    r#"<div class="hintrow"><span><b class="mono">{}</b>{pre} <span class="statline">· {} · {}</span></span>{btn}</div>"#,
+                    esc(&r.tag),
+                    esc(&r.name),
+                    esc(date),
+                ));
+            }
+        }
+    }
+    b
 }
 
 pub fn settings_page(
@@ -3750,12 +3910,13 @@ pub fn settings_page(
         "AP server: external (BIFROST_AP_MODE=external)".into()
     };
     body.push_str(&format!(
-        r#"<h2>Deployment</h2><p class="statline">Archipelago: <b>{}</b><br>{ports}<br>Auth: <b>{}</b><br>Isolation: <span style="color:var({})">{}</span></p>"#,
-        esc(status.ap_version.as_deref().unwrap_or("unknown — couldn't read Utils.py")),
+        r#"<h2>Deployment</h2><p class="statline">{ports}<br>Auth: <b>{}</b><br>Isolation: <span style="color:var({})">{}</span></p>"#,
         esc(&status.auth_mode),
         if status.strong_isolation { "--ok" } else { "--warn" },
         esc(&status.isolation),
     ));
+    body.push_str(&ap_panel(status));
+    body.push_str(&backups_panel(status));
     let discords: String = inst
         .discords
         .iter()

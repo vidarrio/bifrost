@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""Install an Archipelago release for Bifrost (settings page → Archipelago).
+
+    bifrost_ap_install.py releases <owner/repo>
+        Print the repo's recent GitHub releases as one JSON line.
+    bifrost_ap_install.py install <owner/repo> <tag> <dest>
+        Download the release's source, unpack it into <dest>, create its venv
+        and install its requirements. Progress lines go to stdout; the last
+        line is a JSON result.
+
+Runs under a plain Python 3 (not an AP venv), outside the sandbox: it needs
+the network, and it's what builds the interpreter the sandboxed helpers use.
+Only the standard library is used. GUI-only requirements (Kivy/KivyMD) are
+skipped — Bifrost never opens AP's client UI — and a world whose
+requirements fail to install is reported, not fatal. AP's Cython speedups
+are built when a C compiler is around; otherwise AP uses its pure-Python
+fallback.
+"""
+import io
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import urllib.request
+
+UA = {"User-Agent": "bifrost-ap-install", "Accept": "application/vnd.github+json"}
+MAX_TARBALL = 512 * 1024 * 1024
+SKIP = re.compile(r"^\s*(kivy|kivymd)\b", re.I)
+
+
+def say(msg):
+    print(msg, flush=True)
+
+
+def fetch(url, limit):
+    req = urllib.request.Request(url, headers=UA)
+    with urllib.request.urlopen(req, timeout=60) as r:
+        data = r.read(limit + 1)
+    if len(data) > limit:
+        raise RuntimeError(f"{url}: larger than {limit} bytes")
+    return data
+
+
+def releases(repo):
+    data = json.loads(fetch(f"https://api.github.com/repos/{repo}/releases?per_page=15", 4 << 20))
+    out = [
+        {
+            "tag": r["tag_name"],
+            "name": r.get("name") or r["tag_name"],
+            "prerelease": bool(r.get("prerelease")),
+            "published": r.get("published_at") or "",
+        }
+        for r in data
+        if not r.get("draft")
+    ]
+    print(json.dumps({"ok": True, "releases": out}))
+
+
+def unpack(blob, dest):
+    """Extract a GitHub source tarball into dest, dropping its top folder and
+    refusing anything that would land outside dest or isn't a plain file/dir."""
+    root = os.path.realpath(dest)
+    with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tf:
+        for m in tf.getmembers():
+            parts = m.name.split("/", 1)
+            if len(parts) < 2 or not parts[1]:
+                continue
+            target = os.path.realpath(os.path.join(root, parts[1]))
+            if not target.startswith(root + os.sep):
+                raise RuntimeError(f"unsafe path in archive: {m.name}")
+            if m.isdir():
+                os.makedirs(target, exist_ok=True)
+            elif m.isfile():
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with tf.extractfile(m) as src, open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                if m.mode & 0o111:
+                    os.chmod(target, 0o755)
+            # links, devices etc. are skipped: AP's source has none it needs
+
+
+def filtered(req_file, out_file):
+    with open(req_file) as f:
+        lines = [l for l in f if not SKIP.match(l)]
+    with open(out_file, "w") as f:
+        f.writelines(lines)
+
+
+def pip(venv_py, *args):
+    r = subprocess.run([venv_py, "-m", "pip", "--disable-pip-version-check", "--no-input", *args],
+                       capture_output=True, text=True)
+    return r.returncode == 0, (r.stderr or r.stdout).strip().splitlines()[-3:]
+
+
+def install(repo, tag, dest):
+    if os.path.exists(dest):
+        shutil.rmtree(dest)
+    os.makedirs(dest)
+    say(f"Downloading {repo} {tag}…")
+    blob = fetch(f"https://github.com/{repo}/archive/refs/tags/{tag}.tar.gz", MAX_TARBALL)
+    say(f"Unpacking ({len(blob) // (1 << 20)} MiB)…")
+    unpack(blob, dest)
+    if not os.path.isfile(os.path.join(dest, "Utils.py")):
+        raise RuntimeError("that release doesn't look like Archipelago (no Utils.py)")
+
+    say("Creating the Python environment…")
+    subprocess.run([sys.executable, "-m", "venv", os.path.join(dest, "venv")], check=True,
+                   capture_output=True)
+    py = os.path.join(dest, "venv", "bin", "python")
+    ok, err = pip(py, "install", "--upgrade", "pip", "setuptools<81", "wheel")
+    if not ok:
+        raise RuntimeError("upgrading pip: " + " | ".join(err))
+
+    say("Installing Archipelago's requirements…")
+    core = os.path.join(dest, ".bifrost-requirements.txt")
+    filtered(os.path.join(dest, "requirements.txt"), core)
+    ok, err = pip(py, "install", "-r", core)
+    if not ok:
+        raise RuntimeError("core requirements: " + " | ".join(err))
+
+    failed = []
+    worlds = sorted(
+        d for d in os.listdir(os.path.join(dest, "worlds"))
+        if os.path.isfile(os.path.join(dest, "worlds", d, "requirements.txt"))
+    )
+    say(f"Installing requirements for {len(worlds)} worlds…")
+    for w in worlds:
+        req = os.path.join(dest, "worlds", w, ".bifrost-requirements.txt")
+        filtered(os.path.join(dest, "worlds", w, "requirements.txt"), req)
+        ok, err = pip(py, "install", "-r", req)
+        if not ok:
+            failed.append(w)
+            say(f"  {w}: failed ({' | '.join(err)[-200:]})")
+
+    speedups = False
+    if shutil.which("cc") or shutil.which("gcc"):
+        say("Building AP's speedups…")
+        cy = os.path.join(dest, "venv", "bin", "cythonize")
+        r = subprocess.run([cy, "-b", "-i", "_speedups.pyx"], cwd=dest, capture_output=True, text=True)
+        speedups = r.returncode == 0
+        shutil.rmtree(os.path.join(dest, "build"), ignore_errors=True)
+        if not speedups:
+            say("  speedups didn't build; AP will use its pure-Python fallback")
+    print(json.dumps({"ok": True, "failed_worlds": failed, "speedups": speedups}))
+
+
+def main():
+    try:
+        if sys.argv[1:2] == ["releases"] and len(sys.argv) == 3:
+            releases(sys.argv[2])
+        elif sys.argv[1:2] == ["install"] and len(sys.argv) == 5:
+            install(*sys.argv[2:5])
+        else:
+            sys.exit(__doc__)
+    except Exception as e:  # reported to Bifrost as the last line
+        print(json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"}))
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

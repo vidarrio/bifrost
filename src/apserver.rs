@@ -216,18 +216,17 @@ fn start(
         "--server_password".into(),
         launch.admin_password.clone().into(),
     ];
+    // The install that generated this season's seed (see `apinstall`).
+    let ap = crate::apinstall::for_dirs(dirs);
+    let mut env = crate::ap_adapter::ap_env(dirs, &ap);
+    env.push(("PYTHONUNBUFFERED", "1".into()));
     let job = Job {
-        program: &cfg.ap_python,
+        program: &ap.python,
         args,
         cwd: &dirs.root,
-        env: vec![
-            ("BIFROST_AP_DIR", cfg.ap_dir.clone().into_os_string()),
-            ("BIFROST_SEASON_DIR", dirs.root.clone().into_os_string()),
-            ("PYTHONDONTWRITEBYTECODE", "1".into()),
-            ("PYTHONUNBUFFERED", "1".into()),
-        ],
+        env,
         read: vec![
-            cfg.ap_dir.clone(),
+            ap.dir.clone(),
             cfg.runtime_dir.join("scripts"),
             dirs.root.clone(),
         ],

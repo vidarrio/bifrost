@@ -41,7 +41,9 @@ pub(super) async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
              ap_admin_password TEXT NOT NULL DEFAULT '',
              -- The port its managed AP server listens on: pinned at go-live,
              -- held through restarts and re-rolls, released on archive.
-             ap_port INTEGER UNIQUE
+             ap_port INTEGER UNIQUE,
+             -- The Archipelago version that generated the current seed.
+             ap_version TEXT
            )"#,
     )
     .execute(pool)
@@ -131,6 +133,9 @@ pub struct SeasonRow {
     pub minesweeper_enabled: bool,
     pub mc_enabled: bool,
     pub ap_port: Option<i64>,
+    /// The Archipelago version that generated its current seed (it keeps
+    /// running on that one; see `apinstall`).
+    pub ap_version: Option<String>,
 }
 
 /// `state` as stored (lets `FromRow` decode straight into [`State`]).
@@ -151,7 +156,7 @@ impl SeasonRow {
 }
 
 const COLS: &str = "id, name, state, created_by, created_at, seed, live_at, archived_at,
-                    minesweeper_enabled, mc_enabled, ap_port";
+                    minesweeper_enabled, mc_enabled, ap_port, ap_version";
 
 /// Why a transition was refused.
 #[derive(Debug, PartialEq)]
@@ -467,6 +472,15 @@ impl Db {
     pub async fn set_season_seed(&self, id: i64, seed: &str) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE season SET seed = ? WHERE id = ?")
             .bind(seed)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_season_ap_version(&self, id: i64, version: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE season SET ap_version = ? WHERE id = ?")
+            .bind(version)
             .bind(id)
             .execute(&self.pool)
             .await?;
