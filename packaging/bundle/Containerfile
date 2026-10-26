@@ -1,0 +1,91 @@
+# Bifrost native single-file bundle (design doc §3, option 2): a static
+# Bifrost binary with its runtime appended — a relocatable Python
+# (python-build-standalone) carrying Archipelago's requirements, the pinned
+# Archipelago source, and Bifrost's scripts + vendored worlds. See
+# src/bundle.rs for the format and how it unpacks.
+#
+#   packaging/bundle/build.sh          → dist/bifrost-<version>-x86_64-linux
+#
+# Build args: BIFROST_VERSION, AP_VERSION + AP_SHA256 (the release's source
+# tarball), PY_URL + PY_SHA256 (python-build-standalone install_only).
+
+ARG DEBIAN=trixie
+# apt's privilege drop to _apt (uid/gid 65534) fails under rootless builders
+# whose subordinate ID range doesn't reach 65534; see the Dockerfile.
+ARG APT="apt-get -o APT::Sandbox::User=root"
+
+# ---- Bifrost, static (musl): runs on any x86_64 Linux ----
+FROM docker.io/library/rust:1.98-${DEBIAN} AS bifrost
+ARG APT
+RUN ${APT} update && ${APT} install -y --no-install-recommends musl-tools \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY rust-toolchain.toml ./
+RUN rustup target add x86_64-unknown-linux-musl
+COPY Cargo.toml Cargo.lock ./
+COPY crates crates
+COPY src src
+COPY static static
+RUN cargo build --release --locked --bin bifrost --target x86_64-unknown-linux-musl
+
+# ---- the runtime payload ----
+FROM docker.io/library/debian:${DEBIAN}-slim AS runtime
+ARG APT
+ARG AP_VERSION=0.6.8
+ARG AP_SHA256=2e957e6cd466d311a3db05f71d4a7525c71858ddfe0eebb7465380a1fa80c3ff
+ARG AP_REPO=https://github.com/ArchipelagoMW/Archipelago
+ARG PY_URL=https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.13.16+20261013-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
+ARG PY_SHA256=d0080766b6b74aeb81e1949ef0d9a20e6c17f7b160fb295a69b936ccb17660be
+RUN ${APT} update && ${APT} install -y --no-install-recommends \
+        ca-certificates curl gcc git libc6-dev zip \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /bundle/runtime
+RUN curl -fsSL "${PY_URL}" -o /tmp/py.tgz \
+    && echo "${PY_SHA256}  /tmp/py.tgz" | sha256sum -c - \
+    && tar -xzf /tmp/py.tgz && rm /tmp/py.tgz
+RUN curl -fsSL "${AP_REPO}/archive/refs/tags/${AP_VERSION}.tar.gz" -o /tmp/ap.tgz \
+    && echo "${AP_SHA256}  /tmp/ap.tgz" | sha256sum -c - \
+    && tar -xzf /tmp/ap.tgz && rm /tmp/ap.tgz && mv "Archipelago-${AP_VERSION}" archipelago
+# Archipelago's requirements go straight into the relocatable interpreter (a
+# venv would hard-code this build's paths). GUI-only Kivy/KivyMD are left out,
+# as the settings-page installer does; setuptools<81: some worlds still import
+# pkg_resources. The Cython speedups are prebuilt with gcc.
+WORKDIR /bundle/runtime/archipelago
+RUN P=../python/bin/python3 \
+    && $P -m pip install --no-cache-dir --upgrade pip "setuptools<81" wheel cython \
+    && grep -viE '^\s*(kivy|kivymd)\b' requirements.txt > /tmp/req.txt \
+    && $P -m pip install --no-cache-dir -r /tmp/req.txt \
+    && for r in worlds/*/requirements.txt; do \
+         grep -viE '^\s*(kivy|kivymd)\b' "$r" > /tmp/w.txt; \
+         $P -m pip install --no-cache-dir -r /tmp/w.txt || echo "WARN: $r failed"; \
+       done \
+    && CC=gcc ../python/bin/cythonize -b -i _speedups.pyx && rm -rf build \
+    && find .. -name __pycache__ -prune -exec rm -rf {} +
+WORKDIR /bundle/runtime
+COPY scripts bifrost/scripts
+COPY vendor bifrost/vendor
+ARG BIFROST_VERSION=dev
+# The id names this exact payload: a new build unpacks fresh.
+RUN rm -rf bifrost/scripts/__pycache__ \
+    && h=$(find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12) \
+    && echo "${BIFROST_VERSION}-ap${AP_VERSION}-${h}" > BUNDLE_ID && cat BUNDLE_ID \
+    && zip -qry -X /bundle/payload.zip .
+
+# ---- binary + payload + trailer (payload length, u64 LE; magic) ----
+FROM runtime AS assemble
+COPY --from=bifrost /src/target/x86_64-unknown-linux-musl/release/bifrost /bundle/bifrost.bin
+RUN /bundle/runtime/python/bin/python3 - <<'EOF'
+import os, struct
+n = os.path.getsize("/bundle/payload.zip")
+with open("/bundle/bifrost", "wb") as out:
+    for part in ("/bundle/bifrost.bin", "/bundle/payload.zip"):
+        with open(part, "rb") as f:
+            while chunk := f.read(1 << 20):
+                out.write(chunk)
+    out.write(struct.pack("<Q", n) + b"BIFROST-BUNDLE01")
+os.chmod("/bundle/bifrost", 0o755)
+EOF
+
+FROM scratch AS bundle
+ARG BIFROST_VERSION=dev
+COPY --from=assemble /bundle/bifrost /bifrost-${BIFROST_VERSION}-x86_64-linux

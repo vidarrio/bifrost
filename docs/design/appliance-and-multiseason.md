@@ -66,6 +66,27 @@ without it Bifrost drops to the limits tier and says which flag to add — and
 strong tier active, the managed-server and multi-season end-to-end suites pass
 against the container, and stop/start keeps every season's port and save.
 
+**Native bundle — as built (`packaging/bundle/`, `src/bundle.rs`).**
+`packaging/bundle/build.sh` produces `dist/bifrost-<version>-x86_64-linux`
+(~80 MB): a static musl Bifrost with a zip payload appended, then a trailer
+(payload length + magic). The payload holds a relocatable CPython 3.13 from
+python-build-standalone (pinned release + SHA-256) with Archipelago's
+requirements installed straight into it (no venv, so it stays relocatable;
+Kivy/KivyMD left out; `_speedups` prebuilt), the pinned Archipelago source
+(tag + tarball SHA-256), Bifrost's `scripts/` + `vendor/`, and a `BUNDLE_ID`
+(version + AP version + content hash). On start, a binary with a payload
+unpacks it once into `$BIFROST_DATA/runtime/<id>/` (atomic rename; symlinks
+must stay inside) and supplies the defaults for `BIFROST_AP_DIR`,
+`BIFROST_AP_PYTHON`, `BIFROST_RUNTIME_DIR` and `BIFROST_PYTHON` (explicit
+settings still win); without `BIFROST_DATA` it uses `~/.local/share/bifrost`
+(`/var/lib/bifrost` as root). A newer bundle unpacks beside the old runtime,
+which is removed unless an installed release's venv was built from it.
+Isolation is the host's: bubblewrap if installed (strong tier), otherwise
+limits only. Verified: first run unpacks, restart doesn't; checks, generation
+and a live server run on the bundled Python under bwrap; a release installs
+from the settings page with it; and it runs on a bare `debian:bookworm-slim`
+with no Python at all. Linux x86_64 only for now.
+
 **AP coupling → one adapter.** Today we touch AP internals directly (pickled
 `current.apsave` via `restricted_loads`, `AutoWorldRegister`, helper scripts
 pinned to `/srv/archipelago`). Before bundling, isolate *all* AP-internals

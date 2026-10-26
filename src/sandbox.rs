@@ -239,7 +239,13 @@ fn in_container() -> bool {
     std::path::Path::new("/run/.containerenv").exists() || std::path::Path::new("/.dockerenv").exists()
 }
 
-fn set_limit(resource: libc::__rlimit_resource_t, value: u64) {
+// glibc types setrlimit's resource as an enum; musl (the native bundle) as int.
+#[cfg(target_env = "gnu")]
+type Resource = libc::__rlimit_resource_t;
+#[cfg(not(target_env = "gnu"))]
+type Resource = libc::c_int;
+
+fn set_limit(resource: Resource, value: u64) {
     let lim = libc::rlimit {
         rlim_cur: value as libc::rlim_t,
         rlim_max: value as libc::rlim_t,

@@ -27,6 +27,7 @@ mod apserver;
 mod archive;
 mod auth;
 mod backup;
+mod bundle;
 mod checker;
 mod cli;
 mod config;

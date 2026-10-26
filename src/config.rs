@@ -145,14 +145,40 @@ impl Config {
     /// Resolve from the environment and `$BIFROST_DATA/config.toml`, and
     /// make the file's settings available to [`var`]. Panics on a malformed
     /// file (startup should fail loudly, not run half-configured).
+    ///
+    /// A single-file bundle (see `bundle`) unpacks its runtime here and
+    /// supplies the defaults for the AP install, interpreter and runtime dir;
+    /// without `BIFROST_DATA` it keeps its data in the user's data dir.
     pub fn load() -> Self {
-        let data_dir = env_var("BIFROST_DATA").unwrap_or_else(|| "/var/lib/bifrost".into());
+        let data_dir = env_var("BIFROST_DATA").unwrap_or_else(|| {
+            if crate::bundle::present() {
+                crate::bundle::default_data_dir().to_string_lossy().into_owned()
+            } else {
+                "/var/lib/bifrost".into()
+            }
+        });
         let file = load_file(&Path::new(&data_dir).join(CONFIG_FILE))
             .unwrap_or_else(|e| panic!("{CONFIG_FILE}: {e}"));
         if FILE_VARS.set(file).is_err() {
             panic!("config::load called twice");
         }
-        Self::resolve(var)
+        let bundled: HashMap<&str, String> = match crate::bundle::prepare(Path::new(&data_dir)) {
+            Ok(Some(rt)) => {
+                let s = |p: PathBuf| p.to_string_lossy().into_owned();
+                HashMap::from([
+                    ("BIFROST_AP_DIR", s(rt.ap_dir())),
+                    ("BIFROST_AP_PYTHON", s(rt.python())),
+                    ("BIFROST_RUNTIME_DIR", s(rt.runtime_dir())),
+                    ("BIFROST_PYTHON", s(rt.python())),
+                ])
+            }
+            Ok(None) => HashMap::new(),
+            Err(e) => panic!("bundled runtime: {e}"),
+        };
+        Self::resolve(|k| match k {
+            "BIFROST_DATA" => Some(data_dir.clone()),
+            _ => var(k).or_else(|| bundled.get(k).cloned()),
+        })
     }
 
     /// Resolve from an arbitrary variable lookup (testable).

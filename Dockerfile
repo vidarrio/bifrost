@@ -55,9 +55,10 @@ RUN venv/bin/cythonize -b -i _speedups.pyx && rm -rf build
 # ---- runtime ----
 FROM docker.io/library/debian:${DEBIAN}-slim
 ARG APT
-# python3-venv: building the venvs of releases installed from the settings page.
+# python3-venv + git: building the venvs of releases installed from the
+# settings page (some worlds pin requirements to git commits).
 RUN ${APT} update && ${APT} install -y --no-install-recommends \
-        ca-certificates python3 python3-venv bubblewrap tini \
+        ca-certificates python3 python3-venv git bubblewrap tini \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 900 --home-dir /var/lib/bifrost --shell /usr/sbin/nologin bifrost \
     && install -d -o bifrost -g bifrost /var/lib/bifrost
