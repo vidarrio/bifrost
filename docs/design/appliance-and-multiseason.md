@@ -610,6 +610,17 @@ changes a live game. *Remove* is refused for the bundled install, the active
 one, and any a non-archived season is pinned to. AP's own pip-on-startup is
 off (`SKIP_REQUIREMENTS_UPDATE`): Bifrost owns each install's dependencies.
 
+**Archipelago fork — as built (`packaging/archipelago/`).** Releases come
+from Bifrost's fork, `vidarrio/Archipelago` (the `BIFROST_AP_REPO` default),
+so Bifrost can carry small compatibility patches: each build is an upstream
+tag plus `packaging/archipelago/patches/`, released as
+`<tag>-bifrost.<build>` by `release.sh`, with a `BIFROST_VERSION` file that
+names the install (players are shown the upstream part). The first patch
+silences join/leave/tag-change/`!admin` announcements for clients tagged
+`Bifrost`, which every Bifrost connection sends (`ap::QUIET_TAG`, the
+in-logic helper). Upstream servers still work; they just announce those
+clients.
+
 **Backups — as built (`src/backup.rs`).** Nightly at `[backup] hour` (UTC,
 default 04:00; `off` disables), plus *Back up now* on the settings page and
 `bifrost backup now`. One owner-only zip per backup in `[backup] dir`

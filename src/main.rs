@@ -450,7 +450,7 @@ async fn landing(State(st): State<AppState>) -> Html<String> {
             .replace("<!--TAG-->", &render::landing_tag(&inst.domain))
             .replace(
                 "<!--APVERSION-->",
-                &render::escape(&format!("Archipelago {}", apinstall::active().version)),
+                &render::escape(&format!("Archipelago {}", apinstall::active().upstream())),
             )
             .replace("<!--DISCORDS-->", &render::landing_discords(&inst.discords)),
     )

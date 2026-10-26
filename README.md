@@ -63,7 +63,9 @@ Settings*, create a season, and open its signups.
 - **Archipelago updates.** Check for releases, install one (tested with a
   sandboxed generation before it's offered), and switch new seasons to it. Live
   seasons keep the version that generated them until they're re-rolled or
-  archived.
+  archived. Releases come from Bifrost's fork of Archipelago, which adds small
+  compatibility patches, e.g. no join/leave announcements for Bifrost's own
+  connections (see `packaging/archipelago/`).
 - **Backups.** Nightly and on demand, with retention (the last 7 days, 4 weeks
   and 3 months, capped at 5 GiB by default), downloadable from the settings
   page.
@@ -119,6 +121,7 @@ src/
 scripts/          Python helpers run under Archipelago's interpreter
 vendor/           bundled apworlds (Universal Tracker)
 packaging/bundle/ the native bundle build
+packaging/archipelago/ Bifrost's Archipelago fork: patches + release script
 docs/design/      design notes
 ```
 

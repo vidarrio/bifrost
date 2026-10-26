@@ -65,7 +65,8 @@ pub struct Config {
     /// The ports live seasons' AP servers get, one each (`BIFROST_AP_PORTS`,
     /// e.g. `38281-38300`). Its size caps how many seasons can be live at once.
     pub ap_ports: RangeInclusive<u16>,
-    /// The GitHub repo further Archipelago releases are installed from.
+    /// The GitHub repo further Archipelago releases are installed from:
+    /// Bifrost's fork (`packaging/archipelago/`) by default.
     pub ap_repo: String,
     /// The Python that builds an installed release's venv.
     pub base_python: PathBuf,
@@ -205,7 +206,7 @@ impl Config {
             ap_ports: var("BIFROST_AP_PORTS")
                 .map(|r| parse_port_range(&r).unwrap_or_else(|e| panic!("BIFROST_AP_PORTS: {e}")))
                 .unwrap_or(38281..=38300),
-            ap_repo: var("BIFROST_AP_REPO").unwrap_or_else(|| "ArchipelagoMW/Archipelago".into()),
+            ap_repo: var("BIFROST_AP_REPO").unwrap_or_else(|| "vidarrio/Archipelago".into()),
             base_python: var("BIFROST_PYTHON").unwrap_or_else(|| "python3".into()).into(),
             trusted_proxies: var("BIFROST_TRUSTED_PROXIES")
                 .map(|l| {
@@ -460,7 +461,7 @@ pub const EXAMPLE: &str = r#"# $BIFROST_DATA/config.toml — every setting here 
 # dir = "/opt/archipelago"           # BIFROST_AP_DIR
 # python = "/opt/archipelago/venv/bin/python"  # BIFROST_AP_PYTHON
 # — installing further releases from the settings page:
-# repo = "ArchipelagoMW/Archipelago"  # BIFROST_AP_REPO (GitHub owner/name)
+# repo = "vidarrio/Archipelago"  # BIFROST_AP_REPO (GitHub owner/name; Bifrost's fork)
 # base_python = "python3"            # BIFROST_PYTHON (builds each release's venv; needs venv + pip)
 # — external mode only (managed mode generates per-season passwords):
 # url = "ws://127.0.0.1:38281"       # BIFROST_AP_URL

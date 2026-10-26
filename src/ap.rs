@@ -16,6 +16,11 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
 
+/// The tag every Bifrost connection carries: Bifrost's Archipelago fork
+/// doesn't announce such clients joining, leaving or using `!admin`
+/// (`packaging/archipelago/patches/`). Upstream servers just list it.
+pub const QUIET_TAG: &str = "Bifrost";
+
 /// A hint as stored in `_read_hints_*` (ids; names resolved at render via Meta).
 #[derive(Clone)]
 pub struct HintRaw {
@@ -467,7 +472,7 @@ async fn run_once(
                         "uuid": "bifrost-tracker",
                         "version": {"class": "Version", "major": 0, "minor": 6, "build": 8},
                         "items_handling": 0,
-                        "tags": ["Tracker"],
+                        "tags": ["Tracker", QUIET_TAG],
                         "slot_data": false,
                         "password": cfg.password,
                     }]);
@@ -710,7 +715,7 @@ pub async fn mark_goal(url: &str, password: &str, name: &str, game: &str) -> Res
                         let connect = json!([{
                             "cmd": "Connect", "game": game, "name": name, "uuid": "bifrost-goal",
                             "version": {"class": "Version", "major": 0, "minor": 6, "build": 8},
-                            "items_handling": 7, "tags": [], "slot_data": false,
+                            "items_handling": 7, "tags": [QUIET_TAG], "slot_data": false,
                             "password": password,
                         }]);
                         tx.send(Message::Text(connect.to_string()))
@@ -823,7 +828,7 @@ pub async fn send_hint(
                         let connect = json!([{
                             "cmd": "Connect", "game": "", "name": name, "uuid": "bifrost-hint",
                             "version": {"class": "Version", "major": 0, "minor": 6, "build": 8},
-                            "items_handling": 0, "tags": ["TextOnly"], "slot_data": false,
+                            "items_handling": 0, "tags": ["TextOnly", QUIET_TAG], "slot_data": false,
                             "password": password,
                         }]);
                         tx.send(Message::Text(connect.to_string()))
@@ -963,7 +968,7 @@ pub async fn send_admin(
                         let connect = json!([{
                             "cmd": "Connect", "game": "", "name": connect_name, "uuid": "bifrost-admin",
                             "version": {"class": "Version", "major": 0, "minor": 6, "build": 8},
-                            "items_handling": 0, "tags": ["TextOnly"], "slot_data": false,
+                            "items_handling": 0, "tags": ["TextOnly", QUIET_TAG], "slot_data": false,
                             "password": password,
                         }]);
                         tx.send(Message::Text(connect.to_string()))
@@ -1076,7 +1081,7 @@ pub async fn slot_points(url: &str, password: &str, name: &str) -> Option<i64> {
                         let connect = json!([{
                             "cmd": "Connect", "game": "", "name": name, "uuid": "bifrost-points",
                             "version": {"class": "Version", "major": 0, "minor": 6, "build": 8},
-                            "items_handling": 0, "tags": ["TextOnly"], "slot_data": false,
+                            "items_handling": 0, "tags": ["TextOnly", QUIET_TAG], "slot_data": false,
                             "password": password,
                         }]);
                         tx.send(Message::Text(connect.to_string())).await.ok()?;

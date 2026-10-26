@@ -66,6 +66,7 @@ async def run():
     # received items + checks, runs the logic once, fires our callback, and exits.
     ctx = TrackerGameContext(connect, password, print_count=True)
     ctx.auth = slot
+    ctx.tags.add("Bifrost")  # quiet join/leave on Bifrost's AP fork (src/ap.rs QUIET_TAG)
     # Regenerate from the season's YAMLs regardless of any host.yaml override.
     ctx.tracker_core.player_folder_override = bifrost_ap.season_path("Players")
     ctx.set_callback(cb)

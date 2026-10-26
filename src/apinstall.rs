@@ -10,6 +10,12 @@
 //! until it's re-rolled or archived; switching the active version never
 //! changes a live game under its players.
 //!
+//! Releases come from Bifrost's fork of Archipelago (`BIFROST_AP_REPO`, see
+//! `packaging/archipelago/`): upstream tags plus Bifrost's compatibility
+//! patches, tagged `<upstream>-bifrost.<build>`. Such a build names itself in
+//! a `BIFROST_VERSION` file, and that's its version here; a plain upstream
+//! checkout goes by its `__version__`.
+//!
 //! The state is held in memory (resolved synchronously by `ap_adapter` and the
 //! AP server supervisor) and loaded from the database at startup.
 
@@ -24,7 +30,8 @@ const READY: &str = ".bifrost-ready";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Install {
-    /// Its `__version__` (managed installs are also named by it).
+    /// Its `BIFROST_VERSION`, else its `__version__` (managed installs are
+    /// also named by it).
     pub version: String,
     pub dir: PathBuf,
     pub python: PathBuf,
@@ -41,9 +48,18 @@ struct State {
 
 static STATE: RwLock<State> = RwLock::new(State { active: None, pins: BTreeMap::new() });
 
-/// The version an AP install declares (`__version__` in its `Utils.py`).
+/// The version an AP install declares: the fork build's `BIFROST_VERSION`
+/// (e.g. `0.6.8-bifrost.1`), else `__version__` in its `Utils.py`.
 pub fn read_version(dir: &Path) -> Option<String> {
-    parse_version(&std::fs::read_to_string(dir.join("Utils.py")).ok()?)
+    let upstream = parse_version(&std::fs::read_to_string(dir.join("Utils.py")).ok()?)?;
+    let build = std::fs::read_to_string(dir.join("BIFROST_VERSION")).unwrap_or_default();
+    Some(fork_version(&upstream, build.trim()).unwrap_or(upstream))
+}
+
+/// A fork build's version, when it's well-formed and of this upstream.
+fn fork_version(upstream: &str, build: &str) -> Option<String> {
+    let n = build.strip_prefix(upstream)?.strip_prefix("-bifrost.")?;
+    (!n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) && valid_version(build)).then(|| build.to_string())
 }
 
 fn parse_version(utils_py: &str) -> Option<String> {
@@ -63,6 +79,13 @@ pub fn valid_version(v: &str) -> bool {
         && v.len() <= 32
         && !v.starts_with('.')
         && v.chars().all(|c| c.is_ascii_alphanumeric() || ".-+".contains(c))
+}
+
+impl Install {
+    /// The upstream Archipelago version (what players' clients see).
+    pub fn upstream(&self) -> &str {
+        self.version.split_once("-bifrost.").map_or(&self.version, |(u, _)| u)
+    }
 }
 
 pub fn bundled() -> Install {
@@ -211,6 +234,19 @@ mod tests {
         assert_eq!(parse_version("__version__='0.7.0-rc1'").as_deref(), Some("0.7.0-rc1"));
         assert_eq!(parse_version("__version__ = \"../x\""), None);
         assert_eq!(parse_version("version = \"1\""), None);
+    }
+
+    #[test]
+    fn fork_builds_name_themselves() {
+        assert_eq!(fork_version("0.6.8", "0.6.8-bifrost.1").as_deref(), Some("0.6.8-bifrost.1"));
+        assert_eq!(fork_version("0.6.8", "0.6.7-bifrost.1"), None);
+        assert_eq!(fork_version("0.6.8", "0.6.8-bifrost."), None);
+        assert_eq!(fork_version("0.6.8", "0.6.8-bifrost.1/.."), None);
+        assert_eq!(fork_version("0.6.8", ""), None);
+        let i = |v: &str| Install { version: v.into(), dir: PathBuf::new(), python: PathBuf::new(), bundled: false };
+        assert_eq!(i("0.6.8-bifrost.2").upstream(), "0.6.8");
+        assert_eq!(i("0.6.8").upstream(), "0.6.8");
+        assert_eq!(version_cmp("0.6.8-bifrost.10", "0.6.8-bifrost.9"), std::cmp::Ordering::Greater);
     }
 
     #[test]
