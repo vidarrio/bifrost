@@ -31,6 +31,16 @@ def _write():
 try:
     import bifrost_ap  # pins AP paths; must precede AP imports
     logging.getLogger().setLevel(logging.ERROR)
+    # No network in the sandbox: Bifrost relays this helper's one connection,
+    # to the season's AP server, through a Unix socket (BIFROST_AP_SOCKET).
+    _ap_socket = os.environ.get("BIFROST_AP_SOCKET")
+    if _ap_socket:
+        import websockets
+
+        def _connect_via_socket(uri, port=None, **kw):
+            return websockets.unix_connect(_ap_socket, uri, **kw)
+
+        websockets.connect = _connect_via_socket
     import worlds.tracker.TrackerClient as _tcl
     from worlds.tracker.TrackerClient import TrackerGameContext, server_loop
     import worlds.tracker.TrackerCore as _tc

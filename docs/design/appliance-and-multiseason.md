@@ -55,7 +55,8 @@ Offer **two forms**, recommend the first:
 (`rust:1.98-trixie`, release build), Archipelago (a pinned build of Bifrost's fork via
 `AP_VERSION`, default 0.6.8-bifrost.2; venv with core + every bundled world's
 requirements and `setuptools<81`; `_speedups` prebuilt with Cython), and a
-`debian:trixie-slim` runtime with python3, bubblewrap and tini, running as an
+`debian:trixie-slim` runtime with python3, bubblewrap, tini, and gcc + python3-dev
+(so releases installed from the settings page build their speedups), running as an
 unprivileged `bifrost` user. Paths match Bifrost's defaults (`/opt/archipelago`,
 `/opt/bifrost/{scripts,vendor}`, data volume `/var/lib/bifrost`); exposes 8080
 and the AP port range. Run with `--security-opt unmask=/proc/*` (podman) /
@@ -208,10 +209,11 @@ launcher; `ap_adapter` runs every helper through it with a per-helper policy.
   `/etc` allowlist read-only (never all of `/etc`: service drop-ins hold
   secrets), private `/tmp`, AP install + scripts + season dir read-only.
   Writable: generation → season `output/` + `logs/`; check/in-logic → a private
-  scratch dir; PNG normalization → the pack dir. **No network**, except
-  **in-logic**, which must reach the AP server (`--share-net`): world code
-  there runs sandboxed but networked — a known gap until the AP server is
-  reachable over a socket bound into the sandbox.
+  scratch dir; PNG normalization → the pack dir. **No network** for any
+  helper. In-logic, which must reach its season's AP server, gets a Unix
+  socket in its scratch dir that Bifrost relays to that server alone
+  (`ap_adapter::relay_to`; the helper points AP's websocket connect at it).
+  Only the AP servers themselves have the network.
 - A season `host.yaml` is created on demand: a copy of the operator's
   `$BIFROST_DATA/host.yaml` if there is one, else by a step that imports only
   AP's `settings` (no worlds), so world-importing helpers can keep the season

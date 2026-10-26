@@ -103,7 +103,8 @@ copy of it (AP's defaults otherwise).
 
 Anything that runs apworld code — YAML checks, generation, seed decoding, the
 AP servers — runs sandboxed: under bubblewrap with no network (except the AP
-servers and the in-logic tracker), a read-only system, and only the season's
+servers; the in-logic tracker reaches its season's server through a relayed
+socket), a read-only system, and only the season's
 own output writable. Without bubblewrap Bifrost uses resource limits only and
 refuses custom apworlds unless the operator explicitly allows them.
 

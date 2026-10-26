@@ -471,10 +471,17 @@ pub async fn inlogic(
     // The helper writes its result to a file (its stdout is UT/AP noise).
     let dir = scratch_dir("inlogic").await?;
     let out = dir.join("result.json");
+    // It runs apworld code, so no network: its one connection — to this
+    // season's AP server — goes through a Unix socket in its scratch dir,
+    // relayed here to the server.
+    let sock = dir.join("ap.sock");
+    let relay = relay_to(&sock, connect.to_string())?;
+    let mut env = vec![("BIFROST_AP_SOCKET", sock.clone().into_os_string())];
+    env.extend(crate::ap::quiet_key().map(|k| ("BIFROST_QUIET_KEY", k.into())));
     let access = Access {
         write: vec![dir.clone()],
-        network: true,
-        env: crate::ap::quiet_key().map(|k| ("BIFROST_QUIET_KEY", k.into())).into_iter().collect(),
+        network: false,
+        env,
         ..Default::default()
     };
     let args = vec![
@@ -484,10 +491,30 @@ pub async fn inlogic(
         out.clone().into(),
     ];
     let run = run_helper("bifrost_inlogic.py", args, season, access, timeout).await;
+    relay.abort();
     let data = tokio::fs::read_to_string(&out).await;
     let _ = tokio::fs::remove_dir_all(&dir).await;
     run?;
     parse_inlogic(&data.map_err(|e| format!("no result file: {e}"))?)
+}
+
+/// Accept connections on a Unix socket at `path` and pipe each to TCP
+/// `target` (`host:port`), until the returned task is aborted.
+fn relay_to(path: &Path, target: String) -> Result<tokio::task::JoinHandle<()>, String> {
+    let listener = tokio::net::UnixListener::bind(path).map_err(|e| format!("relay socket: {e}"))?;
+    Ok(tokio::spawn(async move {
+        while let Ok((mut inner, _)) = listener.accept().await {
+            let target = target.clone();
+            tokio::spawn(async move {
+                match tokio::net::TcpStream::connect(&target).await {
+                    Ok(mut ap) => {
+                        let _ = tokio::io::copy_bidirectional(&mut inner, &mut ap).await;
+                    }
+                    Err(e) => tracing::warn!("in-logic relay to {target}: {e}"),
+                }
+            });
+        }
+    }))
 }
 
 fn parse_inlogic(data: &str) -> Result<InLogic, String> {
