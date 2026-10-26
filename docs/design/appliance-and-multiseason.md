@@ -388,3 +388,36 @@ new data dir, new config, new service wiring. Consequences:
 1 de-risks everything; 2–3 are the "ready to publish" gates; 4 is the headline;
 5 is the distributable bundle. Multi-season (4) can precede packaging (5) and
 land on the current LXC host first.
+
+## 14. Auth route split — what native auth must reproduce
+
+Today the public / authenticated / admin split is enforced at the reverse proxy
+(forward-auth). When Bifrost owns auth it must reproduce the **same split
+in-app**, with the same default-public behaviour. The split is by URL path
+prefix, matched most-specific-first, with an implicit public catch-all.
+
+| Tier | Route prefixes | Who |
+|---|---|---|
+| **Admin** | `/admin` | admin role only |
+| **Authenticated** | `/claim` `/hint` `/signup` `/game` `/prioritize` `/minesweeper` `/api` `/mc` | any logged-in user (user or admin) |
+| **Public** | everything else — `/`, `/board`, `/check`, `/log`, static assets | anyone, no login |
+
+Rules to preserve exactly:
+- **Default is public.** Gating is an explicit allow-list of prefixes; anything
+  not listed is public (fail-open to public, never the reverse).
+- `/game` is authenticated, so the PopTracker `…/poptracker/{state,asset}` and
+  the per-game endpoints under it require a login — keep that.
+- Most-specific prefix wins (`/admin` is admin even though `/` is public).
+
+Transport/identity contract (forward-auth mode stays byte-compatible with the
+existing proxy; native mode yields the same `Principal`): on allow, the upstream
+sets request headers the app trusts — `X-Auth-Request-User`, `-Email`,
+`-Groups`, `-Preferred-Username` — and group membership picks the tier; on deny
+the proxy 302s to sign-in. The trust-header provider MUST be bound to the trusted
+proxy (the spoof fix in §5); those headers are otherwise forgeable.
+
+Role mapping: the live instance has two groups today (a *users* group → **user**
+tier, an *admins* group → **admin** tier); the design's third role
+(**moderator**) layers on later (§6). Exact group names / domains / proxy
+addresses are per-instance config, not part of this doc — kept in the
+(gitignored) operational handoff.
