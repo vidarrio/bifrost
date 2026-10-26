@@ -198,6 +198,47 @@ Providers:
 Authorization becomes an **in-app role model** (next section), independent of
 kanidm groups.
 
+**Implementation notes (step 2, on `appliance`).**
+
+- `src/auth.rs` — one middleware per request: resolves the `Principal` for the
+  instance's mode, refuses cross-site state-changing requests, and enforces the
+  §14 route tiers before any handler runs; handlers read the `Me` extractor
+  and ask `authorize(principal, Action)`. `src/account.rs` — sign-in/out,
+  first-run setup, invite/reset redemption, the `/admin/users` console.
+  `src/db/auth.rs` — `account`, `session`, `auth_link` tables (tokens stored
+  only as SHA-256). `src/cli.rs` — the break-glass CLI.
+- **CSRF: Fetch-Metadata / Origin verification instead of per-form tokens.**
+  State-changing requests are refused unless `Sec-Fetch-Site` is
+  `same-origin`/`none`, or (older browsers) `Origin` matches `Host`; requests
+  with neither header aren't from a browser and can't be CSRF. Together with
+  `SameSite=Lax` session cookies this covers every POST, including multipart
+  uploads and `fetch` calls, without threading a token through ~30 forms
+  (OWASP lists both as valid CSRF defenses).
+- Auth mode lives in the DB (`setting.auth_mode`), switched only by
+  `bifrost auth mode native|forward-auth` (restart to apply) — the same CLI is
+  the break-glass: `bifrost admin reset-link <user>`, `bifrost admin
+  create-sysadmin <user>`, `bifrost admin set-role <user> <role>`,
+  `bifrost auth status`.
+- First run (native, no accounts): Bifrost logs a one-time
+  `/setup?token=…` link; whoever holds it creates the sysadmin. No
+  first-come-first-served setup page on a public instance.
+- Sessions: random 256-bit cookie (`HttpOnly; SameSite=Lax; Secure` — set
+  `BIFROST_INSECURE_COOKIES=1` only for plain-HTTP dev), 30-day expiry; a
+  password reset or disabling an account ends its sessions. Login backoff is
+  per username (5 free failures, then 30 s doubling to 15 min), and unknown
+  usernames cost the same argon2 work as wrong passwords.
+- Forward-auth config (`BIFROST_FWD_*`): `SECRET_HEADER` + `SECRET` (a header
+  the proxy adds) and/or `TRUSTED_PROXIES` (IPs/CIDRs) — every configured
+  check must pass, and with neither configured nobody is trusted;
+  `SUBJECT_HEADER` / `USERNAME_HEADER` / `GROUPS_HEADER` (oauth2-proxy
+  defaults); `ROLE_GROUPS` (`sysadmin=<group>,user=<group>`; when set, the IdP
+  is authoritative for roles and users in none of the groups are refused);
+  `SIGN_IN_URL` / `SIGN_OUT_URL` for the header bar. Identity headers are read
+  **only on signed-in tiers**: on public routes the proxy doesn't overwrite
+  them, so a client could supply its own.
+- Until seasons have owners (§7) `ManageSeason` is sysadmin-only, matching
+  §14's sysadmin-only `/admin`; moderators gain powers with §7.
+
 ## 6. Roles & authorization
 
 Three roles, least-privilege:
@@ -390,6 +431,8 @@ new data dir, new config, new service wiring. Consequences:
 land on the current LXC host first.
 
 ## 14. Auth route split — what native auth must reproduce
+
+*Implemented by `auth::tier` + `auth::middleware` (step 2).*
 
 Today the public / authenticated / admin split is enforced at the reverse proxy
 (forward-auth). When Bifrost owns auth it must reproduce the **same split

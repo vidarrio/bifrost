@@ -27,6 +27,8 @@ futures-util = { version = "0.3", default-features = false, features = ["std", "
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }  # Bifrost slots + claims
 poptracker = { path = "crates/poptracker" }  # PopTracker-pack engine (runs pack Lua -> tracker state)
 zip = { version = "9", default-features = false, features = ["deflate"] }  # read per-player files out of the generated seed zip + uploaded pack assets
+argon2 = "0.5"  # native-account password hashing (argon2id)
+sha2 = "0.10"  # session/link tokens are stored as SHA-256, never in the clear
 
 # Planned, added as each phase lands:
 #   reqwest     # the Discord bot / kanidm integration

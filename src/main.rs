@@ -1,19 +1,15 @@
 //! Bifrost — the hub for all things Archipelago.
 //!
 //! Public: the hub (`/`), the YAML checker (`/check`), and the live board
-//! (`/board`). Behind SSO (oauth2-proxy forward-auth, `archipelago_users`):
-//! the claim page (`/claim`), where a logged-in user claims their Bifrost slot.
-//! Identity arrives as `X-Auth-Request-*` headers set by oauth2-proxy.
-//!
-//! Runs alongside the Archipelago MultiServer on the Bifrost host; fronted by Traefik at
-//! bifrost.example.org.
+//! (`/board`). Behind sign-in: claiming slots, signups, game pages, hints; and
+//! `/admin` for sysadmins. Who's signed in, and which routes need it, is
+//! decided once per request by the `auth` middleware (design doc §5, §14).
 
 use std::sync::{Arc, RwLock};
 
 use axum::{
     Json, Router,
     extract::{Form, Multipart, Path, Query, State},
-    http::HeaderMap,
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
@@ -21,11 +17,14 @@ use serde::Deserialize;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
+mod account;
 mod activity;
 mod ap;
 mod ap_adapter;
 mod archive;
+mod auth;
 mod checker;
+mod cli;
 mod config;
 mod db;
 mod generate;
@@ -51,6 +50,7 @@ struct AppState {
     /// in-progress board per player *per difficulty*, held server-side so each
     /// difficulty tab survives a tab close/reopen and difficulty switches.
     mine_games: Arc<Mutex<HashMap<(String, String), mine::Game>>>,
+    auth: auth::Auth,
 }
 
 const LANDING: &str = include_str!("../static/index.html");
@@ -73,6 +73,13 @@ async fn main() {
     let db = db::Db::open(&db_path.to_string_lossy())
         .await
         .unwrap_or_else(|e| panic!("open db {}: {e}", db_path.display()));
+
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = cli::run(&args, &db).await {
+        std::process::exit(code);
+    }
+
+    let auth = init_auth(&db).await;
 
     let ap_cfg = ap::ApConfig::from_env();
     let board: Shared = Arc::new(RwLock::new(ap::Board::default()));
@@ -100,6 +107,7 @@ async fn main() {
         ap_cfg,
         genstate,
         mine_games: Arc::new(Mutex::new(HashMap::new())),
+        auth: auth.clone(),
     };
     let app = Router::new()
         .route("/health", get(health))
@@ -150,6 +158,9 @@ async fn main() {
         .route("/minesweeper/pause", post(mine_pause))
         .route("/minesweeper/leaderboard", get(mine_leaderboard))
         .route("/api/me", get(api_me))
+        .merge(account::routes())
+        // Authenticate + enforce the route tiers before any handler runs.
+        .layer(axum::middleware::from_fn_with_state(auth, auth::middleware))
         .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
         // Dynamic HTML/JSON must never be cached (or bfcache'd) by the browser:
         // a stale page would keep running old inline JS. `no-store` also disables
@@ -167,7 +178,54 @@ async fn main() {
         .await
         .unwrap_or_else(|e| panic!("bind {addr}: {e}"));
     tracing::info!("Bifrost listening on {addr}");
-    axum::serve(listener, app).await.expect("serve");
+    // Peer addresses feed the forward-auth trusted-proxy allowlist.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await
+    .expect("serve");
+}
+
+/// Build the auth state for the configured mode; on a fresh native instance,
+/// print the one-time first-run setup link.
+async fn init_auth(db: &db::Db) -> auth::Auth {
+    let mode = db.auth_mode().await;
+    let fwd = match auth::ForwardAuth::from_env() {
+        Ok(f) => f,
+        Err(e) if mode == auth::AuthMode::ForwardAuth => panic!("forward-auth config: {e}"),
+        Err(_) => auth::ForwardAuth::default(),
+    };
+    if mode == auth::AuthMode::ForwardAuth && !fwd.configured() {
+        tracing::error!(
+            "auth mode is forward-auth but no trusted proxy is configured \
+             (BIFROST_FWD_SECRET_HEADER/BIFROST_FWD_SECRET or BIFROST_FWD_TRUSTED_PROXIES): \
+             nobody can sign in"
+        );
+    }
+    let setup_token = (mode == auth::AuthMode::Native && db.account_count().await == 0).then(|| {
+        let t = auth::new_token();
+        tracing::warn!("no accounts yet — first-run setup: open /setup?token={t}");
+        t
+    });
+    tracing::info!("auth mode: {}", mode.as_str());
+    let auth = Arc::new(auth::AuthInner {
+        db: db.clone(),
+        mode,
+        fwd,
+        secure_cookies: std::env::var("BIFROST_INSECURE_COOKIES").ok().as_deref() != Some("1"),
+        throttle: auth::Throttle::default(),
+        setup_token: Mutex::new(setup_token),
+    });
+    // Drop expired sessions now and then.
+    let purge = db.clone();
+    tokio::spawn(async move {
+        loop {
+            purge.purge_expired_sessions(auth::now()).await;
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+        }
+    });
+    auth
 }
 
 /// `BIFROST_COOP="Cam:Abi,Foo:Bar"` — map an AP slot name to an extra Bifrost
@@ -182,22 +240,6 @@ fn parse_coop() -> Vec<(String, String)> {
         .collect()
 }
 
-/// Read the SSO identity oauth2-proxy forwarded. Returns (username, is_admin).
-fn identity(h: &HeaderMap) -> (String, bool) {
-    let user = h
-        .get("x-auth-request-preferred-username")
-        .or_else(|| h.get("x-auth-request-user"))
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("unknown")
-        .to_string();
-    let is_admin = h
-        .get("x-auth-request-groups")
-        .and_then(|v| v.to_str().ok())
-        .map(|g| g.contains("archipelago_admins"))
-        .unwrap_or(false);
-    (user, is_admin)
-}
-
 async fn health() -> &'static str {
     "ok"
 }
@@ -209,17 +251,16 @@ async fn favicon() -> impl IntoResponse {
     )
 }
 
-/// Identity for the header bar, filled client-side. Gated behind oauth2-proxy,
-/// so a real user is always present; `user` is null only if the headers are
-/// somehow missing, which the page renders as a "sign in" link.
-async fn api_me(headers: HeaderMap) -> Json<serde_json::Value> {
-    let (user, is_admin) = identity(&headers);
-    let user = if user == "unknown" || user.is_empty() {
-        serde_json::Value::Null
-    } else {
-        serde_json::Value::String(user)
-    };
-    Json(serde_json::json!({ "user": user, "admin": is_admin }))
+/// Identity for the header bar, filled client-side. `/api` is a signed-in
+/// tier, so anonymous callers get the middleware's 401 JSON (with `sign_in`).
+async fn api_me(State(st): State<AppState>, me: auth::Me) -> Json<serde_json::Value> {
+    let (user, is_admin) = me.ident();
+    Json(serde_json::json!({
+        "user": user,
+        "admin": is_admin,
+        "sign_in": st.auth.sign_in_url(),
+        "sign_out": st.auth.sign_out_url(),
+    }))
 }
 
 async fn landing(State(st): State<AppState>) -> Html<String> {
@@ -619,10 +660,10 @@ async fn pt_can_manage(st: &AppState, season: &str, ap_slot: i64, me: &str, is_a
 async fn pt_upload(
     Path(ap_slot): Path<i64>,
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     mut mp: Multipart,
 ) -> Response {
-    let (me, is_admin) = identity(&headers);
+    let (me, is_admin) = me.ident();
     let season = st.board.read().ok().and_then(|b| b.seed.clone()).unwrap_or_default();
     // Land back on the PopTracker tab (the pack-management tab), not the default.
     let back = format!("/game/{ap_slot}#tab-pt");
@@ -657,8 +698,8 @@ async fn pt_upload(
 }
 
 /// Claimant (or admin) removes the slot's pack.
-async fn pt_remove(Path(ap_slot): Path<i64>, State(st): State<AppState>, headers: HeaderMap) -> Response {
-    let (me, is_admin) = identity(&headers);
+async fn pt_remove(Path(ap_slot): Path<i64>, State(st): State<AppState>, me: auth::Me) -> Response {
+    let (me, is_admin) = me.ident();
     let season = st.board.read().ok().and_then(|b| b.seed.clone()).unwrap_or_default();
     let back = format!("/game/{ap_slot}#tab-pt");
     if !season.is_empty() && pt_can_manage(&st, &season, ap_slot, &me, is_admin).await {
@@ -797,9 +838,9 @@ fn safe_back(b: Option<&str>, default: &str) -> String {
 async fn game_view(
     Path(ap_slot): Path<i64>,
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
 ) -> Html<String> {
-    let (me, is_admin) = identity(&headers);
+    let (me, is_admin) = me.ident();
     let (snap, game, item_names, connect_name) = match st.board.read() {
         Ok(b) => {
             let (game, cn) = b
@@ -971,10 +1012,10 @@ struct PrioForm {
 
 async fn prioritize_post(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Form(f): Form<PrioForm>,
 ) -> Redirect {
-    let (me, is_admin) = identity(&headers);
+    let (me, is_admin) = me.ident();
     let (season, is_found) = match st.board.read() {
         Ok(b) => {
             let season = b.seed.clone().unwrap_or_default();
@@ -1000,8 +1041,8 @@ async fn prioritize_post(
     Redirect::to(&safe_back(f.back.as_deref(), "/board"))
 }
 
-async fn claim_get(State(st): State<AppState>, headers: HeaderMap) -> Html<String> {
-    let (me, is_admin) = identity(&headers);
+async fn claim_get(State(st): State<AppState>, me: auth::Me) -> Html<String> {
+    let (me, is_admin) = me.ident();
     let snap = match st.board.read() {
         Ok(b) => b.snapshot(),
         Err(_) => return Html("board unavailable".into()),
@@ -1020,10 +1061,10 @@ struct ClaimForm {
 
 async fn claim_post(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Form(f): Form<ClaimForm>,
 ) -> Response {
-    let (me, is_admin) = identity(&headers);
+    let (me, is_admin) = me.ident();
     let back = safe_back(f.back.as_deref(), "/claim");
     let season = st
         .board
@@ -1069,10 +1110,10 @@ struct McUsernameForm {
 /// Minecraft server by the host-side syncer that watches the export.
 async fn mc_username_post(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Form(f): Form<McUsernameForm>,
 ) -> Response {
-    let (me, _is_admin) = identity(&headers);
+    let (me, _is_admin) = me.ident();
     let season = st
         .board
         .read()
@@ -1137,10 +1178,10 @@ fn hint_rejected(text: &str) -> bool {
 
 async fn hint_post(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Form(f): Form<HintForm>,
 ) -> Json<serde_json::Value> {
-    let (me, _is_admin) = identity(&headers);
+    let (me, _is_admin) = me.ident();
     let reject = |msg: &str| Json(serde_json::json!({"ok": false, "message": msg}));
     let detail = st.db.slot_detail(f.slot_id).await.ok().flatten();
     let Some((ap_slot, claimant, is_common)) = detail else {
@@ -1285,9 +1326,9 @@ fn rejected_for_points(text: &str) -> bool {
 async fn game_hints(
     Path(ap_slot): Path<i64>,
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
 ) -> Html<String> {
-    let (me, is_admin) = identity(&headers);
+    let (me, is_admin) = me.ident();
     let (snap, season) = match st.board.read() {
         Ok(b) => (b.snapshot(), b.seed.clone().unwrap_or_default()),
         Err(_) => return Html(String::new()),
@@ -1333,10 +1374,10 @@ struct FinishForm {
 async fn game_finish(
     Path(ap_slot): Path<i64>,
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Form(f): Form<FinishForm>,
 ) -> Response {
-    let (_me, is_admin) = identity(&headers);
+    let (_me, is_admin) = me.ident();
     let back = safe_back(f.back.as_deref(), &format!("/game/{ap_slot}"));
     if !is_admin {
         return render::notice("Admins only.", false, &back).into_response();
@@ -1367,8 +1408,8 @@ fn slugify(s: &str) -> String {
     if out.is_empty() { "slot".into() } else { out }
 }
 
-async fn signup_get(State(st): State<AppState>, headers: HeaderMap) -> Html<String> {
-    let (me, is_admin) = identity(&headers);
+async fn signup_get(State(st): State<AppState>, me: auth::Me) -> Html<String> {
+    let (me, is_admin) = me.ident();
     let subs = st.db.submissions().await.unwrap_or_default();
     let open = st.db.signups_open().await;
     render::signup_page(&subs, &me, is_admin, open)
@@ -1443,10 +1484,10 @@ async fn signup_check(mut mp: Multipart) -> Json<serde_json::Value> {
 
 async fn signup_post(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     mut mp: Multipart,
 ) -> Html<String> {
-    let (me, _) = identity(&headers);
+    let (me, _) = me.ident();
     if !st.db.signups_open().await {
         return render::signup_result("Signups are closed right now.", false);
     }
@@ -1532,10 +1573,10 @@ struct DelForm {
 
 async fn signup_delete(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Form(f): Form<DelForm>,
 ) -> Redirect {
-    let (me, is_admin) = identity(&headers);
+    let (me, is_admin) = me.ident();
     if let Ok(Some((yaml_file, apworld_file))) = st.db.delete_submission(f.id, &me, is_admin).await
     {
         let _ = tokio::fs::remove_file(&yaml_file).await;
@@ -1613,8 +1654,8 @@ async fn render_admin(st: &AppState) -> Html<String> {
     )
 }
 
-async fn admin_view(State(st): State<AppState>, headers: HeaderMap) -> Response {
-    let (_me, is_admin) = identity(&headers);
+async fn admin_view(State(st): State<AppState>, me: auth::Me) -> Response {
+    let (_me, is_admin) = me.ident();
     if !is_admin {
         return render::notice("Admins only.", false, "/board").into_response();
     }
@@ -1628,18 +1669,18 @@ struct SignupsForm {
 
 async fn admin_signups(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Form(f): Form<SignupsForm>,
 ) -> Redirect {
-    let (_me, is_admin) = identity(&headers);
+    let (_me, is_admin) = me.ident();
     if is_admin {
         let _ = st.db.set_signups_open(f.open == "1").await;
     }
     Redirect::to("/admin")
 }
 
-async fn admin_generate(State(st): State<AppState>, headers: HeaderMap) -> Redirect {
-    let (_me, is_admin) = identity(&headers);
+async fn admin_generate(State(st): State<AppState>, me: auth::Me) -> Redirect {
+    let (_me, is_admin) = me.ident();
     if is_admin {
         let start = match st.genstate.lock() {
             Ok(mut g) if !g.0 => {
@@ -1657,8 +1698,8 @@ async fn admin_generate(State(st): State<AppState>, headers: HeaderMap) -> Redir
     Redirect::to("/admin")
 }
 
-async fn admin_regenerate(State(st): State<AppState>, headers: HeaderMap) -> Redirect {
-    let (_me, is_admin) = identity(&headers);
+async fn admin_regenerate(State(st): State<AppState>, me: auth::Me) -> Redirect {
+    let (_me, is_admin) = me.ident();
     if is_admin {
         let old_season = st
             .board
@@ -1716,10 +1757,10 @@ struct ClearForm {
 
 async fn admin_clear(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Form(f): Form<ClearForm>,
 ) -> Response {
-    let (_me, is_admin) = identity(&headers);
+    let (_me, is_admin) = me.ident();
     if !is_admin {
         return render::notice("Admins only.", false, "/board").into_response();
     }
@@ -1765,10 +1806,10 @@ struct ArchiveForm {
 /// minesweeper leaderboards. Must run before a Full reset wipes the live data.
 async fn admin_archive_season(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Form(f): Form<ArchiveForm>,
 ) -> Response {
-    let (_me, is_admin) = identity(&headers);
+    let (_me, is_admin) = me.ident();
     if !is_admin {
         return render::notice("Admins only.", false, "/admin").into_response();
     }
@@ -1982,10 +2023,10 @@ async fn season_view(
 
 async fn admin_delete_player(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Form(f): Form<DelForm>,
 ) -> Redirect {
-    let (me, is_admin) = identity(&headers);
+    let (me, is_admin) = me.ident();
     if is_admin
         && let Ok(Some((yaml_file, apworld_file))) = st.db.delete_submission(f.id, &me, true).await
     {
@@ -2002,8 +2043,8 @@ struct ApworldForm {
     name: String,
 }
 
-async fn admin_delete_apworld(headers: HeaderMap, Form(f): Form<ApworldForm>) -> Redirect {
-    let (_me, is_admin) = identity(&headers);
+async fn admin_delete_apworld(me: auth::Me, Form(f): Form<ApworldForm>) -> Redirect {
+    let (_me, is_admin) = me.ident();
     if is_admin {
         let _ = generate::delete_apworld(&f.name).await;
     }
@@ -2019,10 +2060,10 @@ struct ConsoleForm {
 /// page can append it to a live log without a page reload.
 async fn admin_console(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Form(f): Form<ConsoleForm>,
 ) -> Json<serde_json::Value> {
-    let (_me, is_admin) = identity(&headers);
+    let (_me, is_admin) = me.ident();
     if !is_admin {
         return Json(serde_json::json!({"ok": false, "output": "Admins only."}));
     }
@@ -2090,11 +2131,10 @@ struct ConnPwForm {
 
 async fn admin_connect_password(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Form(f): Form<ConnPwForm>,
 ) -> Response {
-    let (_me, is_admin) = identity(&headers);
-    if !is_admin {
+    if !me.can(auth::Action::ManageInstance) {
         return render::notice("Admins only.", false, "/board").into_response();
     }
     let pw = f.password.trim().to_string();
@@ -2162,10 +2202,10 @@ async fn admin_connect_password(
 
 async fn admin_minesweeper(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Form(f): Form<SignupsForm>,
 ) -> Redirect {
-    let (_me, is_admin) = identity(&headers);
+    let (_me, is_admin) = me.ident();
     if is_admin {
         let _ = st.db.set_minesweeper_enabled(f.open == "1").await;
     }
@@ -2174,10 +2214,10 @@ async fn admin_minesweeper(
 
 async fn admin_mc(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Form(f): Form<SignupsForm>,
 ) -> Redirect {
-    let (_me, is_admin) = identity(&headers);
+    let (_me, is_admin) = me.ident();
     if is_admin {
         let _ = st.db.set_mc_enabled(f.open == "1").await;
     }
@@ -2194,10 +2234,10 @@ struct OutputQuery {
 /// router); `generate::read_output` validates the member is really in the zip.
 async fn admin_output(
     State(_st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Query(q): Query<OutputQuery>,
 ) -> Response {
-    let (_me, is_admin) = identity(&headers);
+    let (_me, is_admin) = me.ident();
     if !is_admin {
         return render::notice("Admins only.", false, "/board").into_response();
     }
@@ -2243,11 +2283,11 @@ fn download_response(member: &str, data: Vec<u8>) -> Response {
 /// so a claimant can't pull another game's file.
 async fn game_output(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Path(ap_slot): Path<i64>,
     Query(q): Query<OutputQuery>,
 ) -> Response {
-    let (me, is_admin) = identity(&headers);
+    let (me, is_admin) = me.ident();
     let season = st
         .board
         .read()
@@ -2299,10 +2339,10 @@ async fn mc_asset(Path(which): Path<String>) -> Response {
 
 async fn minesweeper_page(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Query(q): Query<KindQuery>,
 ) -> Html<String> {
-    let (me, _is_admin) = identity(&headers);
+    let (me, _is_admin) = me.ident();
     let free = q.free;
     // Freeplay (minigame section) is always available and ignores the admin
     // toggle, which only gates the seasonal bonus-hint board.
@@ -2365,10 +2405,10 @@ struct NewForm {
 
 async fn mine_new(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Form(f): Form<NewForm>,
 ) -> Json<serde_json::Value> {
-    let (me, _) = identity(&headers);
+    let (me, _) = me.ident();
     // Freeplay (the standalone minigame) is always available; the admin toggle
     // only gates the seasonal, bonus-hint-earning board.
     if !f.free && !st.db.minesweeper_enabled().await {
@@ -2392,10 +2432,10 @@ async fn mine_new(
 /// pauses the clock (`repose`); it resumes on the next reveal.
 async fn mine_state(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Query(q): Query<KindQuery>,
 ) -> Json<serde_json::Value> {
-    let (me, _) = identity(&headers);
+    let (me, _) = me.ident();
     let kind = mine::Kind::parse(&q.kind);
     let mut games = match st.mine_games.lock() {
         Ok(g) => g,
@@ -2465,10 +2505,10 @@ async fn mine_leaderboard(
 /// switching to the other difficulty). Idempotent.
 async fn mine_pause(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Query(q): Query<KindQuery>,
 ) -> Json<serde_json::Value> {
-    let (me, _) = identity(&headers);
+    let (me, _) = me.ident();
     let kind = mine::Kind::parse(&q.kind);
     if let Ok(mut games) = st.mine_games.lock() {
         if let Some(g) = games.get_mut(&mine_key(&me, q.free, kind)) {
@@ -2490,10 +2530,10 @@ struct RevealForm {
 
 async fn mine_reveal(
     State(st): State<AppState>,
-    headers: HeaderMap,
+    me: auth::Me,
     Form(f): Form<RevealForm>,
 ) -> Json<serde_json::Value> {
-    let (me, _) = identity(&headers);
+    let (me, _) = me.ident();
     let key = mine_key(&me, f.free, mine::Kind::parse(&f.kind));
     // Reveal under the lock, then release it before any await.
     let outcome = {

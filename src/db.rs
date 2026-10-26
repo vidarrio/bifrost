@@ -8,6 +8,9 @@
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{FromRow, SqlitePool};
 
+mod auth;
+pub use auth::{AccountRow, LinkKind, LinkRow, RedeemError};
+
 #[derive(Clone)]
 pub struct Db {
     pool: SqlitePool,
@@ -322,6 +325,7 @@ impl Db {
         )
         .execute(&pool)
         .await?;
+        auth::migrate(&pool).await?;
         Ok(Self { pool })
     }
 
