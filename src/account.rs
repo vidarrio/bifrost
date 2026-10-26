@@ -386,9 +386,6 @@ async fn console(st: &AppState, me: &Me, minted: Option<Minted>, err: Option<&st
         minted: minted.as_ref(),
         err,
         now: auth::now(),
-        auth_mode: st.auth.mode.as_str(),
-        isolation: &crate::sandbox::get().posture(),
-        strong_isolation: crate::sandbox::get().strong(),
     })
     .into_response()
 }

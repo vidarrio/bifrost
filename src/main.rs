@@ -1792,6 +1792,8 @@ async fn render_admin(ctx: &scope::SeasonCtx, st: &AppState) -> Html<String> {
         archived.as_deref(),
         &outputs,
         &out_slots,
+        st.seasons.connect_address(&ctx.row, &st.db.instance().await.domain).as_deref(),
+        config::get().ap_managed,
     )
 }
 
@@ -2104,13 +2106,17 @@ async fn settings_view(State(st): State<AppState>, me: auth::Me) -> Response {
         return render::notice("Sysadmins only.", false, "/").into_response();
     }
     let inst = st.db.instance().await;
-    render::settings_page(&inst, &settings_status(), None, false).into_response()
+    render::settings_page(&inst, &settings_status(&st), None, false).into_response()
 }
 
 /// What the settings page reports about the deployment (read-only there).
-fn settings_status() -> render::SettingsStatus {
+fn settings_status(st: &AppState) -> render::SettingsStatus {
     let cfg = config::get();
+    let sb = sandbox::get();
     render::SettingsStatus {
+        auth_mode: st.auth.mode.as_str().to_string(),
+        isolation: sb.posture(),
+        strong_isolation: sb.strong(),
         ap_version: ap_adapter::ap_version().map(str::to_string),
         managed: cfg.ap_managed,
         ports: (*cfg.ap_ports.start(), *cfg.ap_ports.end()),
@@ -2136,7 +2142,7 @@ async fn settings_save(State(st): State<AppState>, me: auth::Me, Form(f): Form<S
     }
     match parse_settings(&f) {
         Ok(inst) => match st.db.set_instance(&inst).await {
-            Ok(()) => render::settings_page(&inst, &settings_status(), None, true).into_response(),
+            Ok(()) => render::settings_page(&inst, &settings_status(&st), None, true).into_response(),
             Err(e) => render::notice(&format!("Couldn't save: {e}"), false, "/admin/settings").into_response(),
         },
         Err(e) => {
@@ -2152,7 +2158,7 @@ async fn settings_save(State(st): State<AppState>, me: auth::Me, Form(f): Form<S
                     .map(|l| db::Discord { name: l.to_string(), url: String::new(), note: String::new() })
                     .collect(),
             };
-            render::settings_page(&typed, &settings_status(), Some(&e), false).into_response()
+            render::settings_page(&typed, &settings_status(&st), Some(&e), false).into_response()
         }
     }
 }
@@ -2216,7 +2222,8 @@ async fn seasons_page(st: &AppState, me: &auth::Me, name: &str, err: Option<&str
         let mods = st.db.season_mods(s.id).await;
         manage.push(me.can(auth::Action::ManageSeason { mods: &mods }));
     }
-    render::seasons_page(&seasons, &manage, name, err).into_response()
+    render::seasons_page(&seasons, &manage, name, err, me.can(auth::Action::ManageInstance))
+        .into_response()
 }
 
 #[derive(Deserialize)]

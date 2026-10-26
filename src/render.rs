@@ -1520,6 +1520,8 @@ pub fn admin_page(
     archived: Option<&str>,
     outputs: &[crate::generate::OutputFile],
     out_slots: &[SlotRow],
+    connect: Option<&str>,
+    managed: bool,
 ) -> Html<String> {
     let mut b = page_head(None);
     b.push_str(&format!(
@@ -1527,17 +1529,23 @@ pub fn admin_page(
         esc(&season.name),
         season.state().as_str(),
     ));
-    b.push_str(&mods_section(mods));
-
+    // Tabbed season console (design doc §9); the tab survives form posts via
+    // the URL hash (see <button type="button" class="gtab on" data-tab="tab-overview">Overview</button><button type="button" class="gtab" data-tab="tab-entries">Signups &amp; apworlds</button><button type="button" class="gtab" data-tab="tab-files">Player files</button><button type="button" class="gtab" data-tab="tab-conn">Connection</button><button type="button" class="gtab" data-tab="tab-options">Options</button><button type="button" class="gtab" data-tab="tab-archive">Archive &amp; reset</button>_JS).
     let conn = if connected { "connected" } else { "waiting" };
     let seed_txt = seed.filter(|s| !s.is_empty()).unwrap_or("—");
+    let addr = connect
+        .map(|a| format!(r#" · players connect to <b class="mono">{}</b>"#, esc(a)))
+        .unwrap_or_default();
     b.push_str(&format!(
-        r#"<div class="statline">server <b>{conn}</b> · seed <b>{}</b></div>"#,
+        r#"<div class="statline">server <b>{conn}</b> · seed <b>{}</b>{addr}</div>"#,
         esc(seed_txt)
     ));
+    b.push_str(TABS_CSS);
+    b.push_str(r#"<div class="gtabs"><button type="button" class="gtab on" data-tab="tab-overview">Overview</button><button type="button" class="gtab" data-tab="tab-entries">Signups &amp; apworlds</button><button type="button" class="gtab" data-tab="tab-files">Player files</button><button type="button" class="gtab" data-tab="tab-conn">Connection</button><button type="button" class="gtab" data-tab="tab-options">Options</button><button type="button" class="gtab" data-tab="tab-archive">Archive &amp; reset</button></div>"#);
 
+    b.push_str(r#"<div class="gtabpanel" id="tab-overview">"#);
     // Signups
-    b.push_str(r#"<h2>Signups</h2>"#);
+    b.push_str(r#"<h2>Signups window</h2>"#);
     if signups_open {
         b.push_str(r#"<div class="statline">Signups are <b>open</b>.</div>"#);
         b.push_str(&format!(
@@ -1563,62 +1571,6 @@ pub fn admin_page(
             )
         ));
     }
-
-    // Minesweeper minigame
-    b.push_str(r#"<h2>Minesweeper</h2>"#);
-    if minesweeper_on {
-        b.push_str(r#"<div class="statline">The minesweeper minigame is <b>enabled</b> — players can farm bonus hints.</div>"#);
-        b.push_str(&format!(
-            r#"<div class="btnrow">{}</div>"#,
-            action_btn(
-                "admin/minesweeper",
-                &[("open", "0")],
-                "Disable minesweeper",
-                false,
-                ""
-            )
-        ));
-    } else {
-        b.push_str(r#"<div class="statline">The minesweeper minigame is <b>disabled</b>.</div>"#);
-        b.push_str(&format!(
-            r#"<div class="btnrow">{}</div>"#,
-            action_btn(
-                "admin/minesweeper",
-                &[("open", "1")],
-                "Enable minesweeper",
-                false,
-                ""
-            )
-        ));
-    }
-
-    // Common game (shared Minecraft server) — read at generation time to decide
-    // whether the communal in-pool slot is included. Toggle it before generating.
-    b.push_str(r#"<h2>Common game (Minecraft)</h2>"#);
-    if mc_on {
-        b.push_str(r#"<div class="statline">The shared Minecraft common game is <b>enabled</b> — the next season generated will include the communal slot.</div>"#);
-        b.push_str(&format!(
-            r#"<div class="btnrow">{}</div>"#,
-            action_btn("admin/mc", &[("open", "0")], "Disable common game", false, "")
-        ));
-    } else {
-        b.push_str(r#"<div class="statline">The shared Minecraft common game is <b>disabled</b> — toggle this <b>before generating</b> to include it in the season.</div>"#);
-        b.push_str(&format!(
-            r#"<div class="btnrow">{}</div>"#,
-            action_btn("admin/mc", &[("open", "1")], "Enable common game", false, "")
-        ));
-    }
-
-    // Connect password (what players use to join the server)
-    b.push_str(r#"<h2>Connect password</h2>"#);
-    b.push_str(&format!(
-        r#"<div class="statline">Players join with <b>{}</b> — share it in Discord.</div>"#,
-        esc(connect_pw)
-    ));
-    b.push_str(
-        r#"<form class="console" method="post" action="admin/connect-password" autocomplete="off" onsubmit="return confirm('Change the connect password? Bifrost will restart briefly to apply it.')"><input type="text" name="password" placeholder="new connect password" style="flex:1;min-width:0" autocomplete="off" required><button type="submit">Set</button></form>
-<p class="warnnote">Letters, numbers, - or _ (3–64 chars). Sets it on the running server and in host.yaml; Bifrost restarts to reconnect.</p>"#,
-    );
 
     // Generate
     b.push_str(r#"<h2>Generate</h2>"#);
@@ -1654,40 +1606,10 @@ pub fn admin_page(
         ));
     }
 
-    // Generated per-player files (extracted from the current seed) for handing out.
-    b.push_str(r#"<h2>Player files</h2>"#);
-    if outputs.is_empty() {
-        b.push_str(r#"<div class="empty">No per-player files in the current seed — most games connect directly and produce none; only patch/ROM-based games and a few others (BG3, Minecraft, …) emit one. (Nothing here until a season is generated.)</div>"#);
-    } else {
-        b.push_str(r#"<p class="empty">Files the generator produced for specific slots — give each to the right player (Discord, etc.). The slot name and game are taken straight from the filename, so there's no guessing which goes where.</p>"#);
-        for o in outputs {
-            let link = format!(
-                r#"<a class="ghost" href="admin/output?file={}">download</a>"#,
-                urlq(&o.member)
-            );
-            if o.is_spoiler {
-                b.push_str(&format!(
-                    r#"<div class="hintrow"><span><b>Spoiler</b> · <code>.{}</code> · {} · admin reference, not for players</span>{link}</div>"#,
-                    esc(&o.ext),
-                    human_size(o.size),
-                ));
-            } else {
-                let game = out_slots
-                    .iter()
-                    .find(|s| s.name.eq_ignore_ascii_case(&o.label))
-                    .map(|s| s.game.as_str())
-                    .unwrap_or("—");
-                b.push_str(&format!(
-                    r#"<div class="hintrow"><span><b>{}</b> — {} · <code>.{}</code> · {}</span>{link}</div>"#,
-                    esc(&o.label),
-                    esc(game),
-                    esc(&o.ext),
-                    human_size(o.size),
-                ));
-            }
-        }
-    }
+    b.push_str(&mods_section(mods));
+    b.push_str("</div>");
 
+    b.push_str(r#"<div class="gtabpanel" id="tab-entries" hidden>"#);
     // Signups (the queue for the next season)
     b.push_str(r#"<h2>Signups</h2>"#);
     if subs.is_empty() {
@@ -1752,20 +1674,149 @@ pub fn admin_page(
         )
     ));
 
-    // Archive this season (capture for the Past Seasons page before reset)
-    b.push_str(r#"<h2>Archive this season</h2>"#);
-    b.push_str(r#"<p class="empty">Freeze this season for <b>Past Seasons</b> — the roster, each game's final standing (goaled + checks), and this season's minesweeper leaderboards — <b>before</b> you reset, while the data is still live. Re-archiving just refreshes the snapshot.</p>"#);
-    if let Some(name) = archived {
+    b.push_str("</div>");
+
+    b.push_str(r#"<div class="gtabpanel" id="tab-files" hidden>"#);
+    // Generated per-player files (extracted from the current seed) for handing out.
+    b.push_str(r#"<h2>Player files</h2>"#);
+    if outputs.is_empty() {
+        b.push_str(r#"<div class="empty">No per-player files in the current seed — most games connect directly and produce none; only patch/ROM-based games and a few others (BG3, Minecraft, …) emit one. (Nothing here until a season is generated.)</div>"#);
+    } else {
+        b.push_str(r#"<p class="empty">Files the generator produced for specific slots — give each to the right player (Discord, etc.). The slot name and game are taken straight from the filename, so there's no guessing which goes where.</p>"#);
+        for o in outputs {
+            let link = format!(
+                r#"<a class="ghost" href="admin/output?file={}">download</a>"#,
+                urlq(&o.member)
+            );
+            if o.is_spoiler {
+                b.push_str(&format!(
+                    r#"<div class="hintrow"><span><b>Spoiler</b> · <code>.{}</code> · {} · admin reference, not for players</span>{link}</div>"#,
+                    esc(&o.ext),
+                    human_size(o.size),
+                ));
+            } else {
+                let game = out_slots
+                    .iter()
+                    .find(|s| s.name.eq_ignore_ascii_case(&o.label))
+                    .map(|s| s.game.as_str())
+                    .unwrap_or("—");
+                b.push_str(&format!(
+                    r#"<div class="hintrow"><span><b>{}</b> — {} · <code>.{}</code> · {}</span>{link}</div>"#,
+                    esc(&o.label),
+                    esc(game),
+                    esc(&o.ext),
+                    human_size(o.size),
+                ));
+            }
+        }
+    }
+
+    b.push_str("</div>");
+
+    b.push_str(r#"<div class="gtabpanel" id="tab-conn" hidden>"#);
+    // Connect password (what players use to join the server)
+    b.push_str(r#"<h2>Connect password</h2>"#);
+    b.push_str(&format!(
+        r#"<div class="statline">Players join with <b>{}</b>.</div>"#,
+        if connect_pw.is_empty() { "no password".to_string() } else { esc(connect_pw) }
+    ));
+    let (confirm, note) = if managed {
+        (
+            "Change the connect password? It applies to the running server right away.",
+            "Letters, numbers, - or _ (3–64 chars). Applies to the running server immediately and to every restart after.",
+        )
+    } else {
+        (
+            "Change the connect password? Bifrost will restart briefly to apply it.",
+            "Letters, numbers, - or _ (3–64 chars). Sets it on the running server and in host.yaml; Bifrost restarts to reconnect.",
+        )
+    };
+    b.push_str(&format!(
+        r#"<form class="console" method="post" action="admin/connect-password" autocomplete="off" onsubmit="return confirm('{confirm}')"><input type="text" name="password" placeholder="new connect password" style="flex:1;min-width:0" autocomplete="off" required><button type="submit">Set</button></form>
+<p class="warnnote">{note}</p>"#
+    ));
+
+    // AP admin console — commands run over fetch and append to a live log, no
+    // page reload (see CONSOLE_JS).
+    b.push_str(r#"<h2>Server console</h2>"#);
+    b.push_str(r#"<p class="empty">Run a server command as admin — e.g. <code>/send Player Item</code>, <code>/hint Player Item</code>, <code>/players</code>. The <code>!admin</code> prefix is added for you.</p>"#);
+    b.push_str(r#"<pre class="out" id="conlog" hidden></pre>"#);
+    b.push_str(
+        r#"<form class="console" id="conform" method="post" action="admin/console" autocomplete="off"><div class="acwrap"><input type="text" name="cmd" id="concmd" placeholder="/players" autocomplete="off" required><div class="acmenu" id="accands" hidden></div></div><button type="submit">Run</button></form>"#,
+    );
+    // Command autocomplete: ACDATA (players/games/items/locations) is embedded,
+    // then CONSOLE_JS reads it. Split so the JS's braces don't fight format!.
+    b.push_str("<script>\n(function(){\nvar ACDATA=");
+    b.push_str(&acdata.replace("</", "<\\/"));
+    b.push_str(";\n");
+    b.push_str(CONSOLE_JS);
+    b.push_str("\n})();\n</script>");
+
+    b.push_str("</div>");
+
+    b.push_str(r#"<div class="gtabpanel" id="tab-options" hidden>"#);
+    // Minesweeper minigame
+    b.push_str(r#"<h2>Minesweeper</h2>"#);
+    if minesweeper_on {
+        b.push_str(r#"<div class="statline">The minesweeper minigame is <b>enabled</b> — players can farm bonus hints.</div>"#);
         b.push_str(&format!(
-            r#"<div class="statline">✓ Archived as <b>{}</b>. <a href="season/{}">View</a></div>"#,
-            esc(name),
-            esc(seed.unwrap_or("")),
+            r#"<div class="btnrow">{}</div>"#,
+            action_btn(
+                "admin/minesweeper",
+                &[("open", "0")],
+                "Disable minesweeper",
+                false,
+                ""
+            )
+        ));
+    } else {
+        b.push_str(r#"<div class="statline">The minesweeper minigame is <b>disabled</b>.</div>"#);
+        b.push_str(&format!(
+            r#"<div class="btnrow">{}</div>"#,
+            action_btn(
+                "admin/minesweeper",
+                &[("open", "1")],
+                "Enable minesweeper",
+                false,
+                ""
+            )
         ));
     }
-    b.push_str(
-        r#"<form class="console" method="post" action="admin/archive-season" autocomplete="off"><input type="text" name="name" placeholder="Season name (e.g. Season Sept 2026)" style="flex:1;min-width:0"><button type="submit">Archive &amp; finalize season</button></form>
-<p class="warnnote">Also run the host season bundle (raw multidata, save, YAMLs, apworlds + log → Nextcloud) before reset — that's the replayable archive this snapshot can't hold.</p>"#,
-    );
+
+    // Common game (shared Minecraft server) — read at generation time to decide
+    // whether the communal in-pool slot is included. Toggle it before generating.
+    b.push_str(r#"<h2>Common game (Minecraft)</h2>"#);
+    if mc_on {
+        b.push_str(r#"<div class="statline">The shared Minecraft common game is <b>enabled</b> — the next season generated will include the communal slot.</div>"#);
+        b.push_str(&format!(
+            r#"<div class="btnrow">{}</div>"#,
+            action_btn("admin/mc", &[("open", "0")], "Disable common game", false, "")
+        ));
+    } else {
+        b.push_str(r#"<div class="statline">The shared Minecraft common game is <b>disabled</b> — toggle this <b>before generating</b> to include it in the season.</div>"#);
+        b.push_str(&format!(
+            r#"<div class="btnrow">{}</div>"#,
+            action_btn("admin/mc", &[("open", "1")], "Enable common game", false, "")
+        ));
+    }
+
+    b.push_str("</div>");
+
+    b.push_str(r#"<div class="gtabpanel" id="tab-archive" hidden>"#);
+    // Archive: live → archived (frozen standings + raw bundle, server stopped).
+    b.push_str(r#"<h2>Archive this season</h2>"#);
+    if let Some(name) = archived {
+        b.push_str(&format!(
+            r#"<div class="statline">✓ Archived as <b>{}</b>. <a href="season">View the summary</a></div>"#,
+            esc(name),
+        ));
+    } else {
+        b.push_str(r#"<p class="empty">Ends the season: freezes the roster, each game's final standing and the season's minesweeper leaderboards for <b>Past Seasons</b>, writes the raw replayable bundle (multidata, save, YAMLs, apworlds, logs) to the archives folder, then stops the season's AP server (saving) and frees its port.</p>"#);
+        b.push_str(&format!(
+            r#"<form class="console" method="post" action="admin/archive-season" autocomplete="off" onsubmit="return confirm('Archive this season? Its game server stops.')"><input type="text" name="name" placeholder="{}" title="Final name (optional)" style="flex:1;min-width:0"><button type="submit">Archive &amp; finalize</button></form>"#,
+            esc(&season.name)
+        ));
+    }
 
     // Maintenance + reset
     b.push_str(r#"<h2>Maintenance</h2>"#);
@@ -1793,7 +1844,7 @@ pub fn admin_page(
             "Delete the generated world (current.zip + archives)?"
         ),
     ));
-    b.push_str(r#"<p class="warnnote">Full reset removes all apworlds, players, slots, the save, and the world, and closes signups — a clean slate for the next season. <b>Archive the season first</b> (above); past-season snapshots and minesweeper history are kept.</p>"#);
+    b.push_str(r#"<p class="warnnote">Full reset removes all apworlds, players, slots, the save, and the world, and closes signups — a clean slate for the next season. <b>Archive the season first</b>; past-season snapshots and minesweeper history are kept.</p>"#);
     b.push_str(&format!(
         r#"<div class="btnrow">{}</div>"#,
         action_btn(
@@ -1805,22 +1856,9 @@ pub fn admin_page(
         )
     ));
 
-    // AP admin console — commands run over fetch and append to a live log, no
-    // page reload (see CONSOLE_JS).
-    b.push_str(r#"<h2>Server console</h2>"#);
-    b.push_str(r#"<p class="empty">Run a server command as admin — e.g. <code>/send Player Item</code>, <code>/hint Player Item</code>, <code>/players</code>. The <code>!admin</code> prefix is added for you.</p>"#);
-    b.push_str(r#"<pre class="out" id="conlog" hidden></pre>"#);
-    b.push_str(
-        r#"<form class="console" id="conform" method="post" action="admin/console" autocomplete="off"><div class="acwrap"><input type="text" name="cmd" id="concmd" placeholder="/players" autocomplete="off" required><div class="acmenu" id="accands" hidden></div></div><button type="submit">Run</button></form>"#,
-    );
-    // Command autocomplete: ACDATA (players/games/items/locations) is embedded,
-    // then CONSOLE_JS reads it. Split so the JS's braces don't fight format!.
-    b.push_str("<script>\n(function(){\nvar ACDATA=");
-    b.push_str(&acdata.replace("</", "<\\/"));
-    b.push_str(";\n");
-    b.push_str(CONSOLE_JS);
-    b.push_str("\n})();\n</script>");
+    b.push_str("</div>");
 
+    b.push_str(TABS_JS);
     b.push_str("</main></body></html>");
     Html(b)
 }
@@ -1988,10 +2026,6 @@ const GAME_STYLE: &str = r#"<style>
 .gamelogbar{margin:0 0 10px;text-align:center}
 .gamelogbar input[type=search]{width:100%;max-width:420px;box-sizing:border-box;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:8px 11px;font-size:13px;font-family:var(--font)}
 .gamelogbar input[type=search]:focus{outline:none;border-color:var(--accent)}
-.gtabs{display:flex;gap:2px;border-bottom:1px solid var(--bd);margin:22px 0 16px}
-.gtab{background:none;color:var(--muted);border:0;border-bottom:2px solid transparent;border-radius:0;margin-bottom:-1px;padding:8px 15px;font-family:var(--font);font-size:14px;font-weight:600;cursor:pointer}
-.gtab:hover{color:var(--fg)}
-.gtab.on{color:var(--accent);border-bottom-color:var(--accent)}
 .utmeta{font-family:var(--mono);font-size:12px;color:var(--muted);margin:0 0 12px}
 .utlist{display:flex;flex-direction:column;gap:4px;max-height:70vh;overflow:auto}
 .utloc{font-size:13px;line-height:1.35;padding:6px 10px;background:var(--panel);border:1px solid var(--bd);border-radius:7px}
@@ -2035,16 +2069,52 @@ const GAME_STYLE: &str = r#"<style>
 </style>"#;
 
 /// Toggles the game page's tab panels (delegated click on the tab bar).
-const GAME_TAB_JS: &str = r#"<script>
+/// Tab bar styling shared by the game page and the season console.
+const TABS_CSS: &str = r#"<style>
+.gtabs{display:flex;flex-wrap:wrap;gap:2px;border-bottom:1px solid var(--bd);margin:22px 0 16px}
+.gtab{background:none;color:var(--muted);border:0;border-bottom:2px solid transparent;border-radius:0;margin-bottom:-1px;padding:8px 15px;font-family:var(--font);font-size:14px;font-weight:600;cursor:pointer}
+.gtab:hover{color:var(--fg)}
+.gtab.on{color:var(--accent);border-bottom-color:var(--accent)}
+a.gtab{display:inline-block;text-decoration:none}
+</style>"#;
+
+/// The instance console's tab bar (design doc §9): one page per tab, so these
+/// are links. Moderators see only Seasons.
+fn console_nav(active: &str, sysadmin: bool) -> String {
+    let mut out = format!(r#"{TABS_CSS}<div class="gtabs">"#);
+    for (href, label) in [
+        ("/admin/seasons", "Seasons"),
+        ("/admin/users", "Users &amp; links"),
+        ("/admin/settings", "Settings"),
+    ] {
+        if !sysadmin && href != "/admin/seasons" {
+            continue;
+        }
+        let on = if href == active { " on" } else { "" };
+        out.push_str(&format!(r#"<a class="gtab{on}" href="{href}">{label}</a>"#));
+    }
+    out.push_str("</div>");
+    out
+}
+
+/// Toggles `.gtabpanel`s from the `.gtabs` bar. The open tab lives in the URL
+/// hash, and every form's action carries it too: a post's redirect inherits
+/// the fragment, so you land back on the tab you acted from.
+const TABS_JS: &str = r#"<script>
 (function(){var bar=document.querySelector('.gtabs');if(!bar)return;
-function activate(id){var btn=bar.querySelector('.gtab[data-tab="'+id+'"]');if(!btn)return;
+function activate(id,push){var btn=bar.querySelector('.gtab[data-tab="'+id+'"]');if(!btn)return;
 bar.querySelectorAll('.gtab').forEach(function(x){x.classList.toggle('on',x===btn);});
-document.querySelectorAll('.gtabpanel').forEach(function(p){p.hidden=(p.id!==id);});}
-bar.addEventListener('click',function(e){var b=e.target.closest('.gtab');if(!b)return;activate(b.getAttribute('data-tab'));});
-// Open the tab named in the URL hash (e.g. #tab-pt after a pack upload).
+document.querySelectorAll('.gtabpanel').forEach(function(p){p.hidden=(p.id!==id);});
+if(push)history.replaceState(null,'','#'+id);
+document.querySelectorAll('form').forEach(function(f){var a=f.getAttribute('action');if(a)f.setAttribute('action',a.split('#')[0]+'#'+id);});}
+bar.addEventListener('click',function(e){var b=e.target.closest('.gtab');if(!b)return;activate(b.getAttribute('data-tab'),true);});
 var h=(location.hash||'').slice(1),el=h&&document.getElementById(h);
-if(el&&el.classList.contains('gtabpanel'))activate(h);
+if(el&&el.classList.contains('gtabpanel'))activate(h,false);
 })();
+</script>"#;
+
+/// The game page's log tab (after [`TABS_JS`]).
+const GAME_TAB_JS: &str = r#"<script>
 // The game's Log tab: a type-to-filter search + a feed whose page size is
 // fitted to the viewport, with live refresh of the current page while open.
 // Pager links (carrying the active search + rpp) are intercepted to swap in
@@ -2435,6 +2505,7 @@ pub fn game_page(
     let is_common = here.iter().any(|r| r.is_common);
     let mut out = page_head(Some(me));
     out.push_str(GAME_STYLE);
+    out.push_str(TABS_CSS);
     // The UT and Log tab panels are the same for the common and regular slot
     // branches; build them once.
     let ut_html = inlogic_panel(inlogic);
@@ -2598,6 +2669,7 @@ pub fn game_page(
         out.push_str(&ut_html);
         out.push_str(&poptracker_panel(ap_slot, pt_has_pack, pt_can_manage));
         out.push_str(&log_html);
+        out.push_str(TABS_JS);
         out.push_str(GAME_TAB_JS);
         out.push_str("</main></body></html>");
         return Html(out);
@@ -2711,6 +2783,7 @@ pub fn game_page(
     out.push_str(&ut_html);
     out.push_str(&poptracker_panel(ap_slot, pt_has_pack, pt_can_manage));
     out.push_str(&log_html);
+    out.push_str(TABS_JS);
     out.push_str(GAME_TAB_JS);
 
     out.push_str("</main></body></html>");
@@ -3318,20 +3391,10 @@ pub struct UsersView<'a> {
     pub minted: Option<&'a crate::account::Minted>,
     pub err: Option<&'a str>,
     pub now: i64,
-    /// Active auth mode and the sandbox posture line.
-    pub auth_mode: &'a str,
-    pub isolation: &'a str,
-    pub strong_isolation: bool,
 }
 
 pub fn users_page(v: &UsersView) -> Html<String> {
-    let mut body = String::new();
-    body.push_str(&format!(
-        r#"<h2>Instance</h2><p class="statline">Auth: <b>{}</b><br>Isolation: <span style="color:var({})">{}</span></p>"#,
-        esc(v.auth_mode),
-        if v.strong_isolation { "--ok" } else { "--warn" },
-        esc(v.isolation)
-    ));
+    let mut body = console_nav("/admin/users", true);
     if let Some(m) = v.minted {
         body.push_str(&format!(
             r#"<div class="banner ok minted"><b>{}</b> — copy it now; it won't be shown again.
@@ -3448,8 +3511,8 @@ pub fn users_page(v: &UsersView) -> Html<String> {
     }
 
     auth_page(
-        "Users & links",
-        r#"<a href="/admin/seasons">← seasons</a> · <a href="/admin/settings">settings</a>"#,
+        "Console",
+        r#"<a href="/">← home</a>"#,
         v.err,
         &body,
     )
@@ -3489,8 +3552,9 @@ pub fn seasons_page(
     manage: &[bool],
     default_name: &str,
     err: Option<&str>,
+    sysadmin: bool,
 ) -> Html<String> {
-    let mut body = String::new();
+    let mut body = console_nav("/admin/seasons", sysadmin);
     body.push_str(&format!(
         r#"<h2>New season</h2>
 <form class="linkform" method="post" action="/admin/seasons">
@@ -3528,18 +3592,17 @@ pub fn seasons_page(
         }
         body.push_str("</table>");
     }
-    auth_page(
-        "Seasons",
-        r#"<a href="/">← home</a> · <a href="/admin/users">users &amp; links</a> · <a href="/admin/settings">settings</a>"#,
-        err,
-        &body,
-    )
+    auth_page("Console", r#"<a href="/">← home</a>"#, err, &body)
 }
 
 // ---- instance settings (sysadmin) ----
 
 /// Deployment facts the settings page shows read-only.
 pub struct SettingsStatus {
+    pub auth_mode: String,
+    /// The sandbox posture line, and whether it's the strong tier.
+    pub isolation: String,
+    pub strong_isolation: bool,
     pub ap_version: Option<String>,
     pub managed: bool,
     pub ports: (u16, u16),
@@ -3551,7 +3614,7 @@ pub fn settings_page(
     err: Option<&str>,
     saved: bool,
 ) -> Html<String> {
-    let mut body = String::new();
+    let mut body = console_nav("/admin/settings", true);
     if saved {
         body.push_str(r#"<div class="banner ok">Saved — the home page shows it now.</div>"#);
     }
@@ -3566,8 +3629,11 @@ pub fn settings_page(
         "AP server: external (BIFROST_AP_MODE=external)".into()
     };
     body.push_str(&format!(
-        r#"<h2>Deployment</h2><p class="statline">Archipelago: <b>{}</b><br>{ports}</p>"#,
-        esc(status.ap_version.as_deref().unwrap_or("unknown — couldn't read Utils.py"))
+        r#"<h2>Deployment</h2><p class="statline">Archipelago: <b>{}</b><br>{ports}<br>Auth: <b>{}</b><br>Isolation: <span style="color:var({})">{}</span></p>"#,
+        esc(status.ap_version.as_deref().unwrap_or("unknown — couldn't read Utils.py")),
+        esc(&status.auth_mode),
+        if status.strong_isolation { "--ok" } else { "--warn" },
+        esc(&status.isolation),
     ));
     let discords: String = inst
         .discords
@@ -3598,8 +3664,8 @@ pub fn settings_page(
         esc(&discords),
     ));
     auth_page(
-        "Instance settings",
-        r#"<a href="/admin/seasons">← seasons</a> · <a href="/admin/users">users &amp; links</a>"#,
+        "Console",
+        r#"<a href="/">← home</a>"#,
         err,
         &body,
     )
