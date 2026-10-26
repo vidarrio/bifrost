@@ -74,7 +74,7 @@ impl Sandbox {
     /// and what works on this host. `probe` is an interpreter to test-run
     /// inside bubblewrap (falls back to `true`).
     pub async fn detect(probe: &Path) -> Sandbox {
-        let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+        let var = crate::config::var;
         let want = var("BIFROST_SANDBOX").unwrap_or_else(|| "auto".into());
         let mb = |k: &str, d: u64| var(k).and_then(|v| v.parse().ok()).unwrap_or(d);
         let limits = Limits {

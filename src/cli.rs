@@ -3,6 +3,7 @@
 //! IdP is down. Run as the service user on the host:
 //!
 //! ```text
+//! bifrost config example                   (a commented $BIFROST_DATA/config.toml)
 //! bifrost auth status
 //! bifrost auth mode native|forward-auth     (restart the service to apply)
 //! bifrost admin reset-link <username>
@@ -15,12 +16,30 @@ use crate::db::Db;
 
 const USAGE: &str = "usage:
   bifrost                                   run the server
+  bifrost config example                    print a commented config.toml template
   bifrost auth status                       show the auth mode and accounts
   bifrost auth mode native|forward-auth     switch auth mode (restart to apply)
   bifrost admin reset-link <username>       mint a 24 h password-reset link
   bifrost admin create-sysadmin <username>  create a sysadmin + reset link
   bifrost admin set-role <username> <role>  user|moderator|sysadmin (e.g. promote
                                             the first IdP user when no group mapping)";
+
+/// Commands that need no data dir or database (run before startup touches
+/// either). Returns the exit code if `args` named one.
+pub fn run_early(args: &[String]) -> Option<i32> {
+    match args
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["config", "example"] => {
+            print!("{}", crate::config::EXAMPLE);
+            Some(0)
+        }
+        _ => None,
+    }
+}
 
 /// Run a CLI command if `args` (after the program name) name one. Returns the
 /// process exit code, or `None` to start the server.
@@ -94,10 +113,7 @@ fn offline_auth(db: &Db) -> AuthInner {
 }
 
 fn print_link(path: &str) {
-    match std::env::var("BIFROST_PUBLIC_URL")
-        .ok()
-        .filter(|u| !u.is_empty())
-    {
+    match crate::config::var("BIFROST_PUBLIC_URL") {
         Some(base) => println!("{}{path}", base.trim_end_matches('/')),
         None => println!(
             "{path}   (prefix with this instance's URL; set BIFROST_PUBLIC_URL to print it whole)"

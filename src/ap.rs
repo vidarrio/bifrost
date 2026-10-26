@@ -346,14 +346,13 @@ pub struct ApConfig {
 
 impl ApConfig {
     pub fn from_env() -> Option<Self> {
-        let slot = std::env::var("BIFROST_SLOT")
-            .ok()
-            .filter(|s| !s.is_empty())?;
+        use crate::config::var;
+        let slot = var("BIFROST_SLOT")?;
         Some(Self {
-            url: std::env::var("BIFROST_AP_URL").unwrap_or_else(|_| "ws://127.0.0.1:38281".into()),
+            url: var("BIFROST_AP_URL").unwrap_or_else(|| "ws://127.0.0.1:38281".into()),
             slot,
-            password: std::env::var("BIFROST_AP_PASSWORD").unwrap_or_default(),
-            admin_password: std::env::var("BIFROST_AP_ADMIN_PASSWORD").unwrap_or_default(),
+            password: var("BIFROST_AP_PASSWORD").unwrap_or_default(),
+            admin_password: var("BIFROST_AP_ADMIN_PASSWORD").unwrap_or_default(),
         })
     }
 }

@@ -67,7 +67,12 @@ async fn main() {
         )
         .init();
 
-    let cfg = config::init(config::Config::from_env());
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = cli::run_early(&args) {
+        std::process::exit(code);
+    }
+
+    let cfg = config::init(config::Config::load());
     cfg.ensure_dirs()
         .unwrap_or_else(|e| panic!("create data dirs under {}: {e}", cfg.data_dir.display()));
     let port = cfg.port;
@@ -77,7 +82,6 @@ async fn main() {
         .await
         .unwrap_or_else(|e| panic!("open db {}: {e}", db_path.display()));
 
-    let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(code) = cli::run(&args, &db).await {
         std::process::exit(code);
     }
@@ -229,7 +233,7 @@ async fn init_auth(db: &db::Db) -> auth::Auth {
         db: db.clone(),
         mode,
         fwd,
-        secure_cookies: std::env::var("BIFROST_INSECURE_COOKIES").ok().as_deref() != Some("1"),
+        secure_cookies: config::var("BIFROST_INSECURE_COOKIES").as_deref() != Some("1"),
         throttle: auth::Throttle::default(),
         setup_token: Mutex::new(setup_token),
     });
@@ -247,7 +251,7 @@ async fn init_auth(db: &db::Db) -> auth::Auth {
 /// `BIFROST_COOP="Cam:Abi,Foo:Bar"` — map an AP slot name to an extra Bifrost
 /// slot name (a co-op seat) for the current season's seeding.
 fn parse_coop() -> Vec<(String, String)> {
-    std::env::var("BIFROST_COOP")
+    config::var("BIFROST_COOP")
         .unwrap_or_default()
         .split(',')
         .filter_map(|p| p.split_once(':'))
@@ -361,9 +365,9 @@ async fn live_priorities(
 }
 
 /// The player-facing Minecraft common-game server address (host:port), shown on
-/// the communal slot's card. Override with `BIFROST_MC_ADDR`.
-fn mc_addr() -> String {
-    std::env::var("BIFROST_MC_ADDR").unwrap_or_else(|_| "ap.example.org:25565".into())
+/// the communal slot's card (`BIFROST_MC_ADDR`); not shown when unset.
+fn mc_addr() -> Option<String> {
+    config::var("BIFROST_MC_ADDR")
 }
 
 /// Where Bifrost writes the desired Minecraft whitelist (the current season's
@@ -403,7 +407,7 @@ async fn board_view(State(st): State<AppState>) -> Html<String> {
     // Board shows the latest slice of the persistent log (journal-sourced).
     let acts = st.db.activity_latest(&season, BOARD_ACTIVITY).await;
     let inlogic = st.db.inlogic_counts(&season).await;
-    render::board_page(&snap, &slots, &prios, Some(&addr), &acts, &inlogic)
+    render::board_page(&snap, &slots, &prios, addr.as_deref(), &acts, &inlogic)
 }
 
 /// The board's live-update payload: the `.boardcols` inner HTML (`body`) + the
@@ -423,7 +427,7 @@ async fn board_fragment_view(State(st): State<AppState>) -> Json<serde_json::Val
     Json(serde_json::json!({
         "conn": render::conn_line(&snap),
         "progress": render::season_progress(&snap, &slots),
-        "body": render::board_fragment(&snap, &slots, &prios, Some(&addr), &acts, &inlogic),
+        "body": render::board_fragment(&snap, &slots, &prios, addr.as_deref(), &acts, &inlogic),
     }))
 }
 
@@ -960,7 +964,7 @@ async fn game_view(
         credits,
         i_have_claim,
         my_mc.as_deref(),
-        Some(mc_addr().as_str()),
+        mc_addr().as_deref(),
         &my_files,
         inlogic.as_ref(),
         &log,

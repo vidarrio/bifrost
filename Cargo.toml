@@ -30,6 +30,7 @@ zip = { version = "9", default-features = false, features = ["deflate"] }  # rea
 argon2 = "0.5"  # native-account password hashing (argon2id)
 sha2 = "0.10"  # session/link tokens are stored as SHA-256, never in the clear
 libc = "0.2"  # sandbox floor: setrlimit / setsid / killpg for AP helper processes
+toml = { version = "0.8", default-features = false, features = ["parse"] }  # $BIFROST_DATA/config.toml
 
 # Planned, added as each phase lands:
 #   reqwest     # the Discord bot / kanidm integration
