@@ -1903,7 +1903,11 @@ const GAME_STYLE: &str = r#"<style>
 .ptmap{width:100vw;max-width:100vw;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);padding-inline:clamp(16px,3vw,48px);box-sizing:border-box;text-align:center}
 .ptmapwrap{position:relative;display:inline-block;max-width:100%;vertical-align:top;margin:0 7px 16px}
 .ptgroup .ptgh{text-align:center}
-.ptmapwrap img{display:block;max-width:100%;height:auto}
+/* Zoom/pan viewport: clips the transformed stage; touch-action:none so a drag
+   pans instead of scrolling the page. */
+.ptview{position:relative;overflow:hidden;width:fit-content;max-width:100%;border-radius:4px;touch-action:none}
+.ptstage{position:relative;transform-origin:0 0}
+.ptview img,.ptmapwrap img{display:block;max-width:100%;height:auto;user-select:none;-webkit-user-drag:none}
 .ptmk{position:absolute;border:1px solid rgba(0,0,0,.65);box-sizing:border-box;border-radius:2px}
 .ptmk.d{transform:rotate(45deg)}
 .ptform{margin:10px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -1998,8 +2002,14 @@ const PT_JS: &str = r#"<script>
   var m=(st.maps||[]).filter(function(x){return x.name===mapName;})[0];
   var wrap=document.createElement('div'); wrap.className='ptmapwrap';
   if(!m){ wrap.textContent='(map '+mapName+' missing)'; return wrap; }
-  var img=document.createElement('img'); img.loading='lazy';
-  img.src=assetUrl(m.img); wrap.appendChild(img);
+  // A clipping viewport (.ptview) holds a transformable stage (.ptstage) with
+  // the image + markers; scroll zooms toward the cursor, drag pans (like native
+  // PopTracker). Markers are % of the stage, so they ride the transform.
+  var view=document.createElement('div'); view.className='ptview';
+  var stage=document.createElement('div'); stage.className='ptstage';
+  view.appendChild(stage); wrap.appendChild(view);
+  var img=document.createElement('img'); img.loading='lazy'; img.draggable=false;
+  img.src=assetUrl(m.img); stage.appendChild(img);
   var sz=m.location_size||16; var spans=[];
   (st.markers||[]).filter(function(k){return k.map===mapName;}).forEach(function(k){
    var s=k.size||sz; var mk=document.createElement('span');
@@ -2007,7 +2017,7 @@ const PT_JS: &str = r#"<script>
    mk.dataset.key=k.location+'@'+k.map; mk.dataset.loc=k.location;
    mk.title=markerTitle(k);
    mk.style.background=markerBg(k);
-   mk._k=k; mk._s=s; spans.push(mk); wrap.appendChild(mk);
+   mk._k=k; mk._s=s; spans.push(mk); stage.appendChild(mk);
   });
   // Position markers as PERCENTAGES of the image's natural size, so they scale
   // with the responsive (max-width:100%) image on any screen width.
@@ -2018,7 +2028,40 @@ const PT_JS: &str = r#"<script>
    });
   }
   if(img.complete && img.naturalWidth) place(); else img.addEventListener('load',place);
+  attachZoomPan(view,stage);
   return wrap;
+ }
+ // Scroll-to-zoom + drag-to-pan (mouse) and pinch/drag (touch) on one map view.
+ function attachZoomPan(view,stage){
+  var scale=1,tx=0,ty=0,MAX=8;
+  function apply(){ stage.style.transform='translate('+tx+'px,'+ty+'px) scale('+scale+')';
+   view.style.cursor=scale>1?'grab':''; view.classList.toggle('zoomed',scale>1); }
+  function clamp(){ var r=view.getBoundingClientRect(), W=r.width, H=r.height;
+   var minx=W*(1-scale), miny=H*(1-scale);
+   tx=Math.min(0,Math.max(minx,tx)); ty=Math.min(0,Math.max(miny,ty));
+   if(scale<=1){ tx=0; ty=0; } }
+  function zoomAt(px,py,factor){ var ns=Math.min(MAX,Math.max(1,scale*factor));
+   if(ns===scale) return; var cx=(px-tx)/scale, cy=(py-ty)/scale;
+   scale=ns; tx=px-cx*scale; ty=py-cy*scale; clamp(); apply(); }
+  view.addEventListener('wheel',function(e){ e.preventDefault(); var r=view.getBoundingClientRect();
+   zoomAt(e.clientX-r.left, e.clientY-r.top, e.deltaY<0?1.2:1/1.2); }, {passive:false});
+  view.addEventListener('dblclick',function(e){ e.preventDefault(); scale=1; tx=0; ty=0; apply(); });
+  var pts={}, last=null, pinch=0;
+  view.addEventListener('pointerdown',function(e){ pts[e.pointerId]={x:e.clientX,y:e.clientY};
+   try{ view.setPointerCapture(e.pointerId); }catch(_){}
+   if(Object.keys(pts).length===1){ last={x:e.clientX,y:e.clientY}; if(scale>1) view.style.cursor='grabbing'; } });
+  view.addEventListener('pointermove',function(e){ if(!pts[e.pointerId]) return;
+   pts[e.pointerId]={x:e.clientX,y:e.clientY}; var ids=Object.keys(pts);
+   if(ids.length>=2){ var a=pts[ids[0]], b=pts[ids[1]], d=Math.hypot(a.x-b.x,a.y-b.y);
+    var r=view.getBoundingClientRect(); if(pinch) zoomAt((a.x+b.x)/2-r.left,(a.y+b.y)/2-r.top,d/pinch);
+    pinch=d; last=null; return; }
+   if(last){ if(scale>1){ tx+=e.clientX-last.x; ty+=e.clientY-last.y; clamp(); apply(); }
+    last={x:e.clientX,y:e.clientY}; } });
+  function up(e){ delete pts[e.pointerId]; try{ view.releasePointerCapture(e.pointerId); }catch(_){}
+   if(Object.keys(pts).length<2) pinch=0;
+   if(!Object.keys(pts).length){ last=null; view.style.cursor=scale>1?'grab':''; } }
+  view.addEventListener('pointerup',up); view.addEventListener('pointercancel',up);
+  apply();
  }
  var itemsByCode={};
  function buildIndex(){ itemsByCode={}; (st.items||[]).forEach(function(it){ (it.codes||[]).forEach(function(c){ if(c) itemsByCode[(''+c).toLowerCase()]=it; }); }); }
