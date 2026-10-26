@@ -25,7 +25,9 @@ const USAGE: &str = "usage:
                                             the first IdP user when no group mapping)
   bifrost backup now                        take a backup (also runs nightly)
   bifrost backup list                       list backups
-  bifrost backup restore <file.zip>         restore one (stop Bifrost first)";
+  bifrost backup restore <file.zip>         restore one (stop Bifrost first)
+  bifrost season import <bundle.tar.gz>     add a finished season from another
+                                            instance's archive bundle";
 
 /// Commands that need no data dir or database (run before startup touches
 /// either). Returns the exit code if `args` named one.
@@ -80,6 +82,16 @@ pub async fn run(args: &[String], db: &Db) -> Option<i32> {
             }
             Err(e) => {
                 eprintln!("backup failed: {e}");
+                1
+            }
+        },
+        ["season", "import", file] => match crate::archive::import(db, std::path::Path::new(file), None).await {
+            Ok(id) => {
+                println!("imported as season {id} (archived)");
+                0
+            }
+            Err(e) => {
+                eprintln!("import failed: {e}");
                 1
             }
         },

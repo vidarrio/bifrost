@@ -209,6 +209,47 @@ impl Db {
         Ok(r.last_insert_rowid())
     }
 
+    /// The season holding `seed`, if any.
+    pub async fn season_by_seed(&self, seed: &str) -> Option<i64> {
+        sqlx::query_scalar("SELECT id FROM season WHERE seed = ?")
+            .bind(seed)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// An archived season brought in from another instance's bundle
+    /// (`archive::import`): no slots or files, just its record and summary.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn import_season(
+        &self,
+        name: &str,
+        seed: &str,
+        summary: &str,
+        created_by: Option<i64>,
+        created_at: i64,
+        live_at: Option<i64>,
+        archived_at: i64,
+        ap_version: Option<&str>,
+    ) -> Result<i64, sqlx::Error> {
+        let r = sqlx::query(
+            "INSERT INTO season (name, state, created_by, created_at, seed, live_at, archived_at, summary, ap_version)
+             VALUES (?, 'archived', ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(name)
+        .bind(created_by)
+        .bind(created_at)
+        .bind(seed)
+        .bind(live_at)
+        .bind(archived_at)
+        .bind(summary)
+        .bind(ap_version)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.last_insert_rowid())
+    }
+
     pub async fn season(&self, id: i64) -> Option<SeasonRow> {
         sqlx::query_as(&format!("SELECT {COLS} FROM season WHERE id = ?"))
             .bind(id)

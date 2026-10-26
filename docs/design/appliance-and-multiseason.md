@@ -695,6 +695,15 @@ new data dir, new config, new service wiring. Consequences:
 - Anything worth keeping from the old instance (e.g. past-season archive
   bundles / summaries) is carried over as a one-off import at redeploy time,
   decided then — not via compatibility code.
+- **Season import — as built (`src/archive.rs`).** For moving finished seasons
+  between appliance instances from now on (not for the old instance's
+  bundles): the archive bundle also carries `bundle.json` (format
+  `bifrost-season`, version 1, name, seed, dates, AP version) and
+  `summary.json`. `bifrost season import <bundle>` or the Seasons console
+  (sysadmins; streamed upload up to 2 GiB) creates an archived season with that
+  summary and keeps the bundle in `archives/`; a seed already present is
+  refused, and so is a bundle without `bundle.json` or from a newer format.
+  Archived seasons' admins can download the bundle from the Seasons list.
 
 ## 12. Risks & open decisions
 

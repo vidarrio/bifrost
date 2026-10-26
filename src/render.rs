@@ -3708,6 +3708,15 @@ pub fn seasons_page(
 <p class="statline">A new season starts as a <b>draft</b>: set it up in its admin page, open signups, then generate it to go live. Each live season gets its own AP port until it's archived.</p>"#,
         esc(default_name)
     ));
+    if sysadmin {
+        body.push_str(
+            r#"<h2>Import a finished season</h2>
+<form class="linkform" method="post" action="/admin/seasons/import" enctype="multipart/form-data">
+<label>Season bundle<input type="file" name="bundle" accept=".tar.gz,.tgz,application/gzip" required></label>
+<button type="submit">Import</button></form>
+<p class="statline">A bundle is what archiving a season writes (its summary, seed, save, YAMLs and worlds) — download one from another Bifrost's Seasons list. It shows up here as an archived season.</p>"#,
+        );
+    }
     body.push_str("<h2>Seasons</h2>");
     if seasons.is_empty() {
         body.push_str(r#"<div class="empty">No seasons yet.</div>"#);
@@ -3720,7 +3729,13 @@ pub fn seasons_page(
                 _ => fmt_date(s.created_at),
             };
             let links = if s.state() == crate::db::State::Archived {
-                format!(r#"<a href="/s/{0}/season">summary</a>"#, s.id)
+                let bundle = s.seed.as_deref().and_then(crate::archive::bundle_path).is_some() && *can;
+                let bundle = if bundle {
+                    format!(r#" · <a href="/s/{}/admin/bundle">bundle</a>"#, s.id)
+                } else {
+                    String::new()
+                };
+                format!(r#"<a href="/s/{0}/season">summary</a>{bundle}"#, s.id)
             } else if *can {
                 format!(r#"<a href="/s/{0}/board">board</a> · <a href="/s/{0}/admin">admin</a>"#, s.id)
             } else {

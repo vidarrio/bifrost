@@ -215,6 +215,8 @@ async fn main() {
         .route("/signup/delete", post(signup_delete))
         .route("/admin", get(admin_view))
         .route("/admin/seasons", get(seasons_view).post(seasons_create))
+        .route("/admin/seasons/import", post(seasons_import).layer(axum::extract::DefaultBodyLimit::max(2 << 30)))
+        .route("/admin/bundle", get(admin_bundle))
         .route("/admin/settings", get(settings_view).post(settings_save))
         .route("/admin/settings/ap/check", post(ap_check))
         .route("/admin/settings/ap/install", post(ap_install))
@@ -2199,7 +2201,8 @@ async fn admin_archive_season(
         }
         t
     };
-    match archive::bundle_season(ctx.id, &seed, &season_txt).await {
+    let manifest = archive::Manifest::new(&ctx.row, &summary.name, &seed, now);
+    match archive::bundle_season(ctx.id, &seed, &season_txt, &manifest, &summary).await {
         Ok(path) => tracing::info!("season bundle written: {path}"),
         Err(e) => tracing::warn!("season bundle failed (summary saved): {e}"),
     }
@@ -2352,7 +2355,12 @@ async fn backup_download(me: auth::Me, Query(q): Query<BackupName>, req: axum::e
     let Some(path) = backup::path(&q.name) else {
         return (axum::http::StatusCode::NOT_FOUND, "no such backup").into_response();
     };
-    let disposition = format!("attachment; filename=\"{}\"", q.name);
+    download(path, &q.name, req).await
+}
+
+/// Send a file as an attachment named `name` (ranges, conditional requests).
+async fn download(path: std::path::PathBuf, name: &str, req: axum::extract::Request) -> Response {
+    let disposition = format!("attachment; filename=\"{name}\"");
     match tower::ServiceExt::oneshot(tower_http::services::ServeFile::new(path), req).await {
         Ok(mut r) => {
             if let Ok(v) = axum::http::HeaderValue::from_str(&disposition) {
@@ -2475,6 +2483,55 @@ async fn seasons_page(st: &AppState, me: &auth::Me, name: &str, err: Option<&str
     }
     render::seasons_page(&seasons, &manage, name, err, me.can(auth::Action::ManageInstance))
         .into_response()
+}
+
+/// Import a finished season from another instance's archive bundle
+/// (sysadmins). The upload streams to a temp file — bundles can be large.
+async fn seasons_import(State(st): State<AppState>, me: auth::Me, mut mp: Multipart) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return render::notice("Sysadmins only.", false, "/").into_response();
+    }
+    let tmp = config::get().tmp_dir().join(format!("import-{}.tar.gz", auth::new_token()));
+    let res = async {
+        tokio::fs::create_dir_all(config::get().tmp_dir()).await.map_err(|e| e.to_string())?;
+        let mut got = false;
+        while let Ok(Some(mut field)) = mp.next_field().await {
+            if field.name() != Some("bundle") {
+                continue;
+            }
+            let mut out = tokio::fs::File::create(&tmp).await.map_err(|e| e.to_string())?;
+            while let Some(chunk) = field.chunk().await.map_err(|e| format!("upload: {e}"))? {
+                tokio::io::AsyncWriteExt::write_all(&mut out, &chunk).await.map_err(|e| e.to_string())?;
+                got = true;
+            }
+        }
+        if !got {
+            return Err("No file received.".to_string());
+        }
+        archive::import(&st.db, &tmp, Some(me.id())).await
+    }
+    .await;
+    let _ = tokio::fs::remove_file(&tmp).await;
+    match res {
+        Ok(id) => {
+            tracing::info!("{} imported season {id}", me.username());
+            Redirect::to(&format!("/s/{id}/season")).into_response()
+        }
+        Err(e) => seasons_page(&st, &me, &default_season_name(), Some(&format!("Import failed: {e}"))).await,
+    }
+}
+
+/// An archived season's bundle (its admins), e.g. to import it elsewhere.
+async fn admin_bundle(ctx: scope::SeasonCtx, me: auth::Me, req: axum::extract::Request) -> Response {
+    let (_me, is_admin) = ctx.ident(&me);
+    if !is_admin {
+        return render::notice("Admins only.", false, "/").into_response();
+    }
+    let seed = ctx.row.seed.clone().unwrap_or_default();
+    match archive::bundle_path(&seed).filter(|_| ctx.state() == db::State::Archived) {
+        Some(path) => download(path, &format!("bifrost-season-{seed}.tar.gz"), req).await,
+        None => (axum::http::StatusCode::NOT_FOUND, "no bundle for this season").into_response(),
+    }
 }
 
 #[derive(Deserialize)]
