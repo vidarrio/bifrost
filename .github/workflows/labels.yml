@@ -5,7 +5,9 @@ name: Labels
 # never checks out the pull request's code, so it can label PRs from forks.
 on:
   pull_request_target:
-    types: [opened, reopened, synchronize]
+    # A PR's branch can't change, so its label is decided when it opens; not
+    # rerunning on pushes keeps a label someone removed on purpose removed.
+    types: [opened, reopened]
 
 permissions:
   contents: read

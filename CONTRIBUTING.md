@@ -25,7 +25,8 @@ branch. Prefix the branch name with the kind of change:
 
 For example: `feat/season-rehearsal`, `fix/hint-credit-race`.
 
-Pull requests are labelled with their kind of change (`feat`, `fix`, …)
+The kind of change also shows on the pull request: its title starts with it
+(see [Pull requests](#pull-requests)), and it's labelled with it
 automatically, from the branch prefix.
 
 Keep branches short-lived. If `main` moves on while you work, rebase onto it
@@ -63,8 +64,18 @@ pull request instead.
 
 ## Pull requests
 
-Open a pull request against `main` once the branch is ready for review. The
-description says:
+Open a pull request against `main` once the branch is ready for review. Its
+title is `<kind>: <subject>`, where `<kind>` is the branch's prefix without the
+slash and `<subject>` is an imperative summary. A scope in parentheses is
+optional. For example:
+
+- `feat: import seasons from archive bundles`
+- `fix(poptracker): don't hold the engine borrow while handlers run`
+
+A CI check (`title`) fails when the title doesn't have this form or its kind
+doesn't match the branch.
+
+The description says:
 
 - what changes and why;
 - how it was tested;
@@ -125,9 +136,9 @@ A pull request merges when all of these hold:
 4. The branch is up to date with `main`.
 
 Merge with **squash and merge**, the only merge method the repository allows.
-The pull request title becomes the commit subject on `main`, with the PR number
-appended, so write it like a commit subject: imperative, and at most about 65
-characters, so the subject stays under 72 with the number. The branch is deleted automatically.
+The pull request title, kind included, becomes the commit subject on `main`,
+with the PR number appended. Keep it to about 65 characters, so the subject
+stays under 72 with the number. The branch is deleted automatically.
 
 ### Repository settings
 
