@@ -1,7 +1,7 @@
 [package]
 name = "poptracker"
 version = "0.0.1"
-edition = "2021"
+edition = "2024"
 description = "PopTracker-pack engine: runs a pack's Lua headlessly against Archipelago state and emits tracker state (items + location accessibility). Logic only — no rendering, no network."
 license = "MIT"
 publish = false
