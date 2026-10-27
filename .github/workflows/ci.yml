@@ -26,8 +26,12 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      shards: ${{ steps.shards.outputs.shards }}
     steps:
       - uses: actions/checkout@v5
+      - name: End-to-end shards
+        id: shards
+        run: echo "shards=$(tests/e2e/run.sh shards)" >> "$GITHUB_OUTPUT"
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -90,8 +94,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The shards themselves are defined in tests/e2e/run.sh.
-        shard: [1, 2, 3]
+        # The shards are defined in tests/e2e/run.sh. If `changes` failed (and
+        # this runs anyway, failing closed), fall back to three.
+        shard: ${{ fromJSON(needs.changes.outputs.shards || '[1, 2, 3]') }}
     name: e2e (${{ matrix.shard }})
     steps:
       - uses: actions/checkout@v5
@@ -147,7 +152,9 @@ jobs:
   # One stable check for the ruleset, whatever the shards are.
   e2e:
     needs: [changes, e2e-suites]
-    if: ${{ !cancelled() }}
+    # always(), not !cancelled(): on a cancelled run this job must still run
+    # and fail, since a skipped required check would count as passed.
+    if: always()
     runs-on: ubuntu-24.04
     steps:
       - name: All shards passed (or skipped for a docs-only change)
