@@ -44,7 +44,10 @@ pub(crate) async fn catalog_upload(State(st): State<AppState>, me: auth::Me, mut
     }
     .await;
     match res {
-        Ok(w) => catalog_page(&st, None, Some(&format!("Added {} to the catalog.", w.file))).await.into_response(),
+        Ok(w) => {
+            let msg = format!("Added {} to the catalog.", w.file);
+            catalog_page(&st, None, Some(&msg)).await.into_response()
+        }
         Err(e) => catalog_page(&st, Some(&e), None).await.into_response(),
     }
 }

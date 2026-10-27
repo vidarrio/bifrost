@@ -258,7 +258,7 @@ pub struct ForwardAuth {
 
 impl ForwardAuth {
     pub fn from_env(trusted: Vec<Cidr>) -> Result<Self, String> {
-        let var = crate::config::var;
+        use crate::config::var;
         let secret = match (var("BIFROST_FWD_SECRET_HEADER"), var("BIFROST_FWD_SECRET")) {
             (Some(h), Some(v)) => Some((h, v)),
             (None, None) => None,

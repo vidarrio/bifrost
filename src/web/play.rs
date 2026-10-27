@@ -21,13 +21,13 @@ pub(crate) async fn prioritize_post(
     let (_me, is_admin) = ctx.ident(&me);
     let season = ctx.id;
     // Already-found hints are non-prioritizable.
-    let is_found = ctx.rt.board.read().is_ok_and(|b| {
+    let is_found = ctx.rt.with_board(|b| {
         b.snapshot().ap.values().any(|a| {
             a.hint_views.iter().any(|h| {
                 h.found && h.finding == f.finding && h.location == f.location && h.item == f.item
             })
         })
-    });
+    }) == Some(true);
     // A hint is prioritized by the item's owner: a claimant of the receiving
     // slot (whose items the hint is about), or an admin. The finder's world can
     // be someone else's, so we gate on `receiving`, not `finding`.
@@ -43,9 +43,8 @@ pub(crate) async fn prioritize_post(
 pub(crate) async fn claim_get(State(st): State<AppState>,
     ctx: scope::SeasonCtx, me: auth::Me) -> Html<String> {
     let (me, is_admin) = ctx.ident(&me);
-    let snap = match ctx.rt.board.read() {
-        Ok(b) => b.snapshot(),
-        Err(_) => return Html("board unavailable".into()),
+    let Some(snap) = ctx.rt.with_board(|b| b.snapshot()) else {
+        return Html("board unavailable".into());
     };
     let season = ctx.id;
     let slots = st.db.slots(season).await.unwrap_or_default();
@@ -149,10 +148,8 @@ pub(crate) async fn hint_post(
         return reject("Only the player who claimed this slot can hint on it.");
     }
     let connect_name = ctx.rt
-        .board
-        .read()
-        .ok()
-        .and_then(|b| b.slots.get(&ap_slot).map(|s| s.name.clone()));
+        .with_board(|b| b.slots.get(&ap_slot).map(|s| s.name.clone()))
+        .flatten();
     let Some(name) = connect_name else {
         return reject("That slot isn't live right now.");
     };
@@ -163,9 +160,7 @@ pub(crate) async fn hint_post(
     match ap::send_hint(&cfg.url, &cfg.password, &name, f.item.trim()).await {
         Ok(parts) => {
             let text = ctx.rt
-                .board
-                .read()
-                .map(|b| ap::resolve_parts(&b, &parts))
+                .with_board(|b| ap::resolve_parts(b, &parts))
                 .unwrap_or_default();
             if !hint_rejected(&text) {
                 // Placed with AP points — report the new balance.
@@ -184,10 +179,7 @@ pub(crate) async fn hint_post(
                 // every copy for a single credit. Fall back to /hint by name if
                 // we can't resolve a specific location.
                 let admin_cmd = ctx.rt
-                    .board
-                    .read()
-                    .ok()
-                    .and_then(|b| {
+                    .with_board(|b| {
                         let game = b.slots.get(&ap_slot)?.game.clone();
                         let m = b.meta.as_ref()?;
                         let item_id = m.item_id_by_name(&game, f.item.trim())?;
@@ -196,6 +188,7 @@ pub(crate) async fn hint_post(
                         let loc_name = m.location_name(&finder_game, loc)?.to_string();
                         Some(format!("/hint_location {} {}", b.name_of(finder), loc_name))
                     })
+                    .flatten()
                     .unwrap_or_else(|| format!("/hint {name} {}", f.item.trim()));
                 match ap::send_admin(
                     &cfg.url,
@@ -208,12 +201,10 @@ pub(crate) async fn hint_post(
                 {
                     Ok(lists) => {
                         let msg = ctx.rt
-                            .board
-                            .read()
-                            .map(|b| {
+                            .with_board(|b| {
                                 lists
                                     .iter()
-                                    .map(|p| ap::resolve_parts(&b, p))
+                                    .map(|p| ap::resolve_parts(b, p))
                                     .collect::<Vec<_>>()
                                     .join(" ")
                             })

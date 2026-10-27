@@ -33,6 +33,15 @@ impl SeasonRt {
     pub fn ap_cfg(&self) -> Option<ApConfig> {
         self.ap.read().ok().and_then(|c| c.clone())
     }
+    /// Read the season's board under its lock. Handlers go through this (a
+    /// plain function) rather than holding the guard in their async body.
+    pub fn with_board<R>(&self, f: impl FnOnce(&Board) -> R) -> Option<R> {
+        self.board.read().ok().map(|b| f(&b))
+    }
+    /// The same for the generation status (running?, message).
+    pub fn with_genstate<R>(&self, f: impl FnOnce(&mut (bool, String)) -> R) -> Option<R> {
+        self.genstate.lock().ok().map(|mut g| f(&mut g))
+    }
     fn server(&self) -> Option<Arc<ApServer>> {
         self.server.lock().unwrap().clone()
     }

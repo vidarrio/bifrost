@@ -17,10 +17,11 @@ pub(crate) async fn favicon() -> impl IntoResponse {
 /// tier, so anonymous callers get the middleware's 401 JSON (with `sign_in`).
 pub(crate) async fn api_me(State(st): State<AppState>, me: auth::Me) -> Json<serde_json::Value> {
     let (user, _) = me.ident();
+    // The header's optional "home" pill (instance settings).
+    let home = st.db.instance().await.home_url;
     Json(serde_json::json!({
         "user": user,
-        // The header's optional "home" pill (instance settings).
-        "home": st.db.instance().await.home_url,
+        "home": home,
         // Moderators and up: the header's way into season administration.
         "admin": me.can(auth::Action::CreateSeason),
         "sign_in": st.auth.sign_in_url(),
@@ -46,9 +47,7 @@ pub(crate) async fn landing(State(st): State<AppState>) -> Html<String> {
                 let ap_names: std::collections::HashMap<i64, String> = st
                     .seasons
                     .get(season.id)
-                    .board
-                    .read()
-                    .map(|b| b.slots.iter().map(|(k, s)| (*k, s.name.clone())).collect())
+                    .with_board(|b| b.slots.iter().map(|(k, s)| (*k, s.name.clone())).collect())
                     .unwrap_or_default();
                 (
                     format!("{} — who's playing what", season.name),

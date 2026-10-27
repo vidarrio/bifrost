@@ -59,7 +59,10 @@ pub(crate) async fn seasons_import(State(st): State<AppState>, me: auth::Me, mut
             tracing::info!("{} imported season {id}", me.username());
             Redirect::to(&format!("/s/{id}/season")).into_response()
         }
-        Err(e) => seasons_page(&st, &me, &default_season_name(), Some(&format!("Import failed: {e}"))).await,
+        Err(e) => {
+            let msg = format!("Import failed: {e}");
+            seasons_page(&st, &me, &default_season_name(), Some(&msg)).await
+        }
     }
 }
 
@@ -71,7 +74,10 @@ pub(crate) async fn admin_bundle(ctx: scope::SeasonCtx, me: auth::Me, req: axum:
     }
     let seed = ctx.row.seed.clone().unwrap_or_default();
     match archive::bundle_path(&seed).filter(|_| ctx.state() == db::State::Archived) {
-        Some(path) => download(path, &format!("bifrost-season-{seed}.tar.gz"), req).await,
+        Some(path) => {
+            let name = format!("bifrost-season-{seed}.tar.gz");
+            download(path, &name, req).await
+        }
         None => (axum::http::StatusCode::NOT_FOUND, "no bundle for this season").into_response(),
     }
 }

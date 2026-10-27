@@ -110,7 +110,8 @@ pub async fn run(args: &[String], db: &Db) -> Option<i32> {
 }
 
 async fn status(db: &Db) -> i32 {
-    println!("auth mode: {}", db.auth_mode().await.as_str());
+    let mode = db.auth_mode().await;
+    println!("auth mode: {}", mode.as_str());
     for a in db.accounts().await {
         let kind = if a.idp { "idp" } else { "native" };
         let state = if a.disabled { " (disabled)" } else { "" };

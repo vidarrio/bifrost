@@ -5,9 +5,7 @@ use super::*;
 /// Gather everything the admin page shows and render it.
 pub(crate) async fn render_admin(ctx: &scope::SeasonCtx, st: &AppState, me: &auth::Me) -> Html<String> {
     let (connected, seed, acdata) = ctx.rt
-        .board
-        .read()
-        .map(|b| {
+        .with_board(|b| {
             (
                 b.connected,
                 b.seed.clone(),
@@ -24,9 +22,7 @@ pub(crate) async fn render_admin(ctx: &scope::SeasonCtx, st: &AppState, me: &aut
         ctx.rt.ap_cfg().map(|c| c.password).unwrap_or_default()
     };
     let (running, gen_msg) = ctx.rt
-        .genstate
-        .lock()
-        .map(|g| (g.0, g.1.clone()))
+        .with_genstate(|g| (g.0, g.1.clone()))
         .unwrap_or((false, "unknown".into()));
     let subs = st.db.submissions(ctx.id).await.unwrap_or_default();
     let apworlds = generate::list_apworlds(ctx.id).await;
@@ -104,14 +100,14 @@ pub(crate) async fn admin_generate(State(st): State<AppState>,
     ctx: scope::SeasonCtx, me: auth::Me) -> Redirect {
     let (_me, is_admin) = ctx.ident(&me);
     if is_admin {
-        let start = match ctx.rt.genstate.lock() {
-            Ok(mut g) if !g.0 => {
-                g.0 = true;
-                g.1 = "Starting…".into();
-                true
+        let start = ctx.rt.with_genstate(|g| {
+            if g.0 {
+                return false;
             }
-            _ => false,
-        };
+            g.0 = true;
+            g.1 = "Starting…".into();
+            true
+        }) == Some(true);
         if start {
             let (db, rts, id) = (st.db.clone(), st.seasons.clone(), ctx.id);
             tokio::spawn(async move { generate::run(db, rts, id).await });
@@ -126,21 +122,21 @@ pub(crate) async fn admin_regenerate(State(st): State<AppState>,
     if is_admin {
         // A re-roll replaces a live season's seed.
         if !ctx.state().is_live() {
-            if let Ok(mut g) = ctx.rt.genstate.lock()
-                && !g.0
-            {
-                g.1 = "Regenerate re-rolls a live season — generate it first.".into();
-            }
+            ctx.rt.with_genstate(|g| {
+                if !g.0 {
+                    g.1 = "Regenerate re-rolls a live season — generate it first.".into();
+                }
+            });
             return Redirect::to(&ctx.url("/admin"));
         }
-        let start = match ctx.rt.genstate.lock() {
-            Ok(mut g) if !g.0 => {
-                g.0 = true;
-                g.1 = "Starting…".into();
-                true
+        let start = ctx.rt.with_genstate(|g| {
+            if g.0 {
+                return false;
             }
-            _ => false,
-        };
+            g.0 = true;
+            g.1 = "Starting…".into();
+            true
+        }) == Some(true);
         if start {
             let (db, rts, id) = (st.db.clone(), st.seasons.clone(), ctx.id);
             tokio::spawn(async move { generate::regenerate(db, rts, id).await });
@@ -231,7 +227,7 @@ pub(crate) async fn admin_archive_season(
     }
     // Snapshot the live board under one lock: seed, per-slot figures, and the
     // AP slot -> primary player name map (to put the lead seat first).
-    let Ok((snap, ap_names, board_seed)) = ctx.rt.board.read().map(|b| {
+    let Some((snap, ap_names, board_seed)) = ctx.rt.with_board(|b| {
         let names: HashMap<i64, String> =
             b.slots.iter().map(|(k, s)| (*k, s.name.clone())).collect();
         (b.snapshot(), names, b.seed.clone())
@@ -537,15 +533,13 @@ pub(crate) async fn admin_console(
     // it from its real location instead (`/send_location`), which also marks the
     // hint found — matching the expectation that sending an item resolves it.
     let effective = ctx.rt
-        .board
-        .read()
-        .ok()
-        .and_then(|b| {
+        .with_board(|b| {
             let rest = cmd.strip_prefix("/send ")?.trim();
             let (player, item) = rest.split_once(char::is_whitespace)?;
             let (finder, loc) = b.send_to_location(player.trim(), item.trim())?;
             Some(format!("/send_location {finder} {loc}"))
         })
+        .flatten()
         .unwrap_or_else(|| cmd.clone());
     let output = match ctx.rt.ap_cfg().as_ref() {
         Some(cfg) => {
@@ -560,12 +554,10 @@ pub(crate) async fn admin_console(
             {
                 Ok(lists) => {
                     let text = ctx.rt
-                        .board
-                        .read()
-                        .map(|b| {
+                        .with_board(|b| {
                             lists
                                 .iter()
-                                .map(|p| ap::resolve_parts(&b, p))
+                                .map(|p| ap::resolve_parts(b, p))
                                 .collect::<Vec<_>>()
                                 .join("\n")
                         })
@@ -626,7 +618,8 @@ pub(crate) async fn admin_connect_password(
             return render::notice(&format!("Couldn't save it: {e}"), false, "admin").into_response();
         }
         st.seasons.set_connect_password(ctx.id, &pw);
-        let applied = st.seasons.console(ctx.id, &format!("/option password {pw}")).await;
+        let cmd = format!("/option password {pw}");
+        let applied = st.seasons.console(ctx.id, &cmd).await;
         let msg = if applied {
             "Connect password updated on the running server."
         } else {
@@ -641,9 +634,7 @@ pub(crate) async fn admin_connect_password(
     // server)? Between seasons there's nothing to set the password ON — the
     // value just needs persisting so the next generated/loaded season uses it.
     let live = ctx.rt
-        .board
-        .read()
-        .map(|b| b.snapshot().connected)
+        .with_board(|b| b.snapshot().connected)
         .unwrap_or(false);
     // Best-effort set it on the running server first (bifrost's env is still the
     // old one, so this connection still authenticates). If a season IS live and
@@ -674,7 +665,8 @@ pub(crate) async fn admin_connect_password(
     // host-side path unit persists it to host.yaml + the service env).
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-        let _ = tokio::fs::write(config::get().connpw_request_file(), format!("{pw}\n")).await;
+        let line = format!("{pw}\n");
+        let _ = tokio::fs::write(config::get().connpw_request_file(), line).await;
     });
     let msg = if live {
         "Connect password updated. Bifrost is restarting to apply it everywhere — give it a few seconds, then reload."

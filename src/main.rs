@@ -57,6 +57,14 @@ struct AppState {
     auth: auth::Auth,
 }
 
+impl AppState {
+    /// Work on the minesweeper games under their lock, outside any async body.
+    /// A poisoned lock is recovered: the games are plain data.
+    fn with_mine_games<R>(&self, f: impl FnOnce(&mut HashMap<(i64, String), mine::Game>) -> R) -> R {
+        f(&mut self.mine_games.lock().unwrap_or_else(|p| p.into_inner()))
+    }
+}
+
 const LANDING: &str = include_str!("../static/index.html");
 
 #[tokio::main]
@@ -215,10 +223,11 @@ async fn main() {
 async fn shutdown_signal() {
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .expect("install SIGTERM handler");
-    tokio::select! {
-        _ = term.recv() => {}
-        _ = tokio::signal::ctrl_c() => {}
-    }
+    // Not `tokio::select!`: rust-analyzer misreads its expansion as making the
+    // future non-`Send`, and this one is handed to `axum::serve`.
+    let term = std::pin::pin!(term.recv());
+    let ctrl_c = std::pin::pin!(tokio::signal::ctrl_c());
+    futures_util::future::select(term, ctrl_c).await;
     tracing::info!("shutting down");
 }
 

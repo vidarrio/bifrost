@@ -79,13 +79,13 @@ pub(crate) async fn mine_new(
     let kind = mine::Kind::parse(&f.kind);
     let game = mine::Game::new(kind);
     let (w, h, mines) = (game.w, game.h, game.mines_n);
-    if let Ok(mut games) = st.mine_games.lock() {
+    st.with_mine_games(|games| {
         let now = now_nanos();
         // Drop stale games (>12h old) so the map stays small, then replace this
         // player's game of this difficulty+mode with the fresh one.
         games.retain(|_, g| now.saturating_sub(g.created) < 12 * 3600 * 1_000_000_000);
         games.insert(mine_key(my_id, f.free, ctx.id, kind), game);
-    }
+    });
     Json(serde_json::json!({"ok": true, "w": w, "h": h, "mines": mines, "kind": kind.id()}))
 }
 
@@ -101,11 +101,7 @@ pub(crate) async fn mine_state(
     let my_id = me.id();
     let (_me, _) = me.ident();
     let kind = mine::Kind::parse(&q.kind);
-    let mut games = match st.mine_games.lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
-    };
-    match games.get_mut(&mine_key(my_id, q.free, ctx.id, kind)) {
+    st.with_mine_games(|games| match games.get_mut(&mine_key(my_id, q.free, ctx.id, kind)) {
         Some(g) if !g.over => {
             g.repose();
             let cells: Vec<_> = g
@@ -119,7 +115,7 @@ pub(crate) async fn mine_state(
             }))
         }
         _ => Json(serde_json::json!({"active": false})),
-    }
+    })
 }
 
 /// Minimum games to qualify for the completion-rate leaderboard.
@@ -172,11 +168,11 @@ pub(crate) async fn mine_pause(
     let my_id = me.id();
     let (_me, _) = me.ident();
     let kind = mine::Kind::parse(&q.kind);
-    if let Ok(mut games) = st.mine_games.lock() {
+    st.with_mine_games(|games| {
         if let Some(g) = games.get_mut(&mine_key(my_id, q.free, ctx.id, kind)) {
             g.pause();
         }
-    }
+    });
     Json(serde_json::json!({"ok": true}))
 }
 
@@ -200,25 +196,17 @@ pub(crate) async fn mine_reveal(
     let (_me, _) = ctx.ident(&me);
     let key = mine_key(my_id, f.free, ctx.id, mine::Kind::parse(&f.kind));
     // Reveal under the lock, then release it before any await.
-    let outcome = {
-        let mut games = match st.mine_games.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        match games.get_mut(&key) {
-            Some(g) => {
-                let rv = g.reveal(f.r, f.c);
-                let (won, over) = (g.won, g.over);
-                let (elapsed_ms, running) = (g.active_ms(), g.running);
-                let kind = g.kind;
-                if over {
-                    games.remove(&key);
-                }
-                Some((rv, won, over, elapsed_ms, running, kind))
-            }
-            None => return Json(serde_json::json!({"ok": false, "error": "No active game."})),
+    let outcome = st.with_mine_games(|games| {
+        let g = games.get_mut(&key)?;
+        let rv = g.reveal(f.r, f.c);
+        let (won, over) = (g.won, g.over);
+        let (elapsed_ms, running) = (g.active_ms(), g.running);
+        let kind = g.kind;
+        if over {
+            games.remove(&key);
         }
-    };
+        Some((rv, won, over, elapsed_ms, running, kind))
+    });
     let Some((rv, won, over, elapsed_ms, running, kind)) = outcome else {
         return Json(serde_json::json!({"ok": false, "error": "No active game."}));
     };

@@ -77,16 +77,15 @@ pub(crate) async fn pt_remove(Path(ap_slot): Path<i64>, State(st): State<AppStat
 /// for the PopTracker tab + its poller. `{pack:false}` when no pack is installed.
 pub(crate) async fn pt_state(Path(ap_slot): Path<i64>, ctx: scope::SeasonCtx) -> Json<serde_json::Value> {
     let season = ctx.id;
-    let (game, received, checked, meta) = {
-        let Ok(b) = ctx.rt.board.read() else {
-            return Json(serde_json::json!({"pack": false}));
-        };
+    let Some((game, received, checked, meta)) = ctx.rt.with_board(|b| {
         let (game, received, checked) = b
             .slots
             .get(&ap_slot)
             .map(|s| (s.game.clone(), s.received_items.clone(), s.checked_locations.clone()))
             .unwrap_or_default();
         (game, received, checked, b.meta.clone())
+    }) else {
+        return Json(serde_json::json!({"pack": false}));
     };
     if !ctx.state().is_live() || !ptrack::has_pack(season, ap_slot) {
         return Json(serde_json::json!({"pack": false}));
@@ -201,18 +200,18 @@ pub(crate) async fn game_view(
 ) -> Html<String> {
     let my_id = me.id();
     let (me, is_admin) = ctx.ident(&me);
-    let (snap, game, item_names, connect_name) = match ctx.rt.board.read() {
-        Ok(b) => {
-            let (game, cn) = b
-                .slots
-                .get(&ap_slot)
-                .map(|s| (s.game.clone(), s.name.clone()))
-                .unwrap_or_default();
-            // Only the slot's own items that still have an unhinted/unfound copy.
-            let items = b.hint_suggestions(ap_slot, &game);
-            (b.snapshot(), game, items, cn)
-        }
-        Err(_) => return Html("board unavailable".into()),
+    let (snap, game, item_names, connect_name) = match ctx.rt.with_board(|b| {
+        let (game, cn) = b
+            .slots
+            .get(&ap_slot)
+            .map(|s| (s.game.clone(), s.name.clone()))
+            .unwrap_or_default();
+        // Only the slot's own items that still have an unhinted/unfound copy.
+        let items = b.hint_suggestions(ap_slot, &game);
+        (b.snapshot(), game, items, cn)
+    }) {
+        Some(v) => v,
+        None => return Html("board unavailable".into()),
     };
     if game.is_empty() {
         return Html("<p>Unknown game slot.</p>".into());
@@ -332,9 +331,8 @@ pub(crate) async fn game_log_fragment(
     Query(q): Query<LogPageQuery>,
 ) -> Html<String> {
     let season = ctx.id;
-    let name = match ctx.rt.board.read() {
-        Ok(b) => b.slots.get(&ap_slot).map(|s| s.name.clone()).unwrap_or_default(),
-        Err(_) => return Html(String::new()),
+    let Some(name) = ctx.rt.with_board(|b| b.slots.get(&ap_slot).map(|s| s.name.clone()).unwrap_or_default()) else {
+        return Html(String::new());
     };
     if !ctx.state().is_live() || name.is_empty() {
         return Html(String::new());
@@ -371,9 +369,8 @@ pub(crate) async fn game_hints(
     let my_id = me.id();
     let (_me, is_admin) = ctx.ident(&me);
     let season = ctx.id;
-    let snap = match ctx.rt.board.read() {
-        Ok(b) => b.snapshot(),
-        Err(_) => return Html(String::new()),
+    let Some(snap) = ctx.rt.with_board(|b| b.snapshot()) else {
+        return Html(String::new());
     };
     let prios = live_priorities(&st, &snap, season).await;
     let can_prioritize = is_admin || st.db.claims_ap_slot(season, my_id, ap_slot).await;
@@ -395,9 +392,7 @@ pub(crate) async fn game_hints(
 /// this after a hint so a name whose last copy was just hinted drops out.
 pub(crate) async fn game_items(Path(ap_slot): Path<i64>, ctx: scope::SeasonCtx) -> Json<Vec<String>> {
     let items = ctx.rt
-        .board
-        .read()
-        .map(|b| {
+        .with_board(|b| {
             let game = b.slots.get(&ap_slot).map(|s| s.game.clone()).unwrap_or_default();
             b.hint_suggestions(ap_slot, &game)
         })
@@ -425,10 +420,8 @@ pub(crate) async fn game_finish(
         return render::notice("Admins only.", false, &back).into_response();
     }
     let slot = ctx.rt
-        .board
-        .read()
-        .ok()
-        .and_then(|b| b.slots.get(&ap_slot).map(|s| (s.name.clone(), s.game.clone())));
+        .with_board(|b| b.slots.get(&ap_slot).map(|s| (s.name.clone(), s.game.clone())))
+        .flatten();
     let Some((name, game)) = slot.filter(|(n, _)| !n.is_empty()) else {
         return render::notice("That slot isn't live right now.", false, &back).into_response();
     };

@@ -36,9 +36,8 @@ pub(crate) async fn board_view(State(st): State<AppState>, ctx: scope::SeasonCtx
     if ctx.state() == db::State::Archived {
         return Redirect::to(&ctx.url("/season")).into_response();
     }
-    let snap = match ctx.rt.board.read() {
-        Ok(b) => b.snapshot(),
-        Err(_) => return Html("board unavailable".to_string()).into_response(),
+    let Some(snap) = ctx.rt.with_board(|b| b.snapshot()) else {
+        return Html("board unavailable".to_string()).into_response();
     };
     let season = ctx.id;
     let slots = st.db.slots(season).await.unwrap_or_default();
@@ -56,9 +55,8 @@ pub(crate) async fn board_view(State(st): State<AppState>, ctx: scope::SeasonCtx
 /// current connection line (`conn`), as JSON so the poller can update both
 /// without a full refresh. Same data as `board_view`; public like `/board`.
 pub(crate) async fn board_fragment_view(State(st): State<AppState>, ctx: scope::SeasonCtx) -> Json<serde_json::Value> {
-    let snap = match ctx.rt.board.read() {
-        Ok(b) => b.snapshot(),
-        Err(_) => return Json(serde_json::json!({})),
+    let Some(snap) = ctx.rt.with_board(|b| b.snapshot()) else {
+        return Json(serde_json::json!({}));
     };
     let season = ctx.id;
     let slots = st.db.slots(season).await.unwrap_or_default();

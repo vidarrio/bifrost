@@ -15,6 +15,7 @@ use std::process::Stdio;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use futures_util::future::Either;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin};
 use tokio::sync::{mpsc, oneshot};
@@ -130,20 +131,32 @@ async fn supervise(mut launch: Launch, db: Db, board: Arc<RwLock<Board>>, mut rx
                 }
             }
         }
+        // No `tokio::select!` here: rust-analyzer misreads its expansion as
+        // making this future non-`Send` (and with it every caller's).
         let cmd = match running.as_mut() {
-            Some(r) => tokio::select! {
-                cmd = rx.recv() => cmd,
-                status = r.child.wait() => {
-                    tracing::warn!("season {season}: AP server exited ({status:?}); restarting in {}s", backoff.as_secs());
-                    running = None;
-                    tokio::time::sleep(backoff).await;
-                    backoff = (backoff * 2).min(Duration::from_secs(60));
-                    continue;
+            Some(r) => {
+                let next = {
+                    let cmd = std::pin::pin!(rx.recv());
+                    let exit = std::pin::pin!(r.child.wait());
+                    match futures_util::future::select(cmd, exit).await {
+                        Either::Left((cmd, _)) => Ok(cmd),
+                        Either::Right((status, _)) => Err(status),
+                    }
+                };
+                match next {
+                    Ok(cmd) => cmd,
+                    Err(status) => {
+                        tracing::warn!("season {season}: AP server exited ({status:?}); restarting in {}s", backoff.as_secs());
+                        running = None;
+                        tokio::time::sleep(backoff).await;
+                        backoff = (backoff * 2).min(Duration::from_secs(60));
+                        continue;
+                    }
                 }
-            },
-            None if failed => tokio::select! {
-                cmd = rx.recv() => cmd,
-                _ = tokio::time::sleep(backoff) => {
+            }
+            None if failed => match tokio::time::timeout(backoff, rx.recv()).await {
+                Ok(cmd) => cmd,
+                Err(_) => {
                     backoff = (backoff * 2).min(Duration::from_secs(60));
                     continue;
                 }
@@ -163,7 +176,8 @@ async fn supervise(mut launch: Launch, db: Db, board: Arc<RwLock<Board>>, mut rx
             }
             Some(Cmd::Console(line)) => {
                 if let Some(r) = running.as_mut() {
-                    let _ = r.stdin.write_all(format!("{line}\n").as_bytes()).await;
+                    let input = format!("{line}\n");
+                    let _ = r.stdin.write_all(input.as_bytes()).await;
                     let _ = r.stdin.flush().await;
                 }
             }
@@ -316,7 +330,8 @@ async fn capture(
     while let Ok(Some(line)) = lines.next_line().await {
         let ts = crate::auth::now();
         if let Some(f) = file.as_mut() {
-            let _ = f.write_all(format!("{ts} {line}\n").as_bytes()).await;
+            let entry = format!("{ts} {line}\n");
+            let _ = f.write_all(entry.as_bytes()).await;
         }
         crate::activity::ingest_line(season, &board, &db, line.trim(), ts).await;
     }
