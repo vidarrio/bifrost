@@ -458,7 +458,10 @@ impl Session {
     pub fn on_clear(&self, slot_data: &serde_json::Value) -> Result<()> {
         self.charge();
         let sd = json_to_lua(&self.lua, slot_data)?;
-        for h in self.eng.borrow().clear_h.clone() {
+        // Copy the list out first: a handler may register more handlers, which
+        // needs the engine borrowed mutably.
+        let handlers = self.eng.borrow().clear_h.clone();
+        for h in handlers {
             h.call::<()>(sd.clone())?;
         }
         Ok(())
@@ -467,7 +470,8 @@ impl Session {
     /// Fire the pack's Item handlers for one received item.
     pub fn on_item(&self, index: i64, item_id: i64, item_name: &str, player: i64) -> Result<()> {
         self.charge();
-        for h in self.eng.borrow().item_h.clone() {
+        let handlers = self.eng.borrow().item_h.clone();
+        for h in handlers {
             h.call::<()>((index, item_id, item_name, player))?;
         }
         Ok(())
@@ -476,7 +480,8 @@ impl Session {
     /// Fire the pack's Location handlers for one checked location.
     pub fn on_location(&self, location_id: i64, location_name: &str) -> Result<()> {
         self.charge();
-        for h in self.eng.borrow().loc_h.clone() {
+        let handlers = self.eng.borrow().loc_h.clone();
+        for h in handlers {
             h.call::<()>((location_id, location_name))?;
         }
         Ok(())
@@ -486,13 +491,11 @@ impl Session {
     pub fn on_retrieved(&self, key: &str, val: &serde_json::Value) -> Result<()> {
         self.charge();
         let v = json_to_lua(&self.lua, val)?;
-        for h in self
-            .eng
-            .borrow()
-            .retr_h
-            .iter()
-            .chain(self.eng.borrow().setr_h.iter())
-        {
+        let handlers: Vec<Function> = {
+            let e = self.eng.borrow();
+            e.retr_h.iter().chain(e.setr_h.iter()).cloned().collect()
+        };
+        for h in handlers {
             h.call::<()>((key, v.clone()))?;
         }
         Ok(())
@@ -555,7 +558,8 @@ impl Session {
         out.items.sort_by(|a, b| a.key.cmp(&b.key));
 
         // maps
-        for m in self.eng.borrow().maps.clone() {
+        let maps = self.eng.borrow().maps.clone();
+        for m in maps {
             out.maps.push(MapInfo {
                 name: m.name,
                 img: m.img,
