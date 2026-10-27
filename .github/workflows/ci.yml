@@ -28,7 +28,7 @@ jobs:
       code: ${{ steps.filter.outputs.code }}
       shards: ${{ steps.shards.outputs.shards }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: End-to-end shards
         id: shards
         run: echo "shards=$(tests/e2e/run.sh shards)" >> "$GITHUB_OUTPUT"
@@ -46,7 +46,7 @@ jobs:
   lint:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Toolchain
         run: |
           rustup update --no-self-update stable
@@ -73,7 +73,7 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Toolchain
         run: rustup update --no-self-update stable
       - uses: Swatinem/rust-cache@v2
@@ -99,7 +99,7 @@ jobs:
         shard: ${{ fromJSON(needs.changes.outputs.shards || '[1, 2, 3]') }}
     name: e2e (${{ matrix.shard }})
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Toolchain
         run: rustup update --no-self-update stable
       - uses: Swatinem/rust-cache@v2
@@ -172,7 +172,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: System packages
         run: |
           sudo apt-get update
@@ -203,7 +203,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: System packages
         run: |
           sudo apt-get update
