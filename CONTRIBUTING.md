@@ -92,6 +92,7 @@ CI runs on every pull request and on every push to `main`. It checks:
 | `e2e` | the native end-to-end suites (a debug build on real Archipelago installs, generating seeds and running servers under bubblewrap), split across parallel shards |
 | `image` | builds the container image and runs its suite (`tests/e2e/run.sh container`) |
 | `bundle` | builds the native bundle and runs its suite (`tests/e2e/run.sh bundle`) |
+| `title` | the pull request title is `<kind>: <subject>`, with the branch's kind (see [Pull requests](#pull-requests)) |
 
 `e2e`, `image` and `bundle` are skipped when a pull request only changes
 documentation (Markdown files, `docs/`, `LICENSE`). The image and bundle
