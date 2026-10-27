@@ -15,9 +15,9 @@ What that means for you:
   security flaws that review and testing missed. Treat Bifrost like any other
   young, small open-source project.
 - **You run it at your own risk.** Bifrost is provided as is, without
-  warranty. Before exposing an instance to the internet, read the
-  [user guide](docs/USER_GUIDE.md)'s notes on isolation and sign-in, and keep
-  backups.
+  warranty (see [LICENSE](LICENSE)). Before exposing an instance to the
+  internet, read the [user guide](docs/USER_GUIDE.md)'s notes on isolation and
+  sign-in, and keep backups.
 - **Apworlds are code.** Custom Archipelago worlds run arbitrary Python.
   Bifrost sandboxes them, but no sandbox is perfect. Only allow worlds you
   trust.

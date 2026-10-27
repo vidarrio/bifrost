@@ -153,3 +153,7 @@ cargo build && BIFROST_DATA=./data BIFROST_AP_DIR=/path/to/Archipelago \
 
 `BIFROST_AP_DIR` should hold an Archipelago checkout with a `venv/`
 (`BIFROST_AP_PYTHON` overrides the interpreter).
+
+## License
+
+MIT; see [LICENSE](LICENSE).
