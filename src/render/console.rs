@@ -19,7 +19,13 @@ pub(super) fn mods_section(m: &SeasonMods) -> String {
         out.push_str(&format!(
             r#"<div class="hintrow"><span>{}</span>{}</div>"#,
             esc(name),
-            action_btn("admin/mods/remove", &[("account_id", &id.to_string())], "remove", true, "")
+            action_btn(
+                "admin/mods/remove",
+                &[("account_id", &id.to_string())],
+                "remove",
+                true,
+                ""
+            )
         ));
     }
     out.push_str(
@@ -61,14 +67,22 @@ pub fn seasons_page(
         body.push_str(r#"<div class="empty">No seasons yet.</div>"#);
     } else {
         body.push_str(r#"<table class="utable"><tr><th>Season</th><th>State</th><th>Port</th><th>Created</th><th></th></tr>"#);
-        for (s, can) in seasons.iter().zip(manage.iter().chain(std::iter::repeat(&false))) {
+        for (s, can) in seasons
+            .iter()
+            .zip(manage.iter().chain(std::iter::repeat(&false)))
+        {
             let when = match (s.archived_at, s.live_at) {
                 (Some(t), _) => format!("archived {}", fmt_date(t)),
                 (None, Some(t)) => format!("live since {}", fmt_date(t)),
                 _ => fmt_date(s.created_at),
             };
             let links = if s.state() == crate::db::State::Archived {
-                let bundle = s.seed.as_deref().and_then(crate::archive::bundle_path).is_some() && *can;
+                let bundle = s
+                    .seed
+                    .as_deref()
+                    .and_then(crate::archive::bundle_path)
+                    .is_some()
+                    && *can;
                 let bundle = if bundle {
                     format!(r#" · <a href="/s/{}/admin/bundle">bundle</a>"#, s.id)
                 } else {
@@ -76,7 +90,10 @@ pub fn seasons_page(
                 };
                 format!(r#"<a href="/s/{0}/season">summary</a>{bundle}"#, s.id)
             } else if *can {
-                format!(r#"<a href="/s/{0}/board">board</a> · <a href="/s/{0}/admin">admin</a>"#, s.id)
+                format!(
+                    r#"<a href="/s/{0}/board">board</a> · <a href="/s/{0}/admin">admin</a>"#,
+                    s.id
+                )
             } else {
                 format!(r#"<a href="/s/{0}/board">board</a>"#, s.id)
             };
@@ -133,7 +150,9 @@ pub(super) fn backups_panel(status: &SettingsStatus) -> String {
         p.max_bytes >> 20,
     );
     if status.backup_running {
-        b.push_str(r#"<meta http-equiv="refresh" content="3"><div class="banner">Backing up…</div>"#);
+        b.push_str(
+            r#"<meta http-equiv="refresh" content="3"><div class="banner">Backing up…</div>"#,
+        );
     } else if let Some((at, msg, ok)) = &status.backup_last {
         b.push_str(&format!(
             r#"<div class="banner {}">{} <span class="statline">({})</span></div>"#,
@@ -169,7 +188,13 @@ pub(super) fn backups_panel(status: &SettingsStatus) -> String {
     }
     b.push_str(r#"<div class="btnrow">"#);
     if !status.backup_running {
-        b.push_str(&action_btn("/admin/settings/backups/now", &[], "Back up now", false, ""));
+        b.push_str(&action_btn(
+            "/admin/settings/backups/now",
+            &[],
+            "Back up now",
+            false,
+            "",
+        ));
     }
     b.push_str("</div>");
     b
@@ -192,7 +217,13 @@ pub(super) fn ap_panel(status: &SettingsStatus) -> String {
         used.extend(users.iter().map(|u| esc(u)));
         let mut acts = String::new();
         if !active {
-            acts.push_str(&action_btn("/admin/settings/ap/use", &[("version", &i.version)], "use for new seasons", false, ""));
+            acts.push_str(&action_btn(
+                "/admin/settings/ap/use",
+                &[("version", &i.version)],
+                "use for new seasons",
+                false,
+                "",
+            ));
         }
         if !i.bundled && !active && users.is_empty() {
             acts.push(' ');
@@ -237,25 +268,47 @@ pub(super) fn ap_panel(status: &SettingsStatus) -> String {
     }
 
     b.push_str(r#"<div class="btnrow">"#);
-    b.push_str(&action_btn("/admin/settings/ap/check", &[], "Check for releases", false, ""));
+    b.push_str(&action_btn(
+        "/admin/settings/ap/check",
+        &[],
+        "Check for releases",
+        false,
+        "",
+    ));
     b.push_str("</div>");
     match &status.updates.releases {
         None => {}
-        Some((_, Err(e))) => b.push_str(&format!(r#"<div class="banner bad">Couldn't check: {}</div>"#, esc(e))),
+        Some((_, Err(e))) => b.push_str(&format!(
+            r#"<div class="banner bad">Couldn't check: {}</div>"#,
+            esc(e)
+        )),
         Some((at, Ok(rels))) => {
             let installed = |t: &str| status.installs.iter().any(|(i, _)| i.version == t);
             let fresh: Vec<_> = rels.iter().filter(|r| !installed(&r.tag)).collect();
-            b.push_str(&format!(r#"<p class="statline">Checked {}.</p>"#, fmt_date(*at)));
+            b.push_str(&format!(
+                r#"<p class="statline">Checked {}.</p>"#,
+                fmt_date(*at)
+            ));
             if fresh.is_empty() {
                 b.push_str(r#"<div class="empty">Every recent release is installed.</div>"#);
             }
             for r in fresh {
-                let pre = if r.prerelease { r#" <span class="tag">pre-release</span>"# } else { "" };
+                let pre = if r.prerelease {
+                    r#" <span class="tag">pre-release</span>"#
+                } else {
+                    ""
+                };
                 let date = r.published.get(..10).unwrap_or("");
                 let btn = if busy {
                     String::new()
                 } else {
-                    action_btn("/admin/settings/ap/install", &[("version", &r.tag)], "install", false, "")
+                    action_btn(
+                        "/admin/settings/ap/install",
+                        &[("version", &r.tag)],
+                        "install",
+                        false,
+                        "",
+                    )
                 };
                 b.push_str(&format!(
                     r#"<div class="hintrow"><span><b class="mono">{}</b>{pre} <span class="statline">· {} · {}</span></span>{btn}</div>"#,
@@ -329,12 +382,7 @@ pub fn settings_page(
         esc(&inst.home_url),
         esc(&discords),
     ));
-    auth_page(
-        "Console",
-        r#"<a href="/">← home</a>"#,
-        err,
-        &body,
-    )
+    auth_page("Console", r#"<a href="/">← home</a>"#, err, &body)
 }
 
 // ---- the apworld catalog (instance, sysadmin) ----

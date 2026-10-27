@@ -37,7 +37,11 @@ impl Policy {
     pub fn from_config() -> Self {
         let num = |name: &str, default: u64| -> u64 {
             config::var(name)
-                .map(|v| v.trim().parse().unwrap_or_else(|_| panic!("{name}: expected a number, got {v:?}")))
+                .map(|v| {
+                    v.trim()
+                        .parse()
+                        .unwrap_or_else(|_| panic!("{name}: expected a number, got {v:?}"))
+                })
                 .unwrap_or(default)
         };
         let hour = match config::var("BIFROST_BACKUP_HOUR").as_deref().map(str::trim) {
@@ -77,7 +81,12 @@ pub struct Backup {
 fn name_for(at: i64) -> String {
     let (y, m, d) = civil(at.div_euclid(86400));
     let s = at.rem_euclid(86400);
-    format!("bifrost-{y:04}{m:02}{d:02}-{:02}{:02}{:02}.zip", s / 3600, s / 60 % 60, s % 60)
+    format!(
+        "bifrost-{y:04}{m:02}{d:02}-{:02}{:02}{:02}.zip",
+        s / 3600,
+        s / 60 % 60,
+        s % 60
+    )
 }
 
 /// The time a backup's name says it was taken.
@@ -104,10 +113,14 @@ pub fn list() -> Vec<Backup> {
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().into_string().ok()?;
-            Some(Backup { at: parse_name(&name)?, size: e.metadata().ok()?.len(), name })
+            Some(Backup {
+                at: parse_name(&name)?,
+                size: e.metadata().ok()?.len(),
+                name,
+            })
         })
         .collect();
-    v.sort_by(|a, b| b.at.cmp(&a.at));
+    v.sort_by_key(|x| std::cmp::Reverse(x.at));
     v
 }
 
@@ -172,7 +185,12 @@ pub fn plan(backups: &[Backup], p: &Policy) -> Vec<bool> {
     bucket(p.daily, &day);
     bucket(p.weekly, &week);
     bucket(p.monthly, &month);
-    let mut total: u64 = backups.iter().zip(&keep).filter(|(_, k)| **k).map(|(b, _)| b.size).sum();
+    let mut total: u64 = backups
+        .iter()
+        .zip(&keep)
+        .filter(|(_, k)| **k)
+        .map(|(b, _)| b.size)
+        .sum();
     for i in (1..backups.len()).rev() {
         if total <= p.max_bytes {
             break;
@@ -205,7 +223,8 @@ fn free_bytes(dir: &Path) -> Option<u64> {
     use std::os::unix::ffi::OsStrExt;
     let c = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
     let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
-    (unsafe { libc::statvfs(c.as_ptr(), &mut s) } == 0).then(|| s.f_bavail as u64 * s.f_frsize as u64)
+    (unsafe { libc::statvfs(c.as_ptr(), &mut s) } == 0)
+        .then(|| s.f_bavail as u64 * s.f_frsize as u64)
 }
 
 /// A path as the filesystem resolves it (symlinks, `..`), so the backup dir
@@ -217,15 +236,22 @@ fn resolved(p: &Path) -> PathBuf {
 /// What a backup leaves out, relative to the data dir. `data` and `backups`
 /// are [`resolved`].
 fn excluded(data: &Path, rel: &Path, backups: &Path) -> bool {
-    let top = rel.components().next().map(|c| c.as_os_str().to_string_lossy().into_owned());
+    let top = rel
+        .components()
+        .next()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned());
     // `ap`, `runtime`: reinstallable (installed releases; the native bundle's
     // unpacked Python + AP, which a restore must not swap for a copy without
     // its symlinks and exec bits). `.cache`: tools that treat the data dir as
     // $HOME (the container's user).
     matches!(top.as_deref(), Some("ap" | "runtime" | "tmp" | ".cache"))
-        || rel.to_str().is_some_and(|r| r == "bifrost.db" || r.starts_with("bifrost.db-"))
+        || rel
+            .to_str()
+            .is_some_and(|r| r == "bifrost.db" || r.starts_with("bifrost.db-"))
         || data.join(rel).starts_with(backups)
-        || top.as_deref().is_some_and(|t| t.starts_with(".restore-") || t.starts_with(".pre-restore-"))
+        || top
+            .as_deref()
+            .is_some_and(|t| t.starts_with(".restore-") || t.starts_with(".pre-restore-"))
 }
 
 /// Write the zip: the database snapshot plus every other kept file.
@@ -251,10 +277,14 @@ fn write_zip(out: &Path, data: &Path, db_snapshot: &Path, backups: &Path) -> Res
     let mut files = 1u64;
     let mut stack = vec![data.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for e in rd.flatten() {
             let p = e.path();
-            let Ok(rel) = p.strip_prefix(data) else { continue };
+            let Ok(rel) = p.strip_prefix(data) else {
+                continue;
+            };
             if excluded(data, rel, backups) {
                 continue;
             }
@@ -270,7 +300,10 @@ fn write_zip(out: &Path, data: &Path, db_snapshot: &Path, backups: &Path) -> Res
             }
         }
     }
-    zip.finish().map_err(|e| e.to_string())?.flush().map_err(|e| e.to_string())?;
+    zip.finish()
+        .map_err(|e| e.to_string())?
+        .flush()
+        .map_err(|e| e.to_string())?;
     Ok(files)
 }
 
@@ -293,7 +326,11 @@ pub async fn create(db: &Db, p: &Policy) -> Result<Backup, String> {
     let msg = match &res {
         Ok(b) => {
             tracing::info!("backup written: {} ({} bytes)", b.name, b.size);
-            (crate::auth::now(), format!("Backed up to {}.", b.name), true)
+            (
+                crate::auth::now(),
+                format!("Backed up to {}.", b.name),
+                true,
+            )
         }
         Err(e) => {
             tracing::error!("backup failed: {e}");
@@ -305,7 +342,9 @@ pub async fn create(db: &Db, p: &Policy) -> Result<Backup, String> {
 }
 
 async fn create_inner(db: &Db, p: &Policy) -> Result<Backup, String> {
-    let _one = RUNNING.try_lock().map_err(|_| "a backup is already running".to_string())?;
+    let _one = RUNNING
+        .try_lock()
+        .map_err(|_| "a backup is already running".to_string())?;
     let dir = dir();
     {
         use std::os::unix::fs::DirBuilderExt;
@@ -317,10 +356,11 @@ async fn create_inner(db: &Db, p: &Policy) -> Result<Backup, String> {
     }
     // Room for another one the size of the last (or of the database, if
     // there's none yet), plus headroom.
-    let estimate = list()
-        .first()
-        .map(|b| b.size)
-        .unwrap_or_else(|| std::fs::metadata(config::get().db_path()).map(|m| m.len()).unwrap_or(0));
+    let estimate = list().first().map(|b| b.size).unwrap_or_else(|| {
+        std::fs::metadata(config::get().db_path())
+            .map(|m| m.len())
+            .unwrap_or(0)
+    });
     if let Some(free) = free_bytes(&dir)
         && free < estimate + HEADROOM
     {
@@ -339,8 +379,15 @@ async fn create_inner(db: &Db, p: &Policy) -> Result<Backup, String> {
     let snapshot = dir.join(format!(".partial-{name}.db"));
     let _ = std::fs::remove_file(&partial);
     let _ = std::fs::remove_file(&snapshot);
-    db.snapshot_to(&snapshot).await.map_err(|e| format!("database snapshot: {e}"))?;
-    let (data, out, snap, bdir) = (resolved(&config::get().data_dir), partial.clone(), snapshot.clone(), resolved(&dir));
+    db.snapshot_to(&snapshot)
+        .await
+        .map_err(|e| format!("database snapshot: {e}"))?;
+    let (data, out, snap, bdir) = (
+        resolved(&config::get().data_dir),
+        partial.clone(),
+        snapshot.clone(),
+        resolved(&dir),
+    );
     let written = tokio::task::spawn_blocking(move || write_zip(&out, &data, &snap, &bdir))
         .await
         .map_err(|e| e.to_string())?;
@@ -351,7 +398,9 @@ async fn create_inner(db: &Db, p: &Policy) -> Result<Backup, String> {
     }
     std::fs::rename(&partial, dir.join(&name)).map_err(|e| e.to_string())?;
     prune(p);
-    let size = std::fs::metadata(dir.join(&name)).map(|m| m.len()).unwrap_or(0);
+    let size = std::fs::metadata(dir.join(&name))
+        .map(|m| m.len())
+        .unwrap_or(0);
     Ok(Backup { name, at, size })
 }
 
@@ -454,16 +503,23 @@ pub fn restore(file: &Path) -> Result<String, String> {
     std::fs::create_dir_all(&aside).map_err(|e| e.to_string())?;
     let backups = resolved(&dir());
     let data = &resolved(data);
-    for e in std::fs::read_dir(data).map_err(|e| e.to_string())?.flatten() {
+    for e in std::fs::read_dir(data)
+        .map_err(|e| e.to_string())?
+        .flatten()
+    {
         let p = e.path();
         let rel = PathBuf::from(e.file_name());
         let db_file = rel.to_string_lossy().starts_with("bifrost.db");
         if p == staging || p == aside || excluded(data, &rel, &backups) && !db_file {
             continue;
         }
-        std::fs::rename(&p, aside.join(&rel)).map_err(|e| format!("moving {} aside: {e}", p.display()))?;
+        std::fs::rename(&p, aside.join(&rel))
+            .map_err(|e| format!("moving {} aside: {e}", p.display()))?;
     }
-    for e in std::fs::read_dir(&staging).map_err(|e| e.to_string())?.flatten() {
+    for e in std::fs::read_dir(&staging)
+        .map_err(|e| e.to_string())?
+        .flatten()
+    {
         std::fs::rename(e.path(), data.join(e.file_name())).map_err(|e| e.to_string())?;
     }
     let _ = std::fs::remove_dir(&staging);
@@ -480,7 +536,11 @@ mod tests {
     use super::*;
 
     fn b(at: i64, size: u64) -> Backup {
-        Backup { name: name_for(at), at, size }
+        Backup {
+            name: name_for(at),
+            at,
+            size,
+        }
     }
 
     #[test]
@@ -488,7 +548,10 @@ mod tests {
         let at = 1_793_016_000 + 3723; // 2026-10-26 01:02:03 UTC-ish
         assert_eq!(parse_name(&name_for(at)), Some(at));
         assert_eq!(name_for(0), "bifrost-19700101-000000.zip");
-        assert_eq!(parse_name("bifrost-20261026-040000.zip"), Some(days_from_civil(2026, 10, 26) * 86400 + 4 * 3600));
+        assert_eq!(
+            parse_name("bifrost-20261026-040000.zip"),
+            Some(days_from_civil(2026, 10, 26) * 86400 + 4 * 3600)
+        );
         assert_eq!(parse_name("bifrost-20261326-040000.zip"), None);
         assert_eq!(parse_name("other.zip"), None);
         assert_eq!(civil(days_from_civil(2024, 2, 29)), (2024, 2, 29));
@@ -496,28 +559,51 @@ mod tests {
 
     #[test]
     fn retention_keeps_daily_weekly_monthly() {
-        let p = Policy { hour: Some(4), daily: 7, weekly: 4, monthly: 3, max_bytes: u64::MAX };
+        let p = Policy {
+            hour: Some(4),
+            daily: 7,
+            weekly: 4,
+            monthly: 3,
+            max_bytes: u64::MAX,
+        };
         // One backup a night for 120 nights, plus a manual one on the last day.
         let start = days_from_civil(2026, 6, 1) * 86400 + 4 * 3600;
         let mut all: Vec<Backup> = (0..120).map(|d| b(start + d * 86400, 10)).collect();
         all.push(b(start + 119 * 86400 + 3600, 10));
         all.reverse();
         let keep = plan(&all, &p);
-        let kept: Vec<&Backup> = all.iter().zip(&keep).filter(|(_, k)| **k).map(|(b, _)| b).collect();
+        let kept: Vec<&Backup> = all
+            .iter()
+            .zip(&keep)
+            .filter(|(_, k)| **k)
+            .map(|(b, _)| b)
+            .collect();
         assert!(keep[0], "the newest is always kept");
         assert!(!keep[1], "only the newest of a day");
         // 7 days + older weeks + older months, without duplicates.
         assert!(kept.len() <= 7 + 4 + 3 && kept.len() >= 9, "{}", kept.len());
         let oldest = kept.last().unwrap().at;
-        assert!(start + 119 * 86400 - oldest < 100 * 86400, "nothing older than ~3 months");
+        assert!(
+            start + 119 * 86400 - oldest < 100 * 86400,
+            "nothing older than ~3 months"
+        );
         assert_eq!(plan(&[], &p), Vec::<bool>::new());
     }
 
     #[test]
     fn retention_respects_the_size_cap_but_keeps_the_newest() {
-        let p = Policy { hour: None, daily: 7, weekly: 0, monthly: 0, max_bytes: 25 };
+        let p = Policy {
+            hour: None,
+            daily: 7,
+            weekly: 0,
+            monthly: 0,
+            max_bytes: 25,
+        };
         let all: Vec<Backup> = (0..7).rev().map(|d| b(d * 86400, 10)).collect();
-        assert_eq!(plan(&all, &p), vec![true, true, false, false, false, false, false]);
+        assert_eq!(
+            plan(&all, &p),
+            vec![true, true, false, false, false, false, false]
+        );
         let huge = vec![b(0, 100)];
         assert_eq!(plan(&huge, &p), vec![true]);
     }
@@ -550,7 +636,11 @@ mod tests {
         let bk = Path::new("/data/backups");
         assert!(excluded(d, Path::new("ap/0.6.9/Utils.py"), bk));
         assert!(excluded(d, Path::new("tmp/x"), bk));
-        assert!(excluded(d, Path::new("runtime/0.0.1-ap0.6.8/python/bin/python3"), bk));
+        assert!(excluded(
+            d,
+            Path::new("runtime/0.0.1-ap0.6.8/python/bin/python3"),
+            bk
+        ));
         assert!(excluded(d, Path::new(".cache/pip/x"), bk));
         assert!(excluded(d, Path::new("bifrost.db-wal"), bk));
         assert!(excluded(d, Path::new("backups/bifrost-x.zip"), bk));

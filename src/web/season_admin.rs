@@ -3,8 +3,13 @@
 use super::*;
 
 /// Gather everything the admin page shows and render it.
-pub(crate) async fn render_admin(ctx: &scope::SeasonCtx, st: &AppState, me: &auth::Me) -> Html<String> {
-    let (connected, seed, acdata) = ctx.rt
+pub(crate) async fn render_admin(
+    ctx: &scope::SeasonCtx,
+    st: &AppState,
+    me: &auth::Me,
+) -> Html<String> {
+    let (connected, seed, acdata) = ctx
+        .rt
         .with_board(|b| {
             (
                 b.connected,
@@ -21,7 +26,8 @@ pub(crate) async fn render_admin(ctx: &scope::SeasonCtx, st: &AppState, me: &aut
     } else {
         ctx.rt.ap_cfg().map(|c| c.password).unwrap_or_default()
     };
-    let (running, gen_msg) = ctx.rt
+    let (running, gen_msg) = ctx
+        .rt
         .with_genstate(|g| (g.0, g.1.clone()))
         .unwrap_or((false, "unknown".into()));
     let subs = st.db.submissions(ctx.id).await.unwrap_or_default();
@@ -39,7 +45,10 @@ pub(crate) async fn render_admin(ctx: &scope::SeasonCtx, st: &AppState, me: &aut
         Some(id) => st.db.username(id).await,
         None => None,
     };
-    let mods = render::SeasonMods { owner, co_mods: st.db.co_mods(ctx.id).await };
+    let mods = render::SeasonMods {
+        owner,
+        co_mods: st.db.co_mods(ctx.id).await,
+    };
     render::admin_page(
         &ctx.row,
         &mods,
@@ -59,12 +68,18 @@ pub(crate) async fn render_admin(ctx: &scope::SeasonCtx, st: &AppState, me: &aut
         archived.as_deref(),
         &outputs,
         &out_slots,
-        st.seasons.connect_address(&ctx.row, &st.db.instance().await.domain).as_deref(),
+        st.seasons
+            .connect_address(&ctx.row, &st.db.instance().await.domain)
+            .as_deref(),
         config::get().ap_managed,
     )
 }
 
-pub(crate) async fn admin_view(State(st): State<AppState>, ctx: scope::SeasonCtx, me: auth::Me) -> Response {
+pub(crate) async fn admin_view(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+) -> Response {
     let (_me, is_admin) = ctx.ident(&me);
     if !is_admin {
         return render::notice("Admins only.", false, "board").into_response();
@@ -86,7 +101,11 @@ pub(crate) async fn admin_signups(
 ) -> Response {
     let (_me, is_admin) = ctx.ident(&me);
     if is_admin {
-        let to = if f.open == "1" { db::State::Signup } else { db::State::Draft };
+        let to = if f.open == "1" {
+            db::State::Signup
+        } else {
+            db::State::Draft
+        };
         if ctx.state() != to
             && let Err(e) = st.db.transition(ctx.id, to, auth::now()).await
         {
@@ -96,8 +115,11 @@ pub(crate) async fn admin_signups(
     Redirect::to(&ctx.url("/admin")).into_response()
 }
 
-pub(crate) async fn admin_generate(State(st): State<AppState>,
-    ctx: scope::SeasonCtx, me: auth::Me) -> Redirect {
+pub(crate) async fn admin_generate(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+) -> Redirect {
     let (_me, is_admin) = ctx.ident(&me);
     if is_admin {
         let start = ctx.rt.with_genstate(|g| {
@@ -116,8 +138,11 @@ pub(crate) async fn admin_generate(State(st): State<AppState>,
     Redirect::to(&ctx.url("/admin"))
 }
 
-pub(crate) async fn admin_regenerate(State(st): State<AppState>,
-    ctx: scope::SeasonCtx, me: auth::Me) -> Redirect {
+pub(crate) async fn admin_regenerate(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+) -> Redirect {
     let (_me, is_admin) = ctx.ident(&me);
     if is_admin {
         // A re-roll replaces a live season's seed.
@@ -235,7 +260,8 @@ pub(crate) async fn admin_archive_season(
         return render::notice("Board is busy — try again.", false, "admin").into_response();
     };
     if !ctx.state().is_live() {
-        return render::notice("Only a live season can be archived.", false, "admin").into_response();
+        return render::notice("Only a live season can be archived.", false, "admin")
+            .into_response();
     }
     let seed = ctx.row.seed.clone().unwrap_or_default();
     // The standings come from the live board: refuse until it has seen this
@@ -251,8 +277,12 @@ pub(crate) async fn admin_archive_season(
     }
     let slots = st.db.slots(ctx.id).await.unwrap_or_default();
     if slots.is_empty() {
-        return render::notice("No slots to archive for the current season.", false, "admin")
-            .into_response();
+        return render::notice(
+            "No slots to archive for the current season.",
+            false,
+            "admin",
+        )
+        .into_response();
     }
 
     // Group the season's Bifrost slots by AP slot (one game each; co-op slots
@@ -272,11 +302,11 @@ pub(crate) async fn admin_archive_season(
         let (game, mut names) = by_slot.remove(ap_slot).unwrap();
         names.sort_by_key(|n| n.to_ascii_lowercase());
         // Primary (the AP slot's own player) first.
-        if let Some(lead) = ap_names.get(ap_slot) {
-            if let Some(pos) = names.iter().position(|n| n.eq_ignore_ascii_case(lead)) {
-                let p = names.remove(pos);
-                names.insert(0, p);
-            }
+        if let Some(lead) = ap_names.get(ap_slot)
+            && let Some(pos) = names.iter().position(|n| n.eq_ignore_ascii_case(lead))
+        {
+            let p = names.remove(pos);
+            names.insert(0, p);
         }
         player_total += names.len();
         let live = snap.ap.get(ap_slot);
@@ -289,9 +319,7 @@ pub(crate) async fn admin_archive_season(
         };
         // Same three-way status the live board shows (goaled / released / —),
         // so a dropped-out player reads "released" on the archive too.
-        let (status, label) = live
-            .map(render::card_status)
-            .unwrap_or(("idle", "—"));
+        let (status, label) = live.map(render::card_status).unwrap_or(("idle", "—"));
         games.push(season::SeasonGame {
             game,
             players: names,
@@ -302,7 +330,11 @@ pub(crate) async fn admin_archive_season(
             pct,
         });
     }
-    games.sort_by(|a, b| a.game.to_ascii_lowercase().cmp(&b.game.to_ascii_lowercase()));
+    games.sort_by(|a, b| {
+        a.game
+            .to_ascii_lowercase()
+            .cmp(&b.game.to_ascii_lowercase())
+    });
 
     // Freeze this season's minesweeper leaderboards (same shape as the live
     // seasonal board: top 10, rate needs ≥5 games).
@@ -371,8 +403,12 @@ pub(crate) async fn admin_archive_season(
         Err(e) => tracing::warn!("season bundle failed (summary saved): {e}"),
     }
     if let Err(e) = st.db.transition(ctx.id, db::State::Archived, now).await {
-        return render::notice(&format!("Summary saved, but archiving failed: {e}"), false, "admin")
-            .into_response();
+        return render::notice(
+            &format!("Summary saved, but archiving failed: {e}"),
+            false,
+            "admin",
+        )
+        .into_response();
     }
     st.seasons.stop(ctx.id).await;
     apinstall::pin(ctx.id, None);
@@ -394,7 +430,8 @@ pub(crate) async fn mods_add(
     Form(f): Form<ModAddForm>,
 ) -> Response {
     if !ctx.can_manage(&me) {
-        return render::notice("Only this season's moderators can do that.", false, "admin").into_response();
+        return render::notice("Only this season's moderators can do that.", false, "admin")
+            .into_response();
     }
     let target = st.db.account_by_name(f.username.trim()).await;
     match target {
@@ -424,7 +461,8 @@ pub(crate) async fn mods_remove(
     Form(f): Form<ModRemoveForm>,
 ) -> Response {
     if !ctx.can_manage(&me) {
-        return render::notice("Only this season's moderators can do that.", false, "admin").into_response();
+        return render::notice("Only this season's moderators can do that.", false, "admin")
+            .into_response();
     }
     let _ = st.db.remove_co_mod(ctx.id, f.account_id).await;
     Redirect::to(&ctx.url("/admin")).into_response()
@@ -451,7 +489,11 @@ pub(crate) struct ApworldForm {
     pub(crate) name: String,
 }
 
-pub(crate) async fn admin_delete_apworld(ctx: scope::SeasonCtx, me: auth::Me, Form(f): Form<ApworldForm>) -> Redirect {
+pub(crate) async fn admin_delete_apworld(
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Form(f): Form<ApworldForm>,
+) -> Redirect {
     let (_me, is_admin) = ctx.ident(&me);
     if is_admin {
         let _ = generate::delete_apworld(ctx.id, &f.name).await;
@@ -532,7 +574,8 @@ pub(crate) async fn admin_console(
     // location (and any hint) untouched. If that item has an active hint, deliver
     // it from its real location instead (`/send_location`), which also marks the
     // hint found — matching the expectation that sending an item resolves it.
-    let effective = ctx.rt
+    let effective = ctx
+        .rt
         .with_board(|b| {
             let rest = cmd.strip_prefix("/send ")?.trim();
             let (player, item) = rest.split_once(char::is_whitespace)?;
@@ -553,7 +596,8 @@ pub(crate) async fn admin_console(
             .await
             {
                 Ok(lists) => {
-                    let text = ctx.rt
+                    let text = ctx
+                        .rt
                         .with_board(|b| {
                             lists
                                 .iter()
@@ -594,7 +638,11 @@ pub(crate) async fn admin_connect_password(
     let managed = config::get().ap_managed;
     // Managed: the password is the season's own; external: it's the shared
     // server's, an instance setting.
-    let allowed = if managed { ctx.can_manage(&me) } else { me.can(auth::Action::ManageInstance) };
+    let allowed = if managed {
+        ctx.can_manage(&me)
+    } else {
+        me.can(auth::Action::ManageInstance)
+    };
     if !allowed {
         return render::notice("Admins only.", false, "board").into_response();
     }
@@ -615,7 +663,8 @@ pub(crate) async fn admin_connect_password(
         // Stored with the season (used whenever its server starts) and applied
         // to the running server's console right away — no restart.
         if let Err(e) = st.db.set_ap_password(ctx.id, &pw).await {
-            return render::notice(&format!("Couldn't save it: {e}"), false, "admin").into_response();
+            return render::notice(&format!("Couldn't save it: {e}"), false, "admin")
+                .into_response();
         }
         st.seasons.set_connect_password(ctx.id, &pw);
         let cmd = format!("/option password {pw}");
@@ -633,7 +682,8 @@ pub(crate) async fn admin_connect_password(
     // Is a season actually live right now (tracker connected to a running
     // server)? Between seasons there's nothing to set the password ON — the
     // value just needs persisting so the next generated/loaded season uses it.
-    let live = ctx.rt
+    let live = ctx
+        .rt
         .with_board(|b| b.snapshot().connected)
         .unwrap_or(false);
     // Best-effort set it on the running server first (bifrost's env is still the
@@ -650,15 +700,14 @@ pub(crate) async fn admin_connect_password(
         &format!("/option password {pw}"),
     )
     .await
+        && live
     {
-        if live {
-            return render::notice(
-                &format!("Couldn't set it on the running server: {e}"),
-                false,
-                "admin",
-            )
-            .into_response();
-        }
+        return render::notice(
+            &format!("Couldn't set it on the running server: {e}"),
+            false,
+            "admin",
+        )
+        .into_response();
     }
     // Persist after a short delay so this response reaches the browser before the
     // root helper restarts bifrost (writing the request file triggers it: a

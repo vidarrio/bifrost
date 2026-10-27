@@ -16,7 +16,11 @@ pub(crate) async fn minesweeper_page(
     let enabled = free || ctx.row.minesweeper_enabled;
     let season = ctx.id;
     // Freeplay: no bonus hints; stats are all-time. Seasonal: credits + seasonal.
-    let credits = if free { 0 } else { st.db.credits(season, my_id).await };
+    let credits = if free {
+        0
+    } else {
+        st.db.credits(season, my_id).await
+    };
     let stat_scope: Option<i64> = if free { None } else { Some(season) };
     let standard = st.db.mine_stats(stat_scope, my_id, "standard").await;
     let expert = st.db.mine_stats(stat_scope, my_id, "expert").await;
@@ -30,7 +34,6 @@ pub(crate) fn now_nanos() -> u64 {
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0)
 }
-
 
 #[derive(Deserialize)]
 pub(crate) struct KindQuery {
@@ -51,7 +54,11 @@ pub(crate) struct KindQuery {
 pub(crate) fn mine_key(account: i64, free: bool, season: i64, kind: mine::Kind) -> (i64, String) {
     // A seasonal game belongs to its season: finishing it under another
     // season's URL mustn't credit that one.
-    let mode = if free { "free:".to_string() } else { format!("s{season}:") };
+    let mode = if free {
+        "free:".to_string()
+    } else {
+        format!("s{season}:")
+    };
     (account, format!("{mode}{}", kind.id()))
 }
 
@@ -101,21 +108,23 @@ pub(crate) async fn mine_state(
     let my_id = me.id();
     let (_me, _) = me.ident();
     let kind = mine::Kind::parse(&q.kind);
-    st.with_mine_games(|games| match games.get_mut(&mine_key(my_id, q.free, ctx.id, kind)) {
-        Some(g) if !g.over => {
-            g.repose();
-            let cells: Vec<_> = g
-                .revealed_cells()
-                .iter()
-                .map(|(r, c, n)| serde_json::json!({"r": r, "c": c, "n": n}))
-                .collect();
-            Json(serde_json::json!({
-                "active": true, "w": g.w, "h": g.h, "mines": g.mines_n,
-                "cells": cells, "elapsed_ms": g.active_ms(), "running": g.running
-            }))
-        }
-        _ => Json(serde_json::json!({"active": false})),
-    })
+    st.with_mine_games(
+        |games| match games.get_mut(&mine_key(my_id, q.free, ctx.id, kind)) {
+            Some(g) if !g.over => {
+                g.repose();
+                let cells: Vec<_> = g
+                    .revealed_cells()
+                    .iter()
+                    .map(|(r, c, n)| serde_json::json!({"r": r, "c": c, "n": n}))
+                    .collect();
+                Json(serde_json::json!({
+                    "active": true, "w": g.w, "h": g.h, "mines": g.mines_n,
+                    "cells": cells, "elapsed_ms": g.active_ms(), "running": g.running
+                }))
+            }
+            _ => Json(serde_json::json!({"active": false})),
+        },
+    )
 }
 
 /// Minimum games to qualify for the completion-rate leaderboard.
@@ -134,7 +143,10 @@ pub(crate) async fn mine_leaderboard(
     // Freeplay shows the all-time (permanent) board; the seasonal board scopes to
     // the season.
     let scope: Option<i64> = if q.free { None } else { Some(ctx.id) };
-    let time = st.db.mine_leaders_time(scope, kind.id(), LEADERBOARD_TOP).await;
+    let time = st
+        .db
+        .mine_leaders_time(scope, kind.id(), LEADERBOARD_TOP)
+        .await;
     let rate = st
         .db
         .mine_leaders_rate(scope, kind.id(), LEADERBOARD_MIN_GAMES, LEADERBOARD_TOP)

@@ -111,7 +111,9 @@ pub(super) fn board_inner(
     activity: &[crate::db::ActivityRow],
     inlogic: &std::collections::HashMap<i64, i64>,
 ) {
-    out.push_str(r#"<div class="boardgrid"><h2>Slots — tap one to claim, hint, and see its hints</h2>"#);
+    out.push_str(
+        r#"<div class="boardgrid"><h2>Slots — tap one to claim, hint, and see its hints</h2>"#,
+    );
     if slots.is_empty() {
         out.push_str(r#"<div class="empty">No slots yet — the board fills once Bifrost connects to a running game.</div>"#);
     } else {

@@ -49,17 +49,24 @@ pub fn run_early(args: &[String]) -> Option<i32> {
 /// Commands that need the data dir but must run before the database is
 /// opened (restoring replaces it).
 pub fn run_offline(args: &[String]) -> Option<i32> {
-    match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-        ["backup", "restore", file] => Some(match crate::backup::restore(std::path::Path::new(file)) {
-            Ok(msg) => {
-                println!("{msg}");
-                0
-            }
-            Err(e) => {
-                eprintln!("restore failed: {e}");
-                1
-            }
-        }),
+    match args
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["backup", "restore", file] => {
+            Some(match crate::backup::restore(std::path::Path::new(file)) {
+                Ok(msg) => {
+                    println!("{msg}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("restore failed: {e}");
+                    1
+                }
+            })
+        }
         _ => None,
     }
 }
@@ -75,26 +82,30 @@ pub async fn run(args: &[String], db: &Db) -> Option<i32> {
         ["admin", "reset-link", user] => reset_link(db, user).await,
         ["admin", "create-sysadmin", user] => create_sysadmin(db, user).await,
         ["admin", "set-role", user, role] => set_role(db, user, role).await,
-        ["backup", "now"] => match crate::backup::create(db, &crate::backup::Policy::from_config()).await {
-            Ok(b) => {
-                println!("{}", crate::backup::dir().join(&b.name).display());
-                0
+        ["backup", "now"] => {
+            match crate::backup::create(db, &crate::backup::Policy::from_config()).await {
+                Ok(b) => {
+                    println!("{}", crate::backup::dir().join(&b.name).display());
+                    0
+                }
+                Err(e) => {
+                    eprintln!("backup failed: {e}");
+                    1
+                }
             }
-            Err(e) => {
-                eprintln!("backup failed: {e}");
-                1
+        }
+        ["season", "import", file] => {
+            match crate::archive::import(db, std::path::Path::new(file), None, false).await {
+                Ok(id) => {
+                    println!("imported as season {id} (archived)");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("import failed: {e}");
+                    1
+                }
             }
-        },
-        ["season", "import", file] => match crate::archive::import(db, std::path::Path::new(file), None, false).await {
-            Ok(id) => {
-                println!("imported as season {id} (archived)");
-                0
-            }
-            Err(e) => {
-                eprintln!("import failed: {e}");
-                1
-            }
-        },
+        }
         ["backup", "list"] => {
             for b in crate::backup::list() {
                 println!("{}  {:>10}", b.name, b.size);

@@ -135,7 +135,11 @@ impl Db {
         .flatten()
     }
 
-    pub async fn add_world_request(&self, season: i64, r: &WorldRequest) -> Result<(), sqlx::Error> {
+    pub async fn add_world_request(
+        &self,
+        season: i64,
+        r: &WorldRequest,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT INTO world_request (season, file, sha256, game, uploaded_by, uploaded_at)
              VALUES (?, ?, ?, ?, ?, ?)",
@@ -201,7 +205,12 @@ impl Db {
 
     /// A held submission passed its check: take the slot name and game the
     /// check read, and stop holding it. Fails if that slot name is taken.
-    pub async fn release_submission(&self, id: i64, slot_name: &str, game: &str) -> Result<(), sqlx::Error> {
+    pub async fn release_submission(
+        &self,
+        id: i64,
+        slot_name: &str,
+        game: &str,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
             "UPDATE submission SET slot_name = ?, game = ?, held_for = NULL, held_err = NULL
              WHERE id = ?",
@@ -222,7 +231,6 @@ impl Db {
             .await?;
         Ok(())
     }
-
 }
 
 #[cfg(test)]
@@ -261,7 +269,10 @@ mod tests {
     async fn held_submissions_wait_for_their_world() {
         let (db, dir) = db("held").await;
         let season = db.create_season("S", None, 0).await.unwrap();
-        let acct = db.create_account("alice", "x", crate::auth::Role::User, 0).await.unwrap();
+        let acct = db
+            .create_account("alice", "x", crate::auth::Role::User, 0)
+            .await
+            .unwrap();
         let r = WorldRequest {
             file: "foo.apworld".into(),
             sha256: "cd".repeat(32),
@@ -270,12 +281,27 @@ mod tests {
             uploaded_at: 1,
         };
         db.add_world_request(season, &r).await.unwrap();
-        assert!(db.add_world_request(season, &r).await.is_err(), "one request per file");
+        assert!(
+            db.add_world_request(season, &r).await.is_err(),
+            "one request per file"
+        );
         let id = db
-            .add_submission(season, acct, "Alice", "Foo", true, "", "/x.yaml", Some("foo.apworld"))
+            .add_submission(
+                season,
+                acct,
+                "Alice",
+                "Foo",
+                true,
+                "",
+                "/x.yaml",
+                Some("foo.apworld"),
+            )
             .await
             .unwrap();
-        assert_eq!(db.held_submissions(season, "foo.apworld").await, vec![(id, "/x.yaml".into())]);
+        assert_eq!(
+            db.held_submissions(season, "foo.apworld").await,
+            vec![(id, "/x.yaml".into())]
+        );
         db.set_held_err(id, "nope").await.unwrap();
         let sub = &db.submissions(season).await.unwrap()[0];
         assert!(sub.held() && sub.held_err.as_deref() == Some("nope"));

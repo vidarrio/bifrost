@@ -24,12 +24,17 @@ use tokio_tungstenite::tungstenite::Message;
 /// admin password: the in-logic helper, which runs apworld code, gets it too.
 pub fn quiet_key() -> Option<&'static str> {
     static KEY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    crate::config::get().ap_managed.then(|| KEY.get_or_init(crate::auth::new_token).as_str())
+    crate::config::get()
+        .ap_managed
+        .then(|| KEY.get_or_init(crate::auth::new_token).as_str())
 }
 
 /// Add the quiet key to a `[Connect]` message, when there is one.
 fn keyed(mut connect: Value) -> Value {
-    if let (Some(key), Some(c)) = (quiet_key(), connect.get_mut(0).and_then(Value::as_object_mut)) {
+    if let (Some(key), Some(c)) = (
+        quiet_key(),
+        connect.get_mut(0).and_then(Value::as_object_mut),
+    ) {
         c.insert("bifrost_key".into(), key.into());
     }
     connect
@@ -236,9 +241,7 @@ impl Board {
         let m = self.meta.as_ref()?;
         let locs = m.placements(ap_slot)?.get(&item_id)?;
         let acc = self.accounted_locs(ap_slot);
-        locs.iter()
-            .map(|a| (a[0], a[1]))
-            .find(|p| !acc.contains(p))
+        locs.iter().map(|a| (a[0], a[1])).find(|p| !acc.contains(p))
     }
 
     pub fn snapshot(&self) -> BoardSnapshot {
@@ -403,11 +406,8 @@ pub fn spawn(
                                 if let Some(s) = b.slots.get_mut(&slot) {
                                     s.sent = c.sent;
                                     s.received = c.items.len() as u64;
-                                    s.received_items = c
-                                        .items
-                                        .iter()
-                                        .map(|a| (a[0], a[1], a[2]))
-                                        .collect();
+                                    s.received_items =
+                                        c.items.iter().map(|a| (a[0], a[1], a[2])).collect();
                                     s.checked_locations = c.checked;
                                 }
                             }
@@ -743,8 +743,7 @@ pub async fn mark_goal(url: &str, password: &str, name: &str, game: &str) -> Res
                         return Err(format!("connection refused: {errs}"));
                     }
                     "Connected" => {
-                        let upd =
-                            json!([{ "cmd": "StatusUpdate", "status": CLIENT_GOAL }]);
+                        let upd = json!([{ "cmd": "StatusUpdate", "status": CLIENT_GOAL }]);
                         tx.send(Message::Text(upd.to_string()))
                             .await
                             .map_err(|e| format!("send StatusUpdate: {e}"))?;
@@ -783,7 +782,10 @@ pub async fn send_hint(
     // NamedTuple array) or a Hint PrintJSON's NetworkItem `item` field.
     fn hint_fl(v: &Value) -> Option<(i64, i64)> {
         if let Some(o) = v.as_object() {
-            Some((o.get("finding_player")?.as_i64()?, o.get("location")?.as_i64()?))
+            Some((
+                o.get("finding_player")?.as_i64()?,
+                o.get("location")?.as_i64()?,
+            ))
         } else if let Some(a) = v.as_array() {
             Some((a.get(1)?.as_i64()?, a.get(2)?.as_i64()?))
         } else {

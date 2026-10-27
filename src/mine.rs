@@ -585,7 +585,10 @@ mod tests {
             "{} generation too slow: {ms}ms for {n} {w}x{h}/{mines} boards",
             kind.id()
         );
-        eprintln!("{n} no-guess {w}x{h}/{mines} ({}) boards in {ms}ms", kind.id());
+        eprintln!(
+            "{n} no-guess {w}x{h}/{mines} ({}) boards in {ms}ms",
+            kind.id()
+        );
     }
 
     #[test]

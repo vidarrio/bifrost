@@ -58,11 +58,7 @@ impl MineStats {
     /// Success rate as a whole-number percentage (0 when nothing played).
     pub fn success_pct(&self) -> i64 {
         let t = self.total();
-        if t == 0 {
-            0
-        } else {
-            (self.wins * 100) / t
-        }
+        if t == 0 { 0 } else { (self.wins * 100) / t }
     }
 }
 
@@ -314,7 +310,10 @@ impl Db {
         )
         .execute(&pool)
         .await?;
-        Ok(Self { pool, ap_ports: None })
+        Ok(Self {
+            pool,
+            ap_ports: None,
+        })
     }
 
     /// A player's bonus-hint credits for a season.
@@ -364,11 +363,12 @@ impl Db {
         name: &str,
     ) -> Result<SetMcOutcome, sqlx::Error> {
         // Taken by someone else? (Same user re-saving their own name is fine.)
-        let owner: Option<i64> =
-            sqlx::query_scalar("SELECT account_id FROM mc_account WHERE mc_username = ? COLLATE NOCASE")
-                .bind(name)
-                .fetch_optional(&self.pool)
-                .await?;
+        let owner: Option<i64> = sqlx::query_scalar(
+            "SELECT account_id FROM mc_account WHERE mc_username = ? COLLATE NOCASE",
+        )
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
         if matches!(owner, Some(o) if o != account) {
             return Ok(SetMcOutcome::TakenByOther);
         }
@@ -489,7 +489,9 @@ impl Db {
         if season.is_some() {
             sql.push_str(" AND season=?");
         }
-        let mut q = sqlx::query_as::<_, MineStats>(&sql).bind(account).bind(kind);
+        let mut q = sqlx::query_as::<_, MineStats>(&sql)
+            .bind(account)
+            .bind(kind);
         if let Some(s) = season {
             q = q.bind(s);
         }
@@ -516,7 +518,10 @@ impl Db {
         if let Some(s) = season {
             q = q.bind(s);
         }
-        q.bind(limit).fetch_all(&self.pool).await.unwrap_or_default()
+        q.bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default()
     }
 
     /// Best completion-rate leaderboard: (player, wins, total) for players with
@@ -577,6 +582,7 @@ impl Db {
     /// Append an activity row (ingest path; dedup is via the cursor). `sender`
     /// is the actor (sender of an item, or the player who goaled/released/
     /// collected); `receiver` is the item's recipient (sends only, else None).
+    #[allow(clippy::too_many_arguments)]
     pub async fn activity_add(
         &self,
         season: i64,
@@ -726,10 +732,14 @@ impl Db {
             qb.push(")");
         }
         if let Some(s) = f.sender {
-            qb.push(" AND sender = ").push_bind(s).push(" COLLATE NOCASE");
+            qb.push(" AND sender = ")
+                .push_bind(s)
+                .push(" COLLATE NOCASE");
         }
         if let Some(r) = f.receiver {
-            qb.push(" AND receiver = ").push_bind(r).push(" COLLATE NOCASE");
+            qb.push(" AND receiver = ")
+                .push_bind(r)
+                .push(" COLLATE NOCASE");
         }
         if let Some(t) = f.since {
             qb.push(" AND ts >= ").push_bind(t);
@@ -759,8 +769,9 @@ impl Db {
         offset: i64,
         limit: i64,
     ) -> Vec<ActivityRow> {
-        let mut qb =
-            sqlx::QueryBuilder::new("SELECT ts, kind, text, item_class FROM activity WHERE season = ");
+        let mut qb = sqlx::QueryBuilder::new(
+            "SELECT ts, kind, text, item_class FROM activity WHERE season = ",
+        );
         qb.push_bind(season);
         Self::apply_activity_filter(&mut qb, f);
         qb.push(" ORDER BY id DESC LIMIT ")
@@ -1018,8 +1029,11 @@ impl Db {
             .unwrap_or(0);
         let roster: HashSet<&str> = new_ap_slots.iter().map(|(_, n, _)| n.as_str()).collect();
         // Names that were communal common-game slots last season stay communal.
-        let common_names: HashSet<&str> =
-            old.iter().filter(|s| s.is_common).map(|s| s.name.as_str()).collect();
+        let common_names: HashSet<&str> = old
+            .iter()
+            .filter(|s| s.is_common)
+            .map(|s| s.name.as_str())
+            .collect();
         let new_ap_by_name: HashMap<&str, i64> = new_ap_slots
             .iter()
             .map(|(n, name, _)| (name.as_str(), *n))
@@ -1069,7 +1083,9 @@ impl Db {
         }
         // Carry claims over by name.
         for s in &old {
-            let Some(account) = s.claimed_by_id else { continue };
+            let Some(account) = s.claimed_by_id else {
+                continue;
+            };
             let id: Option<i64> =
                 sqlx::query_scalar("SELECT id FROM bifrost_slot WHERE season = ? AND name = ?")
                     .bind(new_season)
@@ -1106,7 +1122,12 @@ impl Db {
 
     /// Claim a slot, enforcing one claim per player per season.
     /// Claim `slot_id` — only if it's one of `season`'s slots.
-    pub async fn claim_one(&self, season: i64, slot_id: i64, account: i64) -> Result<ClaimOutcome, sqlx::Error> {
+    pub async fn claim_one(
+        &self,
+        season: i64,
+        slot_id: i64,
+        account: i64,
+    ) -> Result<ClaimOutcome, sqlx::Error> {
         let found: Option<i64> =
             sqlx::query_scalar("SELECT season FROM bifrost_slot WHERE id = ? AND season = ?")
                 .bind(slot_id)
@@ -1274,7 +1295,8 @@ impl Db {
         account: i64,
         is_admin: bool,
     ) -> Result<bool, sqlx::Error> {
-        const IN_SEASON: &str = "bifrost_slot_id IN (SELECT id FROM bifrost_slot WHERE id = ? AND season = ?)";
+        const IN_SEASON: &str =
+            "bifrost_slot_id IN (SELECT id FROM bifrost_slot WHERE id = ? AND season = ?)";
         let res = if is_admin {
             sqlx::query(&format!("DELETE FROM claim WHERE {IN_SEASON}"))
                 .bind(slot_id)
@@ -1282,12 +1304,14 @@ impl Db {
                 .execute(&self.pool)
                 .await?
         } else {
-            sqlx::query(&format!("DELETE FROM claim WHERE {IN_SEASON} AND account_id = ?"))
-                .bind(slot_id)
-                .bind(season)
-                .bind(account)
-                .execute(&self.pool)
-                .await?
+            sqlx::query(&format!(
+                "DELETE FROM claim WHERE {IN_SEASON} AND account_id = ?"
+            ))
+            .bind(slot_id)
+            .bind(season)
+            .bind(account)
+            .execute(&self.pool)
+            .await?
         };
         Ok(res.rows_affected() > 0)
     }

@@ -4,8 +4,11 @@ use super::*;
 
 /// The `#logbody` (feed + pager) for the full-log live poller, for the current
 /// filters/page/rpp (query carried through). The filter form is not re-sent.
-pub(crate) async fn log_fragment_view(State(st): State<AppState>,
-    ctx: scope::SeasonCtx, Query(q): Query<LogQuery>) -> Html<String> {
+pub(crate) async fn log_fragment_view(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    Query(q): Query<LogQuery>,
+) -> Html<String> {
     let season = ctx.id;
     let kinds = selected_kinds(&q);
     let classes = selected_classes(&q);
@@ -55,7 +58,9 @@ pub(crate) fn opt_ne(s: &Option<String>) -> Option<&str> {
 }
 /// Parse an epoch-second query field (empty/invalid/non-positive → None).
 pub(crate) fn parse_ts(s: &Option<String>) -> Option<i64> {
-    opt_ne(s).and_then(|v| v.parse::<i64>().ok()).filter(|t| *t > 0)
+    opt_ne(s)
+        .and_then(|v| v.parse::<i64>().ok())
+        .filter(|t| *t > 0)
 }
 
 /// Event kinds selected in the filter (empty = all).
@@ -105,7 +110,9 @@ pub(crate) fn pct(s: &str) -> String {
     let mut o = String::new();
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => o.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                o.push(b as char)
+            }
             _ => o.push_str(&format!("%{b:02X}")),
         }
     }
@@ -150,7 +157,10 @@ pub(crate) fn filter_qs(q: &LogQuery) -> String {
 
 /// Resolve (rows-per-page, page, total-pages, offset) from the query + a total.
 pub(crate) fn paginate(q: &LogQuery, total: i64) -> (i64, i64, i64, i64) {
-    let rpp = q.rpp.unwrap_or(LOG_RPP_DEFAULT).clamp(LOG_RPP_MIN, LOG_RPP_MAX);
+    let rpp = q
+        .rpp
+        .unwrap_or(LOG_RPP_DEFAULT)
+        .clamp(LOG_RPP_MIN, LOG_RPP_MAX);
     let pages = ((total + rpp - 1) / rpp).max(1);
     let page = q.page.unwrap_or(1).clamp(1, pages);
     (rpp, page, pages, (page - 1) * rpp)
@@ -173,7 +183,11 @@ pub(crate) fn act_filter<'a>(
 }
 
 /// The render-side filter state for the filter bar + pager links.
-pub(crate) fn log_filter<'a>(q: &'a LogQuery, participants: &'a [String], qs: &'a str) -> render::LogFilter<'a> {
+pub(crate) fn log_filter<'a>(
+    q: &'a LogQuery,
+    participants: &'a [String],
+    qs: &'a str,
+) -> render::LogFilter<'a> {
     render::LogFilter {
         kinds_selected: [
             q.kind_send.is_some(),
@@ -198,8 +212,11 @@ pub(crate) fn log_filter<'a>(q: &'a LogQuery, participants: &'a [String], qs: &'
 }
 
 /// The full, paginated, filterable activity log for the current (live) season.
-pub(crate) async fn log_view(State(st): State<AppState>,
-    ctx: scope::SeasonCtx, Query(q): Query<LogQuery>) -> Html<String> {
+pub(crate) async fn log_view(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    Query(q): Query<LogQuery>,
+) -> Html<String> {
     let season = ctx.id;
     let kinds = selected_kinds(&q);
     let classes = selected_classes(&q);

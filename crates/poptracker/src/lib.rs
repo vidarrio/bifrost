@@ -143,9 +143,13 @@ fn extract_zip_capped(zip_path: &Path, dest: &Path, cap: u64) -> Result<()> {
     let mut zip = zip::ZipArchive::new(file).map_err(|e| Error::Pack(format!("zip: {e}")))?;
     let mut budget = cap;
     for i in 0..zip.len() {
-        let mut f = zip.by_index(i).map_err(|e| Error::Pack(format!("zip entry {i}: {e}")))?;
+        let mut f = zip
+            .by_index(i)
+            .map_err(|e| Error::Pack(format!("zip entry {i}: {e}")))?;
         // enclosed_name() rejects absolute paths and `..` traversal.
-        let Some(rel) = f.enclosed_name() else { continue };
+        let Some(rel) = f.enclosed_name() else {
+            continue;
+        };
         let out = dest.join(rel);
         if f.is_dir() {
             std::fs::create_dir_all(&out).map_err(|e| Error::Io(e.to_string()))?;
@@ -315,8 +319,8 @@ struct SectionDef {
 }
 #[derive(Clone)]
 struct LocNode {
-    name: String,                // full path, e.g. "Area/Sub/Spot"
-    groups: Vec<Vec<String>>,    // effective location-level access: parent chain + own; ALL groups must pass
+    name: String,                 // full path, e.g. "Area/Sub/Spot"
+    groups: Vec<Vec<String>>, // effective location-level access: parent chain + own; ALL groups must pass
     vis_groups: Vec<Vec<String>>, // effective `visibility_rules`: parent chain + own; ALL must pass for the marker to show
     map_locations: Vec<MapLoc>,
     sections: Vec<SectionDef>,
@@ -440,13 +444,13 @@ impl Session {
     /// pack's own `onClear` can set the same toggles if it reads them.
     pub fn set_valid_locations(&self, ids: &[i64]) {
         self.eng.borrow_mut().valid_locations = Some(ids.iter().copied().collect());
-        if let Ok(ap) = self.lua.globals().get::<Table>("Archipelago") {
-            if let Ok(t) = self.lua.create_table() {
-                for (i, id) in ids.iter().enumerate() {
-                    let _ = t.set(i as i64 + 1, *id);
-                }
-                let _ = ap.set("MissingLocations", t);
+        if let Ok(ap) = self.lua.globals().get::<Table>("Archipelago")
+            && let Ok(t) = self.lua.create_table()
+        {
+            for (i, id) in ids.iter().enumerate() {
+                let _ = t.set(i as i64 + 1, *id);
             }
+            let _ = ap.set("MissingLocations", t);
         }
     }
 
@@ -482,7 +486,13 @@ impl Session {
     pub fn on_retrieved(&self, key: &str, val: &serde_json::Value) -> Result<()> {
         self.charge();
         let v = json_to_lua(&self.lua, val)?;
-        for h in self.eng.borrow().retr_h.iter().chain(self.eng.borrow().setr_h.iter()).cloned() {
+        for h in self
+            .eng
+            .borrow()
+            .retr_h
+            .iter()
+            .chain(self.eng.borrow().setr_h.iter())
+        {
             h.call::<()>((key, v.clone()))?;
         }
         Ok(())
@@ -509,7 +519,8 @@ impl Session {
                 let count = t.get::<i64>("AcquiredCount").unwrap_or(0);
                 let stage = t.get::<i64>("CurrentStage").unwrap_or(0);
                 let e = self.eng.borrow();
-                let staged = kind == "progressive" || kind == "progressive_toggle" || kind == "static";
+                let staged =
+                    kind == "progressive" || kind == "progressive_toggle" || kind == "static";
                 let img = e.imgs.get(&key).and_then(|v| {
                     let pick = if staged {
                         let i = (stage.max(0) as usize).min(v.len().saturating_sub(1));
@@ -736,15 +747,15 @@ fn eval_token(lua: &Lua, eng: &E, tok: &str, depth: u32) -> bool {
     }
     if let Some(f) = tok.strip_prefix('$') {
         let name = f.split(':').next().unwrap_or(f);
-        if let Ok(func) = lua.globals().get::<Function>(name) {
-            if let Ok(v) = func.call::<Value>(()) {
-                return match v {
-                    Value::Integer(i) => i >= 1,
-                    Value::Number(n) => n >= 1.0,
-                    Value::Boolean(b) => b,
-                    _ => false,
-                };
-            }
+        if let Ok(func) = lua.globals().get::<Function>(name)
+            && let Ok(v) = func.call::<Value>(())
+        {
+            return match v {
+                Value::Integer(i) => i >= 1,
+                Value::Number(n) => n >= 1.0,
+                Value::Boolean(b) => b,
+                _ => false,
+            };
         }
         return false;
     }
@@ -782,7 +793,9 @@ fn eval_token(lua: &Lua, eng: &E, tok: &str, depth: u32) -> bool {
 /// isn't a plain integer.
 fn location_present(eng: &E, code: &str) -> bool {
     let e = eng.borrow();
-    let Some(valid) = e.valid_locations.as_ref() else { return false };
+    let Some(valid) = e.valid_locations.as_ref() else {
+        return false;
+    };
     code.parse::<i64>().is_ok_and(|id| valid.contains(&id))
 }
 
@@ -920,7 +933,11 @@ fn resolve_layout(
     match node {
         serde_json::Value::Object(o) => {
             if o.get("type").and_then(|v| v.as_str()) == Some("layout") {
-                if let Some(target) = o.get("key").and_then(|v| v.as_str()).and_then(|k| layouts.get(k)) {
+                if let Some(target) = o
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .and_then(|k| layouts.get(k))
+                {
                     return resolve_layout(layouts, target, depth + 1);
                 }
                 return serde_json::Value::Null;
@@ -936,9 +953,11 @@ fn resolve_layout(
             }
             serde_json::Value::Object(m)
         }
-        serde_json::Value::Array(a) => {
-            serde_json::Value::Array(a.iter().map(|x| resolve_layout(layouts, x, depth + 1)).collect())
-        }
+        serde_json::Value::Array(a) => serde_json::Value::Array(
+            a.iter()
+                .map(|x| resolve_layout(layouts, x, depth + 1))
+                .collect(),
+        ),
         other => other.clone(),
     }
 }
@@ -957,7 +976,8 @@ fn img_path(s: &str) -> String {
 
 /// A number that PopTracker may encode as a JSON number or a numeric string.
 fn num(v: &serde_json::Value) -> Option<f64> {
-    v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+    v.as_f64()
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
 }
 
 /// Read a rules field (`access_rules`/`visibility_rules`). PopTracker allows it
@@ -967,9 +987,10 @@ fn num(v: &serde_json::Value) -> Option<f64> {
 fn str_rules(node: &serde_json::Value, field: &str) -> Vec<String> {
     match node.get(field) {
         Some(serde_json::Value::String(s)) => vec![s.clone()],
-        Some(serde_json::Value::Array(a)) => {
-            a.iter().filter_map(|x| x.as_str().map(String::from)).collect()
-        }
+        Some(serde_json::Value::Array(a)) => a
+            .iter()
+            .filter_map(|x| x.as_str().map(String::from))
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -990,7 +1011,11 @@ fn flatten_locations(
         return;
     }
     let name = node.get("name").and_then(|v| v.as_str()).unwrap_or("");
-    let full = if prefix.is_empty() { name.to_string() } else { format!("{prefix}/{name}") };
+    let full = if prefix.is_empty() {
+        name.to_string()
+    } else {
+        format!("{prefix}/{name}")
+    };
 
     // This node's effective groups = parent chain + its own access_rules.
     let mut groups = parent_groups.to_vec();
@@ -1029,7 +1054,11 @@ fn flatten_locations(
         .map(|a| {
             a.iter()
                 .map(|s| SectionDef {
-                    name: s.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    name: s
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     item_count: s.get("item_count").and_then(|v| v.as_i64()).unwrap_or(1),
                     rules: str_rules(s, "access_rules"),
                     vis: str_rules(s, "visibility_rules"),
@@ -1043,7 +1072,8 @@ fn flatten_locations(
     {
         let mut e = eng.borrow_mut();
         for s in &sections {
-            e.loc_counts.insert(format!("{full}/{}", s.name), s.item_count);
+            e.loc_counts
+                .insert(format!("{full}/{}", s.name), s.item_count);
             // A single-section (or unnamed-section) location is also addressable
             // by the bare location path.
             if sections.len() == 1 || s.name.is_empty() {
@@ -1115,14 +1145,26 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     for m in ["ReadU8", "ReadU16", "ReadU24", "ReadU32"] {
         at.set(m, lua.create_function(|_, _: MultiValue| Ok(0i64))?)?;
     }
-    at.set("ReadVariable", lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?)?;
-    at.set("GetConnectionState", lua.create_function(|_, _: MultiValue| Ok(3i64))?)?;
+    at.set(
+        "ReadVariable",
+        lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?,
+    )?;
+    at.set(
+        "GetConnectionState",
+        lua.create_function(|_, _: MultiValue| Ok(3i64))?,
+    )?;
     at.set("SelectedConnectorType", lua.create_table()?)?;
     g.set("AutoTracker", &at)?;
 
     // Highlight enum (display only).
     let hl = lua.create_table()?;
-    for (k, v) in [("None", 0), ("Avoid", 1), ("NoPriority", 2), ("Unspecified", 3), ("Priority", 4)] {
+    for (k, v) in [
+        ("None", 0),
+        ("Avoid", 1),
+        ("NoPriority", 2),
+        ("Unspecified", 3),
+        ("Priority", 4),
+    ] {
         hl.set(k, v)?;
     }
     g.set("Highlight", &hl)?;
@@ -1136,11 +1178,19 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
             lua.create_function(move |lua, (_t, file): (Table, String)| {
                 // PopTracker's Add* return a bool and tolerate a missing/broken
                 // file; mirror that so one bad path can't reject the whole pack.
-                let Ok(txt) = read_pack_file(&eng2, &file) else { return Ok(false) };
-                let Ok(json) = parse_pack_json(&txt) else { return Ok(false) };
+                let Ok(txt) = read_pack_file(&eng2, &file) else {
+                    return Ok(false);
+                };
+                let Ok(json) = parse_pack_json(&txt) else {
+                    return Ok(false);
+                };
                 let items: Table = lua.globals().get("__ITEMS")?;
                 for item in json.as_array().cloned().unwrap_or_default() {
-                    let kind = item.get("type").and_then(|v| v.as_str()).unwrap_or("toggle").to_string();
+                    let kind = item
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("toggle")
+                        .to_string();
                     let mut all_codes: Vec<String> = Vec::new();
                     let mut stage_codes: Vec<Vec<String>> = Vec::new();
                     let mut imgs: Vec<String> = Vec::new();
@@ -1162,13 +1212,18 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                                 stage_codes.push(Vec::new());
                             }
                             // one image per stage (index-aligned), "" if none
-                            imgs.push(st.get("img").and_then(|v| v.as_str()).map(img_path).unwrap_or_default());
+                            imgs.push(
+                                st.get("img")
+                                    .and_then(|v| v.as_str())
+                                    .map(img_path)
+                                    .unwrap_or_default(),
+                            );
                         }
                     }
-                    if imgs.is_empty() {
-                        if let Some(im) = item.get("img").and_then(|v| v.as_str()) {
-                            imgs.push(img_path(im));
-                        }
+                    if imgs.is_empty()
+                        && let Some(im) = item.get("img").and_then(|v| v.as_str())
+                    {
+                        imgs.push(img_path(im));
                     }
                     // Unique per item: PopTracker items can share a leading code
                     // (e.g. all "Traveling Merchant" days share "tm"), so keying
@@ -1180,16 +1235,28 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                     // read (Increment/MinCount/MaxCount for consumables, etc.).
                     let geti = |k: &str, d: i64| item.get(k).and_then(|v| v.as_i64()).unwrap_or(d);
                     let t = lua.create_table()?;
-                    t.set("Active", item.get("initial_active_state").and_then(|v| v.as_bool()).unwrap_or(false))?;
+                    t.set(
+                        "Active",
+                        item.get("initial_active_state")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false),
+                    )?;
                     t.set("AcquiredCount", geti("initial_quantity", 0))?;
                     t.set("CurrentStage", geti("initial_stage_index", 0))?;
                     t.set("Increment", geti("increment", 1))?;
                     t.set("MinCount", geti("min_quantity", 0))?;
                     t.set("MaxCount", geti("max_quantity", 0))?;
                     t.set("Type", kind.as_str())?;
-                    t.set("Name", item.get("name").and_then(|v| v.as_str()).unwrap_or(""))?;
+                    t.set(
+                        "Name",
+                        item.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                    )?;
                     items.set(key.as_str(), &t)?;
-                    let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let name = item
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let mut e = eng2.borrow_mut();
                     for c in &all_codes {
                         e.code_to_key.insert(c.clone(), key.clone());
@@ -1213,8 +1280,12 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         tracker.set(
             "AddLocations",
             lua.create_function(move |_lua, (_t, file): (Table, String)| {
-                let Ok(txt) = read_pack_file(&eng2, &file) else { return Ok(false) };
-                let Ok(json) = parse_pack_json(&txt) else { return Ok(false) };
+                let Ok(txt) = read_pack_file(&eng2, &file) else {
+                    return Ok(false);
+                };
+                let Ok(json) = parse_pack_json(&txt) else {
+                    return Ok(false);
+                };
                 flatten_locations(&eng2, &json, "", &[], &[]);
                 Ok(true)
             })?,
@@ -1225,15 +1296,29 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         tracker.set(
             "AddMaps",
             lua.create_function(move |_lua, (_t, file): (Table, String)| {
-                let Ok(txt) = read_pack_file(&eng2, &file) else { return Ok(false) };
-                let Ok(json) = parse_pack_json(&txt) else { return Ok(false) };
+                let Ok(txt) = read_pack_file(&eng2, &file) else {
+                    return Ok(false);
+                };
+                let Ok(json) = parse_pack_json(&txt) else {
+                    return Ok(false);
+                };
                 let mut e = eng2.borrow_mut();
                 for m in json.as_array().cloned().unwrap_or_default() {
                     e.maps.push(MapDef {
-                        name: m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                        img: m.get("img").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        name: m
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        img: m
+                            .get("img")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         location_size: m.get("location_size").and_then(num),
-                        location_shape: m.get("location_shape").and_then(|v| v.as_str().map(String::from)),
+                        location_shape: m
+                            .get("location_shape")
+                            .and_then(|v| v.as_str().map(String::from)),
                     });
                 }
                 Ok(true)
@@ -1292,8 +1377,12 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         tracker.set(
             "AddLayouts",
             lua.create_function(move |_lua, (_t, file): (Table, String)| {
-                let Ok(txt) = read_pack_file(&eng2, &file) else { return Ok(false) };
-                let Ok(json) = parse_pack_json(&txt) else { return Ok(false) };
+                let Ok(txt) = read_pack_file(&eng2, &file) else {
+                    return Ok(false);
+                };
+                let Ok(json) = parse_pack_json(&txt) else {
+                    return Ok(false);
+                };
                 if let Some(obj) = json.as_object() {
                     let mut e = eng2.borrow_mut();
                     for (k, v) in obj {
@@ -1322,9 +1411,16 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         )?;
     }
     for noop in [
-        "AddMemoryWatch", "RemoveMemoryWatch", "AddVariableWatch", "RemoveVariableWatch",
-        "AddWatchForCode", "RemoveWatchForCode", "AddOnFrameHandler", "AddOnLocationSectionChangedHandler",
-        "RemoveOnLocationSectionChangedHandler", "CreateLuaItem",
+        "AddMemoryWatch",
+        "RemoveMemoryWatch",
+        "AddVariableWatch",
+        "RemoveVariableWatch",
+        "AddWatchForCode",
+        "RemoveWatchForCode",
+        "AddOnFrameHandler",
+        "AddOnLocationSectionChangedHandler",
+        "RemoveOnLocationSectionChangedHandler",
+        "CreateLuaItem",
     ] {
         sh.set(noop, lua.create_function(|_, _: MultiValue| Ok(()))?)?;
     }
@@ -1354,8 +1450,15 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     handler!("AddRetrievedHandler", retr_h);
     handler!("AddSetReplyHandler", setr_h);
     for noop in [
-        "SetNotify", "Get", "LocationChecks", "LocationScouts", "HintItem", "HintLocation",
-        "StatusUpdate", "AddScoutHandler", "AddBouncedHandler",
+        "SetNotify",
+        "Get",
+        "LocationChecks",
+        "LocationScouts",
+        "HintItem",
+        "HintLocation",
+        "StatusUpdate",
+        "AddScoutHandler",
+        "AddBouncedHandler",
     ] {
         ap.set(noop, lua.create_function(|_, _: MultiValue| Ok(()))?)?;
     }
@@ -1363,7 +1466,13 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
 
     // AccessibilityLevel enum
     let al = lua.create_table()?;
-    for (k, v) in [("None", 0), ("Inspect", 1), ("SequenceBreak", 2), ("Reachable", 3), ("Cleared", 4)] {
+    for (k, v) in [
+        ("None", 0),
+        ("Inspect", 1),
+        ("SequenceBreak", 2),
+        ("Reachable", 3),
+        ("Cleared", 4),
+    ] {
         al.set(k, v)?;
     }
     g.set("AccessibilityLevel", &al)?;
@@ -1404,7 +1513,10 @@ mod tests {
     #[test]
     fn layout_inlines_refs_inside_tabs() {
         let mut layouts = HashMap::new();
-        layouts.insert("inner".to_string(), serde_json::json!({"type":"map","maps":["m1"]}));
+        layouts.insert(
+            "inner".to_string(),
+            serde_json::json!({"type":"map","maps":["m1"]}),
+        );
         layouts.insert(
             "tracker_default".to_string(),
             serde_json::json!({"type":"tabbed","tabs":[{"title":"A","content":{"type":"layout","key":"inner"}}]}),
@@ -1430,10 +1542,24 @@ mod tests {
     fn pack_join_blocks_traversal_and_absolute() {
         let d = Path::new("/packs/slot");
         // legitimate pack-relative paths resolve inside the dir
-        assert_eq!(pack_join(d, "images/map.png"), Some(d.join("images/map.png")));
-        assert_eq!(pack_join(d, "scripts/logic.lua"), Some(d.join("scripts/logic.lua")));
+        assert_eq!(
+            pack_join(d, "images/map.png"),
+            Some(d.join("images/map.png"))
+        );
+        assert_eq!(
+            pack_join(d, "scripts/logic.lua"),
+            Some(d.join("scripts/logic.lua"))
+        );
         // traversal / absolute / windowsy / empty are refused
-        for bad in ["..", "../etc/passwd", "a/../../b", "/etc/passwd", "\\x", "C:/x", ""] {
+        for bad in [
+            "..",
+            "../etc/passwd",
+            "a/../../b",
+            "/etc/passwd",
+            "\\x",
+            "C:/x",
+            "",
+        ] {
             assert!(pack_join(d, bad).is_none(), "{bad:?} must be refused");
         }
     }
@@ -1445,7 +1571,8 @@ mod tests {
         let zip_path = tmp.path().join("big.zip");
         {
             let mut zw = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
-            zw.start_file("big.bin", zip::write::SimpleFileOptions::default()).unwrap();
+            zw.start_file("big.bin", zip::write::SimpleFileOptions::default())
+                .unwrap();
             std::io::Write::write_all(&mut zw, &vec![0u8; 4096]).unwrap();
             zw.finish().unwrap();
         }
@@ -1460,7 +1587,9 @@ mod tests {
     fn sandbox_excludes_dangerous_stdlib() {
         let lua = sandboxed_lua().unwrap();
         let g = lua.globals();
-        for banned in ["os", "io", "package", "require", "dofile", "loadfile", "debug"] {
+        for banned in [
+            "os", "io", "package", "require", "dofile", "loadfile", "debug",
+        ] {
             assert!(
                 matches!(g.get::<Value>(banned).unwrap(), Value::Nil),
                 "{banned} must be unavailable to pack Lua"

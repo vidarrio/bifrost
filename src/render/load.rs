@@ -4,7 +4,10 @@ use super::*;
 
 /// The live-load panel's contents (also served alone, every 10 s, by
 /// `/admin/settings/load`). `names`: season id → name.
-pub fn load_panel(load: Option<&crate::load::Load>, names: &std::collections::HashMap<i64, String>) -> String {
+pub fn load_panel(
+    load: Option<&crate::load::Load>,
+    names: &std::collections::HashMap<i64, String>,
+) -> String {
     const MIB: u64 = 1 << 20;
     let Some(l) = load.filter(|l| l.latest().is_some()) else {
         return r#"<p class="statline">Collecting the first sample…</p>"#.into();
@@ -14,15 +17,29 @@ pub fn load_panel(load: Option<&crate::load::Load>, names: &std::collections::Ha
     for w in crate::load::warnings(l) {
         b.push_str(&format!(r#"<div class="banner warn">⚠ {}</div>"#, esc(&w)));
     }
-    let pct = |used: u64, total: u64| if total == 0 { 0.0 } else { used as f32 * 100.0 / total as f32 };
-    let mem_pct: Vec<f32> = l.history.iter().map(|x| pct(x.mem_used, x.mem_total)).collect();
+    let pct = |used: u64, total: u64| {
+        if total == 0 {
+            0.0
+        } else {
+            used as f32 * 100.0 / total as f32
+        }
+    };
+    let mem_pct: Vec<f32> = l
+        .history
+        .iter()
+        .map(|x| pct(x.mem_used, x.mem_total))
+        .collect();
     let cpu: Vec<f32> = l.history.iter().map(|x| x.cpu).collect();
     let mem_what = if l.cgroup { "container limit" } else { "host" };
     b.push_str(r#"<div class="loadcharts">"#);
     b.push_str(&load_chart(
         "Memory used",
         &format!("{:.0}%", pct(s.mem_used, s.mem_total)),
-        &format!("{} of {} MiB · {mem_what}", s.mem_used / MIB, s.mem_total / MIB),
+        &format!(
+            "{} of {} MiB · {mem_what}",
+            s.mem_used / MIB,
+            s.mem_total / MIB
+        ),
         &mem_pct,
         s.at,
         &l.history.iter().map(|x| x.at).collect::<Vec<_>>(),
@@ -43,10 +60,15 @@ pub fn load_panel(load: Option<&crate::load::Load>, names: &std::collections::Ha
     ));
     b.push_str(r#"<table class="utable"><tr><th>What</th><th>Memory</th><th>CPU (% of one core)</th></tr>"#);
     let row = |what: String, (rss, c): (u64, f32)| {
-        format!("<tr><td>{what}</td><td>{} MiB</td><td>{c:.0}%</td></tr>", rss / MIB)
+        format!(
+            "<tr><td>{what}</td><td>{} MiB</td><td>{c:.0}%</td></tr>",
+            rss / MIB
+        )
     };
     for (id, v) in &s.servers {
-        let name = names.get(id).map_or_else(|| format!("season {id}"), |n| esc(n));
+        let name = names
+            .get(id)
+            .map_or_else(|| format!("season {id}"), |n| esc(n));
         b.push_str(&row(format!("{name} — AP server"), *v));
     }
     if s.servers.is_empty() {
@@ -63,12 +85,23 @@ pub fn load_panel(load: Option<&crate::load::Load>, names: &std::collections::Ha
 }
 
 /// One metric over the last hour: a 0–100% line, a hover readout per sample.
-pub(super) fn load_chart(title: &str, now: &str, sub: &str, values: &[f32], at_now: i64, at: &[i64]) -> String {
+pub(super) fn load_chart(
+    title: &str,
+    now: &str,
+    sub: &str,
+    values: &[f32],
+    at_now: i64,
+    at: &[i64],
+) -> String {
     let (w, h) = (300.0f32, 80.0f32);
     let n = values.len().max(2) as f32 - 1.0;
     let x = |i: usize| i as f32 * w / n;
     let y = |v: f32| h - v.clamp(0.0, 100.0) * h / 100.0;
-    let points: Vec<String> = values.iter().enumerate().map(|(i, v)| format!("{:.1},{:.1}", x(i), y(*v))).collect();
+    let points: Vec<String> = values
+        .iter()
+        .enumerate()
+        .map(|(i, v)| format!("{:.1},{:.1}", x(i), y(*v)))
+        .collect();
     let step = w / n;
     let hits: String = values
         .iter()
@@ -83,8 +116,16 @@ pub(super) fn load_chart(title: &str, now: &str, sub: &str, values: &[f32], at_n
         })
         .collect();
     let mins = at.first().map_or(0, |a| (at_now - a) / 60);
-    let span = if mins < 1 { "minute".to_string() } else { format!("{mins} min") };
-    let since = if mins < 1 { "1 min ago".to_string() } else { format!("{mins} min ago") };
+    let span = if mins < 1 {
+        "minute".to_string()
+    } else {
+        format!("{mins} min")
+    };
+    let since = if mins < 1 {
+        "1 min ago".to_string()
+    } else {
+        format!("{mins} min ago")
+    };
     format!(
         r#"<div class="loadchart"><h3>{} <span class="muted">· last {span}</span></h3><div class="now">{}</div><div class="statline">{}</div><div class="plot"><svg viewBox="0 0 {w} {h}" preserveAspectRatio="none" role="img" aria-label="{} over the last {span}, now {}"><line class="grid" x1="0" y1="{h}" x2="{w}" y2="{h}"/><line class="grid" x1="0" y1="{:.1}" x2="{w}" y2="{:.1}" stroke-dasharray="3 3"/><polyline class="line" vector-effect="non-scaling-stroke" points="{}"/>{hits}</svg><span class="ylab">50%</span></div><div class="axis"><span>{since}</span><span>now</span></div></div>"#,
         esc(title),

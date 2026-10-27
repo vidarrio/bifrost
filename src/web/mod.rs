@@ -13,31 +13,31 @@ use serde::Deserialize;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
-mod public;
 mod board;
-mod logs;
-mod game;
-mod play;
-mod minecraft;
-mod signup;
-mod season_admin;
-mod settings;
-mod seasons;
 mod catalog;
+mod game;
+mod logs;
+mod minecraft;
 mod minesweeper;
+mod play;
+mod public;
+mod season_admin;
+mod seasons;
+mod settings;
+mod signup;
 
-pub(crate) use public::*;
 pub(crate) use board::*;
-pub(crate) use logs::*;
-pub(crate) use game::*;
-pub(crate) use play::*;
-pub(crate) use minecraft::*;
-pub(crate) use signup::*;
-pub(crate) use season_admin::*;
-pub(crate) use settings::*;
-pub(crate) use seasons::*;
 pub(crate) use catalog::*;
+pub(crate) use game::*;
+pub(crate) use logs::*;
+pub(crate) use minecraft::*;
 pub(crate) use minesweeper::*;
+pub(crate) use play::*;
+pub(crate) use public::*;
+pub(crate) use season_admin::*;
+pub(crate) use seasons::*;
+pub(crate) use settings::*;
+pub(crate) use signup::*;
 
 pub(crate) fn now_secs() -> i64 {
     std::time::SystemTime::now()
@@ -47,12 +47,17 @@ pub(crate) fn now_secs() -> i64 {
 }
 
 /// Send a file as an attachment named `name` (ranges, conditional requests).
-pub(crate) async fn download(path: std::path::PathBuf, name: &str, req: axum::extract::Request) -> Response {
+pub(crate) async fn download(
+    path: std::path::PathBuf,
+    name: &str,
+    req: axum::extract::Request,
+) -> Response {
     let disposition = format!("attachment; filename=\"{name}\"");
     match tower::ServiceExt::oneshot(tower_http::services::ServeFile::new(path), req).await {
         Ok(mut r) => {
             if let Ok(v) = axum::http::HeaderValue::from_str(&disposition) {
-                r.headers_mut().insert(axum::http::header::CONTENT_DISPOSITION, v);
+                r.headers_mut()
+                    .insert(axum::http::header::CONTENT_DISPOSITION, v);
             }
             r.map(axum::body::Body::new).into_response()
         }
@@ -97,7 +102,10 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         .route("/log", get(log_view))
         .route("/log/fragment", get(log_fragment_view))
         .route("/game/{ap_slot}", get(game_view))
-        .route("/game/{ap_slot}/poptracker", post(pt_upload).layer(upload_limit()))
+        .route(
+            "/game/{ap_slot}/poptracker",
+            post(pt_upload).layer(upload_limit()),
+        )
         .route("/game/{ap_slot}/poptracker/remove", post(pt_remove))
         .route("/game/{ap_slot}/log/fragment", get(game_log_fragment))
         .route("/game/{ap_slot}/poptracker/state", get(pt_state))
@@ -112,12 +120,18 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         .route("/hint", post(hint_post))
         .route("/prioritize", post(prioritize_post))
         .route("/signup", get(signup_get).post(signup_post))
-        .route("/signup/apworld", post(signup_apworld).layer(upload_limit()))
+        .route(
+            "/signup/apworld",
+            post(signup_apworld).layer(upload_limit()),
+        )
         .route("/signup/check", post(signup_check))
         .route("/signup/delete", post(signup_delete))
         .route("/admin", get(admin_view))
         .route("/admin/seasons", get(seasons_view).post(seasons_create))
-        .route("/admin/seasons/import", post(seasons_import).layer(axum::extract::DefaultBodyLimit::max(2 << 30)))
+        .route(
+            "/admin/seasons/import",
+            post(seasons_import).layer(axum::extract::DefaultBodyLimit::max(2 << 30)),
+        )
         .route("/admin/bundle", get(admin_bundle))
         .route("/admin/settings", get(settings_view).post(settings_save))
         .route("/admin/settings/ap/check", post(ap_check))
@@ -140,7 +154,10 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         .route("/admin/worlds/reject", post(admin_world_reject))
         .route("/admin/worlds/to-catalog", post(admin_world_to_catalog))
         .route("/admin/catalog", get(catalog_view))
-        .route("/admin/catalog/add", post(catalog_upload).layer(upload_limit()))
+        .route(
+            "/admin/catalog/add",
+            post(catalog_upload).layer(upload_limit()),
+        )
         .route("/admin/catalog/remove", post(catalog_remove))
         .route("/admin/catalog/approval", post(catalog_approval))
         .route("/admin/console", post(admin_console))
@@ -188,7 +205,9 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         ))
         .layer(SetResponseHeaderLayer::if_not_present(
             axum::http::header::CONTENT_SECURITY_POLICY,
-            axum::http::HeaderValue::from_static("frame-ancestors 'self'; base-uri 'self'; object-src 'none'"),
+            axum::http::HeaderValue::from_static(
+                "frame-ancestors 'self'; base-uri 'self'; object-src 'none'",
+            ),
         ))
         .layer(SetResponseHeaderLayer::if_not_present(
             axum::http::header::REFERRER_POLICY,

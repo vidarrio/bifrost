@@ -13,7 +13,11 @@ pub struct SignupWorlds {
 
 /// A catalog entry as one line: "Game 1.2 (file)".
 pub(super) fn catalog_label(w: &crate::db::CatalogWorld) -> String {
-    let name = if w.game.is_empty() { w.file.trim_end_matches(".apworld") } else { &w.game };
+    let name = if w.game.is_empty() {
+        w.file.trim_end_matches(".apworld")
+    } else {
+        &w.game
+    };
     let mut l = name.to_string();
     if !w.version.is_empty() {
         l.push_str(&format!(" {}", w.version));
@@ -51,13 +55,21 @@ pub fn signup_page(
     }
     step1.push_str("</div>");
     if !worlds.custom_allowed {
-        step1.push_str(r#"<p class="hint">Custom (unofficial) games are turned off on this server.</p>"#);
+        step1.push_str(
+            r#"<p class="hint">Custom (unofficial) games are turned off on this server.</p>"#,
+        );
     }
     if worlds.custom_allowed && !worlds.catalog.is_empty() {
         let opts: String = worlds
             .catalog
             .iter()
-            .map(|w| format!(r#"<option value="{}">{}</option>"#, esc(&w.sha256), esc(&catalog_label(w))))
+            .map(|w| {
+                format!(
+                    r#"<option value="{}">{}</option>"#,
+                    esc(&w.sha256),
+                    esc(&catalog_label(w))
+                )
+            })
             .collect();
         step1.push_str(&format!(
             r#"<div data-box="catalog" hidden>

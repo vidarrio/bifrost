@@ -59,7 +59,11 @@ async fn ingest(season: i64, board: &Arc<RwLock<Board>>, db: &Db) -> Result<(), 
         // One-time retroactive backfill of the season. It began no earlier than
         // the previous season was archived, nor before its seed was deployed
         // (a fresh current.zip), so earlier games still in the journal stay out.
-        None => Mode::Backfill(db.last_archived_before(season).await.max(current_zip_mtime(season))),
+        None => Mode::Backfill(
+            db.last_archived_before(season)
+                .await
+                .max(current_zip_mtime(season)),
+        ),
     };
 
     // The one-time backfill waits for meta so historical sends get classified;
@@ -70,7 +74,13 @@ async fn ingest(season: i64, board: &Arc<RwLock<Board>>, db: &Db) -> Result<(), 
     }
 
     let mut cmd = Command::new("journalctl");
-    cmd.args(["-u", &config::get().ap_journal_unit, "-o", "json", "--no-pager"]);
+    cmd.args([
+        "-u",
+        &config::get().ap_journal_unit,
+        "-o",
+        "json",
+        "--no-pager",
+    ]);
     match &mode {
         Mode::Incremental(c) => {
             cmd.arg(format!("--after-cursor={c}"));
@@ -84,7 +94,10 @@ async fn ingest(season: i64, board: &Arc<RwLock<Board>>, db: &Db) -> Result<(), 
     }
     cmd.stdin(std::process::Stdio::null());
 
-    let out = cmd.output().await.map_err(|e| format!("journalctl spawn: {e}"))?;
+    let out = cmd
+        .output()
+        .await
+        .map_err(|e| format!("journalctl spawn: {e}"))?;
     if !out.status.success() {
         return Err(format!(
             "journalctl exited {}: {}",
@@ -164,8 +177,16 @@ pub async fn ingest_line(season: i64, board: &Arc<RwLock<Board>>, db: &Db, line:
         ("send", Some(s), Some(loc), Some(m)) => m.item_flags(s, loc).map(item_class),
         _ => None,
     };
-    db.activity_add(season, ts, kind, &body, sender.as_deref(), receiver.as_deref(), class)
-        .await;
+    db.activity_add(
+        season,
+        ts,
+        kind,
+        &body,
+        sender.as_deref(),
+        receiver.as_deref(),
+        class,
+    )
+    .await;
 }
 
 /// Deploy time of the season's seed, as epoch seconds (0 if unknown).
@@ -227,7 +248,13 @@ fn classify(msg: &str) -> Option<Classified> {
         let name = name.trim();
         let actor = || Some(name.to_string());
         if what.starts_with("has completed their goal") {
-            return Some(("goal", format!("{name} reached their goal!"), actor(), None, None));
+            return Some((
+                "goal",
+                format!("{name} reached their goal!"),
+                actor(),
+                None,
+                None,
+            ));
         }
         if what.starts_with("has released all remaining items") {
             return Some((
@@ -304,11 +331,21 @@ mod tests {
 
     #[test]
     fn parses_goal_release_collect() {
-        let (k, t, s, r, _) = classify("Notice (all): Cam (Team #1) has completed their goal.").unwrap();
-        assert_eq!((k, t.as_str(), s.as_deref(), r), ("goal", "Cam reached their goal!", Some("Cam"), None));
-        let g = classify("Notice (all): Elle (Team #1) has released all remaining items from their world.").unwrap();
+        let (k, t, s, r, _) =
+            classify("Notice (all): Cam (Team #1) has completed their goal.").unwrap();
+        assert_eq!(
+            (k, t.as_str(), s.as_deref(), r),
+            ("goal", "Cam reached their goal!", Some("Cam"), None)
+        );
+        let g = classify(
+            "Notice (all): Elle (Team #1) has released all remaining items from their world.",
+        )
+        .unwrap();
         assert_eq!((g.0, g.2.as_deref(), g.3), ("release", Some("Elle"), None));
-        let c = classify("Notice (all): Dustbiter (Team #1) has collected their items from other worlds.").unwrap();
+        let c = classify(
+            "Notice (all): Dustbiter (Team #1) has collected their items from other worlds.",
+        )
+        .unwrap();
         assert_eq!((c.0, c.2.as_deref()), ("collect", Some("Dustbiter")));
     }
 
@@ -325,8 +362,14 @@ mod tests {
     #[test]
     fn drops_noise() {
         assert!(classify("Notice (all): Deh (Team #1) viewing HITMAN has joined. Client(0.6.8), ['TextOnly'].").is_none());
-        assert!(classify("Notice (all): HunkOfJunk (Team #1) has left the game. Client(0.6.0), [].").is_none());
-        assert!(classify("Notice (Team #1): [Hint]: Deh's Level is at X in Deh's World. (priority)").is_none());
+        assert!(
+            classify("Notice (all): HunkOfJunk (Team #1) has left the game. Client(0.6.0), [].")
+                .is_none()
+        );
+        assert!(
+            classify("Notice (Team #1): [Hint]: Deh's Level is at X in Deh's World. (priority)")
+                .is_none()
+        );
         assert!(classify("Notice (all): Deh: !hint Level - New York").is_none());
         assert!(classify("connection closed").is_none());
     }

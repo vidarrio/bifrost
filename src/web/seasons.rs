@@ -9,24 +9,41 @@ pub(crate) async fn seasons_view(State(st): State<AppState>, me: auth::Me) -> Re
     seasons_page(&st, &me, &default_season_name(), None).await
 }
 
-pub(crate) async fn seasons_page(st: &AppState, me: &auth::Me, name: &str, err: Option<&str>) -> Response {
+pub(crate) async fn seasons_page(
+    st: &AppState,
+    me: &auth::Me,
+    name: &str,
+    err: Option<&str>,
+) -> Response {
     let seasons = st.db.seasons().await;
     let mut manage = Vec::with_capacity(seasons.len());
     for s in &seasons {
         let mods = st.db.season_mods(s.id).await;
         manage.push(me.can(auth::Action::ManageSeason { mods: &mods }));
     }
-    render::seasons_page(&seasons, &manage, name, err, me.can(auth::Action::ManageInstance))
-        .into_response()
+    render::seasons_page(
+        &seasons,
+        &manage,
+        name,
+        err,
+        me.can(auth::Action::ManageInstance),
+    )
+    .into_response()
 }
 
 /// Import a finished season from another instance's archive bundle
 /// (sysadmins). The upload streams to a temp file — bundles can be large.
-pub(crate) async fn seasons_import(State(st): State<AppState>, me: auth::Me, mut mp: Multipart) -> Response {
+pub(crate) async fn seasons_import(
+    State(st): State<AppState>,
+    me: auth::Me,
+    mut mp: Multipart,
+) -> Response {
     if !me.can(auth::Action::ManageInstance) {
         return render::notice("Sysadmins only.", false, "/").into_response();
     }
-    let tmp = config::get().tmp_dir().join(format!("import-{}.tar.gz", auth::new_token()));
+    let tmp = config::get()
+        .tmp_dir()
+        .join(format!("import-{}.tar.gz", auth::new_token()));
     // Removed however this ends (an aborted upload drops this future).
     struct Upload(std::path::PathBuf);
     impl Drop for Upload {
@@ -36,15 +53,21 @@ pub(crate) async fn seasons_import(State(st): State<AppState>, me: auth::Me, mut
     }
     let _upload = Upload(tmp.clone());
     let res = async {
-        tokio::fs::create_dir_all(config::get().tmp_dir()).await.map_err(|e| e.to_string())?;
+        tokio::fs::create_dir_all(config::get().tmp_dir())
+            .await
+            .map_err(|e| e.to_string())?;
         let mut got = false;
         while let Ok(Some(mut field)) = mp.next_field().await {
             if field.name() != Some("bundle") {
                 continue;
             }
-            let mut out = tokio::fs::File::create(&tmp).await.map_err(|e| e.to_string())?;
+            let mut out = tokio::fs::File::create(&tmp)
+                .await
+                .map_err(|e| e.to_string())?;
             while let Some(chunk) = field.chunk().await.map_err(|e| format!("upload: {e}"))? {
-                tokio::io::AsyncWriteExt::write_all(&mut out, &chunk).await.map_err(|e| e.to_string())?;
+                tokio::io::AsyncWriteExt::write_all(&mut out, &chunk)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 got = true;
             }
         }
@@ -67,7 +90,11 @@ pub(crate) async fn seasons_import(State(st): State<AppState>, me: auth::Me, mut
 }
 
 /// An archived season's bundle (its admins), e.g. to import it elsewhere.
-pub(crate) async fn admin_bundle(ctx: scope::SeasonCtx, me: auth::Me, req: axum::extract::Request) -> Response {
+pub(crate) async fn admin_bundle(
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    req: axum::extract::Request,
+) -> Response {
     let (_me, is_admin) = ctx.ident(&me);
     if !is_admin {
         return render::notice("Admins only.", false, "/").into_response();
@@ -78,7 +105,11 @@ pub(crate) async fn admin_bundle(ctx: scope::SeasonCtx, me: auth::Me, req: axum:
             let name = format!("bifrost-season-{seed}.tar.gz");
             download(path, &name, req).await
         }
-        None => (axum::http::StatusCode::NOT_FOUND, "no bundle for this season").into_response(),
+        None => (
+            axum::http::StatusCode::NOT_FOUND,
+            "no bundle for this season",
+        )
+            .into_response(),
     }
 }
 
@@ -89,13 +120,23 @@ pub(crate) struct SeasonForm {
 
 /// Create a season (a draft, named up front, owned by its creator) and open
 /// its admin page.
-pub(crate) async fn seasons_create(State(st): State<AppState>, me: auth::Me, Form(f): Form<SeasonForm>) -> Response {
+pub(crate) async fn seasons_create(
+    State(st): State<AppState>,
+    me: auth::Me,
+    Form(f): Form<SeasonForm>,
+) -> Response {
     if !me.can(auth::Action::CreateSeason) {
         return render::notice("Moderators only.", false, "/").into_response();
     }
     let name: String = f.name.trim().chars().take(80).collect();
     if name.is_empty() {
-        return seasons_page(&st, &me, &default_season_name(), Some("Give the season a name.")).await;
+        return seasons_page(
+            &st,
+            &me,
+            &default_season_name(),
+            Some("Give the season a name."),
+        )
+        .await;
     }
     let created = st
         .db

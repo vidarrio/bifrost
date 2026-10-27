@@ -7,29 +7,29 @@ use axum::response::Html;
 use crate::ap::BoardSnapshot;
 use crate::db::{SlotRow, SubmissionRow};
 
-mod landing;
-mod season;
-mod board;
-mod log;
-mod signup;
-mod admin;
-mod game;
-mod mine;
 mod account;
+mod admin;
+mod board;
 mod console;
+mod game;
+mod landing;
 mod load;
+mod log;
+mod mine;
+mod season;
+mod signup;
 
-pub use landing::*;
-pub use season::*;
-pub use board::*;
-pub use log::*;
-pub use signup::*;
-pub use admin::*;
-pub use game::*;
-pub use mine::*;
 pub use account::*;
+pub use admin::*;
+pub use board::*;
 pub use console::*;
+pub use game::*;
+pub use landing::*;
 pub use load::*;
+pub use log::*;
+pub use mine::*;
+pub use season::*;
+pub use signup::*;
 
 /// HTML-escape (for callers outside this module).
 pub fn escape(s: &str) -> String {
@@ -414,7 +414,11 @@ fn group_by_ap(slots: &[SlotRow]) -> Vec<Group<'_>> {
             }),
         }
     }
-    groups.sort_by(|a, b| a.game.to_ascii_lowercase().cmp(&b.game.to_ascii_lowercase()));
+    groups.sort_by(|a, b| {
+        a.game
+            .to_ascii_lowercase()
+            .cmp(&b.game.to_ascii_lowercase())
+    });
     groups
 }
 
@@ -559,19 +563,31 @@ mod tests {
 
     #[test]
     fn attribute_values_cant_be_broken_out_of() {
-        assert_eq!(esc(r#"x" onmouseover="a()"#), "x&quot; onmouseover=&quot;a()");
+        assert_eq!(
+            esc(r#"x" onmouseover="a()"#),
+            "x&quot; onmouseover=&quot;a()"
+        );
         assert_eq!(esc("it's <b>"), "it&#39;s &lt;b&gt;");
         // In a handler the attribute decodes back to a JSON string literal.
-        assert_eq!(js_attr("Delete O'Brien\"s?"), r#"&quot;Delete O&#39;Brien\&quot;s?&quot;"#);
+        assert_eq!(
+            js_attr("Delete O'Brien\"s?"),
+            r#"&quot;Delete O&#39;Brien\&quot;s?&quot;"#
+        );
         let btn = action_btn("x", &[], "go", true, "Remove ');alert(1);('?");
-        assert!(btn.contains("confirm(&quot;Remove &#39;);alert(1);(&#39;?&quot;)"), "{btn}");
+        assert!(
+            btn.contains("confirm(&quot;Remove &#39;);alert(1);(&#39;?&quot;)"),
+            "{btn}"
+        );
     }
 
     #[test]
     fn imported_summary_fields_are_escaped() {
         let s = crate::season::SeasonSummary {
             name: "<s>".into(),
-            games: vec![crate::season::SeasonGame { status: "x\" onmouseover=\"a()".into(), ..Default::default() }],
+            games: vec![crate::season::SeasonGame {
+                status: "x\" onmouseover=\"a()".into(),
+                ..Default::default()
+            }],
             minesweeper: vec![crate::season::MineBoard {
                 label: "<script>bad()</script>".into(),
                 time: vec![("p".into(), 1)],
@@ -591,6 +607,9 @@ mod tests {
             qs: "",
         };
         let html = season_page(&s, &[], 1, 1, 50, &f).0;
-        assert!(!html.contains("<script>bad()") && !html.contains("x\" onmouseover"), "unescaped field");
+        assert!(
+            !html.contains("<script>bad()") && !html.contains("x\" onmouseover"),
+            "unescaped field"
+        );
     }
 }

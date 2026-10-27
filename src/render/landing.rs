@@ -34,11 +34,11 @@ pub fn landing_roster(
             let mut names: Vec<String> = g.rows.iter().map(|r| r.name.clone()).collect();
             names.sort_by_key(|n| n.to_ascii_lowercase());
             // Put the AP slot's own player (the primary) first, rest alphabetical.
-            if let Some(lead) = ap_names.get(&g.ap_slot) {
-                if let Some(pos) = names.iter().position(|n| n.eq_ignore_ascii_case(lead)) {
-                    let p = names.remove(pos);
-                    names.insert(0, p);
-                }
+            if let Some(lead) = ap_names.get(&g.ap_slot)
+                && let Some(pos) = names.iter().position(|n| n.eq_ignore_ascii_case(lead))
+            {
+                let p = names.remove(pos);
+                names.insert(0, p);
             }
             let key = names
                 .first()
@@ -63,10 +63,6 @@ pub fn landing_roster(
     }
     out
 }
-
-/// Frontpage roster for the gap between seasons (no live game yet): the people
-/// signed up for the *next* season, straight from the submission queue, so the
-/// section fills in live as they register. Mirrors `landing_roster`'s card style
 
 /// The home page's "Connect to" block: each live season's address (or "ask
 /// an admin" until the sysadmin sets the connect host), then the password note.
@@ -137,6 +133,9 @@ pub fn landing_discords(discords: &[crate::db::Discord]) -> String {
     )
 }
 
+/// Frontpage roster for the gap between seasons (no live game yet): the people
+/// signed up for the *next* season, straight from the submission queue, so the
+/// section fills in live as they register. Mirrors `landing_roster`'s card style
 /// (who + game) so the section looks identical whether a season is live or not.
 pub fn landing_signups(subs: &[SubmissionRow]) -> String {
     if subs.is_empty() {

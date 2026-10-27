@@ -8,29 +8,23 @@ pub(crate) fn mc_addr() -> Option<String> {
     config::var("BIFROST_MC_ADDR")
 }
 
-/// Where Bifrost writes the desired Minecraft whitelist (the current season's
-/// claimant usernames, one JSON array). The host-side `mc-whitelist-sync`
-/// watches this file (over the Bifrost host's data dir) and reconciles it onto the
-/// Minecraft server — Bifrost itself has no reach across to it.
-/// Lives in the data dir (`config::Config::mc_whitelist_file`).
-
 /// A valid Minecraft (Java) username: 3–16 of `[A-Za-z0-9_]`.
 pub(crate) fn valid_mc_username(s: &str) -> bool {
     (3..=16).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
-/// Recompute the season's whitelist and write it to the whitelist file
-/// atomically (temp + rename). Best-effort: a failure is logged, not fatal —
-/// the next change (or the host timer) reconciles.
-/// Write the Minecraft whitelist (one file for the one shared server: every
-/// live, MC-enabled season's claimants) for the host syncer.
+/// Write the Minecraft whitelist (one JSON array of usernames for the one
+/// shared server: every live, MC-enabled season's claimants) to
+/// `config::Config::mc_whitelist_file`, atomically (temp + rename). A
+/// host-side syncer watches the file and applies it to the Minecraft server,
+/// which Bifrost has no reach to. Best-effort: a failure is logged, and the
+/// next change (or the host timer) reconciles.
 pub(crate) async fn export_mc_whitelist(st: &AppState) {
     let names = st.db.mc_whitelist_all().await;
     let json = serde_json::to_string(&names).unwrap_or_else(|_| "[]".into());
     let file = config::get().mc_whitelist_file();
     let tmp = file.with_extension("json.tmp");
-    if let Err(e) = std::fs::write(&tmp, &json).and_then(|_| std::fs::rename(&tmp, &file))
-    {
+    if let Err(e) = std::fs::write(&tmp, &json).and_then(|_| std::fs::rename(&tmp, &file)) {
         tracing::warn!("mc whitelist export failed: {e}");
     }
 }

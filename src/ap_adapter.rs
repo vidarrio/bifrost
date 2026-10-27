@@ -24,8 +24,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 
-use crate::checker::CheckResult;
 use crate::apinstall::{self, Install};
+use crate::checker::CheckResult;
 use crate::config::{self, SeasonDirs};
 use crate::meta::{Meta, SlotCounts};
 use crate::sandbox::{self, Job};
@@ -73,12 +73,19 @@ async fn run_helper(
         program: &ap.python,
         args: all_args,
         cwd: &season.root,
-        env: helper_env(season, &ap).into_iter().chain(access.env).collect(),
+        env: helper_env(season, &ap)
+            .into_iter()
+            .chain(access.env)
+            .collect(),
         read,
         write: access.write,
         network: access.network,
     };
-    let cmd = if access.generate { sandbox::get().generation(&job) } else { sandbox::get().command(&job) };
+    let cmd = if access.generate {
+        sandbox::get().generation(&job)
+    } else {
+        sandbox::get().command(&job)
+    };
     sandbox::run(cmd, timeout).await
 }
 
@@ -225,7 +232,12 @@ fn write_pins(
 
 /// Install an apworld and pin its hash (`pin.sha256` is filled in here). The
 /// only way custom worlds should enter a season — see [`crate::worlds`].
-pub fn install_world(season: &SeasonDirs, file: &str, bytes: &[u8], mut pin: Pin) -> Result<(), String> {
+pub fn install_world(
+    season: &SeasonDirs,
+    file: &str,
+    bytes: &[u8],
+    mut pin: Pin,
+) -> Result<(), String> {
     let _lock = PINS.lock().unwrap_or_else(|p| p.into_inner());
     std::fs::write(season.worlds.join(file), bytes).map_err(|e| format!("install: {e}"))?;
     pin.sha256 = sha256_hex(bytes);
@@ -241,7 +253,12 @@ pub fn pin_shipped(season: &SeasonDirs, file: &str) -> Result<(), String> {
     let mut pins = world_pins(season);
     pins.insert(
         file.to_string(),
-        Pin { sha256: sha256_hex(&bytes), uploaded_by: "bifrost".into(), shipped: true, ..Pin::default() },
+        Pin {
+            sha256: sha256_hex(&bytes),
+            uploaded_by: "bifrost".into(),
+            shipped: true,
+            ..Pin::default()
+        },
     );
     write_pins(season, &pins)
 }
@@ -270,7 +287,9 @@ pub fn custom_worlds(season: &SeasonDirs) -> Vec<String> {
         .flatten()
         .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("apworld"))
         .filter(|e| {
-            let shipped = pins.get(&*e.file_name().to_string_lossy()).filter(|p| p.shipped);
+            let shipped = pins
+                .get(&*e.file_name().to_string_lossy())
+                .filter(|p| p.shipped);
             std::fs::read(e.path())
                 .map(|b| {
                     let h = sha256_hex(&b);
@@ -434,15 +453,9 @@ pub async fn generate(season: &SeasonDirs) -> Result<(), String> {
     let timeout = config::var("BIFROST_GENERATE_TIMEOUT_MIN")
         .and_then(|m| m.parse::<u64>().ok())
         .map_or(GENERATE_TIMEOUT, |m| Duration::from_secs(m * 60));
-    let out = run_helper(
-        "bifrost_generate.py",
-        vec![],
-        season,
-        access,
-        timeout,
-    )
-    .await
-    .map_err(|e| format!("generate: {e}"))?;
+    let out = run_helper("bifrost_generate.py", vec![], season, access, timeout)
+        .await
+        .map_err(|e| format!("generate: {e}"))?;
     if !out.status.success() {
         return Err(format!("generation error: {}", stderr_tail(&out, 3)));
     }
@@ -471,7 +484,10 @@ pub async fn inlogic(
     // The helper writes its result to a file (its stdout is UT/AP noise).
     let dir = scratch_dir("inlogic").await?;
     // Cleans up however this ends — even if the caller is aborted mid-run.
-    let mut run_guard = InLogicRun { dir: dir.clone(), relay: None };
+    let mut run_guard = InLogicRun {
+        dir: dir.clone(),
+        relay: None,
+    };
     let out = dir.join("result.json");
     // It runs apworld code, so no network: its one connection — to this
     // season's AP server — goes through a Unix socket in its scratch dir,
@@ -517,7 +533,8 @@ impl Drop for InLogicRun {
 /// Accept connections on a Unix socket at `path` and pipe each to TCP
 /// `target` (`host:port`), until the returned task is aborted.
 fn relay_to(path: &Path, target: String) -> Result<tokio::task::JoinHandle<()>, String> {
-    let listener = tokio::net::UnixListener::bind(path).map_err(|e| format!("relay socket: {e}"))?;
+    let listener =
+        tokio::net::UnixListener::bind(path).map_err(|e| format!("relay socket: {e}"))?;
     Ok(tokio::spawn(async move {
         while let Ok((mut inner, _)) = listener.accept().await {
             let target = target.clone();

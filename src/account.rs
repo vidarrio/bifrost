@@ -101,7 +101,11 @@ async fn login_post(
     }
     let rd = auth::safe_redirect(f.rd.as_deref());
     let username = f.username.trim().to_string();
-    let client = crate::ratelimit::client_ip(&crate::config::get().trusted_proxies, &headers, peer.map(|p| p.0.0.ip()));
+    let client = crate::ratelimit::client_ip(
+        &crate::config::get().trusted_proxies,
+        &headers,
+        peer.map(|p| p.0.0.ip()),
+    );
     let wait = st.auth.throttle.wait(&username, client);
     if wait > 0 {
         let msg = format!("Too many failed attempts — try again in {wait} s.");

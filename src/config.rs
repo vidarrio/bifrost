@@ -32,8 +32,8 @@
 //! `BIFROST_DATA` itself is environment-only (it locates the file).
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::ops::RangeInclusive;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use crate::net::Cidr;
@@ -120,7 +120,14 @@ impl SeasonDirs {
 
     /// Create the season's directories (idempotent).
     pub fn ensure(&self) -> std::io::Result<()> {
-        for d in [&self.players, &self.worlds, &self.output, &self.logs, &self.submissions, &self.pending] {
+        for d in [
+            &self.players,
+            &self.worlds,
+            &self.output,
+            &self.logs,
+            &self.submissions,
+            &self.pending,
+        ] {
             std::fs::create_dir_all(d)?;
         }
         Ok(())
@@ -153,7 +160,9 @@ impl Config {
     pub fn load() -> Self {
         let data_dir = env_var("BIFROST_DATA").unwrap_or_else(|| {
             if crate::bundle::present() {
-                crate::bundle::default_data_dir().to_string_lossy().into_owned()
+                crate::bundle::default_data_dir()
+                    .to_string_lossy()
+                    .into_owned()
             } else {
                 "/var/lib/bifrost".into()
             }
@@ -207,7 +216,9 @@ impl Config {
                 .map(|r| parse_port_range(&r).unwrap_or_else(|e| panic!("BIFROST_AP_PORTS: {e}")))
                 .unwrap_or(38281..=38300),
             ap_repo: var("BIFROST_AP_REPO").unwrap_or_else(|| "vidarrio/Archipelago".into()),
-            base_python: var("BIFROST_PYTHON").unwrap_or_else(|| "python3".into()).into(),
+            base_python: var("BIFROST_PYTHON")
+                .unwrap_or_else(|| "python3".into())
+                .into(),
             trusted_proxies: var("BIFROST_TRUSTED_PROXIES")
                 .map(|l| {
                     Cidr::parse_list(&l).unwrap_or_else(|e| panic!("BIFROST_TRUSTED_PROXIES: {e}"))
@@ -303,7 +314,13 @@ fn env_var(name: &str) -> Option<String> {
 /// [`Config::load`] (and in tests) only the environment is consulted. An
 /// empty value is unset either way (e.g. the template's `secret = ""`).
 pub fn var(name: &str) -> Option<String> {
-    env_var(name).or_else(|| FILE_VARS.get()?.get(name).filter(|v| !v.trim().is_empty()).cloned())
+    env_var(name).or_else(|| {
+        FILE_VARS
+            .get()?
+            .get(name)
+            .filter(|v| !v.trim().is_empty())
+            .cloned()
+    })
 }
 
 /// `38281-38300` (or a single port) → an inclusive range.
@@ -355,7 +372,11 @@ const FILE_KEYS: &[(&str, &str, &str)] = &[
     ("sandbox", "file_mb", "BIFROST_SANDBOX_FILE_MB"),
     ("sandbox", "generate_mem_mb", "BIFROST_GENERATE_MEM_MB"),
     ("sandbox", "generate_cpu_secs", "BIFROST_GENERATE_CPU_SECS"),
-    ("sandbox", "generate_timeout_min", "BIFROST_GENERATE_TIMEOUT_MIN"),
+    (
+        "sandbox",
+        "generate_timeout_min",
+        "BIFROST_GENERATE_TIMEOUT_MIN",
+    ),
     (
         "sandbox",
         "allow_unsandboxed_custom_worlds",
@@ -557,7 +578,10 @@ mod tests {
         assert!(parse_port_range("40009-40000").is_err());
         assert!(parse_port_range("0-10").is_err());
         assert!(parse_port_range("a-b").is_err());
-        assert_eq!(with(&[("BIFROST_AP_PORTS", "5000-5001")]).ap_ports, 5000..=5001);
+        assert_eq!(
+            with(&[("BIFROST_AP_PORTS", "5000-5001")]).ap_ports,
+            5000..=5001
+        );
     }
 
     #[test]

@@ -79,7 +79,9 @@ async fn clear_old_seeds(season: i64) {
 /// The newest AP_*.zip in output/, if any.
 async fn newest_seed(season: i64) -> Option<PathBuf> {
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
-    let mut rd = tokio::fs::read_dir(config::get().season(season).output).await.ok()?;
+    let mut rd = tokio::fs::read_dir(config::get().season(season).output)
+        .await
+        .ok()?;
     while let Ok(Some(entry)) = rd.next_entry().await {
         let name = entry.file_name().to_string_lossy().to_string();
         if !(name.starts_with("AP_") && name.ends_with(".zip")) {
@@ -325,16 +327,28 @@ pub async fn list_apworlds(season: i64) -> Vec<Apworld> {
             if !name.ends_with(".apworld") {
                 continue;
             }
-            let mut w = Apworld { file: name.clone(), detail: String::new(), pinned: false, catalog: false };
+            let mut w = Apworld {
+                file: name.clone(),
+                detail: String::new(),
+                pinned: false,
+                catalog: false,
+            };
             w.detail = if !custom.contains(&name) {
                 "shipped with Bifrost".to_string()
             } else {
-                let actual = tokio::fs::read(entry.path()).await.map(|b| ap_adapter::sha256_hex(&b));
+                let actual = tokio::fs::read(entry.path())
+                    .await
+                    .map(|b| ap_adapter::sha256_hex(&b));
                 match (pins.get(&name), actual) {
                     (Some(p), Ok(h)) if p.sha256 == h => {
                         w.pinned = true;
                         w.catalog = p.catalog;
-                        format!("sha256 {}… · uploaded by {} · {}", &h[..12], p.uploaded_by, p.provenance())
+                        format!(
+                            "sha256 {}… · uploaded by {} · {}",
+                            &h[..12],
+                            p.uploaded_by,
+                            p.provenance()
+                        )
                     }
                     (Some(_), _) => "⚠ changed on disk since upload — won't run".to_string(),
                     (None, _) => "⚠ not installed through Bifrost — won't run".to_string(),
@@ -365,10 +379,7 @@ async fn read_seed(
     seed_zip: &Path,
 ) -> Result<(String, Vec<(i64, String, String)>), String> {
     let meta = ap_adapter::decode_meta(dirs, seed_zip).await?;
-    let seed_name = meta
-        .seed
-        .clone()
-        .ok_or("seed metadata missing its name")?;
+    let seed_name = meta.seed.clone().ok_or("seed metadata missing its name")?;
     Ok((seed_name, ap_slots(&meta)))
 }
 
@@ -382,7 +393,11 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: i64) {
     };
     // A live season is re-rolled (which keeps claims), never generated afresh.
     if !matches!(prev, State::Draft | State::Signup) {
-        return set(&state, false, "Failed — the season is already live; re-roll it instead");
+        return set(
+            &state,
+            false,
+            "Failed — the season is already live; re-roll it instead",
+        );
     }
     // Refuse up front rather than generate a world that can't go live (no
     // free AP port, or another season live on an external server).
@@ -400,7 +415,11 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: i64) {
             }
             Err(e) => {
                 let _ = db.transition(season, prev, now()).await;
-                set(&state, false, format!("Generated, but couldn't go live — {e}"))
+                set(
+                    &state,
+                    false,
+                    format!("Generated, but couldn't go live — {e}"),
+                )
             }
         },
         Err(e) => {
@@ -445,7 +464,11 @@ async fn roll(state: &GenState, season: i64) -> Result<config::SeasonDirs, Strin
         Ok(p) => p,
         Err(_) => {
             let msg = state.lock().map(|g| g.1.clone()).unwrap_or_default();
-            set(state, true, "Waiting for another season's generation to finish…");
+            set(
+                state,
+                true,
+                "Waiting for another season's generation to finish…",
+            );
             let p = GENERATION.acquire().await.map_err(|e| e.to_string())?;
             set(state, true, msg);
             p
@@ -460,11 +483,19 @@ async fn roll(state: &GenState, season: i64) -> Result<config::SeasonDirs, Strin
 /// Deploy the new seed with its season pinned to the install that generated
 /// it (the server restarts on it); on failure the old seed stays deployed,
 /// so the old pin comes back too.
-async fn deploy(db: &Db, rts: &Runtimes, season: i64, dirs: &config::SeasonDirs, seed_zip: &Path) -> Result<(), String> {
+async fn deploy(
+    db: &Db,
+    rts: &Runtimes,
+    season: i64,
+    dirs: &config::SeasonDirs,
+    seed_zip: &Path,
+) -> Result<(), String> {
     let version = dirs.install.as_ref().map(|i| i.version.clone());
     let before = db.season(season).await.and_then(|s| s.ap_version);
     let pin = |v: Option<String>| async move {
-        db.set_season_ap_version(season, v.as_deref()).await.map_err(|e| e.to_string())?;
+        db.set_season_ap_version(season, v.as_deref())
+            .await
+            .map_err(|e| e.to_string())?;
         crate::apinstall::pin(season, v);
         Ok::<(), String>(())
     };
@@ -476,7 +507,12 @@ async fn deploy(db: &Db, rts: &Runtimes, season: i64, dirs: &config::SeasonDirs,
     Ok(())
 }
 
-async fn regen_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> Result<String, String> {
+async fn regen_inner(
+    db: &Db,
+    rts: &Runtimes,
+    state: &GenState,
+    season: i64,
+) -> Result<String, String> {
     // Must have a staged lineup to re-roll.
     let mut has_yaml = false;
     if let Ok(mut rd) = tokio::fs::read_dir(config::get().season(season).players).await {
@@ -506,9 +542,15 @@ async fn regen_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> 
     let (seed_name, ap_slots) = read_seed(&dirs, &seed_zip).await?;
     // The new seed is the season's from here: the tracker accepts the restarted
     // server, and data derived from the old seed is dropped.
-    db.set_season_seed(season, &seed_name).await.map_err(|e| e.to_string())?;
-    db.clear_seed_data(season).await.map_err(|e| e.to_string())?;
-    db.remap_season(season, &ap_slots).await.map_err(|e| e.to_string())?;
+    db.set_season_seed(season, &seed_name)
+        .await
+        .map_err(|e| e.to_string())?;
+    db.clear_seed_data(season)
+        .await
+        .map_err(|e| e.to_string())?;
+    db.remap_season(season, &ap_slots)
+        .await
+        .map_err(|e| e.to_string())?;
 
     set(state, true, "Deploying…");
     deploy(db, rts, season, &dirs, &seed_zip).await?;
@@ -519,7 +561,12 @@ async fn regen_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> 
     ))
 }
 
-async fn run_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> Result<String, String> {
+async fn run_inner(
+    db: &Db,
+    rts: &Runtimes,
+    state: &GenState,
+    season: i64,
+) -> Result<String, String> {
     if !db.stale_holds(season).await.is_empty() {
         set(state, true, "Checking held signups…");
         crate::worlds::recheck_stale(db, season).await;
@@ -547,7 +594,9 @@ async fn run_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> Re
     clear_ext(&season.players, "yaml").await?;
     clear_old_seeds(season_id).await;
     for sub in &subs {
-        let dst = season.players.join(format!("{}.yaml", slug(&sub.slot_name)));
+        let dst = season
+            .players
+            .join(format!("{}.yaml", slug(&sub.slot_name)));
         tokio::fs::copy(&sub.yaml_file, &dst)
             .await
             .map_err(|e| format!("staging {}'s YAML: {e}", sub.slot_name))?;
@@ -566,8 +615,8 @@ async fn run_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> Re
         .map_err(|e| format!("staging the Minecraft apworld: {e}"))?;
         ap_adapter::pin_shipped(&season, COMMON_APWORLD)?;
         tokio::fs::copy(common.join(COMMON_YAML), season.players.join(COMMON_YAML))
-        .await
-        .map_err(|e| format!("staging the common-game YAML: {e}"))?;
+            .await
+            .map_err(|e| format!("staging the common-game YAML: {e}"))?;
     }
 
     // Always keep the Universal Tracker apworld present for the in-logic feature.
@@ -583,18 +632,19 @@ async fn run_inner(db: &Db, rts: &Runtimes, state: &GenState, season: i64) -> Re
     let seed_zip = newest_seed(season_id).await.ok_or("no seed was produced")?;
     set(state, true, "Mapping slots and claims…");
     let (seed_name, ap_slots) = read_seed(&dirs, &seed_zip).await?;
-    db.set_season_seed(season_id, &seed_name).await.map_err(|e| e.to_string())?;
+    db.set_season_seed(season_id, &seed_name)
+        .await
+        .map_err(|e| e.to_string())?;
     // A fresh world: nothing from an earlier, failed attempt carries over.
-    db.clear_all_slots(season_id).await.map_err(|e| e.to_string())?;
-    db.clear_seed_data(season_id).await.map_err(|e| e.to_string())?;
-    db.seed_from_submissions(
-        season_id,
-        &ap_slots,
-        &subs,
-        mc.then_some(COMMON_SLOT_NAME),
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    db.clear_all_slots(season_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    db.clear_seed_data(season_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    db.seed_from_submissions(season_id, &ap_slots, &subs, mc.then_some(COMMON_SLOT_NAME))
+        .await
+        .map_err(|e| e.to_string())?;
 
     set(state, true, "Deploying…");
     deploy(db, rts, season_id, &dirs, &seed_zip).await?;
@@ -618,7 +668,10 @@ mod tests {
     fn parses_the_standard_underscore_name() {
         let (num, slot, ext) =
             parse_player_file("AP_94805671998530581428_P12_MissMandalyn.apcivvi").unwrap();
-        assert_eq!((num, slot.as_str(), ext.as_str()), (12, "MissMandalyn", "apcivvi"));
+        assert_eq!(
+            (num, slot.as_str(), ext.as_str()),
+            (12, "MissMandalyn", "apcivvi")
+        );
     }
 
     #[test]
@@ -634,7 +687,10 @@ mod tests {
         let (num, slot, ext) =
             parse_player_file("AP-94805671998530581428-P14-Nid_0.6.8.zip").unwrap();
         assert_eq!((num, slot.as_str(), ext.as_str()), (14, "Nid", "zip"));
-        assert_eq!(member_player("AP-94805671998530581428-P14-Nid_0.6.8.zip"), Some(14));
+        assert_eq!(
+            member_player("AP-94805671998530581428-P14-Nid_0.6.8.zip"),
+            Some(14)
+        );
     }
 
     #[test]

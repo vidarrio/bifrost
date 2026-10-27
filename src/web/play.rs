@@ -40,8 +40,11 @@ pub(crate) async fn prioritize_post(
     Redirect::to(&ctx.back(f.back.as_deref(), "/board"))
 }
 
-pub(crate) async fn claim_get(State(st): State<AppState>,
-    ctx: scope::SeasonCtx, me: auth::Me) -> Html<String> {
+pub(crate) async fn claim_get(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+) -> Html<String> {
     let (me, is_admin) = ctx.ident(&me);
     let Some(snap) = ctx.rt.with_board(|b| b.snapshot()) else {
         return Html("board unavailable".into());
@@ -147,7 +150,8 @@ pub(crate) async fn hint_post(
     } else if claimant != Some(my_id) {
         return reject("Only the player who claimed this slot can hint on it.");
     }
-    let connect_name = ctx.rt
+    let connect_name = ctx
+        .rt
         .with_board(|b| b.slots.get(&ap_slot).map(|s| s.name.clone()))
         .flatten();
     let Some(name) = connect_name else {
@@ -159,7 +163,8 @@ pub(crate) async fn hint_post(
     let creds = st.db.credits(season, my_id).await;
     match ap::send_hint(&cfg.url, &cfg.password, &name, f.item.trim()).await {
         Ok(parts) => {
-            let text = ctx.rt
+            let text = ctx
+                .rt
                 .with_board(|b| ap::resolve_parts(b, &parts))
                 .unwrap_or_default();
             if !hint_rejected(&text) {
@@ -178,7 +183,8 @@ pub(crate) async fn hint_post(
                 // item — via /hint_location, so a multi-copy item doesn't reveal
                 // every copy for a single credit. Fall back to /hint by name if
                 // we can't resolve a specific location.
-                let admin_cmd = ctx.rt
+                let admin_cmd = ctx
+                    .rt
                     .with_board(|b| {
                         let game = b.slots.get(&ap_slot)?.game.clone();
                         let m = b.meta.as_ref()?;
@@ -200,7 +206,8 @@ pub(crate) async fn hint_post(
                 .await
                 {
                     Ok(lists) => {
-                        let msg = ctx.rt
+                        let msg = ctx
+                            .rt
                             .with_board(|b| {
                                 lists
                                     .iter()

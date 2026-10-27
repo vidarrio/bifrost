@@ -112,7 +112,10 @@ pub(super) fn activity_pager(base: &str, qs: &str, page: i64, pages: i64, rpp: i
     let link = |p: i64| format!(r#"{base}?{pre}page={p}&amp;rpp={rpp}"#);
     let mut out = String::from(r#"<nav class="pager">"#);
     if page > 1 {
-        out.push_str(&format!(r#"<a class="pg pgnav" href="{}" title="newer">‹</a>"#, link(page - 1)));
+        out.push_str(&format!(
+            r#"<a class="pg pgnav" href="{}" title="newer">‹</a>"#,
+            link(page - 1)
+        ));
     } else {
         out.push_str(r#"<span class="pg pgnav disabled">‹</span>"#);
     }
@@ -124,7 +127,10 @@ pub(super) fn activity_pager(base: &str, qs: &str, page: i64, pages: i64, rpp: i
         }
     }
     if page < pages {
-        out.push_str(&format!(r#"<a class="pg pgnav" href="{}" title="older">›</a>"#, link(page + 1)));
+        out.push_str(&format!(
+            r#"<a class="pg pgnav" href="{}" title="older">›</a>"#,
+            link(page + 1)
+        ));
     } else {
         out.push_str(r#"<span class="pg pgnav disabled">›</span>"#);
     }
@@ -155,7 +161,8 @@ pub struct LogFilter<'a> {
 /// The filter bar: event-kind checkboxes, sender/receiver (autocompleted from
 /// the season's participants), a relative window, and an absolute from/to range.
 pub(super) fn filter_form(base: &str, f: &LogFilter) -> String {
-    let mut out = format!(r#"<form class="logfilter" id="logfilter" method="get" action="{base}">"#);
+    let mut out =
+        format!(r#"<form class="logfilter" id="logfilter" method="get" action="{base}">"#);
     out.push_str(r#"<div class="ff kinds">"#);
     // Collect isn't offered as a filter — in auto mode it always rides along
     // with a goal/release, so it's not a distinct thing to filter on. Collect
@@ -194,7 +201,11 @@ pub(super) fn filter_form(base: &str, f: &LogFilter) -> String {
     .iter()
     .enumerate()
     {
-        let ck = if f.classes_selected[i] { " checked" } else { "" };
+        let ck = if f.classes_selected[i] {
+            " checked"
+        } else {
+            ""
+        };
         out.push_str(&format!(
             r#"<label class="kindchip classchip ic-{label}"><input type="checkbox" name="{name}" value="1"{ck}><span class="dotc"></span>{label}</label>"#
         ));
@@ -237,9 +248,9 @@ pub(super) fn filter_form(base: &str, f: &LogFilter) -> String {
     out
 }
 
-/// Shared body for the log pages: filter bar + feed + numbered pager.
 /// The swappable part of the log: the feed + pager (no filter form). Served at
 /// `/log/fragment` and swapped into `#logbody` by the live poller.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render_log_body(
     out: &mut String,
     base: &str,

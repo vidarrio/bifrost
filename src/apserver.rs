@@ -104,7 +104,12 @@ impl Drop for Running {
     }
 }
 
-async fn supervise(mut launch: Launch, db: Db, board: Arc<RwLock<Board>>, mut rx: mpsc::Receiver<Cmd>) {
+async fn supervise(
+    mut launch: Launch,
+    db: Db,
+    board: Arc<RwLock<Board>>,
+    mut rx: mpsc::Receiver<Cmd>,
+) {
     let season = launch.season;
     let dirs = config::get().season(season);
     let mut running: Option<Running> = None;
@@ -146,7 +151,10 @@ async fn supervise(mut launch: Launch, db: Db, board: Arc<RwLock<Board>>, mut rx
                 match next {
                     Ok(cmd) => cmd,
                     Err(status) => {
-                        tracing::warn!("season {season}: AP server exited ({status:?}); restarting in {}s", backoff.as_secs());
+                        tracing::warn!(
+                            "season {season}: AP server exited ({status:?}); restarting in {}s",
+                            backoff.as_secs()
+                        );
                         running = None;
                         tokio::time::sleep(backoff).await;
                         backoff = (backoff * 2).min(Duration::from_secs(60));
@@ -308,7 +316,11 @@ fn start(
     if let Some(pid) = child.id() {
         PIDS.lock().unwrap().insert(launch.season, pid);
     }
-    Ok(Running { season: launch.season, child, stdin })
+    Ok(Running {
+        season: launch.season,
+        child,
+        stdin,
+    })
 }
 
 /// Append the server's output to `logs/server.log` and feed gameplay lines to
