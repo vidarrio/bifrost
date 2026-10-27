@@ -10,6 +10,8 @@ an archive of past seasons.
   instance.
 - **[AI disclaimer](AI_DISCLAIMER.md)**: Bifrost is largely AI-written. Read
   this before you deploy it.
+- **[Changelog](CHANGELOG.md)** and **[contributing](CONTRIBUTING.md)**: what
+  changed, and how changes and releases are made.
 
 ## Features
 
