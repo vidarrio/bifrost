@@ -2,7 +2,11 @@
 
 use super::*;
 
-pub(crate) async fn catalog_page(st: &AppState, err: Option<&str>, saved: Option<&str>) -> Html<String> {
+pub(crate) async fn catalog_page(
+    st: &AppState,
+    err: Option<&str>,
+    saved: Option<&str>,
+) -> Html<String> {
     render::catalog_page(&st.db.catalog().await, st.db.approval().await, err, saved)
 }
 
@@ -13,7 +17,11 @@ pub(crate) async fn catalog_view(State(st): State<AppState>, me: auth::Me) -> Re
     catalog_page(&st, None, None).await.into_response()
 }
 
-pub(crate) async fn catalog_upload(State(st): State<AppState>, me: auth::Me, mut mp: Multipart) -> Response {
+pub(crate) async fn catalog_upload(
+    State(st): State<AppState>,
+    me: auth::Me,
+    mut mp: Multipart,
+) -> Response {
     if !me.can(auth::Action::ManageInstance) {
         return render::notice("Sysadmins only.", false, "/").into_response();
     }
@@ -34,7 +42,9 @@ pub(crate) async fn catalog_upload(State(st): State<AppState>, me: auth::Me, mut
         }
     }
     let res = async {
-        let bytes = bytes.filter(|b| !b.is_empty()).ok_or("No file received.".to_string())?;
+        let bytes = bytes
+            .filter(|b| !b.is_empty())
+            .ok_or("No file received.".to_string())?;
         if !worlds::looks_like_apworld(&bytes) {
             return Err("That doesn't look like a valid .apworld (zip) file.".to_string());
         }
@@ -57,7 +67,11 @@ pub(crate) struct CatalogRemoveForm {
     pub(crate) sha256: String,
 }
 
-pub(crate) async fn catalog_remove(State(st): State<AppState>, me: auth::Me, Form(f): Form<CatalogRemoveForm>) -> Response {
+pub(crate) async fn catalog_remove(
+    State(st): State<AppState>,
+    me: auth::Me,
+    Form(f): Form<CatalogRemoveForm>,
+) -> Response {
     if !me.can(auth::Action::ManageInstance) {
         return render::notice("Sysadmins only.", false, "/").into_response();
     }
@@ -72,15 +86,23 @@ pub(crate) struct ApprovalForm {
     pub(crate) mode: String,
 }
 
-pub(crate) async fn catalog_approval(State(st): State<AppState>, me: auth::Me, Form(f): Form<ApprovalForm>) -> Response {
+pub(crate) async fn catalog_approval(
+    State(st): State<AppState>,
+    me: auth::Me,
+    Form(f): Form<ApprovalForm>,
+) -> Response {
     if !me.can(auth::Action::ManageInstance) {
         return render::notice("Sysadmins only.", false, "/").into_response();
     }
     let Some(mode) = db::Approval::parse(&f.mode) else {
-        return catalog_page(&st, Some("Unknown approval mode."), None).await.into_response();
+        return catalog_page(&st, Some("Unknown approval mode."), None)
+            .await
+            .into_response();
     };
     match st.db.set_approval(mode).await {
         Ok(()) => Redirect::to("/admin/catalog").into_response(),
-        Err(e) => catalog_page(&st, Some(&e.to_string()), None).await.into_response(),
+        Err(e) => catalog_page(&st, Some(&e.to_string()), None)
+            .await
+            .into_response(),
     }
 }

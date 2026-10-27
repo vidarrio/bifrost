@@ -107,7 +107,11 @@ pub async fn bundle_season(
     let _ = tokio::fs::copy(season.current_save(), sp.join("save.apsave")).await;
     let _ = copy_ext(&season.players, &sp.join("players"), "yaml").await;
     let _ = copy_ext(&season.worlds, &sp.join("worlds"), "apworld").await;
-    let _ = tokio::fs::copy(season.worlds_lock(), sp.join("worlds").join("worlds.lock.json")).await;
+    let _ = tokio::fs::copy(
+        season.worlds_lock(),
+        sp.join("worlds").join("worlds.lock.json"),
+    )
+    .await;
 
     // Metadata/roster, and what an import reads.
     let _ = tokio::fs::write(sp.join("season.txt"), season_txt).await;
@@ -116,7 +120,9 @@ pub async fn bundle_season(
         ("summary.json", serde_json::to_vec_pretty(summary)),
     ] {
         let json = json.map_err(|e| format!("{file}: {e}"))?;
-        tokio::fs::write(sp.join(file), json).await.map_err(|e| format!("{file}: {e}"))?;
+        tokio::fs::write(sp.join(file), json)
+            .await
+            .map_err(|e| format!("{file}: {e}"))?;
     }
 
     // The AP server's log: a managed server's captured output, else (external
@@ -171,10 +177,16 @@ pub async fn read_bundle(path: &Path) -> Result<(Manifest, SeasonSummary), Strin
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| format!("tar: {e}"))?;
-        let mut out = tar.stdout.take().ok_or("tar: no output")?.take(MAX_MEMBER + 1);
+        let mut out = tar
+            .stdout
+            .take()
+            .ok_or("tar: no output")?
+            .take(MAX_MEMBER + 1);
         let (data, status) = tokio::time::timeout(std::time::Duration::from_secs(60), async {
             let mut data = Vec::new();
-            out.read_to_end(&mut data).await.map_err(|e| format!("reading {name}: {e}"))?;
+            out.read_to_end(&mut data)
+                .await
+                .map_err(|e| format!("reading {name}: {e}"))?;
             if data.len() as u64 > MAX_MEMBER {
                 return Err(format!("{name} is larger than {} MiB", MAX_MEMBER >> 20));
             }
@@ -193,7 +205,10 @@ pub async fn read_bundle(path: &Path) -> Result<(Manifest, SeasonSummary), Strin
     let manifest: Manifest = serde_json::from_slice(&member("bundle.json").await?)
         .map_err(|e| format!("bundle.json: {e}"))?;
     if manifest.format != FORMAT {
-        return Err(format!("bundle.json says it's a {:?}, not a {FORMAT}", manifest.format));
+        return Err(format!(
+            "bundle.json says it's a {:?}, not a {FORMAT}",
+            manifest.format
+        ));
     }
     if manifest.version > VERSION {
         return Err(format!(
@@ -202,7 +217,10 @@ pub async fn read_bundle(path: &Path) -> Result<(Manifest, SeasonSummary), Strin
         ));
     }
     if !valid_seed(&manifest.seed) {
-        return Err(format!("bundle.json has a bad seed name {:?}", manifest.seed));
+        return Err(format!(
+            "bundle.json has a bad seed name {:?}",
+            manifest.seed
+        ));
     }
     let summary: SeasonSummary = serde_json::from_slice(&member("summary.json").await?)
         .map_err(|e| format!("summary.json: {e}"))?;
@@ -211,7 +229,11 @@ pub async fn read_bundle(path: &Path) -> Result<(Manifest, SeasonSummary), Strin
 
 /// A seed name safe to use as a file name (AP seeds are digits).
 fn valid_seed(seed: &str) -> bool {
-    !seed.is_empty() && seed.len() <= 64 && seed.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    !seed.is_empty()
+        && seed.len() <= 64
+        && seed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// Import a season bundle as an archived season: its summary shows on Past
@@ -225,20 +247,37 @@ pub async fn import(db: &Db, path: &Path, by: Option<i64>, movable: bool) -> Res
     if let Some(id) = db.season_by_seed(&m.seed).await {
         return Err(already(id, &m.seed));
     }
-    let name = if m.name.trim().is_empty() { summary.name.clone() } else { m.name.clone() };
+    let name = if m.name.trim().is_empty() {
+        summary.name.clone()
+    } else {
+        m.name.clone()
+    };
     summary.name = name.clone();
     let summary_json = serde_json::to_string(&summary).map_err(|e| e.to_string())?;
     let archives = config::get().archives_dir();
-    tokio::fs::create_dir_all(&archives).await.map_err(|e| format!("archives dir: {e}"))?;
+    tokio::fs::create_dir_all(&archives)
+        .await
+        .map_err(|e| format!("archives dir: {e}"))?;
     // Stage the bundle next to its final place, under a name no other import
     // uses; it takes that place only once the season row exists.
     let staged = archives.join(format!(".import-{}-{}", m.seed, crate::auth::new_token()));
     let moved = movable && tokio::fs::rename(path, &staged).await.is_ok();
     if !moved {
-        tokio::fs::copy(path, &staged).await.map_err(|e| format!("keeping the bundle: {e}"))?;
+        tokio::fs::copy(path, &staged)
+            .await
+            .map_err(|e| format!("keeping the bundle: {e}"))?;
     }
     let row = db
-        .import_season(&name, &m.seed, &summary_json, by, m.created_at, m.live_at, m.archived_at, m.ap_version.as_deref())
+        .import_season(
+            &name,
+            &m.seed,
+            &summary_json,
+            by,
+            m.created_at,
+            m.live_at,
+            m.archived_at,
+            m.ap_version.as_deref(),
+        )
         .await;
     let id = match row {
         Ok(id) => id,

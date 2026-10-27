@@ -385,12 +385,18 @@ impl Throttle {
     }
     /// A successful sign-in: forgive that client.
     pub fn succeed(&self, username: &str, client: Option<IpAddr>) {
-        self.failures.lock().unwrap().remove(&Self::key(username, client));
+        self.failures
+            .lock()
+            .unwrap()
+            .remove(&Self::key(username, client));
     }
     /// A password reset: forgive every client.
     pub fn forgive(&self, username: &str) {
         let u = username.to_lowercase();
-        self.failures.lock().unwrap().retain(|(name, _), _| *name != u);
+        self.failures
+            .lock()
+            .unwrap()
+            .retain(|(name, _), _| *name != u);
     }
     fn lockout(failures: u32) -> Duration {
         if failures < FREE_FAILURES {
@@ -489,7 +495,12 @@ pub enum Tier {
 
 /// Route tiers: plain path-prefix match (as the proxy's
 /// `PathPrefix` did), most specific first, public by default.
-const SYSADMIN_PREFIXES: &[&str] = &["/admin/users", "/admin/links", "/admin/settings", "/admin/catalog"];
+const SYSADMIN_PREFIXES: &[&str] = &[
+    "/admin/users",
+    "/admin/links",
+    "/admin/settings",
+    "/admin/catalog",
+];
 const ADMIN_PREFIXES: &[&str] = &["/admin"];
 const LOGGED_IN_PREFIXES: &[&str] = &[
     "/claim",
@@ -567,7 +578,9 @@ pub async fn middleware(State(auth): State<Auth>, mut req: Request, next: Next) 
 
     match (tier, &principal) {
         (Tier::Public, _) => {}
-        (_, None) if req.uri().path().starts_with("/api") => return api_unauthenticated(&auth).await,
+        (_, None) if req.uri().path().starts_with("/api") => {
+            return api_unauthenticated(&auth).await;
+        }
         (_, None) => return unauthenticated(&auth, &req),
         (Tier::Admin, Some(p)) if p.role < Role::Moderator => {
             return (StatusCode::FORBIDDEN, "Moderators only.").into_response();
@@ -637,10 +650,7 @@ fn unauthenticated(auth: &AuthInner, req: &Request) -> Response {
                 .get::<axum::extract::OriginalUri>()
                 .map(|o| o.0.clone())
                 .unwrap_or_else(|| req.uri().clone());
-            let rd = uri
-                .path_and_query()
-                .map(|pq| pq.as_str())
-                .unwrap_or("/");
+            let rd = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
             Redirect::to(&format!("/login?rd={}", pct(rd))).into_response()
         }
         // The proxy should have intercepted this; reaching us means it isn't
@@ -727,16 +737,32 @@ mod tests {
 
     #[test]
     fn season_management_is_owners_and_sysadmins() {
-        let p = |id, role| Principal { account_id: id, username: String::new(), role };
+        let p = |id, role| Principal {
+            account_id: id,
+            username: String::new(),
+            role,
+        };
         let mods = [7, 9];
         let manage = Action::ManageSeason { mods: &mods };
-        assert!(authorize(Some(&p(1, Role::Sysadmin)), manage), "sysadmin: any season");
+        assert!(
+            authorize(Some(&p(1, Role::Sysadmin)), manage),
+            "sysadmin: any season"
+        );
         assert!(authorize(Some(&p(9, Role::Moderator)), manage), "co-mod");
-        assert!(!authorize(Some(&p(2, Role::Moderator)), manage), "someone else's season");
+        assert!(
+            !authorize(Some(&p(2, Role::Moderator)), manage),
+            "someone else's season"
+        );
         assert!(!authorize(Some(&p(7, Role::User)), manage), "demoted owner");
-        assert!(authorize(Some(&p(2, Role::Moderator)), Action::CreateSeason));
+        assert!(authorize(
+            Some(&p(2, Role::Moderator)),
+            Action::CreateSeason
+        ));
         assert!(!authorize(Some(&p(2, Role::User)), Action::CreateSeason));
-        assert!(!authorize(Some(&p(2, Role::Moderator)), Action::ManageInstance));
+        assert!(!authorize(
+            Some(&p(2, Role::Moderator)),
+            Action::ManageInstance
+        ));
         assert!(!authorize(None, Action::CreateSeason));
     }
 
@@ -820,7 +846,10 @@ mod tests {
     #[test]
     fn throttle_backs_off_then_forgives() {
         let t = Throttle::default();
-        let (me, them) = (Some("10.0.0.1".parse().unwrap()), Some("10.0.0.2".parse().unwrap()));
+        let (me, them) = (
+            Some("10.0.0.1".parse().unwrap()),
+            Some("10.0.0.2".parse().unwrap()),
+        );
         for _ in 0..FREE_FAILURES - 1 {
             t.fail("Ann", them);
         }

@@ -64,9 +64,10 @@ fn split(path: &str) -> Option<(i64, String)> {
     let (id, tail) = rest.split_once('/').unwrap_or((rest, ""));
     let id = id.parse::<i64>().ok().filter(|&i| i > 0)?;
     let tail = format!("/{}", if tail.is_empty() { "board" } else { tail });
-    let instance = INSTANCE_ROUTES
-        .iter()
-        .any(|r| tail.strip_prefix(r).is_some_and(|after| after.is_empty() || after.starts_with('/')));
+    let instance = INSTANCE_ROUTES.iter().any(|r| {
+        tail.strip_prefix(r)
+            .is_some_and(|after| after.is_empty() || after.starts_with('/'))
+    });
     (!instance).then_some((id, tail))
 }
 
@@ -203,7 +204,13 @@ mod tests {
         assert_eq!(split("/s/1/api/me"), None);
         assert_eq!(split("/s/1/login"), None);
         assert_eq!(split("/s/1/admin"), Some((1, "/admin".into())));
-        assert_eq!(split("/s/1/admin/seasonsx"), Some((1, "/admin/seasonsx".into())));
-        assert_eq!(split("/s/1/admin/worlds/approve"), Some((1, "/admin/worlds/approve".into())));
+        assert_eq!(
+            split("/s/1/admin/seasonsx"),
+            Some((1, "/admin/seasonsx".into()))
+        );
+        assert_eq!(
+            split("/s/1/admin/worlds/approve"),
+            Some((1, "/admin/worlds/approve".into()))
+        );
     }
 }

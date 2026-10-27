@@ -373,7 +373,9 @@ pub(super) fn poptracker_panel(ap_slot: i64, has_pack: bool, can_manage: bool) -
 <input type="file" name="pack" accept=".zip,application/zip" required><button type="submit">Upload pack</button></form>"#
         ));
     } else {
-        s.push_str(r#"<p class="empty">No PopTracker pack has been uploaded for this game yet.</p>"#);
+        s.push_str(
+            r#"<p class="empty">No PopTracker pack has been uploaded for this game yet.</p>"#,
+        );
     }
     s.push_str("</div>");
     s
@@ -421,16 +423,24 @@ pub(super) fn log_panel(ap_slot: i64, rows: &[crate::db::ActivityRow], total: i6
         r#"<div class="gtabpanel" id="tab-log" hidden><h2>This game's activity</h2>
 <div class="gamelogbar"><input type="search" id="gamelogq" placeholder="Search this game's activity…" autocomplete="off"></div>"#,
     );
-    s.push_str(&format!(r#"<div id="gamelog" class="gamelog" data-slot="{ap_slot}">"#));
-    s.push_str(&game_log_feed(ap_slot, rows, 1, game_log_pages(total, GAME_LOG_RPP), GAME_LOG_RPP, ""));
+    s.push_str(&format!(
+        r#"<div id="gamelog" class="gamelog" data-slot="{ap_slot}">"#
+    ));
+    s.push_str(&game_log_feed(
+        ap_slot,
+        rows,
+        1,
+        game_log_pages(total, GAME_LOG_RPP),
+        GAME_LOG_RPP,
+        "",
+    ));
     s.push_str("</div></div>");
     s
 }
 
 /// The Universal Tracker tab panel, from the slot's cached in-logic result.
 pub(super) fn inlogic_panel(inlogic: Option<&crate::db::InLogic>) -> String {
-    let mut s =
-        String::from(r#"<div class="gtabpanel" id="tab-ut" hidden><h2>Available now</h2>"#);
+    let mut s = String::from(r#"<div class="gtabpanel" id="tab-ut" hidden><h2>Available now</h2>"#);
     match inlogic {
         None => s.push_str(
             r#"<p class="empty">Universal Tracker hasn't mapped this slot yet — it recomputes a few seconds after the slot's items or checks change. Check back shortly.</p>"#,
@@ -543,10 +553,13 @@ pub fn game_page(
                 r#"Set your Minecraft username below so you're whitelisted, then open <b>Multiplayer</b> and connect to <b>{}</b>."#,
                 esc(addr)
             ),
-            None => "Open <b>Multiplayer</b> and connect — ask an admin for the server address.".to_string(),
+            None => "Open <b>Multiplayer</b> and connect — ask an admin for the server address."
+                .to_string(),
         };
         // Bare address for the Prism steps (the full sentence above is addr_step).
-        let addr = mc_addr.map(esc).unwrap_or_else(|| "ask an admin".to_string());
+        let addr = mc_addr
+            .map(esc)
+            .unwrap_or_else(|| "ask an admin".to_string());
         // Just the NeoForge version (MC_LOADER is "NeoForge 26.2.0.90") for the
         // Prism "Install Loader → NeoForge → <version>" step.
         let loader_ver = MC_LOADER.strip_prefix("NeoForge ").unwrap_or(MC_LOADER);
@@ -584,9 +597,16 @@ pub fn game_page(
             let status = if cur.is_empty() {
                 String::new()
             } else {
-                format!(r#"<p class="statline">Whitelisted as <b>{}</b>.</p>"#, esc(cur))
+                format!(
+                    r#"<p class="statline">Whitelisted as <b>{}</b>.</p>"#,
+                    esc(cur)
+                )
             };
-            let btn = if cur.is_empty() { "Whitelist me" } else { "Update" };
+            let btn = if cur.is_empty() {
+                "Whitelist me"
+            } else {
+                "Update"
+            };
             out.push_str(&format!(
                 r#"<p class="empty">The server is whitelisted. Set the exact username of the Mojang/Microsoft account you'll join on — you'll be let in within a minute or so.</p>
 {status}<form method="post" action="mc/username" class="hintform">
@@ -613,8 +633,7 @@ pub fn game_page(
         // the common game's OWN (shared) AP hint points — no personal/bonus points.
         if can_hint_common {
             if let Some(sid) = here.first().map(|r| r.id) {
-                let items_json =
-                    serde_json::to_string(item_names).unwrap_or_else(|_| "[]".into());
+                let items_json = serde_json::to_string(item_names).unwrap_or_else(|_| "[]".into());
                 let have = match points {
                     Some(p) => format!(
                         r#"The common game has <b id="hintpts">{p}</b> shared hint points. "#

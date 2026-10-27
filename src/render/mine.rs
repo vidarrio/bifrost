@@ -116,7 +116,10 @@ pub fn minesweeper_page(
         } else {
             "← board"
         };
-        format!(r#"<div class="crumb"><a href="{}">{label}</a></div>"#, esc(back))
+        format!(
+            r#"<div class="crumb"><a href="{}">{label}</a></div>"#,
+            esc(back)
+        )
     };
     b.push_str(&format!(r#"<h1>Minesweeper</h1>{crumb}"#));
     if !enabled {
@@ -132,9 +135,12 @@ pub fn minesweeper_page(
         "Clear the board without hitting a mine to earn a bonus hint — worth 1 either way. Every board is solvable by logic alone, no guessing needed, on both difficulties. Left-click a cell to reveal, right-click to flag. On a revealed number: left-click chord-reveals its neighbours once you've flagged that many mines, right-click flags all remaining neighbours when they must all be mines. Bonus hints are spent automatically when you hint without enough points."
     };
     let statline = if free {
-        r#"<div class="statline"><span id="minesleft"></span> · ⏱ <b id="mstimer">0:00</b></div>"#.to_string()
+        r#"<div class="statline"><span id="minesleft"></span> · ⏱ <b id="mstimer">0:00</b></div>"#
+            .to_string()
     } else {
-        format!(r#"<div class="statline">Bonus hints: <b id="credits">{credits}</b> · <span id="minesleft"></span> · ⏱ <b id="mstimer">0:00</b></div>"#)
+        format!(
+            r#"<div class="statline">Bonus hints: <b id="credits">{credits}</b> · <span id="minesleft"></span> · ⏱ <b id="mstimer">0:00</b></div>"#
+        )
     };
     let statnote = if free {
         "All-time, across every season. Times are for cleared boards."

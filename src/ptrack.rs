@@ -16,7 +16,10 @@ use crate::{ap_adapter, config};
 
 /// Per-slot extracted-pack directory: `<data>/packs/<season>/<ap_slot>/`.
 fn slot_dir(season: i64, ap_slot: i64) -> PathBuf {
-    config::get().packs_dir().join(season.to_string()).join(ap_slot.to_string())
+    config::get()
+        .packs_dir()
+        .join(season.to_string())
+        .join(ap_slot.to_string())
 }
 
 /// Is a usable pack installed for this slot?
@@ -47,8 +50,11 @@ pub fn validate(zip_bytes: &[u8]) -> Result<poptracker::Summary, String> {
         let session = poptracker::Session::new(&pack).map_err(|e| e.to_string())?;
         let sum = session.summary();
         if !sum.archipelago_autotracking {
-            return Err("this pack has no Archipelago auto-tracking — it only works with an \
-                        emulator, so it can't be tracked here".to_string());
+            return Err(
+                "this pack has no Archipelago auto-tracking — it only works with an \
+                        emulator, so it can't be tracked here"
+                    .to_string(),
+            );
         }
         Ok(sum)
     })();
@@ -100,7 +106,9 @@ pub fn compute(
     if !valid_locations.is_empty() {
         session.set_valid_locations(valid_locations);
     }
-    session.on_clear(&serde_json::json!({})).map_err(|e| e.to_string())?;
+    session
+        .on_clear(&serde_json::json!({}))
+        .map_err(|e| e.to_string())?;
     for (i, (id, name)) in items.iter().enumerate() {
         session
             .on_item(i as i64, *id, name, player)

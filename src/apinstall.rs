@@ -46,7 +46,10 @@ struct State {
     pins: BTreeMap<i64, String>,
 }
 
-static STATE: RwLock<State> = RwLock::new(State { active: None, pins: BTreeMap::new() });
+static STATE: RwLock<State> = RwLock::new(State {
+    active: None,
+    pins: BTreeMap::new(),
+});
 
 /// The version an AP install declares: the fork build's `BIFROST_VERSION`
 /// (e.g. `0.6.8-bifrost.1`), else `__version__` in its `Utils.py`.
@@ -59,12 +62,17 @@ pub fn read_version(dir: &Path) -> Option<String> {
 /// A fork build's version, when it's well-formed and of this upstream.
 fn fork_version(upstream: &str, build: &str) -> Option<String> {
     let n = build.strip_prefix(upstream)?.strip_prefix("-bifrost.")?;
-    (!n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) && valid_version(build)).then(|| build.to_string())
+    (!n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) && valid_version(build))
+        .then(|| build.to_string())
 }
 
 fn parse_version(utils_py: &str) -> Option<String> {
     utils_py.lines().find_map(|l| {
-        let v = l.strip_prefix("__version__")?.trim_start().strip_prefix('=')?.trim();
+        let v = l
+            .strip_prefix("__version__")?
+            .trim_start()
+            .strip_prefix('=')?
+            .trim();
         let v = v
             .strip_prefix('"')
             .and_then(|v| v.strip_suffix('"'))
@@ -78,13 +86,16 @@ pub fn valid_version(v: &str) -> bool {
     !v.is_empty()
         && v.len() <= 32
         && !v.starts_with('.')
-        && v.chars().all(|c| c.is_ascii_alphanumeric() || ".-+".contains(c))
+        && v.chars()
+            .all(|c| c.is_ascii_alphanumeric() || ".-+".contains(c))
 }
 
 impl Install {
     /// The upstream Archipelago version (what players' clients see).
     pub fn upstream(&self) -> &str {
-        self.version.split_once("-bifrost.").map_or(&self.version, |(u, _)| u)
+        self.version
+            .split_once("-bifrost.")
+            .map_or(&self.version, |(u, _)| u)
     }
 }
 
@@ -151,7 +162,12 @@ pub fn active() -> Install {
 fn find_pinned(version: &str) -> Option<Install> {
     find(version).or_else(|| {
         let (dir, python) = crate::bundle::previous(&config::get().data_dir, version)?;
-        Some(Install { version: version.to_string(), dir, python, bundled: true })
+        Some(Install {
+            version: version.to_string(),
+            dir,
+            python,
+            bundled: true,
+        })
     })
 }
 
@@ -174,7 +190,9 @@ pub fn for_season(id: i64) -> Install {
     match v.map(|v| (find_pinned(&v), v)) {
         Some((Some(i), _)) => i,
         Some((None, v)) => {
-            tracing::warn!("season {id} was generated with Archipelago {v}, which isn't installed any more — using the active one");
+            tracing::warn!(
+                "season {id} was generated with Archipelago {v}, which isn't installed any more — using the active one"
+            );
             active()
         }
         None => active(),
@@ -195,7 +213,10 @@ pub fn load(active: Option<String>, pins: BTreeMap<i64, String>) {
     st.active = active.filter(|v| {
         let ok = find(v).is_some();
         if !ok {
-            tracing::warn!("the active Archipelago {v} isn't installed — using the bundled {}", bundled().version);
+            tracing::warn!(
+                "the active Archipelago {v} isn't installed — using the bundled {}",
+                bundled().version
+            );
         }
         ok
     });
@@ -252,23 +273,40 @@ mod tests {
 
     #[test]
     fn version_is_read_from_utils() {
-        assert_eq!(parse_version("x = 1\n__version__ = \"0.6.8\"\n").as_deref(), Some("0.6.8"));
-        assert_eq!(parse_version("__version__='0.7.0-rc1'").as_deref(), Some("0.7.0-rc1"));
+        assert_eq!(
+            parse_version("x = 1\n__version__ = \"0.6.8\"\n").as_deref(),
+            Some("0.6.8")
+        );
+        assert_eq!(
+            parse_version("__version__='0.7.0-rc1'").as_deref(),
+            Some("0.7.0-rc1")
+        );
         assert_eq!(parse_version("__version__ = \"../x\""), None);
         assert_eq!(parse_version("version = \"1\""), None);
     }
 
     #[test]
     fn fork_builds_name_themselves() {
-        assert_eq!(fork_version("0.6.8", "0.6.8-bifrost.1").as_deref(), Some("0.6.8-bifrost.1"));
+        assert_eq!(
+            fork_version("0.6.8", "0.6.8-bifrost.1").as_deref(),
+            Some("0.6.8-bifrost.1")
+        );
         assert_eq!(fork_version("0.6.8", "0.6.7-bifrost.1"), None);
         assert_eq!(fork_version("0.6.8", "0.6.8-bifrost."), None);
         assert_eq!(fork_version("0.6.8", "0.6.8-bifrost.1/.."), None);
         assert_eq!(fork_version("0.6.8", ""), None);
-        let i = |v: &str| Install { version: v.into(), dir: PathBuf::new(), python: PathBuf::new(), bundled: false };
+        let i = |v: &str| Install {
+            version: v.into(),
+            dir: PathBuf::new(),
+            python: PathBuf::new(),
+            bundled: false,
+        };
         assert_eq!(i("0.6.8-bifrost.2").upstream(), "0.6.8");
         assert_eq!(i("0.6.8").upstream(), "0.6.8");
-        assert_eq!(version_cmp("0.6.8-bifrost.10", "0.6.8-bifrost.9"), std::cmp::Ordering::Greater);
+        assert_eq!(
+            version_cmp("0.6.8-bifrost.10", "0.6.8-bifrost.9"),
+            std::cmp::Ordering::Greater
+        );
     }
 
     #[test]

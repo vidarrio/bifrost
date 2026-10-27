@@ -52,7 +52,13 @@ pub(crate) async fn settings_load(State(st): State<AppState>, me: auth::Me) -> R
     if !me.can(auth::Action::ManageInstance) {
         return axum::http::StatusCode::FORBIDDEN.into_response();
     }
-    let names = st.db.seasons().await.into_iter().map(|s| (s.id, s.name)).collect();
+    let names = st
+        .db
+        .seasons()
+        .await
+        .into_iter()
+        .map(|s| (s.id, s.name))
+        .collect();
     Html(render::load_panel(load::snapshot().as_ref(), &names)).into_response()
 }
 
@@ -76,7 +82,11 @@ pub(crate) struct ApVersionForm {
     pub(crate) version: String,
 }
 
-pub(crate) async fn ap_install(State(st): State<AppState>, me: auth::Me, Form(f): Form<ApVersionForm>) -> Response {
+pub(crate) async fn ap_install(
+    State(st): State<AppState>,
+    me: auth::Me,
+    Form(f): Form<ApVersionForm>,
+) -> Response {
     if !me.can(auth::Action::ManageInstance) {
         return render::notice("Sysadmins only.", false, "/").into_response();
     }
@@ -87,7 +97,11 @@ pub(crate) async fn ap_install(State(st): State<AppState>, me: auth::Me, Form(f)
 }
 
 /// Make a version the active one: signup checks and new generations use it.
-pub(crate) async fn ap_use(State(st): State<AppState>, me: auth::Me, Form(f): Form<ApVersionForm>) -> Response {
+pub(crate) async fn ap_use(
+    State(st): State<AppState>,
+    me: auth::Me,
+    Form(f): Form<ApVersionForm>,
+) -> Response {
     if !me.can(auth::Action::ManageInstance) {
         return render::notice("Sysadmins only.", false, "/").into_response();
     }
@@ -103,7 +117,11 @@ pub(crate) async fn ap_use(State(st): State<AppState>, me: auth::Me, Form(f): Fo
     Redirect::to("/admin/settings#ap").into_response()
 }
 
-pub(crate) async fn ap_remove(State(st): State<AppState>, me: auth::Me, Form(f): Form<ApVersionForm>) -> Response {
+pub(crate) async fn ap_remove(
+    State(st): State<AppState>,
+    me: auth::Me,
+    Form(f): Form<ApVersionForm>,
+) -> Response {
     if !me.can(auth::Action::ManageInstance) {
         return render::notice("Sysadmins only.", false, "/").into_response();
     }
@@ -133,7 +151,11 @@ pub(crate) struct BackupName {
     pub(crate) name: String,
 }
 
-pub(crate) async fn backup_download(me: auth::Me, Query(q): Query<BackupName>, req: axum::extract::Request) -> Response {
+pub(crate) async fn backup_download(
+    me: auth::Me,
+    Query(q): Query<BackupName>,
+    req: axum::extract::Request,
+) -> Response {
     if !me.can(auth::Action::ManageInstance) {
         return render::notice("Sysadmins only.", false, "/").into_response();
     }
@@ -143,7 +165,11 @@ pub(crate) async fn backup_download(me: auth::Me, Query(q): Query<BackupName>, r
     download(path, &q.name, req).await
 }
 
-pub(crate) async fn backup_delete(State(st): State<AppState>, me: auth::Me, Form(f): Form<BackupName>) -> Response {
+pub(crate) async fn backup_delete(
+    State(st): State<AppState>,
+    me: auth::Me,
+    Form(f): Form<BackupName>,
+) -> Response {
     if !me.can(auth::Action::ManageInstance) {
         return render::notice("Sysadmins only.", false, "/").into_response();
     }
@@ -166,14 +192,20 @@ pub(crate) struct SettingsForm {
     pub(crate) discords: String,
 }
 
-pub(crate) async fn settings_save(State(st): State<AppState>, me: auth::Me, Form(f): Form<SettingsForm>) -> Response {
+pub(crate) async fn settings_save(
+    State(st): State<AppState>,
+    me: auth::Me,
+    Form(f): Form<SettingsForm>,
+) -> Response {
     if !me.can(auth::Action::ManageInstance) {
         return render::notice("Sysadmins only.", false, "/").into_response();
     }
     match parse_settings(&f) {
         Ok(inst) => match st.db.set_instance(&inst).await {
-            Ok(()) => render::settings_page(&inst, &settings_status(&st).await, None, true).into_response(),
-            Err(e) => render::notice(&format!("Couldn't save: {e}"), false, "/admin/settings").into_response(),
+            Ok(()) => render::settings_page(&inst, &settings_status(&st).await, None, true)
+                .into_response(),
+            Err(e) => render::notice(&format!("Couldn't save: {e}"), false, "/admin/settings")
+                .into_response(),
         },
         Err(e) => {
             // Re-show what they typed, with the problem.
@@ -185,10 +217,15 @@ pub(crate) async fn settings_save(State(st): State<AppState>, me: auth::Me, Form
                     .discords
                     .lines()
                     .filter(|l| !l.trim().is_empty())
-                    .map(|l| db::Discord { name: l.to_string(), url: String::new(), note: String::new() })
+                    .map(|l| db::Discord {
+                        name: l.to_string(),
+                        url: String::new(),
+                        note: String::new(),
+                    })
                     .collect(),
             };
-            render::settings_page(&typed, &settings_status(&st).await, Some(&e), false).into_response()
+            render::settings_page(&typed, &settings_status(&st).await, Some(&e), false)
+                .into_response()
         }
     }
 }
@@ -196,13 +233,17 @@ pub(crate) async fn settings_save(State(st): State<AppState>, me: auth::Me, Form
 pub(crate) fn web_url(u: &str) -> bool {
     (u.starts_with("https://") || u.starts_with("http://"))
         && u.len() <= 300
-        && !u.chars().any(|c| c.is_whitespace() || c == '"' || c == '<' || c == '>')
+        && !u
+            .chars()
+            .any(|c| c.is_whitespace() || c == '"' || c == '<' || c == '>')
 }
 
 pub(crate) fn parse_settings(f: &SettingsForm) -> Result<db::Instance, String> {
     let domain = f.domain.trim().to_string();
     let host_ok = |h: &str| {
-        h.len() <= 253 && h.chars().all(|c| c.is_ascii_alphanumeric() || ".-[]:".contains(c))
+        h.len() <= 253
+            && h.chars()
+                .all(|c| c.is_ascii_alphanumeric() || ".-[]:".contains(c))
     };
     if !host_ok(&domain) {
         return Err("The connect host should be a bare hostname or IP, like ap.example.org (no scheme, no port).".into());
@@ -213,7 +254,12 @@ pub(crate) fn parse_settings(f: &SettingsForm) -> Result<db::Instance, String> {
     }
     let password_note: String = f.password_note.trim().chars().take(200).collect();
     let mut discords = Vec::new();
-    for (i, line) in f.discords.lines().enumerate().filter(|(_, l)| !l.trim().is_empty()) {
+    for (i, line) in f
+        .discords
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| !l.trim().is_empty())
+    {
         let mut parts = line.splitn(3, '|').map(str::trim);
         let (name, url, note) = (
             parts.next().unwrap_or(""),
@@ -235,5 +281,10 @@ pub(crate) fn parse_settings(f: &SettingsForm) -> Result<db::Instance, String> {
     if discords.len() > 20 {
         return Err("At most 20 Discord servers.".into());
     }
-    Ok(db::Instance { domain, home_url, password_note, discords })
+    Ok(db::Instance {
+        domain,
+        home_url,
+        password_note,
+        discords,
+    })
 }

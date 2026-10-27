@@ -15,8 +15,8 @@ mod activity;
 mod ap;
 mod ap_adapter;
 mod apinstall;
-mod apupdate;
 mod apserver;
+mod apupdate;
 mod archive;
 mod auth;
 mod backup;
@@ -29,9 +29,9 @@ mod generate;
 mod inlogic;
 mod load;
 mod meta;
-mod ptrack;
 mod mine;
 mod net;
+mod ptrack;
 mod ratelimit;
 mod render;
 mod runtime;
@@ -43,7 +43,6 @@ mod worlds;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
-
 
 #[derive(Clone)]
 struct AppState {
@@ -60,7 +59,10 @@ struct AppState {
 impl AppState {
     /// Work on the minesweeper games under their lock, outside any async body.
     /// A poisoned lock is recovered: the games are plain data.
-    fn with_mine_games<R>(&self, f: impl FnOnce(&mut HashMap<(i64, String), mine::Game>) -> R) -> R {
+    fn with_mine_games<R>(
+        &self,
+        f: impl FnOnce(&mut HashMap<(i64, String), mine::Game>) -> R,
+    ) -> R {
         f(&mut self.mine_games.lock().unwrap_or_else(|p| p.into_inner()))
     }
 }
@@ -102,7 +104,9 @@ async fn main() {
     }
     match db.recover_interrupted_generations().await {
         Ok(0) => {}
-        Ok(n) => tracing::warn!("{n} season(s) were mid-generation when Bifrost stopped; put back to where they were"),
+        Ok(n) => tracing::warn!(
+            "{n} season(s) were mid-generation when Bifrost stopped; put back to where they were"
+        ),
         Err(e) => tracing::error!("recovering interrupted generations: {e}"),
     }
 
@@ -118,12 +122,22 @@ async fn main() {
 
     // An AP server run elsewhere (BIFROST_AP_MODE=external); managed mode
     // starts one per live season instead.
-    let external = if cfg.ap_managed { None } else { ap::ApConfig::from_env() };
-    let seasons = Arc::new(runtime::Runtimes::new(db.clone(), external, web::parse_coop()));
+    let external = if cfg.ap_managed {
+        None
+    } else {
+        ap::ApConfig::from_env()
+    };
+    let seasons = Arc::new(runtime::Runtimes::new(
+        db.clone(),
+        external,
+        web::parse_coop(),
+    ));
     if cfg.ap_managed {
         // Ports are held only by live seasons, inside the configured range.
         for name in db.reconcile_ap_ports().await {
-            tracing::error!("season “{name}” is live but every AP port is taken; widen BIFROST_AP_PORTS");
+            tracing::error!(
+                "season “{name}” is live but every AP port is taken; widen BIFROST_AP_PORTS"
+            );
         }
     }
     // Which Archipelago install is active, and which one each season's seed
@@ -139,7 +153,11 @@ async fn main() {
             .collect(),
     );
     let bundled = apinstall::bundled();
-    tracing::info!("Archipelago {} bundled at {}", bundled.version, bundled.dir.display());
+    tracing::info!(
+        "Archipelago {} bundled at {}",
+        bundled.version,
+        bundled.dir.display()
+    );
     if bundle::present()
         && let Some(current) = bundled.dir.parent()
     {
@@ -147,7 +165,11 @@ async fn main() {
     }
     let active = apinstall::active();
     if !active.bundled {
-        tracing::info!("Archipelago {} active (new seasons use it), at {}", active.version, active.dir.display());
+        tracing::info!(
+            "Archipelago {} active (new seasons use it), at {}",
+            active.version,
+            active.dir.display()
+        );
     }
     for season in db.seasons().await {
         if season.state() != db::State::Archived {
@@ -161,9 +183,13 @@ async fn main() {
                 Some(v) => {
                     let (seasons, id) = (seasons.clone(), season.id);
                     tokio::spawn(async move {
-                        tracing::warn!("season {id} runs Archipelago {v}, which isn't installed; installing it first");
+                        tracing::warn!(
+                            "season {id} runs Archipelago {v}, which isn't installed; installing it first"
+                        );
                         if let Err(e) = apupdate::ensure(&v).await {
-                            tracing::error!("season {id}: couldn't install Archipelago {v} ({e}); starting it on the active version");
+                            tracing::error!(
+                                "season {id}: couldn't install Archipelago {v} ({e}); starting it on the active version"
+                            );
                         }
                         seasons.start_live(id).await;
                     });
@@ -247,11 +273,12 @@ async fn init_auth(db: &db::Db) -> auth::Auth {
              nobody can sign in"
         );
     }
-    let setup_token = (mode == auth::AuthMode::Native && db.account_count().await == 0).then(|| {
-        let t = auth::new_token();
-        tracing::warn!("no accounts yet — first-run setup: open /setup?token={t}");
-        t
-    });
+    let setup_token =
+        (mode == auth::AuthMode::Native && db.account_count().await == 0).then(|| {
+            let t = auth::new_token();
+            tracing::warn!("no accounts yet — first-run setup: open /setup?token={t}");
+            t
+        });
     tracing::info!("auth mode: {}", mode.as_str());
     let auth = Arc::new(auth::AuthInner {
         db: db.clone(),

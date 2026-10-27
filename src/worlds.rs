@@ -54,20 +54,29 @@ pub fn manifest(bytes: &[u8]) -> Manifest {
             .find(|n| n.ends_with("/archipelago.json") && n.matches('/').count() == 1)?
             .into_owned();
         let mut json = String::new();
-        zip.by_name(&name).ok()?.take(64 * 1024).read_to_string(&mut json).ok()?;
+        zip.by_name(&name)
+            .ok()?
+            .take(64 * 1024)
+            .read_to_string(&mut json)
+            .ok()?;
         let v: serde_json::Value = serde_json::from_str(&json).ok()?;
         let s = |k: &str| match &v[k] {
             serde_json::Value::String(s) => s.chars().take(80).collect(),
             serde_json::Value::Number(n) => n.to_string(),
             _ => String::new(),
         };
-        Some(Manifest { game: s("game"), version: s("world_version") })
+        Some(Manifest {
+            game: s("game"),
+            version: s("world_version"),
+        })
     };
     read().unwrap_or_default()
 }
 
 pub fn catalog_file(sha256: &str) -> PathBuf {
-    config::get().catalog_dir().join(format!("{sha256}.apworld"))
+    config::get()
+        .catalog_dir()
+        .join(format!("{sha256}.apworld"))
 }
 
 /// Where an upload ended up.
@@ -117,7 +126,11 @@ pub async fn place_upload(
         ..Pin::default()
     };
     if let Some(cat) = db.catalog_world(&sha).await {
-        let pin = Pin { catalog: true, approved_by: cat.added_by, ..base };
+        let pin = Pin {
+            catalog: true,
+            approved_by: cat.added_by,
+            ..base
+        };
         install(dirs, file.to_string(), bytes, pin).await?;
         return Ok(Placed::Installed { catalog: true });
     }
@@ -125,7 +138,9 @@ pub async fn place_upload(
         return if req.sha256 == sha {
             Ok(Placed::Pending)
         } else {
-            Err(format!("Another version of {file} is already waiting for approval."))
+            Err(format!(
+                "Another version of {file} is already waiting for approval."
+            ))
         };
     }
     match db.approval().await {
@@ -148,20 +163,32 @@ pub async fn place_upload(
                 uploaded_by: uploader.to_string(),
                 uploaded_at: base.uploaded_at,
             };
-            db.add_world_request(season, &req).await.map_err(|e| e.to_string())?;
+            db.add_world_request(season, &req)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(Placed::Pending)
         }
     }
 }
 
 /// Install a catalog world into `season`. Returns the file name it took.
-pub async fn install_from_catalog(db: &Db, season: i64, sha256: &str, by: &str) -> Result<String, String> {
-    let cat = db.catalog_world(sha256).await.ok_or("That world isn't in the catalog.")?;
+pub async fn install_from_catalog(
+    db: &Db,
+    season: i64,
+    sha256: &str,
+    by: &str,
+) -> Result<String, String> {
+    let cat = db
+        .catalog_world(sha256)
+        .await
+        .ok_or("That world isn't in the catalog.")?;
     let bytes = tokio::fs::read(catalog_file(&cat.sha256))
         .await
         .map_err(|e| format!("reading the catalog copy: {e}"))?;
     if ap_adapter::sha256_hex(&bytes) != cat.sha256 {
-        return Err("The catalog copy doesn't match its hash — ask a sysadmin to re-add it.".into());
+        return Err(
+            "The catalog copy doesn't match its hash — ask a sysadmin to re-add it.".into(),
+        );
     }
     let dirs = config::get().season(season);
     if installed_conflict(&dirs, &cat.file, &cat.sha256)? {
@@ -182,11 +209,18 @@ pub async fn install_from_catalog(db: &Db, season: i64, sha256: &str, by: &str) 
 /// (in the background — each check can take a while).
 pub async fn approve(db: &Db, season: i64, file: &str, by: &str) -> Result<WorldRequest, String> {
     let dirs = config::get().season(season);
-    let req = db.world_request(season, file).await.ok_or("Nothing is waiting under that name.")?;
+    let req = db
+        .world_request(season, file)
+        .await
+        .ok_or("Nothing is waiting under that name.")?;
     let path = dirs.pending.join(&req.file);
-    let bytes = tokio::fs::read(&path).await.map_err(|e| format!("reading the upload: {e}"))?;
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("reading the upload: {e}"))?;
     if ap_adapter::sha256_hex(&bytes) != req.sha256 {
-        return Err(format!("{file} changed since it was uploaded — reject it and ask for a new upload."));
+        return Err(format!(
+            "{file} changed since it was uploaded — reject it and ask for a new upload."
+        ));
     }
     if !installed_conflict(&dirs, &req.file, &req.sha256)? {
         let pin = Pin {
@@ -206,7 +240,10 @@ pub async fn approve(db: &Db, season: i64, file: &str, by: &str) -> Result<World
 
 /// Reject a pending upload; its held signups say so until they're removed.
 pub async fn reject(db: &Db, season: i64, file: &str, by: &str) -> Result<(), String> {
-    let req = db.take_world_request(season, file).await.ok_or("Nothing is waiting under that name.")?;
+    let req = db
+        .take_world_request(season, file)
+        .await
+        .ok_or("Nothing is waiting under that name.")?;
     let _ = tokio::fs::remove_file(config::get().season(season).pending.join(&req.file)).await;
     let why = format!("{} was rejected by {by} — remove this signup", req.file);
     for (id, _) in db.held_submissions(season, &req.file).await {
@@ -225,7 +262,9 @@ pub async fn recheck_held(db: &Db, season: i64, file: &str) {
             Err(e) => Err(format!("the stored YAML is gone ({e})")),
             Ok(yaml) => match check_with_retries(&dirs, &yaml).await {
                 // No verdict: `stale_holds` picks it up again.
-                Err(e) => Err(format!("couldn't be checked ({e}) — it's tried again before generating")),
+                Err(e) => Err(format!(
+                    "couldn't be checked ({e}) — it's tried again before generating"
+                )),
                 Ok(r) if !r.ok => Err(format!("its YAML didn't pass: {}", r.errors.join("; "))),
                 Ok(r) => r
                     .players
@@ -250,12 +289,18 @@ pub async fn recheck_held(db: &Db, season: i64, file: &str) {
 
 /// A YAML check, retried a few times when the checker couldn't run it (busy
 /// queue, timeout) — those aren't verdicts on the YAML.
-async fn check_with_retries(dirs: &config::SeasonDirs, yaml: &str) -> Result<crate::checker::CheckResult, String> {
+async fn check_with_retries(
+    dirs: &config::SeasonDirs,
+    yaml: &str,
+) -> Result<crate::checker::CheckResult, String> {
     let mut wait = std::time::Duration::from_secs(15);
     for _ in 0..3 {
         match crate::checker::check_yaml(dirs, yaml).await {
             Ok(r) => return Ok(r),
-            Err(e) => tracing::info!("re-checking a held signup: {e}; retrying in {}s", wait.as_secs()),
+            Err(e) => tracing::info!(
+                "re-checking a held signup: {e}; retrying in {}s",
+                wait.as_secs()
+            ),
         }
         tokio::time::sleep(wait).await;
         wait *= 2;
@@ -290,7 +335,11 @@ pub async fn catalog_add(
     let m = manifest(bytes);
     let pick = |typed: &str, read: String| {
         let t = typed.trim();
-        if t.is_empty() { read } else { t.chars().take(80).collect() }
+        if t.is_empty() {
+            read
+        } else {
+            t.chars().take(80).collect()
+        }
     };
     let w = CatalogWorld {
         file: file.to_string(),
@@ -317,10 +366,20 @@ pub async fn catalog_add(
 }
 
 /// Add a world already installed in a season to the catalog.
-pub async fn catalog_add_installed(db: &Db, season: i64, file: &str, by: &str) -> Result<CatalogWorld, String> {
+pub async fn catalog_add_installed(
+    db: &Db,
+    season: i64,
+    file: &str,
+    by: &str,
+) -> Result<CatalogWorld, String> {
     let dirs = config::get().season(season);
-    let pin = ap_adapter::world_pins(&dirs).get(file).cloned().ok_or("That world isn't installed.")?;
-    let bytes = tokio::fs::read(dirs.worlds.join(file)).await.map_err(|e| e.to_string())?;
+    let pin = ap_adapter::world_pins(&dirs)
+        .get(file)
+        .cloned()
+        .ok_or("That world isn't installed.")?;
+    let bytes = tokio::fs::read(dirs.worlds.join(file))
+        .await
+        .map_err(|e| e.to_string())?;
     if ap_adapter::sha256_hex(&bytes) != pin.sha256 {
         return Err(format!("{file} changed on disk since it was installed."));
     }
@@ -377,7 +436,8 @@ mod tests {
         {
             let mut z = zip::ZipWriter::new(&mut buf);
             for (name, body) in entries {
-                z.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+                z.start_file(*name, zip::write::SimpleFileOptions::default())
+                    .unwrap();
                 z.write_all(body.as_bytes()).unwrap();
             }
             z.finish().unwrap();
@@ -389,17 +449,32 @@ mod tests {
     fn manifest_is_read_from_the_world_folder() {
         let w = apworld(&[
             ("foo/__init__.py", ""),
-            ("foo/archipelago.json", r#"{"game": "Foo Quest", "world_version": "1.4.0", "version": 7}"#),
+            (
+                "foo/archipelago.json",
+                r#"{"game": "Foo Quest", "world_version": "1.4.0", "version": 7}"#,
+            ),
         ]);
         assert!(looks_like_apworld(&w));
-        assert_eq!(manifest(&w), Manifest { game: "Foo Quest".into(), version: "1.4.0".into() });
-        assert_eq!(manifest(&apworld(&[("foo/__init__.py", "")])), Manifest::default());
+        assert_eq!(
+            manifest(&w),
+            Manifest {
+                game: "Foo Quest".into(),
+                version: "1.4.0".into()
+            }
+        );
+        assert_eq!(
+            manifest(&apworld(&[("foo/__init__.py", "")])),
+            Manifest::default()
+        );
         assert_eq!(manifest(b"not a zip"), Manifest::default());
     }
 
     #[test]
     fn upload_names_are_slugged_and_reserved_names_refused() {
-        assert_eq!(world_file("Pokemon Crystal.apworld").unwrap(), "Pokemon_Crystal.apworld");
+        assert_eq!(
+            world_file("Pokemon Crystal.apworld").unwrap(),
+            "Pokemon_Crystal.apworld"
+        );
         assert!(world_file("tracker.apworld").is_err());
         assert!(world_file("Minecraft.apworld").is_err());
     }
@@ -407,7 +482,10 @@ mod tests {
     #[test]
     fn yaml_name_and_game_are_read_at_top_level() {
         let y = "# comment\nname: \"Robin\"  # me\ngame: Foo Quest\nFoo Quest:\n  name: nested\n";
-        assert_eq!(yaml_name_game(y), (Some("Robin".into()), Some("Foo Quest".into())));
+        assert_eq!(
+            yaml_name_game(y),
+            (Some("Robin".into()), Some("Foo Quest".into()))
+        );
         let y = "name: Sam\ngame:\n  A: 1\n  B: 1\n";
         assert_eq!(yaml_name_game(y), (Some("Sam".into()), None));
     }

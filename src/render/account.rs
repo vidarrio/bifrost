@@ -158,7 +158,11 @@ pub fn users_page(v: &UsersView) -> Html<String> {
                 a.id
             )
         };
-        let kind = if a.idp { r#" <span class="tag">idp</span>"# } else { "" };
+        let kind = if a.idp {
+            r#" <span class="tag">idp</span>"#
+        } else {
+            ""
+        };
         let status = if a.disabled { "disabled" } else { "active" };
         let mut actions = String::new();
         if !me {
@@ -243,10 +247,5 @@ pub fn users_page(v: &UsersView) -> Html<String> {
         body.push_str("</table>");
     }
 
-    auth_page(
-        "Console",
-        r#"<a href="/">← home</a>"#,
-        v.err,
-        &body,
-    )
+    auth_page("Console", r#"<a href="/">← home</a>"#, v.err, &body)
 }

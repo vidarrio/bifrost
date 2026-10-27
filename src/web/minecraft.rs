@@ -29,8 +29,7 @@ pub(crate) async fn export_mc_whitelist(st: &AppState) {
     let json = serde_json::to_string(&names).unwrap_or_else(|_| "[]".into());
     let file = config::get().mc_whitelist_file();
     let tmp = file.with_extension("json.tmp");
-    if let Err(e) = std::fs::write(&tmp, &json).and_then(|_| std::fs::rename(&tmp, &file))
-    {
+    if let Err(e) = std::fs::write(&tmp, &json).and_then(|_| std::fs::rename(&tmp, &file)) {
         tracing::warn!("mc whitelist export failed: {e}");
     }
 }

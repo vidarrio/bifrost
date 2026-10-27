@@ -251,7 +251,8 @@ impl Sandbox {
 
 /// Running inside a podman/docker container?
 fn in_container() -> bool {
-    std::path::Path::new("/run/.containerenv").exists() || std::path::Path::new("/.dockerenv").exists()
+    std::path::Path::new("/run/.containerenv").exists()
+        || std::path::Path::new("/.dockerenv").exists()
 }
 
 // glibc types setrlimit's resource as an enum; musl (the native bundle) as int.

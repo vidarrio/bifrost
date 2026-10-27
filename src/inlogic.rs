@@ -70,7 +70,15 @@ async fn tick(
         let slots: Vec<(i64, String, String, i64, i64)> = b
             .slots
             .iter()
-            .map(|(k, s)| (*k, s.name.clone(), s.game.clone(), s.sent as i64, s.received as i64))
+            .map(|(k, s)| {
+                (
+                    *k,
+                    s.name.clone(),
+                    s.game.clone(),
+                    s.sent as i64,
+                    s.received as i64,
+                )
+            })
             .collect();
         slots
     };
@@ -85,7 +93,11 @@ async fn tick(
         }
         let season_dirs = config::get().season(season);
         match ap_adapter::inlogic(&season_dirs, &name, password, connect, RUN_TIMEOUT).await {
-            Ok(ap_adapter::InLogic { game: ut_game, locations: locs, captured: true }) => {
+            Ok(ap_adapter::InLogic {
+                game: ut_game,
+                locations: locs,
+                captured: true,
+            }) => {
                 let g = if ut_game.is_empty() { game } else { ut_game };
                 let json = serde_json::to_string(&locs).unwrap_or_else(|_| "[]".into());
                 db.inlogic_set(

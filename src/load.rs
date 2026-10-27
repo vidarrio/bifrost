@@ -125,7 +125,12 @@ pub fn warnings(l: &Load) -> Vec<String> {
 /// Roughly what one more live season's server needs: the largest running
 /// one, else a typical small one.
 fn per_season(s: &Sample) -> u64 {
-    s.servers.values().map(|(rss, _)| *rss).max().unwrap_or(0).max(256 * MIB)
+    s.servers
+        .values()
+        .map(|(rss, _)| *rss)
+        .max()
+        .unwrap_or(0)
+        .max(256 * MIB)
 }
 
 /// A warning when another live season probably wouldn't fit in memory.
@@ -178,14 +183,20 @@ impl Sampler {
         let procs = processes();
         let tck = clock_ticks();
         let now = std::time::Instant::now();
-        let secs = self.last.replace(now).map_or(EVERY.as_secs_f32(), |t| now.duration_since(t).as_secs_f32()).max(0.1);
+        let secs = self
+            .last
+            .replace(now)
+            .map_or(EVERY.as_secs_f32(), |t| now.duration_since(t).as_secs_f32())
+            .max(0.1);
         let pct = |pid: u32, p: &Proc, prev: &HashMap<u32, u64>| match prev.get(&pid) {
             Some(&t0) if p.ticks >= t0 => (p.ticks - t0) as f32 * 100.0 / (tck * secs),
             _ => 0.0,
         };
         let me = std::process::id();
-        let server_pids: HashMap<u32, i64> =
-            crate::apserver::server_pids().into_iter().map(|(season, pid)| (pid, season)).collect();
+        let server_pids: HashMap<u32, i64> = crate::apserver::server_pids()
+            .into_iter()
+            .map(|(season, pid)| (pid, season))
+            .collect();
         let mut servers: BTreeMap<i64, (u64, f32)> =
             server_pids.values().map(|&s| (s, (0, 0.0))).collect();
         let mut helpers = (0u64, 0f32, 0usize);
@@ -200,8 +211,12 @@ impl Sampler {
         // Everything Bifrost started, by ancestry: a server and all under it
         // (bubblewrap's children start sessions of their own) are its season's;
         // the rest are helpers, each direct child of Bifrost one job.
-        let mut stack: Vec<(u32, Option<i64>)> =
-            children.get(&me).into_iter().flatten().map(|&pid| (pid, None)).collect();
+        let mut stack: Vec<(u32, Option<i64>)> = children
+            .get(&me)
+            .into_iter()
+            .flatten()
+            .map(|&pid| (pid, None))
+            .collect();
         while let Some((pid, owner)) = stack.pop() {
             let Some(p) = procs.get(&pid) else { continue };
             let owner = owner.or_else(|| server_pids.get(&pid).copied());
@@ -220,10 +235,24 @@ impl Sampler {
                     }
                 }
             }
-            stack.extend(children.get(&pid).into_iter().flatten().map(|&kid| (kid, owner)));
+            stack.extend(
+                children
+                    .get(&pid)
+                    .into_iter()
+                    .flatten()
+                    .map(|&kid| (kid, owner)),
+            );
         }
         self.ticks = procs.iter().map(|(&pid, p)| (pid, p.ticks)).collect();
-        Some(Sample { at: crate::auth::now(), mem_used, mem_total, cpu, servers, helpers, bifrost })
+        Some(Sample {
+            at: crate::auth::now(),
+            mem_used,
+            mem_total,
+            cpu,
+            servers,
+            helpers,
+            bifrost,
+        })
     }
 }
 
@@ -286,7 +315,11 @@ fn memory() -> Option<(u64, u64, bool)> {
 /// The closest cgroup (v2) at or above Bifrost's own that sets a memory limit.
 fn limited_cgroup() -> Option<std::path::PathBuf> {
     let own = std::fs::read_to_string("/proc/self/cgroup").ok()?;
-    let rel = own.lines().find_map(|l| l.strip_prefix("0::"))?.trim().trim_start_matches('/');
+    let rel = own
+        .lines()
+        .find_map(|l| l.strip_prefix("0::"))?
+        .trim()
+        .trim_start_matches('/');
     let root = Path::new("/sys/fs/cgroup");
     let mut dir = root.join(rel);
     loop {
@@ -313,13 +346,20 @@ fn host_cpu() -> Option<((u64, u64), usize)> {
     let stat = std::fs::read_to_string("/proc/stat").ok()?;
     let cpus = stat
         .lines()
-        .filter(|l| l.strip_prefix("cpu").is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit())))
+        .filter(|l| {
+            l.strip_prefix("cpu")
+                .is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit()))
+        })
         .count();
     Some((parse_cpu_line(stat.lines().next()?)?, cpus.max(1)))
 }
 
 fn parse_cpu_line(line: &str) -> Option<(u64, u64)> {
-    let v: Vec<u64> = line.strip_prefix("cpu ")?.split_whitespace().filter_map(|x| x.parse().ok()).collect();
+    let v: Vec<u64> = line
+        .strip_prefix("cpu ")?
+        .split_whitespace()
+        .filter_map(|x| x.parse().ok())
+        .collect();
     // user nice system idle iowait irq softirq steal (guest time is in user)
     let total: u64 = v.iter().take(8).sum();
     let idle = v.get(3)? + v.get(4).unwrap_or(&0);
@@ -351,14 +391,27 @@ mod tests {
 
     #[test]
     fn host_cpu_counts_idle_and_iowait_as_idle() {
-        assert_eq!(parse_cpu_line("cpu  100 0 50 800 50 0 0 0 0 0"), Some((150, 1000)));
+        assert_eq!(
+            parse_cpu_line("cpu  100 0 50 800 50 0 0 0 0 0"),
+            Some((150, 1000))
+        );
         assert_eq!(parse_cpu_line("cpu0 1 2 3 4"), None);
     }
 
     #[test]
     fn warnings_fire_on_tight_memory_busy_cpu_and_full_disk() {
-        let s = |used: u64, cpu: f32| Sample { mem_used: used, mem_total: 8192 * MIB, cpu, ..Sample::default() };
-        let mut l = Load { disk_free: 50_000 * MIB, disk_total: 100_000 * MIB, cores: 4, ..Load::default() };
+        let s = |used: u64, cpu: f32| Sample {
+            mem_used: used,
+            mem_total: 8192 * MIB,
+            cpu,
+            ..Sample::default()
+        };
+        let mut l = Load {
+            disk_free: 50_000 * MIB,
+            disk_total: 100_000 * MIB,
+            cores: 4,
+            ..Load::default()
+        };
         l.history.extend((0..30).map(|_| s(1024 * MIB, 20.0)));
         assert!(warnings(&l).is_empty());
         l.history.extend((0..30).map(|_| s(7900 * MIB, 95.0)));

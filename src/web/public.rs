@@ -85,7 +85,10 @@ pub(crate) async fn landing(State(st): State<AppState>) -> Html<String> {
             .replace("<!--SEASONLABEL-->", &render::escape(&label))
             .replace("<!--ROSTER-->", &roster)
             .replace("<!--PASTSEASONS-->", &past_html)
-            .replace("<!--CONNECT-->", &render::landing_connect(&live, &inst.password_note))
+            .replace(
+                "<!--CONNECT-->",
+                &render::landing_connect(&live, &inst.password_note),
+            )
             .replace("<!--HOMEPILL-->", &render::home_pill(&inst.home_url))
             .replace("<!--TAG-->", &render::landing_tag(&inst.domain))
             .replace(
@@ -107,8 +110,13 @@ pub(crate) async fn check_form(_ctx: Option<scope::SeasonCtx>) -> Html<String> {
 
 /// Check a YAML against the season's worlds (core worlds only when there's no
 /// season at all).
-pub(crate) async fn check_run(ctx: Option<scope::SeasonCtx>, Form(form): Form<CheckForm>) -> Html<String> {
-    let dirs = ctx.map(|c| c.dirs()).unwrap_or_else(|| config::get().core_season());
+pub(crate) async fn check_run(
+    ctx: Option<scope::SeasonCtx>,
+    Form(form): Form<CheckForm>,
+) -> Html<String> {
+    let dirs = ctx
+        .map(|c| c.dirs())
+        .unwrap_or_else(|| config::get().core_season());
     match checker::check_yaml(&dirs, &form.yaml).await {
         Ok(res) => checker::result_page(&res),
         Err(e) => checker::error_page(&e),
@@ -123,7 +131,8 @@ pub(crate) async fn season_view(
     Query(q): Query<LogQuery>,
 ) -> Response {
     let Some(json) = st.db.season_summary(ctx.id).await else {
-        return render::notice("This season hasn't been archived yet.", false, "board").into_response();
+        return render::notice("This season hasn't been archived yet.", false, "board")
+            .into_response();
     };
     match serde_json::from_str::<season::SeasonSummary>(&json) {
         Ok(summary) => {
@@ -140,6 +149,8 @@ pub(crate) async fn season_view(
             let lf = log_filter(&q, &participants, &qs);
             render::season_page(&summary, &rows, page, pages, rpp, &lf).into_response()
         }
-        Err(_) => render::notice("That season's archive is unreadable.", false, "/").into_response(),
+        Err(_) => {
+            render::notice("That season's archive is unreadable.", false, "/").into_response()
+        }
     }
 }

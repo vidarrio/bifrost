@@ -46,15 +46,28 @@ pub(crate) async fn board_view(State(st): State<AppState>, ctx: scope::SeasonCtx
     // Board shows the latest slice of the persistent log (journal-sourced).
     let acts = st.db.activity_latest(season, BOARD_ACTIVITY).await;
     let inlogic = st.db.inlogic_counts(season).await;
-    let connect = st.seasons.connect_address(&ctx.row, &st.db.instance().await.domain);
-    render::board_page(&snap, &slots, &prios, addr.as_deref(), &acts, &inlogic, connect.as_deref())
-        .into_response()
+    let connect = st
+        .seasons
+        .connect_address(&ctx.row, &st.db.instance().await.domain);
+    render::board_page(
+        &snap,
+        &slots,
+        &prios,
+        addr.as_deref(),
+        &acts,
+        &inlogic,
+        connect.as_deref(),
+    )
+    .into_response()
 }
 
 /// The board's live-update payload: the `.boardcols` inner HTML (`body`) + the
 /// current connection line (`conn`), as JSON so the poller can update both
 /// without a full refresh. Same data as `board_view`; public like `/board`.
-pub(crate) async fn board_fragment_view(State(st): State<AppState>, ctx: scope::SeasonCtx) -> Json<serde_json::Value> {
+pub(crate) async fn board_fragment_view(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+) -> Json<serde_json::Value> {
     let Some(snap) = ctx.rt.with_board(|b| b.snapshot()) else {
         return Json(serde_json::json!({}));
     };

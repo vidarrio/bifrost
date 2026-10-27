@@ -122,7 +122,8 @@ impl Runtimes {
             // room as one of its slots: the configured one when this season
             // has it (BIFROST_SLOT is instance-wide), else the first.
             let slots = self.db.slots(id).await.unwrap_or_default();
-            let configured = config::var("BIFROST_SLOT").filter(|n| slots.iter().any(|r| &r.name == n));
+            let configured =
+                config::var("BIFROST_SLOT").filter(|n| slots.iter().any(|r| &r.name == n));
             let first_slot = slots.into_iter().min_by_key(|r| r.ap_slot).map(|r| r.name);
             Some(ApConfig {
                 url: format!("ws://{host}:{port}"),

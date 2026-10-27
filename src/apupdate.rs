@@ -50,7 +50,10 @@ pub struct Updates {
     pub job: Option<Job>,
 }
 
-static UPDATES: Mutex<Updates> = Mutex::new(Updates { releases: None, job: None });
+static UPDATES: Mutex<Updates> = Mutex::new(Updates {
+    releases: None,
+    job: None,
+});
 
 pub fn snapshot() -> Updates {
     UPDATES.lock().unwrap().clone()
@@ -86,9 +89,17 @@ pub async fn check_releases() {
             error: String,
         }
         let stdout = String::from_utf8_lossy(&out.stdout);
-        let line = stdout.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
-        let r: Reply = serde_json::from_str(line)
-            .map_err(|_| format!("unexpected reply: {}", String::from_utf8_lossy(&out.stderr).trim()))?;
+        let line = stdout
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("");
+        let r: Reply = serde_json::from_str(line).map_err(|_| {
+            format!(
+                "unexpected reply: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )
+        })?;
         if r.ok { Ok(r.releases) } else { Err(r.error) }
     }
     .await;
@@ -152,7 +163,12 @@ pub fn start_install(tag: &str) -> Result<(), String> {
         if matches!(&u.job, Some(j) if j.outcome.is_none()) {
             return Err("An install is already running.".into());
         }
-        u.job = Some(Job { version: tag.to_string(), started: crate::auth::now(), log: vec![], outcome: None });
+        u.job = Some(Job {
+            version: tag.to_string(),
+            started: crate::auth::now(),
+            log: vec![],
+            outcome: None,
+        });
     }
     let tag = tag.to_string();
     tokio::spawn(async move {
@@ -182,7 +198,9 @@ struct InstallReply {
 async fn install(tag: &str) -> Result<String, String> {
     let root = apinstall::root();
     let partial = root.join(format!(".partial-{tag}"));
-    tokio::fs::create_dir_all(&root).await.map_err(|e| format!("{}: {e}", root.display()))?;
+    tokio::fs::create_dir_all(&root)
+        .await
+        .map_err(|e| format!("{}: {e}", root.display()))?;
     let res = install_into(tag, &partial).await;
     if res.is_err() {
         let _ = tokio::fs::remove_dir_all(&partial).await;
@@ -219,12 +237,18 @@ async fn install_into(tag: &str, partial: &Path) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
     let reply: InstallReply = serde_json::from_str(&last).unwrap_or_default();
     if !reply.ok {
-        return Err(if reply.error.is_empty() { "the installer failed".into() } else { reply.error });
+        return Err(if reply.error.is_empty() {
+            "the installer failed".into()
+        } else {
+            reply.error
+        });
     }
 
     let version = apinstall::read_version(partial).ok_or("couldn't read the installed version")?;
     if apinstall::find(&version).is_some() {
-        return Err(format!("that release is Archipelago {version}, which is already installed"));
+        return Err(format!(
+            "that release is Archipelago {version}, which is already installed"
+        ));
     }
     let install = Install {
         version: version.clone(),
@@ -237,7 +261,9 @@ async fn install_into(tag: &str, partial: &Path) -> Result<String, String> {
 
     let dest = apinstall::root().join(&version);
     let _ = tokio::fs::remove_dir_all(&dest).await;
-    tokio::fs::rename(partial, &dest).await.map_err(|e| format!("moving into place: {e}"))?;
+    tokio::fs::rename(partial, &dest)
+        .await
+        .map_err(|e| format!("moving into place: {e}"))?;
     apinstall::mark_ready(&dest).map_err(|e| format!("marking it ready: {e}"))?;
 
     let mut msg = format!("Archipelago {version} is installed and passed a test generation.");
@@ -257,9 +283,13 @@ async fn install_into(tag: &str, partial: &Path) -> Result<String, String> {
 
 /// A core game every recent Archipelago ships, for the test run.
 fn smoke_game(install: &Install) -> Option<(&'static str, &'static str)> {
-    [("checksfinder", "ChecksFinder"), ("clique", "Clique"), ("apquest", "APQuest")]
-        .into_iter()
-        .find(|(dir, _)| install.dir.join("worlds").join(dir).is_dir())
+    [
+        ("checksfinder", "ChecksFinder"),
+        ("clique", "Clique"),
+        ("apquest", "APQuest"),
+    ]
+    .into_iter()
+    .find(|(dir, _)| install.dir.join("worlds").join(dir).is_dir())
 }
 
 /// Check a YAML and roll a one-player seed with `install`, sandboxed, in a
@@ -272,21 +302,29 @@ async fn smoke_test(install: &Install) -> Result<(), String> {
     let _ = tokio::fs::remove_dir_all(&dirs.root).await;
     dirs.ensure().map_err(|e| format!("scratch dir: {e}"))?;
     let yaml = format!("name: Tester\ngame: {game}\n{game}: {{}}\n");
-    let checked = ap_adapter::check_yaml(&dirs, &yaml).await.map_err(|e| format!("test check: {e}"))?;
+    let checked = ap_adapter::check_yaml(&dirs, &yaml)
+        .await
+        .map_err(|e| format!("test check: {e}"))?;
     if !checked.ok {
         return Err(format!("test check failed: {}", checked.errors.join("; ")));
     }
     tokio::fs::write(dirs.players.join("tester.yaml"), &yaml)
         .await
         .map_err(|e| e.to_string())?;
-    ap_adapter::generate(&dirs).await.map_err(|e| format!("test generation: {e}"))?;
+    ap_adapter::generate(&dirs)
+        .await
+        .map_err(|e| format!("test generation: {e}"))?;
     let rolled = std::fs::read_dir(&dirs.output)
         .into_iter()
         .flatten()
         .flatten()
         .any(|e| e.file_name().to_string_lossy().ends_with(".zip"));
     let _ = tokio::fs::remove_dir_all(&dirs.root).await;
-    if rolled { Ok(()) } else { Err("the test generation produced no seed".into()) }
+    if rolled {
+        Ok(())
+    } else {
+        Err("the test generation produced no seed".into())
+    }
 }
 
 /// Delete a managed install nothing uses.
@@ -301,7 +339,9 @@ pub async fn remove(version: &str) -> Result<(), String> {
     if !apinstall::pinned_to(version).is_empty() {
         return Err("A season still runs on that version — archive or re-roll it first.".into());
     }
-    tokio::fs::remove_dir_all(&i.dir).await.map_err(|e| format!("removing it: {e}"))
+    tokio::fs::remove_dir_all(&i.dir)
+        .await
+        .map_err(|e| format!("removing it: {e}"))
 }
 
 #[cfg(test)]
@@ -310,9 +350,12 @@ mod tests {
 
     #[test]
     fn installer_reply_parses() {
-        let r: InstallReply = serde_json::from_str(r#"{"ok": true, "failed_worlds": ["sc2"], "speedups": false}"#).unwrap();
+        let r: InstallReply =
+            serde_json::from_str(r#"{"ok": true, "failed_worlds": ["sc2"], "speedups": false}"#)
+                .unwrap();
         assert!(r.ok && r.failed_worlds == ["sc2"] && !r.speedups);
-        let r: InstallReply = serde_json::from_str(r#"{"ok": false, "error": "HTTPError: 404"}"#).unwrap();
+        let r: InstallReply =
+            serde_json::from_str(r#"{"ok": false, "error": "HTTPError: 404"}"#).unwrap();
         assert!(!r.ok && r.error.contains("404"));
     }
 }

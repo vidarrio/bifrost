@@ -23,7 +23,11 @@ pub(crate) fn slugify(s: &str) -> String {
     if out.is_empty() { "slot".into() } else { out }
 }
 
-pub(crate) async fn signup_get(State(st): State<AppState>, ctx: scope::SeasonCtx, me: auth::Me) -> Html<String> {
+pub(crate) async fn signup_get(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+) -> Html<String> {
     let (me, is_admin) = ctx.ident(&me);
     let subs = st.db.submissions(ctx.id).await.unwrap_or_default();
     let open = ctx.state().accepts_signups();
@@ -102,7 +106,10 @@ pub(crate) async fn signup_apworld(
 
 /// Step 2 of signup: validate a YAML live against the installed worlds (incl. an
 /// apworld just installed in step 1). Returns JSON for the wizard.
-pub(crate) async fn signup_check(ctx: scope::SeasonCtx, mut mp: Multipart) -> Json<serde_json::Value> {
+pub(crate) async fn signup_check(
+    ctx: scope::SeasonCtx,
+    mut mp: Multipart,
+) -> Json<serde_json::Value> {
     let mut yaml: Option<Vec<u8>> = None;
     while let Ok(Some(field)) = mp.next_field().await {
         if field.name() == Some("yaml") {
@@ -166,14 +173,22 @@ pub(crate) async fn signup_post(
         // Its world waits for approval, so the YAML can't be checked yet: hold
         // the signup under the name it declares; it's checked on approval.
         if st.db.world_request(ctx.id, &held_for).await.is_none() {
-            return render::signup_result("That apworld isn't waiting for approval any more — start over.", false);
+            return render::signup_result(
+                "That apworld isn't waiting for approval any more — start over.",
+                false,
+            );
         }
         if yaml.len() > checker::MAX_YAML {
             return render::signup_result("That YAML is too large.", false);
         }
         match worlds::yaml_name_game(&yaml_str) {
             (Some(name), game) => (name, game.unwrap_or_else(|| "?".into())),
-            (None, _) => return render::signup_result("Couldn't find a top-level name: in that YAML.", false),
+            (None, _) => {
+                return render::signup_result(
+                    "Couldn't find a top-level name: in that YAML.",
+                    false,
+                );
+            }
         }
     } else {
         // Trust-but-verify: the wizard already checked, but re-roll server-side so a
@@ -195,13 +210,19 @@ pub(crate) async fn signup_post(
                 false,
             );
         }
-        (p0.name.clone(), p0.game.clone().unwrap_or_else(|| "?".into()))
+        (
+            p0.name.clone(),
+            p0.game.clone().unwrap_or_else(|| "?".into()),
+        )
     };
 
     let slug = slugify(&slot_name);
     let uploads = ctx.dirs().submissions;
     let _ = tokio::fs::create_dir_all(&uploads).await;
-    let yaml_path = uploads.join(format!("{slug}.yaml")).to_string_lossy().into_owned();
+    let yaml_path = uploads
+        .join(format!("{slug}.yaml"))
+        .to_string_lossy()
+        .into_owned();
     if tokio::fs::write(&yaml_path, &yaml).await.is_err() {
         return render::signup_result("Couldn't store the YAML.", false);
     }

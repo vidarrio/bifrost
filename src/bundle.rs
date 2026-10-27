@@ -98,7 +98,10 @@ impl Seek for Slice {
             SeekFrom::Current(d) => self.pos as i128 + d as i128,
         };
         if pos < 0 {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "seek before start"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "seek before start",
+            ));
         }
         self.pos = pos as u64;
         Ok(self.pos)
@@ -107,12 +110,23 @@ impl Seek for Slice {
 
 fn open(p: &Payload) -> Result<zip::ZipArchive<std::io::BufReader<Slice>>, String> {
     let f = std::fs::File::open(&p.exe).map_err(|e| e.to_string())?;
-    let slice = Slice { f, start: p.offset, len: p.len, pos: 0 };
-    zip::ZipArchive::new(std::io::BufReader::new(slice)).map_err(|e| format!("bundled runtime: {e}"))
+    let slice = Slice {
+        f,
+        start: p.offset,
+        len: p.len,
+        pos: 0,
+    };
+    zip::ZipArchive::new(std::io::BufReader::new(slice))
+        .map_err(|e| format!("bundled runtime: {e}"))
 }
 
 fn valid_id(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 80 && !id.starts_with('.') && id.chars().all(|c| c.is_ascii_alphanumeric() || "._-+".contains(c))
+    !id.is_empty()
+        && id.len() <= 80
+        && !id.starts_with('.')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-+".contains(c))
 }
 
 /// Where a bundle keeps its data when `BIFROST_DATA` isn't set: the usual
@@ -150,7 +164,10 @@ fn link_inside(link: &Path, target: &Path) -> bool {
     true
 }
 
-fn extract(zip: &mut zip::ZipArchive<std::io::BufReader<Slice>>, dest: &Path) -> Result<(), String> {
+fn extract(
+    zip: &mut zip::ZipArchive<std::io::BufReader<Slice>>,
+    dest: &Path,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     for i in 0..zip.len() {
         let mut e = zip.by_index(i).map_err(|e| e.to_string())?;
@@ -169,9 +186,13 @@ fn extract(zip: &mut zip::ZipArchive<std::io::BufReader<Slice>>, dest: &Path) ->
             let mut target = String::new();
             e.read_to_string(&mut target).map_err(|e| e.to_string())?;
             if !link_inside(&rel, Path::new(&target)) {
-                return Err(format!("bundle symlink {} points outside it", rel.display()));
+                return Err(format!(
+                    "bundle symlink {} points outside it",
+                    rel.display()
+                ));
             }
-            std::os::unix::fs::symlink(&target, &out).map_err(|e| format!("{}: {e}", out.display()))?;
+            std::os::unix::fs::symlink(&target, &out)
+                .map_err(|e| format!("{}: {e}", out.display()))?;
             continue;
         }
         let mut f = std::fs::File::create(&out).map_err(|e| format!("{}: {e}", out.display()))?;
@@ -212,7 +233,10 @@ pub fn prepare(data_dir: &Path) -> Result<Option<Runtime>, String> {
     let base = data_dir.join("runtime");
     let dest = base.join(&id);
     if !dest.join(COMPLETE).is_file() {
-        tracing::info!("unpacking the bundled runtime {id} into {} (first run of this build)…", dest.display());
+        tracing::info!(
+            "unpacking the bundled runtime {id} into {} (first run of this build)…",
+            dest.display()
+        );
         let partial = base.join(format!(".partial-{id}"));
         let _ = std::fs::remove_dir_all(&partial);
         std::fs::create_dir_all(&partial).map_err(|e| format!("{}: {e}", partial.display()))?;
@@ -270,9 +294,18 @@ mod tests {
 
     #[test]
     fn symlinks_must_stay_inside() {
-        assert!(link_inside(Path::new("python/bin/python3"), Path::new("python3.13")));
-        assert!(link_inside(Path::new("python/lib/x"), Path::new("../bin/y")));
-        assert!(!link_inside(Path::new("python/bin/python3"), Path::new("../../../etc/passwd")));
+        assert!(link_inside(
+            Path::new("python/bin/python3"),
+            Path::new("python3.13")
+        ));
+        assert!(link_inside(
+            Path::new("python/lib/x"),
+            Path::new("../bin/y")
+        ));
+        assert!(!link_inside(
+            Path::new("python/bin/python3"),
+            Path::new("../../../etc/passwd")
+        ));
         assert!(!link_inside(Path::new("a"), Path::new("/etc/passwd")));
     }
 
@@ -286,7 +319,12 @@ mod tests {
     fn slice_reads_a_window() {
         let path = std::env::temp_dir().join(format!("bifrost-slice-{}", std::process::id()));
         std::fs::write(&path, b"0123456789").unwrap();
-        let mut s = Slice { f: std::fs::File::open(&path).unwrap(), start: 3, len: 4, pos: 0 };
+        let mut s = Slice {
+            f: std::fs::File::open(&path).unwrap(),
+            start: 3,
+            len: 4,
+            pos: 0,
+        };
         let mut out = String::new();
         s.read_to_string(&mut out).unwrap();
         assert_eq!(out, "3456");

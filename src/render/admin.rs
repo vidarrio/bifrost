@@ -18,8 +18,14 @@ pub(super) fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool) -> String
             ""
         };
         let held = match (&s.held_for, &s.held_err) {
-            (Some(_), Some(e)) => format!(r#"<div class="meta" style="color:var(--bad)">held: {}</div>"#, esc(e)),
-            (Some(w), None) => format!(r#"<div class="meta">held — waiting for {} to be approved</div>"#, esc(w)),
+            (Some(_), Some(e)) => format!(
+                r#"<div class="meta" style="color:var(--bad)">held: {}</div>"#,
+                esc(e)
+            ),
+            (Some(w), None) => format!(
+                r#"<div class="meta">held — waiting for {} to be approved</div>"#,
+                esc(w)
+            ),
             _ => String::new(),
         };
         let coop = if s.coop_names.is_empty() {
@@ -84,9 +90,11 @@ pub(super) fn action_btn(
 /// it goes live), or what its AP server uses (while live).
 pub(super) fn season_load_line(season: &crate::db::SeasonRow) -> String {
     match season.state() {
-        crate::db::State::Draft | crate::db::State::Signup => crate::load::room_for_another_season()
-            .map(|w| format!(r#"<div class="banner warn">⚠ {}</div>"#, esc(&w)))
-            .unwrap_or_default(),
+        crate::db::State::Draft | crate::db::State::Signup => {
+            crate::load::room_for_another_season()
+                .map(|w| format!(r#"<div class="banner warn">⚠ {}</div>"#, esc(&w)))
+                .unwrap_or_default()
+        }
         crate::db::State::Live => crate::load::snapshot()
             .and_then(|l| l.latest()?.servers.get(&season.id).copied())
             .map(|(rss, cpu)| {
@@ -165,13 +173,7 @@ pub fn admin_page(
         b.push_str(r#"<div class="statline">Signups are <b>closed</b>.</div>"#);
         b.push_str(&format!(
             r#"<div class="btnrow">{}</div>"#,
-            action_btn(
-                "admin/signups",
-                &[("open", "1")],
-                "Open signups",
-                false,
-                ""
-            )
+            action_btn("admin/signups", &[("open", "1")], "Open signups", false, "")
         ));
     }
 
@@ -225,8 +227,14 @@ pub fn admin_page(
         for s in subs {
             let custom = if s.is_custom { " · custom" } else { "" };
             let held = match (&s.held_for, &s.held_err) {
-                (Some(_), Some(e)) => format!(r#" · <span style="color:var(--bad)">held: {}</span>"#, esc(e)),
-                (Some(w), None) => format!(r#" · <span style="color:var(--warn)">held for {}</span>"#, esc(w)),
+                (Some(_), Some(e)) => format!(
+                    r#" · <span style="color:var(--bad)">held: {}</span>"#,
+                    esc(e)
+                ),
+                (Some(w), None) => format!(
+                    r#" · <span style="color:var(--warn)">held for {}</span>"#,
+                    esc(w)
+                ),
                 _ => String::new(),
             };
             b.push_str(&format!(
@@ -259,7 +267,11 @@ pub fn admin_page(
     if !requests.is_empty() {
         b.push_str(r#"<h2>Apworlds waiting for approval</h2><p class="statline">Uploads that aren't in the catalog. Approving installs one and checks the signups held for it; nothing runs its code before then.</p>"#);
         for r in requests {
-            let game = if r.game.is_empty() { String::new() } else { format!(" · {}", esc(&r.game)) };
+            let game = if r.game.is_empty() {
+                String::new()
+            } else {
+                format!(" · {}", esc(&r.game))
+            };
             b.push_str(&format!(
                 r#"<div class="hintrow"><span>{}{game} <span class="statline">· sha256 {}… · uploaded by {} · {}</span></span><span>{} {}</span></div>"#,
                 esc(&r.file),
@@ -285,7 +297,13 @@ pub fn admin_page(
     } else {
         for w in apworlds {
             let to_catalog = if sysadmin && w.pinned && !w.catalog {
-                action_btn("admin/worlds/to-catalog", &[("name", &w.file)], "add to catalog", false, "")
+                action_btn(
+                    "admin/worlds/to-catalog",
+                    &[("name", &w.file)],
+                    "add to catalog",
+                    false,
+                    "",
+                )
             } else {
                 String::new()
             };
@@ -358,7 +376,11 @@ pub fn admin_page(
     b.push_str(r#"<h2>Connect password</h2>"#);
     b.push_str(&format!(
         r#"<div class="statline">Players join with <b>{}</b>.</div>"#,
-        if connect_pw.is_empty() { "no password".to_string() } else { esc(connect_pw) }
+        if connect_pw.is_empty() {
+            "no password".to_string()
+        } else {
+            esc(connect_pw)
+        }
     ));
     let (confirm, note) = if managed {
         (
@@ -430,13 +452,25 @@ pub fn admin_page(
         b.push_str(r#"<div class="statline">The shared Minecraft common game is <b>enabled</b> — the next season generated will include the communal slot.</div>"#);
         b.push_str(&format!(
             r#"<div class="btnrow">{}</div>"#,
-            action_btn("admin/mc", &[("open", "0")], "Disable common game", false, "")
+            action_btn(
+                "admin/mc",
+                &[("open", "0")],
+                "Disable common game",
+                false,
+                ""
+            )
         ));
     } else {
         b.push_str(r#"<div class="statline">The shared Minecraft common game is <b>disabled</b> — toggle this <b>before generating</b> to include it in the season.</div>"#);
         b.push_str(&format!(
             r#"<div class="btnrow">{}</div>"#,
-            action_btn("admin/mc", &[("open", "1")], "Enable common game", false, "")
+            action_btn(
+                "admin/mc",
+                &[("open", "1")],
+                "Enable common game",
+                false,
+                ""
+            )
         ));
     }
 

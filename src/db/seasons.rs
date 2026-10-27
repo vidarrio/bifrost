@@ -168,7 +168,10 @@ pub enum TransitionError {
     /// External mode: one AP server, so only one season can be live.
     AnotherLive(String),
     /// Managed mode: every port in the range is held by a live season.
-    NoFreePort { first: u16, last: u16 },
+    NoFreePort {
+        first: u16,
+        last: u16,
+    },
     Db(String),
 }
 
@@ -451,15 +454,14 @@ impl Db {
                 return Ok(Some(p));
             }
         }
-        let taken: std::collections::HashSet<i64> = sqlx::query_scalar(
-            "SELECT ap_port FROM season WHERE ap_port IS NOT NULL AND id <> ?",
-        )
-        .bind(id)
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(db)?
-        .into_iter()
-        .collect();
+        let taken: std::collections::HashSet<i64> =
+            sqlx::query_scalar("SELECT ap_port FROM season WHERE ap_port IS NOT NULL AND id <> ?")
+                .bind(id)
+                .fetch_all(&mut **tx)
+                .await
+                .map_err(db)?
+                .into_iter()
+                .collect();
         range
             .clone()
             .find(|p| !taken.contains(&i64::from(*p)))
@@ -495,7 +497,9 @@ impl Db {
                     .execute(&mut *tx)
                     .await
                     .map_err(|e| TransitionError::Db(e.to_string()))?;
-                tx.commit().await.map_err(|e| TransitionError::Db(e.to_string()))
+                tx.commit()
+                    .await
+                    .map_err(|e| TransitionError::Db(e.to_string()))
             }
             .await;
             if let Err(e) = ok {
@@ -539,7 +543,11 @@ impl Db {
         Ok(())
     }
 
-    pub async fn set_season_ap_version(&self, id: i64, version: Option<&str>) -> Result<(), sqlx::Error> {
+    pub async fn set_season_ap_version(
+        &self,
+        id: i64,
+        version: Option<&str>,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE season SET ap_version = ? WHERE id = ?")
             .bind(version)
             .bind(id)
@@ -727,7 +735,11 @@ mod tests {
         db.transition(reroll, State::Live, 2).await.unwrap();
         db.transition(reroll, State::Generating, 3).await.unwrap();
         assert_eq!(db.recover_interrupted_generations().await.unwrap(), 2);
-        assert_eq!(db.season(first).await.unwrap().state(), State::Signup, "not live with an undeployed seed");
+        assert_eq!(
+            db.season(first).await.unwrap().state(),
+            State::Signup,
+            "not live with an undeployed seed"
+        );
         assert_eq!(db.season(reroll).await.unwrap().state(), State::Live);
         assert_eq!(db.recover_interrupted_generations().await.unwrap(), 0);
     }
@@ -752,7 +764,10 @@ mod tests {
         // Range full: C can't go live (and generation can tell up front).
         assert_eq!(
             db.can_go_live(c).await,
-            Err(TransitionError::NoFreePort { first: 5000, last: 5001 })
+            Err(TransitionError::NoFreePort {
+                first: 5000,
+                last: 5001
+            })
         );
         assert!(db.transition(c, State::Live, 13).await.is_err());
         // A re-roll keeps the port.

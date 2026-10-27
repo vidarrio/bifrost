@@ -323,18 +323,26 @@ impl Db {
     ) -> Result<Option<Principal>, sqlx::Error> {
         // Every signed-in request lands here: answer from a read when nothing
         // changed, and only take the write lock when something did.
-        let current: Option<(i64, String, String, bool)> =
-            sqlx::query_as("SELECT id, username, role, disabled FROM account WHERE idp_subject = ?")
-                .bind(subject)
-                .fetch_optional(&self.pool)
-                .await?;
+        let current: Option<(i64, String, String, bool)> = sqlx::query_as(
+            "SELECT id, username, role, disabled FROM account WHERE idp_subject = ?",
+        )
+        .bind(subject)
+        .fetch_optional(&self.pool)
+        .await?;
         if let Some((id, name, r, disabled)) = &current {
             if *disabled {
                 return Ok(None);
             }
             let role_ok = role.is_none_or(|want| want.as_str() == r);
             if role_ok && (name == username || self.username_taken(username, Some(*id)).await?) {
-                return Ok(Some(PrincipalRow { id: *id, username: name.clone(), role: r.clone() }.into()));
+                return Ok(Some(
+                    PrincipalRow {
+                        id: *id,
+                        username: name.clone(),
+                        role: r.clone(),
+                    }
+                    .into(),
+                ));
             }
         }
         // Reads then writes: take the write lock up front (see `transition`).
@@ -363,17 +371,21 @@ impl Db {
             None => {
                 let mut name = username.to_string();
                 let mut n = 1;
-                while sqlx::query_scalar::<_, i64>("SELECT count(*) FROM account WHERE username = ?")
-                    .bind(&name)
-                    .fetch_one(&mut *tx)
-                    .await?
+                while sqlx::query_scalar::<_, i64>(
+                    "SELECT count(*) FROM account WHERE username = ?",
+                )
+                .bind(&name)
+                .fetch_one(&mut *tx)
+                .await?
                     > 0
                 {
                     n += 1;
                     name = format!("{username}-{n}");
                 }
                 if n > 1 {
-                    tracing::warn!("forward-auth: username {username} is taken; the IdP user {subject} gets {name}");
+                    tracing::warn!(
+                        "forward-auth: username {username} is taken; the IdP user {subject} gets {name}"
+                    );
                 }
                 sqlx::query(
                     "INSERT INTO account (username, idp_subject, role, created_at) VALUES (?, ?, ?, ?)",
@@ -404,12 +416,17 @@ impl Db {
 
     /// Is `username` held by an account other than `except`? (Case-insensitive,
     /// like the column.)
-    async fn username_taken(&self, username: &str, except: Option<i64>) -> Result<bool, sqlx::Error> {
-        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM account WHERE username = ? AND id IS NOT ?")
-            .bind(username)
-            .bind(except)
-            .fetch_one(&self.pool)
-            .await?;
+    async fn username_taken(
+        &self,
+        username: &str,
+        except: Option<i64>,
+    ) -> Result<bool, sqlx::Error> {
+        let n: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM account WHERE username = ? AND id IS NOT ?")
+                .bind(username)
+                .bind(except)
+                .fetch_one(&self.pool)
+                .await?;
         Ok(n > 0)
     }
 
@@ -726,16 +743,34 @@ mod tests {
     #[tokio::test]
     async fn idp_names_never_collide_with_other_accounts() {
         let db = db().await;
-        let native = db.create_account("Alice", "h", Role::Sysadmin, 0).await.unwrap();
+        let native = db
+            .create_account("Alice", "h", Role::Sysadmin, 0)
+            .await
+            .unwrap();
         // A new IdP user whose name is taken gets a suffix, not the account.
-        let p = db.idp_principal("sub-a", "alice", None, 0).await.unwrap().unwrap();
+        let p = db
+            .idp_principal("sub-a", "alice", None, 0)
+            .await
+            .unwrap()
+            .unwrap();
         assert_ne!(p.account_id, native);
         assert_eq!((p.username.as_str(), p.role), ("alice-2", Role::User));
-        let q = db.idp_principal("sub-b", "alice", None, 0).await.unwrap().unwrap();
+        let q = db
+            .idp_principal("sub-b", "alice", None, 0)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(q.username, "alice-3");
         // Renamed by the IdP to a taken name: keeps its own.
-        let r = db.idp_principal("sub-b", "ALICE-2", None, 0).await.unwrap().unwrap();
-        assert_eq!((r.account_id, r.username.as_str()), (q.account_id, "alice-3"));
+        let r = db
+            .idp_principal("sub-b", "ALICE-2", None, 0)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (r.account_id, r.username.as_str()),
+            (q.account_id, "alice-3")
+        );
     }
 
     #[tokio::test]
@@ -748,11 +783,13 @@ mod tests {
             .unwrap()
             .unwrap();
         let s = db.create_season("S", None, 0).await.unwrap();
-        sqlx::query("INSERT INTO bifrost_slot (season, name, ap_slot, game) VALUES (?, 'Slot', 1, 'G')")
-            .bind(s)
-            .execute(&db.pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO bifrost_slot (season, name, ap_slot, game) VALUES (?, 'Slot', 1, 'G')",
+        )
+        .bind(s)
+        .execute(&db.pool)
+        .await
+        .unwrap();
         let slot = db.slots(s).await.unwrap()[0].id;
         assert!(matches!(
             db.claim_one(s, slot, p.account_id).await.unwrap(),
@@ -779,7 +816,10 @@ mod tests {
         // Nor can another season's admins, through their own season.
         let s2 = db.create_season("S2", None, 0).await.unwrap();
         assert!(!db.unclaim(s2, slot, other, true).await.unwrap());
-        assert!(matches!(db.claim_one(s2, slot, other).await.unwrap(), ClaimOutcome::SlotTaken));
+        assert!(matches!(
+            db.claim_one(s2, slot, other).await.unwrap(),
+            ClaimOutcome::SlotTaken
+        ));
         assert!(db.slot_detail(s2, slot).await.unwrap().is_none());
 
         // Deleting the account cascades its rows away.

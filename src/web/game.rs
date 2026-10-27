@@ -4,7 +4,13 @@ use super::*;
 
 /// Whether the viewer may upload/remove the slot's pack: a claimant of the slot
 /// or an admin.
-pub(crate) async fn pt_can_manage(st: &AppState, season: i64, ap_slot: i64, account: i64, is_admin: bool) -> bool {
+pub(crate) async fn pt_can_manage(
+    st: &AppState,
+    season: i64,
+    ap_slot: i64,
+    account: i64,
+    is_admin: bool,
+) -> bool {
     if is_admin {
         return true;
     }
@@ -30,7 +36,8 @@ pub(crate) async fn pt_upload(
     // Land back on the PopTracker tab (the pack-management tab), not the default.
     let back = ctx.url(&format!("/game/{ap_slot}#tab-pt"));
     if !ctx.state().is_live() || !pt_can_manage(&st, season, ap_slot, my_id, is_admin).await {
-        return render::notice("You can't upload a pack for this game.", false, &back).into_response();
+        return render::notice("You can't upload a pack for this game.", false, &back)
+            .into_response();
     }
     let mut bytes: Option<Vec<u8>> = None;
     while let Ok(Some(field)) = mp.next_field().await {
@@ -44,7 +51,8 @@ pub(crate) async fn pt_upload(
         return render::notice("No file received.", false, &back).into_response();
     };
     if bytes.len() < 2 || &bytes[..2] != b"PK" {
-        return render::notice("That doesn't look like a .zip pack file.", false, &back).into_response();
+        return render::notice("That doesn't look like a .zip pack file.", false, &back)
+            .into_response();
     }
     // validate + install off the async runtime (runs pack Lua + filesystem).
     let season2 = season;
@@ -60,8 +68,12 @@ pub(crate) async fn pt_upload(
 }
 
 /// Claimant (or admin) removes the slot's pack.
-pub(crate) async fn pt_remove(Path(ap_slot): Path<i64>, State(st): State<AppState>,
-    ctx: scope::SeasonCtx, me: auth::Me) -> Response {
+pub(crate) async fn pt_remove(
+    Path(ap_slot): Path<i64>,
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+) -> Response {
     let my_id = me.id();
     let (_me, is_admin) = ctx.ident(&me);
     let season = ctx.id;
@@ -75,13 +87,22 @@ pub(crate) async fn pt_remove(Path(ap_slot): Path<i64>, State(st): State<AppStat
 
 /// Computed tracker state (maps + markers + items) for the slot's pack, as JSON
 /// for the PopTracker tab + its poller. `{pack:false}` when no pack is installed.
-pub(crate) async fn pt_state(Path(ap_slot): Path<i64>, ctx: scope::SeasonCtx) -> Json<serde_json::Value> {
+pub(crate) async fn pt_state(
+    Path(ap_slot): Path<i64>,
+    ctx: scope::SeasonCtx,
+) -> Json<serde_json::Value> {
     let season = ctx.id;
     let Some((game, received, checked, meta)) = ctx.rt.with_board(|b| {
         let (game, received, checked) = b
             .slots
             .get(&ap_slot)
-            .map(|s| (s.game.clone(), s.received_items.clone(), s.checked_locations.clone()))
+            .map(|s| {
+                (
+                    s.game.clone(),
+                    s.received_items.clone(),
+                    s.checked_locations.clone(),
+                )
+            })
             .unwrap_or_default();
         (game, received, checked, b.meta.clone())
     }) else {
@@ -108,7 +129,11 @@ pub(crate) async fn pt_state(Path(ap_slot): Path<i64>, ctx: scope::SeasonCtx) ->
     let items: Vec<(i64, String)> = precollected
         .iter()
         .map(|item| (*item, name_of(*item)))
-        .chain(received.iter().map(|(item, _loc, _finder)| (*item, name_of(*item))))
+        .chain(
+            received
+                .iter()
+                .map(|(item, _loc, _finder)| (*item, name_of(*item))),
+        )
         .collect();
     // The slot's full location set (static per season) drives `visibility_rules`
     // so the tracker hides checks this slot's options never generated.
@@ -120,7 +145,14 @@ pub(crate) async fn pt_state(Path(ap_slot): Path<i64>, ctx: scope::SeasonCtx) ->
     let version = ptrack::pack_version(season, ap_slot);
     let season2 = season;
     let state = tokio::task::spawn_blocking(move || {
-        ptrack::compute(season2, ap_slot, &items, &checked, &valid_locations, ap_slot)
+        ptrack::compute(
+            season2,
+            ap_slot,
+            &items,
+            &checked,
+            &valid_locations,
+            ap_slot,
+        )
     })
     .await;
     match state {
@@ -154,10 +186,11 @@ pub(crate) async fn pt_asset(
     let season = ctx.id;
     let file = q.file.clone();
     let season2 = season;
-    let bytes = tokio::task::spawn_blocking(move || ptrack::read_pack_asset(season2, ap_slot, &file))
-        .await
-        .ok()
-        .flatten();
+    let bytes =
+        tokio::task::spawn_blocking(move || ptrack::read_pack_asset(season2, ap_slot, &file))
+            .await
+            .ok()
+            .flatten();
     let cache = if q.v.is_some() {
         "public, max-age=31536000, immutable"
     } else {
@@ -190,7 +223,6 @@ pub(crate) fn pt_content_type(f: &str) -> &'static str {
         "application/octet-stream"
     }
 }
-
 
 pub(crate) async fn game_view(
     Path(ap_slot): Path<i64>,
@@ -331,7 +363,12 @@ pub(crate) async fn game_log_fragment(
     Query(q): Query<LogPageQuery>,
 ) -> Html<String> {
     let season = ctx.id;
-    let Some(name) = ctx.rt.with_board(|b| b.slots.get(&ap_slot).map(|s| s.name.clone()).unwrap_or_default()) else {
+    let Some(name) = ctx.rt.with_board(|b| {
+        b.slots
+            .get(&ap_slot)
+            .map(|s| s.name.clone())
+            .unwrap_or_default()
+    }) else {
         return Html(String::new());
     };
     if !ctx.state().is_live() || name.is_empty() {
@@ -342,7 +379,10 @@ pub(crate) async fn game_log_fragment(
         .rpp
         .unwrap_or(render::GAME_LOG_RPP)
         .clamp(render::GAME_LOG_RPP_MIN, render::GAME_LOG_RPP_MAX);
-    let total = st.db.activity_count_for_participant(season, &name, term).await;
+    let total = st
+        .db
+        .activity_count_for_participant(season, &name, term)
+        .await;
     let pages = render::game_log_pages(total, rpp);
     let page = q.page.unwrap_or(1).clamp(1, pages);
     let offset = (page - 1) * rpp;
@@ -390,10 +430,18 @@ pub(crate) async fn game_hints(
 
 /// The hint-search suggestion list for one slot, as JSON — the game page polls
 /// this after a hint so a name whose last copy was just hinted drops out.
-pub(crate) async fn game_items(Path(ap_slot): Path<i64>, ctx: scope::SeasonCtx) -> Json<Vec<String>> {
-    let items = ctx.rt
+pub(crate) async fn game_items(
+    Path(ap_slot): Path<i64>,
+    ctx: scope::SeasonCtx,
+) -> Json<Vec<String>> {
+    let items = ctx
+        .rt
         .with_board(|b| {
-            let game = b.slots.get(&ap_slot).map(|s| s.game.clone()).unwrap_or_default();
+            let game = b
+                .slots
+                .get(&ap_slot)
+                .map(|s| s.game.clone())
+                .unwrap_or_default();
             b.hint_suggestions(ap_slot, &game)
         })
         .unwrap_or_default();
@@ -419,8 +467,13 @@ pub(crate) async fn game_finish(
     if !is_admin {
         return render::notice("Admins only.", false, &back).into_response();
     }
-    let slot = ctx.rt
-        .with_board(|b| b.slots.get(&ap_slot).map(|s| (s.name.clone(), s.game.clone())))
+    let slot = ctx
+        .rt
+        .with_board(|b| {
+            b.slots
+                .get(&ap_slot)
+                .map(|s| (s.name.clone(), s.game.clone()))
+        })
         .flatten();
     let Some((name, game)) = slot.filter(|(n, _)| !n.is_empty()) else {
         return render::notice("That slot isn't live right now.", false, &back).into_response();
@@ -430,10 +483,11 @@ pub(crate) async fn game_finish(
     };
     match ap::mark_goal(&cfg.url, &cfg.password, &name, &game).await {
         Ok(()) => Redirect::to(&back).into_response(),
-        Err(e) => render::notice(&format!("Mark-finished failed: {e}"), false, &back).into_response(),
+        Err(e) => {
+            render::notice(&format!("Mark-finished failed: {e}"), false, &back).into_response()
+        }
     }
 }
-
 
 /// A claimant (or admin) downloading their own slot's generated file from the
 /// game page. Gated to someone who claims THIS `ap_slot` (or admin), and the
@@ -469,7 +523,8 @@ pub(crate) async fn game_output(
         .flatten();
     match bytes {
         Some(data) => download_response(&q.file, data),
-        None => render::notice("No such output file in the current seed.", false, &back)
-            .into_response(),
+        None => {
+            render::notice("No such output file in the current seed.", false, &back).into_response()
+        }
     }
 }
