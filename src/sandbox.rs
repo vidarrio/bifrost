@@ -1,4 +1,4 @@
-//! The sandbox launcher every AP helper goes through (design doc §4).
+//! The sandbox launcher every AP helper goes through.
 //!
 //! AP helpers import worlds — i.e. run arbitrary apworld Python — so each one
 //! is started through [`Sandbox::command`], which applies the strongest tier

@@ -1,10 +1,10 @@
-//! Per-season runtime state (design doc §7.4). Every season has its own live
+//! Per-season runtime state. Every season has its own live
 //! board and generation status; the **live** season also runs its AP server
 //! (when Bifrost manages it) and the background workers — AP tracker + counts
 //! refresher, in-logic recomputer, and (for an external server) the journal
 //! ingester — started when it goes live and stopped when it's archived.
 //!
-//! Managed servers each get the port their season holds (§7.3); with an
+//! Managed servers each get the port their season holds; with an
 //! external server only one season can be live.
 
 use std::collections::HashMap;

@@ -1,4 +1,4 @@
-//! Authentication and authorization (design doc §5, §6, §14).
+//! Authentication and authorization.
 //!
 //! Every request passes through [`middleware`], which:
 //!
@@ -7,7 +7,7 @@
 //!    headers from a trusted forward-auth proxy;
 //! 2. rejects cross-site state-changing requests (CSRF), by checking the
 //!    browser's `Sec-Fetch-Site` / `Origin` headers;
-//! 3. enforces the route tiers of design doc §14 (public / logged in / admin)
+//! 3. enforces the route tiers (public / logged in / admin)
 //!    by path prefix, before any handler runs.
 //!
 //! Handlers read the result with the [`Me`] extractor.
@@ -68,7 +68,7 @@ pub struct Principal {
     pub role: Role,
 }
 
-/// How this instance authenticates. Exactly one mode is active (design §5);
+/// How this instance authenticates. Exactly one mode is active;
 /// switched with the `bifrost auth mode` CLI.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AuthMode {
@@ -94,7 +94,7 @@ impl AuthMode {
     }
 }
 
-/// Things a principal may do (design doc §6). The single place authorization
+/// Things a principal may do. The single place authorization
 /// is decided.
 #[derive(Clone, Copy, Debug)]
 pub enum Action<'a> {
@@ -330,7 +330,7 @@ impl ForwardAuth {
     }
 }
 
-/// `sysadmin=admins@idp,user=users@idp`.
+/// `sysadmin=archipelago_admins,moderator=archipelago_moderators,user=archipelago_users`.
 fn parse_role_groups(list: &str) -> Result<Vec<(Role, String)>, String> {
     list.split(',')
         .map(str::trim)
@@ -487,7 +487,7 @@ pub enum Tier {
     Sysadmin,
 }
 
-/// Route tiers of design doc §14: plain path-prefix match (as the proxy's
+/// Route tiers: plain path-prefix match (as the proxy's
 /// `PathPrefix` did), most specific first, public by default.
 const SYSADMIN_PREFIXES: &[&str] = &["/admin/users", "/admin/links", "/admin/settings", "/admin/catalog"];
 const ADMIN_PREFIXES: &[&str] = &["/admin"];

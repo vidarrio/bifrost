@@ -1,4 +1,4 @@
-//! Backups of the data dir (design doc §9): a nightly snapshot, a button for
+//! Backups of the data dir: a nightly snapshot, a button for
 //! one on demand, and a retention policy so they don't eat the disk.
 //!
 //! A backup is one zip, `bifrost-YYYYMMDD-HHMMSS.zip` (UTC), holding a

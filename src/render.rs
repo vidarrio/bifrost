@@ -1648,7 +1648,7 @@ pub fn admin_page(
         esc(&season.name),
         season.state().as_str(),
     ));
-    // Tabbed season console (design doc §9); the tab survives form posts via
+    // Tabbed season console; the tab survives form posts via
     // the URL hash (see <button type="button" class="gtab on" data-tab="tab-overview">Overview</button><button type="button" class="gtab" data-tab="tab-entries">Signups &amp; apworlds</button><button type="button" class="gtab" data-tab="tab-files">Player files</button><button type="button" class="gtab" data-tab="tab-conn">Connection</button><button type="button" class="gtab" data-tab="tab-options">Options</button><button type="button" class="gtab" data-tab="tab-archive">Archive &amp; reset</button>_JS).
     let conn = if connected { "connected" } else { "waiting" };
     let seed_txt = seed.filter(|s| !s.is_empty()).unwrap_or("—");
@@ -2234,7 +2234,7 @@ const TABS_CSS: &str = r#"<style>
 a.gtab{display:inline-block;text-decoration:none}
 </style>"#;
 
-/// The instance console's tab bar (design doc §9): one page per tab, so these
+/// The instance console's tab bar: one page per tab, so these
 /// are links. Moderators see only Seasons.
 fn console_nav(active: &str, sysadmin: bool) -> String {
     let mut out = format!(r#"{TABS_CSS}<div class="gtabs">"#);

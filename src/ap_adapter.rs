@@ -286,7 +286,7 @@ pub fn custom_worlds(season: &SeasonDirs) -> Vec<String> {
 
 /// Refuse to import worlds when a custom one isn't exactly what was uploaded
 /// (unpinned, or changed on disk since), or when custom ones are present and
-/// the sandbox can't contain them (design doc §4's trusted/untrusted split).
+/// the sandbox can't contain them.
 pub fn check_worlds(season: &SeasonDirs) -> Result<(), String> {
     let custom = custom_worlds(season);
     let pins = world_pins(season);

@@ -1,4 +1,4 @@
-//! A live season's Archipelago server, run by Bifrost (design doc §7.2–7.3):
+//! A live season's Archipelago server, run by Bifrost:
 //! one per live season, each on the port the season holds.
 //!
 //! A supervisor task owns the MultiServer process: it starts it (sandboxed,

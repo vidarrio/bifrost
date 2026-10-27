@@ -1,4 +1,4 @@
-# Bifrost appliance image (design doc §12): Bifrost + a pinned Archipelago +
+# Bifrost appliance image: Bifrost + a pinned Archipelago +
 # bubblewrap, everything mutable under one volume.
 #
 #   podman build -t bifrost .            (or docker build)

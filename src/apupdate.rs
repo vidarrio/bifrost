@@ -1,4 +1,4 @@
-//! Installing Archipelago releases from the settings page (design doc §9):
+//! Installing Archipelago releases from the settings page:
 //! check GitHub for releases, install one in the background, and only call
 //! it ready once a test generation passed with it. Switching new seasons to
 //! it, and removing old installs, are separate buttons (see `apinstall` for

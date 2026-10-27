@@ -1,4 +1,4 @@
-//! The native single-file bundle (design doc §3, option 2): the Bifrost
+//! The native single-file bundle: the Bifrost
 //! binary with a zip of its runtime appended — a relocatable Python
 //! (python-build-standalone) with Archipelago's requirements installed into
 //! it, the pinned Archipelago source, and Bifrost's scripts + vendored worlds

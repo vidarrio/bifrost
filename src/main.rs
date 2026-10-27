@@ -3,7 +3,7 @@
 //! Public: the hub (`/`), the YAML checker (`/check`), and the live board
 //! (`/board`). Behind sign-in: claiming slots, signups, game pages, hints; and
 //! `/admin` for sysadmins. Who's signed in, and which routes need it, is
-//! decided once per request by the `auth` middleware (design doc §5, §14).
+//! decided once per request by the `auth` middleware.
 
 use std::sync::Arc;
 

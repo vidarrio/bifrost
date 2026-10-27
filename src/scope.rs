@@ -1,4 +1,4 @@
-//! Season-scoped URLs (design doc §7.5).
+//! Season-scoped URLs.
 //!
 //! Season pages live under `/s/{id}/…`. [`rewrite`] wraps the whole router: it
 //! strips the prefix *before routing* (so routes, auth tiers and rate-limit

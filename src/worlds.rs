@@ -1,4 +1,4 @@
-//! How custom apworlds get into a season (design doc §8). Either from the
+//! How custom apworlds get into a season. Either from the
 //! curated catalog — sysadmin-vetted, usable anywhere — or as an upload,
 //! which is installed right away when the instance auto-approves uploads, and
 //! otherwise waits in the season's `pending/` (where AP never loads it) until

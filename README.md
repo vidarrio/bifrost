@@ -9,6 +9,9 @@ It's built for a friend group or community running recurring seasons, and
 ships as a container image or a single native file. Everything mutable lives
 in one data directory.
 
+**[User guide](docs/USER_GUIDE.md)**: how to play, run seasons and operate an
+instance. Bifrost is largely AI-written; see the [AI disclaimer](AI_DISCLAIMER.md).
+
 ## Run it
 
 **Container (recommended)** — the image carries Bifrost, a pinned Archipelago
@@ -85,7 +88,7 @@ links and sysadmin-minted reset links. Alternatively an identity provider via
 forward-auth (`bifrost auth mode forward-auth`), exclusive per instance: the
 proxy must authenticate the season paths (`/s/{id}/admin`, `/s/{id}/claim`, …)
 as well as the plain ones, or it lets clients' own identity headers through
-(see the design doc, §5). The CLI is the break-glass:
+(see the [user guide](docs/USER_GUIDE.md#sign-in-modes)). The CLI is the break-glass:
 
 ```
 bifrost auth status                       show the auth mode and accounts
@@ -137,7 +140,7 @@ scripts/          Python helpers run under Archipelago's interpreter
 vendor/           bundled apworlds (Universal Tracker)
 packaging/bundle/ the native bundle build
 packaging/archipelago/ Bifrost's Archipelago fork: patches + release script
-docs/design/      design notes
+docs/             the user guide
 ```
 
 ## Development

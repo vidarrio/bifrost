@@ -1,4 +1,4 @@
-//! Rate limiting for auth and expensive endpoints (design doc §10).
+//! Rate limiting for auth and expensive endpoints.
 //!
 //! A token bucket per (rule, caller): signed-in callers are keyed by account,
 //! anonymous ones by client IP. The client IP is the TCP peer, or — only when

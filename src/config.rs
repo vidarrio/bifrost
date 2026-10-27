@@ -1,5 +1,5 @@
 //! Instance configuration and on-disk layout, resolved once from the
-//! environment at startup (design doc §3a).
+//! environment at startup.
 //!
 //! Two roots, never mixed:
 //!
@@ -498,7 +498,7 @@ pub const EXAMPLE: &str = r#"# $BIFROST_DATA/config.toml — every setting here 
 [forward_auth]                       # only with `bifrost auth mode forward-auth`
 # secret_header = "x-bifrost-proxy"  # BIFROST_FWD_SECRET_HEADER
 # secret = ""                        # BIFROST_FWD_SECRET (secret)
-# role_groups = ["sysadmin=admins@idp", "user=users@idp"]  # BIFROST_FWD_ROLE_GROUPS
+# role_groups = ["sysadmin=archipelago_admins", "moderator=archipelago_moderators", "user=archipelago_users"]  # BIFROST_FWD_ROLE_GROUPS
 # sign_in_url = "/oauth2/sign_in"    # BIFROST_FWD_SIGN_IN_URL
 # sign_out_url = "/oauth2/sign_out"  # BIFROST_FWD_SIGN_OUT_URL
 

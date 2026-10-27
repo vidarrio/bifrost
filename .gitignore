@@ -7,7 +7,5 @@
 .cmsg
 .msg
 
-# operational handoff — instance-specific (IPs/domains/kanidm groups), keep out of the public repo
-docs/design/HANDOFF.md
 __pycache__/
 /dist

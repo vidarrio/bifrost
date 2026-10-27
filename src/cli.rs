@@ -1,4 +1,4 @@
-//! Local admin commands — the break-glass path (design doc §5). They act on
+//! Local admin commands — the break-glass path. They act on
 //! the data dir directly, so they work when the web UI can't be reached or the
 //! IdP is down. Run as the service user on the host:
 //!

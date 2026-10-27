@@ -1,6 +1,6 @@
 //! The apworld catalog — instance-wide, curated by sysadmins, usable in any
-//! season without approval — and per-season uploads waiting for approval
-//! (design doc §8). The files themselves live on disk (`catalog/<sha256>.apworld`,
+//! season without approval — and per-season uploads waiting for approval.
+//! The files themselves live on disk (`catalog/<sha256>.apworld`,
 //! `seasons/<id>/pending/`); these tables hold what they are and who sent them.
 
 use sqlx::{FromRow, SqlitePool};

@@ -1,4 +1,4 @@
-//! Seasons as first-class records (design doc §7.1): named at creation, owned
+//! Seasons as first-class records: named at creation, owned
 //! by their creator, moving through a Bifrost-managed lifecycle
 //!
 //! ```text

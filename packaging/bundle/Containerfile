@@ -1,4 +1,4 @@
-# Bifrost native single-file bundle (design doc §3, option 2): a static
+# Bifrost native single-file bundle: a static
 # Bifrost binary with its runtime appended — a relocatable Python
 # (python-build-standalone) carrying Archipelago's requirements, the pinned
 # Archipelago source, and Bifrost's scripts + vendored worlds. See
