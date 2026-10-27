@@ -84,17 +84,26 @@ Run the same commands locally before pushing (see [Development](#development)).
 Every pull request is reviewed by a separate AI agent, one that didn't write
 the change. The reviewer works from the branch and a description of what to
 check, not from the author's own conclusions, so its read isn't anchored on
-them. It reports findings ranked by severity. The author posts them to the
-pull request as a comment, together with how each one was handled.
+them.
 
-Every finding is handled in one of two ways:
+The reviewer posts its review on the pull request itself: a GitHub review
+whose summary says what it checked and its overall verdict, with an inline
+comment on the line each finding is about, ranked by severity. Findings that
+aren't about a line in the diff go in the summary. When the review is posted
+from the maintainer's account, the summary opens by saying it comes from the
+reviewing agent.
 
-- **Fixed** with a commit on the branch.
-- **Answered** in the pull request, saying why it isn't a problem or why it's
-  out of scope. Out-of-scope findings that are still worth doing become issues.
+The author replies to each comment in its thread (and to summary findings in a
+comment of their own), handling every finding in one of two ways:
 
-If the fixes change something substantial, the reviewer looks again. When it's
-unclear whether a change counts as substantial, the maintainer decides.
+- **Fixed**, naming the commit on the branch that fixes it.
+- **Answered**, saying why it isn't a problem or why it's out of scope.
+  Out-of-scope findings that are still worth doing become issues, linked in
+  the reply.
+
+If the fixes change something substantial, the reviewer looks again and posts
+a follow-up review the same way. When it's unclear whether a change counts as
+substantial, the maintainer decides.
 
 ### Merging
 
