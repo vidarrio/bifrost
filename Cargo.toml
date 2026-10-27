@@ -7,10 +7,8 @@ description = "Bifrost — the hub for all things Archipelago."
 license = "MIT"
 publish = false
 
-# Workspace: the PopTracker-pack engine lives in its own crate (pure logic→state,
-# no Bifrost/axum coupling). It is NOT yet a dependency of bifrost — it builds on
-# its own via `cargo build -p poptracker` — so normal bifrost builds/deploys are
-# unaffected until the feature is wired in.
+# The PopTracker-pack engine is its own crate (pure logic → tracker state, no
+# Bifrost or axum coupling); bifrost depends on it below.
 [workspace]
 members = ["crates/poptracker"]
 
@@ -32,9 +30,6 @@ sha2 = "0.10"  # session/link tokens are stored as SHA-256, never in the clear
 libc = "0.2"  # sandbox floor: setrlimit / setsid / killpg for AP helper processes
 toml = { version = "0.8", default-features = false, features = ["parse"] }  # $BIFROST_DATA/config.toml
 tower = { version = "0.5", default-features = false }  # Layer: the season-URL rewrite wraps the router
-
-# Planned, added as each phase lands:
-#   reqwest     # the Discord bot / kanidm integration
 
 [profile.release]
 strip = true
