@@ -29,4 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Archipelago release checks and installs authenticate to GitHub with
   `GITHUB_TOKEN` when it's set, avoiding GitHub's anonymous rate limit.
 
+### Fixed
+
+- PopTracker maps no longer fail for packs whose Archipelago handlers register
+  further handlers while they run.
+
 [Unreleased]: https://github.com/vidarrio/bifrost/commits/main

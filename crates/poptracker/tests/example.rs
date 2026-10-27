@@ -366,3 +366,18 @@ fn no_items_make_locations_unreachable() {
     assert!(!acc["Tests/NeedsC2orA"]);
     assert!(!acc["Tests/NeedsLuaRule"], "$has_enough_b: b(1) < 3");
 }
+
+#[test]
+fn handlers_may_register_handlers() {
+    // Every event kind fires a handler that registers another one (which
+    // borrows the engine mutably); none may panic on a held borrow (#2).
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/reentrant-handlers");
+    let s = Session::new(&Pack::load(dir).unwrap()).unwrap();
+    s.on_clear(&serde_json::json!({})).unwrap();
+    s.on_item(1, 100, "Thing", 1).unwrap();
+    s.on_location(200, "Place").unwrap();
+    s.on_retrieved("key", &serde_json::json!(1)).unwrap();
+    // The handlers registered along the way run on the next events.
+    s.on_clear(&serde_json::json!({})).unwrap();
+    s.on_item(2, 100, "Thing", 1).unwrap();
+}
