@@ -120,7 +120,7 @@ pub fn list() -> Vec<Backup> {
             })
         })
         .collect();
-    v.sort_by_key(|b| std::cmp::Reverse(b.at));
+    v.sort_by_key(|x| std::cmp::Reverse(x.at));
     v
 }
 

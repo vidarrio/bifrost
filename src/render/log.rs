@@ -248,7 +248,6 @@ pub(super) fn filter_form(base: &str, f: &LogFilter) -> String {
     out
 }
 
-/// Shared body for the log pages: filter bar + feed + numbered pager.
 /// The swappable part of the log: the feed + pager (no filter form). Served at
 /// `/log/fragment` and swapped into `#logbody` by the live poller.
 #[allow(clippy::too_many_arguments)]
