@@ -54,8 +54,9 @@ section:
 - **Security**: fixes for vulnerabilities.
 
 Write entries for the people who run or play on Bifrost, not for developers.
-Internal-only changes, such as refactors, CI or tests, don't need an entry. Say
-so in the pull request instead.
+Internal-only changes, such as refactors, CI or tests, don't need an entry, and
+neither does a fix to something that hasn't been released yet. Say so in the
+pull request instead.
 
 ## Pull requests
 

@@ -369,15 +369,51 @@ fn no_items_make_locations_unreachable() {
 
 #[test]
 fn handlers_may_register_handlers() {
-    // Every event kind fires a handler that registers another one (which
-    // borrows the engine mutably); none may panic on a held borrow (#2).
+    // Every event kind fires a handler that registers another one, and the
+    // Clear handler loads more items; both borrow the engine mutably, and none
+    // may panic on a held borrow (#2).
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/reentrant-handlers");
     let s = Session::new(&Pack::load(dir).unwrap()).unwrap();
     s.on_clear(&serde_json::json!({})).unwrap();
     s.on_item(1, 100, "Thing", 1).unwrap();
     s.on_location(200, "Place").unwrap();
     s.on_retrieved("key", &serde_json::json!(1)).unwrap();
-    // The handlers registered along the way run on the next events.
+    let active = |code: &str| {
+        s.state()
+            .items
+            .iter()
+            .find(|i| i.codes.iter().any(|c| c == code))
+            .unwrap_or_else(|| panic!("no item {code}"))
+            .active
+    };
+    // A handler list is a snapshot taken when its event fires: the late
+    // Retrieved and SetReply handlers were added during the one on_retrieved
+    // call that fires both lists, and Clear hasn't fired since late_clear was
+    // added. The late Item and Location handlers already ran (their events
+    // came after the ones that added them).
+    for code in ["late_clear", "late_retrieved", "late_set_reply"] {
+        assert!(!active(code), "{code} ran too early");
+    }
+    assert!(active("late_item") && active("late_location"));
+    // …but they do on the next one; the Clear handler's items loaded too.
     s.on_clear(&serde_json::json!({})).unwrap();
     s.on_item(2, 100, "Thing", 1).unwrap();
+    s.on_location(201, "Place").unwrap();
+    s.on_retrieved("key", &serde_json::json!(2)).unwrap();
+    for code in [
+        "late_clear",
+        "late_item",
+        "late_location",
+        "late_retrieved",
+        "late_set_reply",
+    ] {
+        assert!(active(code), "{code} didn't run");
+    }
+    assert!(
+        s.state()
+            .items
+            .iter()
+            .any(|i| i.codes.iter().any(|c| c == "loaded")),
+        "items loaded by a handler"
+    );
 }

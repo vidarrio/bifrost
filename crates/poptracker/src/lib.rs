@@ -558,7 +558,8 @@ impl Session {
         out.items.sort_by(|a, b| a.key.cmp(&b.key));
 
         // maps
-        for m in self.eng.borrow().maps.clone() {
+        let maps = self.eng.borrow().maps.clone();
+        for m in maps {
             out.maps.push(MapInfo {
                 name: m.name,
                 img: m.img,

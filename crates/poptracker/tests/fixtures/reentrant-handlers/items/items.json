@@ -1,0 +1,32 @@
+[
+  {
+    "name": "late_clear",
+    "type": "toggle",
+    "img": "images/x.png",
+    "codes": "late_clear"
+  },
+  {
+    "name": "late_item",
+    "type": "toggle",
+    "img": "images/x.png",
+    "codes": "late_item"
+  },
+  {
+    "name": "late_location",
+    "type": "toggle",
+    "img": "images/x.png",
+    "codes": "late_location"
+  },
+  {
+    "name": "late_retrieved",
+    "type": "toggle",
+    "img": "images/x.png",
+    "codes": "late_retrieved"
+  },
+  {
+    "name": "late_set_reply",
+    "type": "toggle",
+    "img": "images/x.png",
+    "codes": "late_set_reply"
+  }
+]
