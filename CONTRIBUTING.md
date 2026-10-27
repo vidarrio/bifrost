@@ -25,6 +25,10 @@ branch. Prefix the branch name with the kind of change:
 
 For example: `feat/season-rehearsal`, `fix/hint-credit-race`.
 
+The kind of change also shows on the pull request: its title starts with it
+(see [Pull requests](#pull-requests)), and it's labelled with it
+automatically, from the branch prefix.
+
 Keep branches short-lived. If `main` moves on while you work, rebase onto it
 and update the pull request with `git push --force-with-lease`.
 
@@ -60,8 +64,18 @@ pull request instead.
 
 ## Pull requests
 
-Open a pull request against `main` once the branch is ready for review. The
-description says:
+Open a pull request against `main` once the branch is ready for review. Its
+title is `<kind>: <subject>`, where `<kind>` is the branch's prefix without the
+slash and `<subject>` is an imperative summary. A scope in parentheses is
+optional. For example:
+
+- `feat: import seasons from archive bundles`
+- `fix(poptracker): don't hold the engine borrow while handlers run`
+
+A CI check (`title`) fails when the title doesn't have this form or its kind
+doesn't match the branch.
+
+The description says:
 
 - what changes and why;
 - how it was tested;
@@ -78,6 +92,7 @@ CI runs on every pull request and on every push to `main`. It checks:
 | `e2e` | the native end-to-end suites (a debug build on real Archipelago installs, generating seeds and running servers under bubblewrap), split across parallel shards |
 | `image` | builds the container image and runs its suite (`tests/e2e/run.sh container`) |
 | `bundle` | builds the native bundle and runs its suite (`tests/e2e/run.sh bundle`) |
+| `title` | the pull request title is `<kind>: <subject>`, with the branch's kind (see [Pull requests](#pull-requests)) |
 
 `e2e`, `image` and `bundle` are skipped when a pull request only changes
 documentation (Markdown files, `docs/`, `LICENSE`). The image and bundle
@@ -122,9 +137,9 @@ A pull request merges when all of these hold:
 4. The branch is up to date with `main`.
 
 Merge with **squash and merge**, the only merge method the repository allows.
-The pull request title becomes the commit subject on `main`, with the PR number
-appended, so write it like a commit subject: imperative, and at most about 65
-characters, so the subject stays under 72 with the number. The branch is deleted automatically.
+The pull request title, kind included, becomes the commit subject on `main`,
+with the PR number appended. Keep it to about 65 characters, so the subject
+stays under 72 with the number. The branch is deleted automatically.
 
 ### Repository settings
 
@@ -169,10 +184,10 @@ To cut release `X.Y.Z`:
    until step 5 pushes the tag; that's expected.
 3. **Version**: set `version = "X.Y.Z"` in the root `Cargo.toml`, then run
    `cargo update --workspace` so `Cargo.lock` follows.
-4. **Pull request**: open it as `Release vX.Y.Z`, with CI and review like any
+4. **Pull request**: open it as `release: vX.Y.Z`, with CI and review like any
    other change. Review checks that the changelog is complete and accurate for
    the release. Then merge it.
-5. **Tag** the squash commit that `Release vX.Y.Z` created on `main`, and push
+5. **Tag** the squash commit that `release: vX.Y.Z` created on `main`, and push
    the tag. Check first that `git log -1 origin/main` is that commit; if
    something else has merged since, tag the release commit's SHA instead.
 

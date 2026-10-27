@@ -1,0 +1,15 @@
+# Pull request labels from the branch prefix (see CONTRIBUTING.md, Branches).
+feat:
+  - head-branch: ['^feat/']
+fix:
+  - head-branch: ['^fix/']
+refactor:
+  - head-branch: ['^refactor/']
+docs:
+  - head-branch: ['^docs/']
+ci:
+  - head-branch: ['^ci/']
+chore:
+  - head-branch: ['^chore/', '^dependabot/', '^renovate/']
+release:
+  - head-branch: ['^release/']

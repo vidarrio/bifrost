@@ -1,0 +1,32 @@
+name: Title
+
+# The pull request title is `<kind>: <subject>` (optionally `<kind>(<scope>):`),
+# with the kind of the branch prefix. Squash merges make it the commit subject
+# on main. Reruns when the title is edited.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  title:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Title matches the branch's kind
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          case "$BRANCH" in
+            feat/*|fix/*|refactor/*|docs/*|ci/*|chore/*|release/*) kind=${BRANCH%%/*} ;;
+            # Dependency-update bots: their PRs are chores.
+            dependabot/*|renovate/*) kind=chore ;;
+            *) echo "::error::branch '$BRANCH' has no known prefix (feat/, fix/, refactor/, docs/, ci/, chore/, release/)"; exit 1 ;;
+          esac
+          # Optional scope in parentheses, optional ! for a breaking change.
+          if ! printf '%s\n' "$TITLE" | grep -Eq "^${kind}(\([^()]+\))?!?: [^ ]"; then
+            echo "::error::title should start with '${kind}: ' (or '${kind}(scope): '), got: $TITLE"
+            exit 1
+          fi
