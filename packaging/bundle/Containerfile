@@ -22,11 +22,18 @@ RUN ${APT} update && ${APT} install -y --no-install-recommends musl-tools \
 WORKDIR /src
 COPY rust-toolchain.toml ./
 RUN rustup target add x86_64-unknown-linux-musl
+# Dependencies first, against stub sources (see the Dockerfile).
 COPY Cargo.toml Cargo.lock ./
+COPY crates/poptracker/Cargo.toml crates/poptracker/
+RUN mkdir -p src crates/poptracker/src \
+    && echo 'fn main() {}' > src/main.rs && touch crates/poptracker/src/lib.rs \
+    && cargo build --release --locked --bin bifrost --target x86_64-unknown-linux-musl \
+    && rm -rf src crates/poptracker/src
 COPY crates crates
 COPY src src
 COPY static static
-RUN cargo build --release --locked --bin bifrost --target x86_64-unknown-linux-musl
+RUN touch src/main.rs crates/poptracker/src/lib.rs \
+    && cargo build --release --locked --bin bifrost --target x86_64-unknown-linux-musl
 
 # ---- the runtime payload ----
 FROM docker.io/library/debian:${DEBIAN}-slim AS runtime
