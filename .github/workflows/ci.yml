@@ -10,21 +10,26 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push to a pull request supersedes the old run; on main every
+  # commit gets its own run (and its cache save).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Toolchain
         run: |
-          rustup toolchain install --profile minimal
+          rustup update --no-self-update stable
           rustup component add rustfmt clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Only main's caches can be restored by other branches.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
@@ -33,11 +38,14 @@ jobs:
         run: python3 -m py_compile scripts/*.py
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Toolchain
-        run: rustup toolchain install --profile minimal
+        run: rustup update --no-self-update stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Only main's caches can be restored by other branches.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Unit tests
         run: cargo test --workspace

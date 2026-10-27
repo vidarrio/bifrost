@@ -21,13 +21,16 @@ branch. Prefix the branch name with the kind of change:
 | `docs/` | documentation only |
 | `ci/` | CI and tooling |
 | `chore/` | dependencies, formatting, housekeeping |
+| `release/` | release cuts only (see [Releases](#releases)) |
 
 For example: `feat/season-rehearsal`, `fix/hint-credit-race`.
 
-Keep branches short-lived. If `main` moves on while you work, rebase onto it.
+Keep branches short-lived. If `main` moves on while you work, rebase onto it
+and update the pull request with `git push --force-with-lease`.
 
 `main` is protected: nobody pushes to it directly, the maintainer included.
-Changes reach it only through a pull request with passing CI.
+Changes reach it only through a pull request with passing CI (see
+[Repository settings](#repository-settings)).
 
 ## Commits
 
@@ -79,16 +82,17 @@ Run the same commands locally before pushing (see [Development](#development)).
 Every pull request is reviewed by a separate AI agent, one that didn't write
 the change. The reviewer works from the branch and a description of what to
 check, not from the author's own conclusions, so its read isn't anchored on
-them. It reports findings ranked by severity, and the findings are posted to
-the pull request as a comment.
+them. It reports findings ranked by severity. The author posts them to the
+pull request as a comment, together with how each one was handled.
 
-Every finding is then handled in one of two ways:
+Every finding is handled in one of two ways:
 
 - **Fixed** with a commit on the branch.
 - **Answered** in the pull request, saying why it isn't a problem or why it's
   out of scope. Out-of-scope findings that are still worth doing become issues.
 
-If the fixes change something substantial, the reviewer looks again.
+If the fixes change something substantial, the reviewer looks again. When it's
+unclear whether a change counts as substantial, the maintainer decides.
 
 ### Merging
 
@@ -99,8 +103,24 @@ A pull request merges when all of these hold:
 3. The changelog has its entry, if one is needed.
 4. The branch is up to date with `main`.
 
-Merge with **squash and merge**: the pull request title becomes the commit
-subject on `main`, so make it a good one. Delete the branch afterwards.
+Merge with **squash and merge**, the only merge method the repository allows.
+The pull request title becomes the commit subject on `main`, with the PR number
+appended, so write it like a commit subject: imperative, at most 72
+characters. The branch is deleted automatically.
+
+### Repository settings
+
+These GitHub settings enforce the process:
+
+- **Merging**: squash only (merge commits and rebase merges are off). The
+  squash commit takes the pull request's title and an empty body, so fixup
+  commits on the branch don't end up on `main`. Merged branches are deleted.
+- **A ruleset on `main`**:
+  - changes only through a pull request (no approvals required: the
+    maintainer can't approve their own pull requests);
+  - the CI jobs must pass, on a branch that is up to date with `main`;
+  - no force pushes and no deletion;
+  - nobody can bypass it, the maintainer included.
 
 ## Releases
 
@@ -109,31 +129,46 @@ collect under `[Unreleased]` until then.
 
 Versions follow [Semantic Versioning](https://semver.org/). Before 1.0, a
 minor version (`0.x.0`) carries new features or breaking changes, and a patch
-version (`0.x.y`) carries fixes only.
+version (`0.x.y`) carries fixes only. The first release is `0.1.0`. Only
+Bifrost's own version (the root `Cargo.toml`) is bumped; the `poptracker` crate
+is internal and keeps its version.
 
 To cut release `X.Y.Z`:
 
 1. **Branch** `release/vX.Y.Z` from the latest `main`.
-2. **Changelog**: rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, add a
-   fresh empty `## [Unreleased]` above it, and update the comparison links at
-   the bottom.
-3. **Version**: set `version = "X.Y.Z"` in `Cargo.toml`, and run `cargo build`
-   so `Cargo.lock` follows.
+2. **Changelog**: rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` and add
+   a fresh, empty `## [Unreleased]` above it. Then update the link references
+   at the bottom:
+
+   ```
+   [Unreleased]: https://github.com/vidarrio/bifrost/compare/vX.Y.Z...HEAD
+   [X.Y.Z]: https://github.com/vidarrio/bifrost/compare/vPREV...vX.Y.Z
+   ```
+
+   For the first release, which has no previous tag, the version's link is
+   `https://github.com/vidarrio/bifrost/releases/tag/v0.1.0`. These links 404
+   until step 5 pushes the tag; that's expected.
+3. **Version**: set `version = "X.Y.Z"` in the root `Cargo.toml`, then run
+   `cargo update --workspace` so `Cargo.lock` follows.
 4. **Pull request**: open it as `Release vX.Y.Z`, with CI and review like any
    other change. Review checks that the changelog is complete and accurate for
    the release. Then merge it.
-5. **Tag** the merge commit on `main` and push the tag:
+5. **Tag** the squash commit that `Release vX.Y.Z` created on `main`, and push
+   the tag. Check first that `git log -1 origin/main` is that commit; if
+   something else has merged since, tag the release commit's SHA instead.
 
    ```sh
-   git tag -a vX.Y.Z -m "Bifrost X.Y.Z" <merge-commit>
+   git fetch origin
+   git tag -a vX.Y.Z -m "Bifrost X.Y.Z" origin/main
    git push origin vX.Y.Z
    ```
 
-6. **GitHub release** from the tag, using that version's changelog section as
+6. **GitHub release** from the tag, with that version's changelog section as
    the notes:
 
    ```sh
-   gh release create vX.Y.Z --title "Bifrost X.Y.Z" --notes-file <section.md>
+   awk '/^## \[X.Y.Z\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md > notes.md
+   gh release create vX.Y.Z --verify-tag --title "Bifrost X.Y.Z" --notes-file notes.md
    ```
 
    Build the native bundle from the tag (`packaging/bundle/build.sh`) and

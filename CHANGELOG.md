@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-The first public version; nothing has been released yet. What it does today:
-
 ### Added
 
 - Seasons that go draft → signups → live → archived, with several live at
