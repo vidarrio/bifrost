@@ -444,13 +444,13 @@ impl Session {
     /// pack's own `onClear` can set the same toggles if it reads them.
     pub fn set_valid_locations(&self, ids: &[i64]) {
         self.eng.borrow_mut().valid_locations = Some(ids.iter().copied().collect());
-        if let Ok(ap) = self.lua.globals().get::<Table>("Archipelago") {
-            if let Ok(t) = self.lua.create_table() {
-                for (i, id) in ids.iter().enumerate() {
-                    let _ = t.set(i as i64 + 1, *id);
-                }
-                let _ = ap.set("MissingLocations", t);
+        if let Ok(ap) = self.lua.globals().get::<Table>("Archipelago")
+            && let Ok(t) = self.lua.create_table()
+        {
+            for (i, id) in ids.iter().enumerate() {
+                let _ = t.set(i as i64 + 1, *id);
             }
+            let _ = ap.set("MissingLocations", t);
         }
     }
 
@@ -492,7 +492,6 @@ impl Session {
             .retr_h
             .iter()
             .chain(self.eng.borrow().setr_h.iter())
-            .cloned()
         {
             h.call::<()>((key, v.clone()))?;
         }
@@ -748,15 +747,15 @@ fn eval_token(lua: &Lua, eng: &E, tok: &str, depth: u32) -> bool {
     }
     if let Some(f) = tok.strip_prefix('$') {
         let name = f.split(':').next().unwrap_or(f);
-        if let Ok(func) = lua.globals().get::<Function>(name) {
-            if let Ok(v) = func.call::<Value>(()) {
-                return match v {
-                    Value::Integer(i) => i >= 1,
-                    Value::Number(n) => n >= 1.0,
-                    Value::Boolean(b) => b,
-                    _ => false,
-                };
-            }
+        if let Ok(func) = lua.globals().get::<Function>(name)
+            && let Ok(v) = func.call::<Value>(())
+        {
+            return match v {
+                Value::Integer(i) => i >= 1,
+                Value::Number(n) => n >= 1.0,
+                Value::Boolean(b) => b,
+                _ => false,
+            };
         }
         return false;
     }
@@ -1221,10 +1220,10 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                             );
                         }
                     }
-                    if imgs.is_empty() {
-                        if let Some(im) = item.get("img").and_then(|v| v.as_str()) {
-                            imgs.push(img_path(im));
-                        }
+                    if imgs.is_empty()
+                        && let Some(im) = item.get("img").and_then(|v| v.as_str())
+                    {
+                        imgs.push(img_path(im));
                     }
                     // Unique per item: PopTracker items can share a leading code
                     // (e.g. all "Traveling Merchant" days share "tm"), so keying

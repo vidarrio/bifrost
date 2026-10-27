@@ -582,6 +582,7 @@ impl Db {
     /// Append an activity row (ingest path; dedup is via the cursor). `sender`
     /// is the actor (sender of an item, or the player who goaled/released/
     /// collected); `receiver` is the item's recipient (sends only, else None).
+    #[allow(clippy::too_many_arguments)]
     pub async fn activity_add(
         &self,
         season: i64,

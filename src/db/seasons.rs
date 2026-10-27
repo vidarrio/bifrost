@@ -141,10 +141,9 @@ pub struct SeasonRow {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StateCol(pub State);
 
-impl TryFrom<String> for StateCol {
-    type Error = std::convert::Infallible;
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        Ok(StateCol(State::parse(&s)))
+impl From<String> for StateCol {
+    fn from(s: String) -> Self {
+        StateCol(State::parse(&s))
     }
 }
 
@@ -449,10 +448,10 @@ impl Db {
             .await
             .map_err(db)?
             .flatten();
-        if let Some(p) = held.and_then(|p| u16::try_from(p).ok()) {
-            if range.contains(&p) {
-                return Ok(Some(p));
-            }
+        if let Some(p) = held.and_then(|p| u16::try_from(p).ok())
+            && range.contains(&p)
+        {
+            return Ok(Some(p));
         }
         let taken: std::collections::HashSet<i64> =
             sqlx::query_scalar("SELECT ap_port FROM season WHERE ap_port IS NOT NULL AND id <> ?")

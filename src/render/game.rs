@@ -477,6 +477,7 @@ pub(super) fn inlogic_panel(inlogic: Option<&crate::db::InLogic>) -> String {
     s
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn game_page(
     ap_slot: i64,
     game: &str,

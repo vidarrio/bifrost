@@ -357,8 +357,11 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 /// memory only — a restart forgives.
 #[derive(Default)]
 pub struct Throttle {
-    failures: Mutex<HashMap<(String, Option<IpAddr>), (u32, Instant)>>,
+    failures: Mutex<HashMap<ThrottleKey, (u32, Instant)>>,
 }
+
+/// (username, client address).
+type ThrottleKey = (String, Option<IpAddr>);
 
 const FREE_FAILURES: u32 = 5;
 

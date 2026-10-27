@@ -68,10 +68,10 @@ async fn copy_ext(src: &Path, dst: &Path, ext: &str) -> std::io::Result<()> {
     };
     while let Ok(Some(entry)) = rd.next_entry().await {
         let p = entry.path();
-        if p.extension().and_then(|e| e.to_str()) == Some(ext) {
-            if let Some(name) = p.file_name() {
-                let _ = tokio::fs::copy(&p, dst.join(name)).await;
-            }
+        if p.extension().and_then(|e| e.to_str()) == Some(ext)
+            && let Some(name) = p.file_name()
+        {
+            let _ = tokio::fs::copy(&p, dst.join(name)).await;
         }
     }
     Ok(())
@@ -135,10 +135,10 @@ pub async fn bundle_season(
         .stdin(Stdio::null())
         .output()
         .await
+        && out.status.success()
+        && !out.stdout.is_empty()
     {
-        if out.status.success() && !out.stdout.is_empty() {
-            let _ = tokio::fs::write(sp.join("archipelago.log"), &out.stdout).await;
-        }
+        let _ = tokio::fs::write(sp.join("archipelago.log"), &out.stdout).await;
     }
 
     // Package. tar from inside the stage so paths are relative (no .stage- dir).

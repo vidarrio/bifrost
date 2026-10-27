@@ -302,11 +302,11 @@ pub(crate) async fn admin_archive_season(
         let (game, mut names) = by_slot.remove(ap_slot).unwrap();
         names.sort_by_key(|n| n.to_ascii_lowercase());
         // Primary (the AP slot's own player) first.
-        if let Some(lead) = ap_names.get(ap_slot) {
-            if let Some(pos) = names.iter().position(|n| n.eq_ignore_ascii_case(lead)) {
-                let p = names.remove(pos);
-                names.insert(0, p);
-            }
+        if let Some(lead) = ap_names.get(ap_slot)
+            && let Some(pos) = names.iter().position(|n| n.eq_ignore_ascii_case(lead))
+        {
+            let p = names.remove(pos);
+            names.insert(0, p);
         }
         player_total += names.len();
         let live = snap.ap.get(ap_slot);
@@ -700,15 +700,14 @@ pub(crate) async fn admin_connect_password(
         &format!("/option password {pw}"),
     )
     .await
+        && live
     {
-        if live {
-            return render::notice(
-                &format!("Couldn't set it on the running server: {e}"),
-                false,
-                "admin",
-            )
-            .into_response();
-        }
+        return render::notice(
+            &format!("Couldn't set it on the running server: {e}"),
+            false,
+            "admin",
+        )
+        .into_response();
     }
     // Persist after a short delay so this response reaches the browser before the
     // root helper restarts bifrost (writing the request file triggers it: a
