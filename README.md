@@ -1,158 +1,103 @@
 # Bifrost
 
 A self-hosted season manager for [Archipelago](https://archipelago.gg)
-multiworlds, written in Rust (axum). One download runs the whole thing:
-signups with live YAML checks, seed generation, the AP servers themselves (one
-per live season), a live board with hints, and the archive of past seasons.
+multiworlds. It's built for a friend group or community running recurring
+seasons. One program runs the whole thing: signups with live YAML checks, seed
+generation, the Archipelago servers, a live board with hints and trackers, and
+an archive of past seasons.
 
-It's built for a friend group or community running recurring seasons, and
-ships as a container image or a single native file. Everything mutable lives
-in one data directory.
+- **[User guide](docs/USER_GUIDE.md)**: how to play, run seasons and operate an
+  instance.
+- **[AI disclaimer](AI_DISCLAIMER.md)**: Bifrost is largely AI-written. Read
+  this before you deploy it.
 
-**[User guide](docs/USER_GUIDE.md)**: how to play, run seasons and operate an
-instance. Bifrost is largely AI-written; see the [AI disclaimer](AI_DISCLAIMER.md).
+## Features
 
-## Run it
+- **Seasons.** Each season goes draft → signups → live → archived, and several
+  can be live at once. Every live season gets its own Archipelago server on a
+  stable port.
+- **Signups.** A three-step wizard: pick a game (core, a vetted catalog world,
+  or a custom upload), then upload a YAML. The YAML must pass Archipelago's own
+  checks before the signup is accepted.
+- **Custom worlds, safely.** Sysadmins keep a catalog of vetted apworlds. Other
+  uploads can wait for a moderator's approval. Every world is hash-pinned, and
+  all apworld code runs in a bubblewrap sandbox.
+- **Generation.** One click rolls the seed, maps slots and claims, and starts
+  the server. Re-rolls keep claims.
+- **Live board and game pages.** Slot status, goals and item flow, hints with
+  item search and prioritization, Universal Tracker's in-logic list,
+  PopTracker maps in the browser, and minesweeper for bonus hints.
+- **Roles.** Players, moderators who run their own seasons, and sysadmins who
+  run the instance. Accounts are invite-only with built-in passwords, or come
+  from your identity provider through forward-auth.
+- **Archipelago updates.** Install new releases from the settings page; each is
+  tested before it's offered. A live season keeps the version it was generated
+  with. Releases come from Bifrost's [Archipelago fork](packaging/archipelago/),
+  which carries small compatibility patches.
+- **Operations.** Nightly backups with retention, live load monitoring, and
+  season bundles you can download and import on another instance.
 
-**Container (recommended)** — the image carries Bifrost, a pinned Archipelago
-and bubblewrap:
+## Quick start
 
 ```sh
 podman build -t bifrost .            # or docker build
 podman run -d --name bifrost --stop-timeout 30 --security-opt unmask=/proc/* \
     -p 8080:8080 -p 38281-38300:38281-38300 -v bifrost-data:/var/lib/bifrost bifrost
-podman logs bifrost                  # the first-run /setup link
+podman logs bifrost                  # prints the first-run /setup link
 ```
 
-`--security-opt unmask=/proc/*` (docker: `--security-opt systempaths=unconfined`)
-lets the sandbox mount its own `/proc`; without it Bifrost falls back to a
-weaker sandbox and refuses custom apworlds (it says so in the log).
-`--stop-timeout 30` gives live AP servers time to save.
+Open the `/setup?token=…` link to create the first sysadmin. Then set the
+connect host under *Console → Settings* and create a season.
 
-**Native single file (Linux x86_64)** — a static binary with its own Python
-and Archipelago appended; it unpacks them into the data dir on first run:
-
-```sh
-packaging/bundle/build.sh            # → dist/bifrost-<version>-x86_64-linux
-./dist/bifrost-<version>-x86_64-linux
-```
-
-Without `BIFROST_DATA` it keeps its data in `~/.local/share/bifrost` (or
-`/var/lib/bifrost` as root). Install `bubblewrap` on the host for the strong
-sandbox, which custom apworlds need.
-
-**First run:** open the `/setup?token=…` link from the log to create the first
-sysadmin. Then set the connect host and Discord links under *Console →
-Settings*, create a season, and open its signups.
-
-## What it does
-
-- **Seasons.** Draft → signups → live → archived, several live at once, each
-  with its own AP server on a stable port from `BIFROST_AP_PORTS` (default
-  38281–38300; the range size caps how many seasons can be live). Moderators run
-  the seasons they create; sysadmins run the instance.
-- **Signups.** A stepped wizard: pick a core game, a world from the curated
-  catalog, or upload a custom `.apworld`; the YAML is checked against the
-  season's worlds with Archipelago's own code before it's accepted.
-- **Apworld catalog and approval.** Sysadmins keep a catalog of vetted worlds.
-  Other uploads install right away or wait for a moderator's approval,
-  depending on a sysadmin toggle; signups that need a pending world are held
-  and checked once it's approved.
-- **Generation.** Rolls the season from its signups, maps slots and claims, and
-  starts (or restarts) the season's AP server. Re-rolls keep claims.
-- **Live board and game pages.** Each slot's status, goal and item flow;
-  hints with fuzzy item search and prioritization; Universal Tracker's
-  "in logic" list; PopTracker packs.
-- **Archipelago updates.** Check for releases, install one (tested with a
-  sandboxed generation before it's offered), and switch new seasons to it. Live
-  seasons keep the version that generated them until they're re-rolled or
-  archived. Releases come from Bifrost's fork of Archipelago, which adds small
-  compatibility patches, e.g. no join/leave announcements for Bifrost's own
-  connections (see `packaging/archipelago/`).
-- **Backups.** Nightly and on demand, with retention (the last 7 days, 4 weeks
-  and 3 months, capped at 5 GiB by default), downloadable from the settings
-  page.
-- **Past seasons travel.** Archiving a season writes a bundle (summary, seed,
-  save, YAMLs, worlds) that its admins can download; another instance imports
-  it from the Seasons console or with `bifrost season import`.
-- **Live load.** The settings page shows memory, CPU and disk over the last
-  hour, what each live season's AP server and the sandboxed helpers use, and
-  warns when memory, CPU or disk run short; a season's admin page warns before
-  going live if another server likely wouldn't fit.
-- **Minesweeper.** Clear a no-guess board to earn a bonus hint.
-
-## Accounts
-
-Usernames and passwords by default, with single-use invites, community invite
-links and sysadmin-minted reset links. Alternatively an identity provider via
-forward-auth (`bifrost auth mode forward-auth`), exclusive per instance: the
-proxy must authenticate the season paths (`/s/{id}/admin`, `/s/{id}/claim`, …)
-as well as the plain ones, or it lets clients' own identity headers through
-(see the [user guide](docs/USER_GUIDE.md#sign-in-modes)). The CLI is the break-glass:
-
-```
-bifrost auth status                       show the auth mode and accounts
-bifrost auth mode native|forward-auth     switch auth mode (restart to apply)
-bifrost admin reset-link <username>       mint a 24 h password-reset link
-bifrost admin create-sysadmin <username>  create a sysadmin + reset link
-bifrost admin set-role <username> <role>  user|moderator|sysadmin
-bifrost backup now | list | restore <zip> backups (restore with Bifrost stopped)
-bifrost season import <bundle.tar.gz>     add a finished season from an archive bundle
-```
-
-## Configuration
-
-Settings come from the environment or `$BIFROST_DATA/config.toml` (the
-environment wins). `bifrost config example` prints a commented template of
-every setting. Page-level settings (connect host, home page, Discords, apworld
-approval, Archipelago versions) live in the console instead. Archipelago's own
-generation settings (hint cost, release/collect modes, …) come from
-`$BIFROST_DATA/host.yaml` if you put one there; each new season starts from a
-copy of it (AP's defaults otherwise).
-
-## Isolation
-
-Anything that runs apworld code — YAML checks, generation, seed decoding, the
-AP servers — runs sandboxed: under bubblewrap with no network (except the AP
-servers; the in-logic tracker reaches its season's server through a relayed
-socket), a read-only system, and only the season's
-own output writable. Without bubblewrap Bifrost uses resource limits only and
-refuses custom apworlds unless the operator explicitly allows them.
-
-## Layout
-
-```
-src/
-  main.rs         routes, handlers, startup
-  config.rs       settings + the data-dir layout
-  db.rs, db/      SQLite: seasons, accounts, slots, claims, submissions, catalog, settings
-  auth.rs         sessions, roles, forward-auth, CSRF; account.rs: login/invites/users pages
-  runtime.rs      per-season boards and workers; apserver.rs: AP server supervisor
-  ap_adapter.rs   the one door to Archipelago internals (sandboxed helper scripts)
-  apinstall.rs    which AP install each season runs; apupdate.rs: installing releases
-  worlds.rs       apworld catalog, uploads and approval
-  generate.rs     generate / re-roll orchestration
-  sandbox.rs      bubblewrap / rlimit isolation
-  backup.rs       backups and retention; bundle.rs: the single-file runtime
-  load.rs         live load sampling and warnings (settings page)
-  render.rs       all HTML
-scripts/          Python helpers run under Archipelago's interpreter
-vendor/           bundled apworlds (Universal Tracker)
-packaging/bundle/ the native bundle build
-packaging/archipelago/ Bifrost's Archipelago fork: patches + release script
-docs/             the user guide
-```
+You can also build Bifrost as a single native Linux executable
+(`packaging/bundle/build.sh`). See the
+[user guide](docs/USER_GUIDE.md#installing) for both options, what the
+container flags do, and running behind a reverse proxy.
 
 ## Development
 
+Bifrost is written in Rust (axum, SQLite via sqlx). Its Python helpers run
+under Archipelago's own interpreter.
+
 ```sh
-cargo test                           # unit tests
+cargo test --workspace               # unit tests
 cargo build && BIFROST_DATA=./data BIFROST_AP_DIR=/path/to/Archipelago \
     BIFROST_RUNTIME_DIR=. BIFROST_INSECURE_COOKIES=1 target/debug/bifrost
 ```
 
-`BIFROST_AP_DIR` should hold an Archipelago checkout with a `venv/`
-(`BIFROST_AP_PYTHON` overrides the interpreter).
+`BIFROST_AP_DIR` must point at an Archipelago checkout with a `venv/`
+(`BIFROST_AP_PYTHON` overrides the interpreter). `bifrost config example`
+prints every setting.
+
+```
+src/
+  main.rs           routes, handlers, startup
+  config.rs         settings and the data-dir layout
+  db.rs, db/        SQLite: seasons, accounts, slots, claims, signups, catalog, settings
+  auth.rs           sessions, roles, forward-auth, CSRF (account.rs: sign-in, invites, users)
+  scope.rs          season-scoped URLs (/s/<id>/…)
+  runtime.rs        per-season boards and workers (apserver.rs: the AP server supervisor)
+  ap.rs             Archipelago client and live board state
+  ap_adapter.rs     the one door to Archipelago internals (sandboxed helper scripts)
+  sandbox.rs        bubblewrap / resource-limit isolation
+  apinstall.rs      which AP install each season runs (apupdate.rs: installing releases)
+  worlds.rs         apworld catalog, uploads and approval
+  checker.rs        YAML checks
+  generate.rs       generation and re-rolls
+  inlogic.rs        Universal Tracker's in-logic list
+  ptrack.rs         PopTracker packs (engine in crates/poptracker)
+  mine.rs           no-guess minesweeper
+  season.rs         archived-season summaries (archive.rs: season bundles and import)
+  backup.rs         backups and retention (bundle.rs: the single-file runtime)
+  load.rs           live load sampling and warnings
+  render.rs         all HTML
+crates/poptracker/  PopTracker pack engine
+scripts/            Python helpers run under Archipelago's interpreter
+static/             the home page template
+vendor/             bundled apworlds (Universal Tracker)
+packaging/          the native bundle build and the Archipelago fork's patches
+docs/               the user guide
+```
 
 ## License
 
