@@ -105,8 +105,8 @@ A pull request merges when all of these hold:
 
 Merge with **squash and merge**, the only merge method the repository allows.
 The pull request title becomes the commit subject on `main`, with the PR number
-appended, so write it like a commit subject: imperative, at most 72
-characters. The branch is deleted automatically.
+appended, so write it like a commit subject: imperative, and at most about 65
+characters, so the subject stays under 72 with the number. The branch is deleted automatically.
 
 ### Repository settings
 
@@ -118,7 +118,8 @@ These GitHub settings enforce the process:
 - **A ruleset on `main`**:
   - changes only through a pull request (no approvals required: the
     maintainer can't approve their own pull requests);
-  - the CI jobs must pass, on a branch that is up to date with `main`;
+  - the CI jobs must pass (as reported by GitHub Actions), on a branch that is
+    up to date with `main`;
   - no force pushes and no deletion;
   - nobody can bypass it, the maintainer included.
 
@@ -167,8 +168,8 @@ To cut release `X.Y.Z`:
    the notes:
 
    ```sh
-   awk '/^## \[X.Y.Z\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md > notes.md
-   gh release create vX.Y.Z --verify-tag --title "Bifrost X.Y.Z" --notes-file notes.md
+   awk '/^## \[X.Y.Z\]/{f=1;next} /^## \[/||/^\[[^]]*\]: /{f=0} f' CHANGELOG.md |
+       gh release create vX.Y.Z --verify-tag --title "Bifrost X.Y.Z" --notes-file -
    ```
 
    Build the native bundle from the tag (`packaging/bundle/build.sh`) and

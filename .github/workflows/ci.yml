@@ -8,11 +8,11 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request supersedes its old run. On main each run gets
+# a group of its own, so every commit there is checked (and saves the cache).
 concurrency:
-  group: ci-${{ github.ref }}
-  # A newer push to a pull request supersedes the old run; on main every
-  # commit gets its own run (and its cache save).
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always

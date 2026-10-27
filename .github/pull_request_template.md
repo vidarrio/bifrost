@@ -8,7 +8,7 @@
 
 ## Checklist
 
-- [ ] Title is an imperative subject of at most 72 characters (it becomes the commit on `main`)
+- [ ] Title is an imperative subject of at most ~65 characters (it becomes the commit on `main`, plus " (#N)")
 - [ ] Branch is up to date with `main`
 - [ ] `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass locally
 - [ ] `CHANGELOG.md` has an entry under `[Unreleased]` (or: no user-visible change)
