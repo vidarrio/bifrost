@@ -74,17 +74,10 @@ RUN rm -rf bifrost/scripts/__pycache__ \
 # ---- binary + payload + trailer (payload length, u64 LE; magic) ----
 FROM runtime AS assemble
 COPY --from=bifrost /src/target/x86_64-unknown-linux-musl/release/bifrost /bundle/bifrost.bin
-RUN /bundle/runtime/python/bin/python3 - <<'EOF'
-import os, struct
-n = os.path.getsize("/bundle/payload.zip")
-with open("/bundle/bifrost", "wb") as out:
-    for part in ("/bundle/bifrost.bin", "/bundle/payload.zip"):
-        with open(part, "rb") as f:
-            while chunk := f.read(1 << 20):
-                out.write(chunk)
-    out.write(struct.pack("<Q", n) + b"BIFROST-BUNDLE01")
-os.chmod("/bundle/bifrost", 0o755)
-EOF
+# A script file rather than a RUN heredoc: older builders (podman 4) don't
+# support heredocs.
+COPY packaging/bundle/assemble.py /tmp/assemble.py
+RUN /bundle/runtime/python/bin/python3 /tmp/assemble.py
 
 FROM scratch AS bundle
 ARG BIFROST_VERSION=dev

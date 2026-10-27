@@ -278,6 +278,8 @@ The image and bundle ship a pinned Archipelago. **Settings → Archipelago**
 manages further versions:
 
 - **Check for releases.** Lists recent releases of Bifrost's Archipelago fork.
+  GitHub limits anonymous lookups to 60 an hour per address; set
+  `GITHUB_TOKEN` in Bifrost's environment to lift that.
   The fork is upstream Archipelago plus small compatibility patches, such as
   silencing join and leave announcements for Bifrost's own connections.
 - **Install.** Builds the release with its own Python environment. A release

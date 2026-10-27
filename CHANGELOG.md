@@ -26,5 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nightly backups with retention, live load monitoring, and season bundles that
   can be imported on another instance.
 - A container image and a single-file native Linux build.
+- Archipelago release checks and installs authenticate to GitHub with
+  `GITHUB_TOKEN` when it's set, avoiding GitHub's anonymous rate limit.
 
 [Unreleased]: https://github.com/vidarrio/bifrost/commits/main

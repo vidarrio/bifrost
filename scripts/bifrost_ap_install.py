@@ -27,6 +27,10 @@ import tarfile
 import urllib.request
 
 UA = {"User-Agent": "bifrost-ap-install", "Accept": "application/vnd.github+json"}
+# GitHub allows 60 anonymous API requests an hour per address; a token
+# (GITHUB_TOKEN, e.g. in CI) lifts that. Taken out of the environment so the
+# build steps below (pip, setup scripts of world requirements) never see it.
+TOKEN = os.environ.pop("GITHUB_TOKEN", None)
 MAX_TARBALL = 512 * 1024 * 1024
 SKIP = re.compile(r"^\s*(kivy|kivymd)\b", re.I)
 
@@ -37,6 +41,9 @@ def say(msg):
 
 def fetch(url, limit):
     req = urllib.request.Request(url, headers=UA)
+    # Only to the API, and not carried along if it redirects elsewhere.
+    if TOKEN and url.startswith("https://api.github.com/"):
+        req.add_unredirected_header("Authorization", f"Bearer {TOKEN}")
     with urllib.request.urlopen(req, timeout=60) as r:
         data = r.read(limit + 1)
     if len(data) > limit:
