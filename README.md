@@ -71,7 +71,8 @@ prints every setting.
 
 ```
 src/
-  main.rs           routes, handlers, startup
+  main.rs           startup and shutdown
+  web/              HTTP handlers and the route table, one file per area of the site
   config.rs         settings and the data-dir layout
   db.rs, db/        SQLite: seasons, accounts, slots, claims, signups, catalog, settings
   auth.rs           sessions, roles, forward-auth, CSRF (account.rs: sign-in, invites, users)

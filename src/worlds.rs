@@ -25,7 +25,7 @@ pub fn world_file(upload_name: &str) -> Result<String, &'static str> {
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("world");
-    let base = crate::slugify(stem);
+    let base = crate::web::slugify(stem);
     if RESERVED.contains(&base.to_lowercase().as_str()) {
         return Err("That apworld name is reserved — rename the file and try again.");
     }
