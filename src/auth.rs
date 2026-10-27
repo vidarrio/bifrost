@@ -567,6 +567,7 @@ pub async fn middleware(State(auth): State<Auth>, mut req: Request, next: Next) 
 
     match (tier, &principal) {
         (Tier::Public, _) => {}
+        (_, None) if req.uri().path().starts_with("/api") => return api_unauthenticated(&auth).await,
         (_, None) => return unauthenticated(&auth, &req),
         (Tier::Admin, Some(p)) if p.role < Role::Moderator => {
             return (StatusCode::FORBIDDEN, "Moderators only.").into_response();
@@ -615,15 +616,16 @@ async fn forward_auth_principal(
     }
 }
 
-/// An anonymous request to a gated route: pages go to sign-in, APIs get 401.
+/// An anonymous request to a gated API: 401 with JSON, so client code (e.g.
+/// the header's `/api/me`) can offer sign-in and still show the home link.
+async fn api_unauthenticated(auth: &AuthInner) -> Response {
+    let home = auth.db.instance().await.home_url;
+    let body = serde_json::json!({ "user": null, "admin": false, "sign_in": auth.sign_in_url(), "home": home });
+    (StatusCode::UNAUTHORIZED, axum::Json(body)).into_response()
+}
+
+/// An anonymous request to a gated page: sign-in (APIs: `api_unauthenticated`).
 fn unauthenticated(auth: &AuthInner, req: &Request) -> Response {
-    let path = req.uri().path();
-    if path.starts_with("/api") {
-        // JSON, so client code (e.g. the header's `/api/me`) can offer sign-in.
-        let body =
-            serde_json::json!({ "user": null, "admin": false, "sign_in": auth.sign_in_url() });
-        return (StatusCode::UNAUTHORIZED, axum::Json(body)).into_response();
-    }
     if req.method() != Method::GET {
         return (StatusCode::UNAUTHORIZED, "Sign in required.").into_response();
     }

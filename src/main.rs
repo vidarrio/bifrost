@@ -414,6 +414,8 @@ async fn api_me(State(st): State<AppState>, me: auth::Me) -> Json<serde_json::Va
     let (user, _) = me.ident();
     Json(serde_json::json!({
         "user": user,
+        // The header's optional "home" pill (instance settings).
+        "home": st.db.instance().await.home_url,
         // Moderators and up: the header's way into season administration.
         "admin": me.can(auth::Action::CreateSeason),
         "sign_in": st.auth.sign_in_url(),

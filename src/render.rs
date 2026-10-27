@@ -223,7 +223,7 @@ pre.out{background:#0b0f14;border:1px solid var(--bd);border-radius:8px;padding:
 #conlog{max-height:320px;overflow:auto;margin-bottom:8px}
 .warnnote{color:var(--warn);font-size:12px;margin:4px 0}
 </style></head><body>
-<header><div class="hwrap"><a class="brand" href="/">Bifrost</a><span class="spacer"></span><span class="who" id="who"></span><span id="adminslot"></span><a class="pill" href="https://home.example.org/">home</a></div></header>
+<header><div class="hwrap"><a class="brand" href="/">Bifrost</a><span class="spacer"></span><span class="who" id="who"></span><span id="adminslot"></span><span id="homeslot"></span></div></header>
 <script>
 // Fill the header from a cached identity synchronously (before paint) so it
 // doesn't flicker empty→filled on reload, then confirm/update from /api/me.
@@ -232,6 +232,8 @@ function bifApplyMe(m){
  if(w){if(m&&m.user){w.innerHTML='signed in as <b></b>'+(m.sign_out?' · <a href="'+m.sign_out+'" id="signout">sign out</a>':'');w.querySelector('b').textContent=m.user;var so=document.getElementById('signout');if(so)so.onclick=function(e){e.preventDefault();if(m.sign_out==='/logout'){var f=document.createElement('form');f.method='post';f.action='/logout';document.body.appendChild(f);f.submit()}else location.href=m.sign_out}}else{w.innerHTML='<a href="'+((m&&m.sign_in)||'/login')+'">sign in</a>'}}
  var a=document.getElementById('adminslot');
  if(a)a.innerHTML=(m&&m.admin)?'<a class="pill" href="/admin/seasons">admin</a>':'';
+ var h=document.getElementById('homeslot');
+ if(h){h.innerHTML='';if(m&&m.home){var l=document.createElement('a');l.className='pill';l.href=m.home;l.textContent='home';h.appendChild(l)}}
 }
 try{var _m=localStorage.getItem('bifme');if(_m)bifApplyMe(JSON.parse(_m));}catch(e){}
 fetch('/api/me').then(function(r){return r.json()}).then(function(m){
