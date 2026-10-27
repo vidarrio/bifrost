@@ -35,7 +35,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Python helpers compile
-        run: python3 -m py_compile scripts/*.py
+        run: python3 -m py_compile scripts/*.py tests/e2e/*.py
 
   test:
     runs-on: ubuntu-24.04
@@ -49,3 +49,52 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Unit tests
         run: cargo test --workspace
+
+  e2e:
+    # The native end-to-end suites: a debug build on the runner, on the
+    # Archipelago build the image ships, sandboxed with bubblewrap.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - name: Toolchain
+        run: rustup update --no-self-update stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap python3-venv python3-dev python3-requests
+      - name: Let bubblewrap create user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Build
+        run: cargo build
+      - name: Cache the Archipelago install
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bifrost-dev/archipelago-bifrost
+          key: archipelago-${{ runner.os }}-${{ hashFiles('Dockerfile', 'scripts/bifrost_ap_install.py') }}
+      - name: Install Archipelago
+        run: tests/e2e/setup-ap.sh
+      - name: End-to-end suites
+        run: tests/e2e/run.sh native
+
+  packaging:
+    # The container image and the native single-file bundle, built and run.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap python3-requests
+      - name: Let bubblewrap create user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Build the image
+        run: podman build -t bifrost:dev .
+      - name: Build the bundle
+        run: packaging/bundle/build.sh
+      - name: Packaging suites
+        run: tests/e2e/run.sh packaging

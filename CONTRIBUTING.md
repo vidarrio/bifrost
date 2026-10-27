@@ -72,8 +72,10 @@ CI runs on every pull request and on every push to `main`. It checks:
 
 | Job | Runs |
 |---|---|
-| `lint` | `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, a syntax check of the Python helpers |
+| `lint` | `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, a syntax check of the Python helpers and tests |
 | `test` | `cargo test --workspace` |
+| `e2e` | the native end-to-end suites (`tests/e2e/run.sh native`): a debug build on real Archipelago installs, generating seeds and running servers under bubblewrap |
+| `packaging` | builds the container image and the native bundle, then runs their suites (`tests/e2e/run.sh packaging`) |
 
 Run the same commands locally before pushing (see [Development](#development)).
 
@@ -192,3 +194,21 @@ cargo build && BIFROST_DATA=./data BIFROST_AP_DIR=/path/to/Archipelago \
 ```
 
 `BIFROST_AP_DIR` must point at an Archipelago checkout with a `venv/`.
+
+### End-to-end tests
+
+The suites in `tests/e2e/` start real Bifrost instances on throwaway data
+directories and drive them over HTTP. They need Python 3 with `requests`,
+`bubblewrap`, and an Archipelago install, which `setup-ap.sh` provides:
+
+```sh
+tests/e2e/setup-ap.sh                # installs the Archipelago build the image ships
+cargo build
+tests/e2e/run.sh                     # all native suites
+tests/e2e/run.sh catalog quiet       # or just some
+```
+
+`tests/e2e/run.sh packaging` runs the container and bundle suites; build the
+image as `bifrost:dev` (`podman build -t bifrost:dev .`) and the bundle
+(`packaging/bundle/build.sh`) first. Scratch space and paths are set by the
+environment variables described at the top of `tests/e2e/lib.py`.
