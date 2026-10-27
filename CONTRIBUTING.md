@@ -81,27 +81,36 @@ Run the same commands locally before pushing (see [Development](#development)).
 
 ### Review
 
-Every pull request is reviewed by a separate AI agent, one that didn't write
-the change. The reviewer works from the branch and a description of what to
-check, not from the author's own conclusions, so its read isn't anchored on
-them. It reports findings ranked by severity. The author posts them to the
-pull request as a comment, together with how each one was handled.
+Every pull request is reviewed by someone other than its author. In practice
+that's a separate AI agent, briefed to work from the branch rather than from
+the author's own conclusions; [`CLAUDE.md`](CLAUDE.md) has the instructions
+agents follow.
 
-Every finding is handled in one of two ways:
+The review happens on the pull request:
 
-- **Fixed** with a commit on the branch.
-- **Answered** in the pull request, saying why it isn't a problem or why it's
-  out of scope. Out-of-scope findings that are still worth doing become issues.
+- The reviewer posts a GitHub review. Its summary says what was checked and
+  the overall verdict, and each finding is an inline comment on the line it's
+  about, labelled with its severity. Findings that aren't about a line in the
+  diff are listed in the summary.
+- The author answers every finding on the pull request: inline findings in
+  their own threads, summary findings in a reply comment. Each answer says the
+  finding is either
+  - **fixed**, naming the commit that fixes it, or
+  - **answered**: why it isn't a problem, or why it's out of scope.
+    Out-of-scope findings that are still worth doing become issues, linked in
+    the answer.
 
-If the fixes change something substantial, the reviewer looks again. When it's
-unclear whether a change counts as substantial, the maintainer decides.
+If the fixes change something substantial, the reviewer looks again and posts
+a follow-up review. If the reviewer and author disagree about a finding, or
+it's unclear whether a change is substantial, the maintainer decides.
 
 ### Merging
 
 A pull request merges when all of these hold:
 
 1. CI passes.
-2. Every review finding is fixed or answered.
+2. Every review finding has an answer on the pull request (fixed or
+   answered).
 3. The changelog has its entry, if one is needed.
 4. The branch is up to date with `main`.
 
