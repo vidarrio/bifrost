@@ -19,12 +19,14 @@ jobs:
           TITLE: ${{ github.event.pull_request.title }}
           BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
-          kind=${BRANCH%%/*}
-          case "$kind" in
-            feat|fix|refactor|docs|ci|chore|release) ;;
+          case "$BRANCH" in
+            feat/*|fix/*|refactor/*|docs/*|ci/*|chore/*|release/*) kind=${BRANCH%%/*} ;;
+            # Dependency-update bots: their PRs are chores.
+            dependabot/*|renovate/*) kind=chore ;;
             *) echo "::error::branch '$BRANCH' has no known prefix (feat/, fix/, refactor/, docs/, ci/, chore/, release/)"; exit 1 ;;
           esac
-          if ! printf '%s\n' "$TITLE" | grep -Eq "^${kind}(\([a-z0-9._-]+\))?: [^ ]"; then
+          # Optional scope in parentheses, optional ! for a breaking change.
+          if ! printf '%s\n' "$TITLE" | grep -Eq "^${kind}(\([^()]+\))?!?: [^ ]"; then
             echo "::error::title should start with '${kind}: ' (or '${kind}(scope): '), got: $TITLE"
             exit 1
           fi

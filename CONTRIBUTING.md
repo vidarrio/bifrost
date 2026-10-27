@@ -183,10 +183,10 @@ To cut release `X.Y.Z`:
    until step 5 pushes the tag; that's expected.
 3. **Version**: set `version = "X.Y.Z"` in the root `Cargo.toml`, then run
    `cargo update --workspace` so `Cargo.lock` follows.
-4. **Pull request**: open it as `Release vX.Y.Z`, with CI and review like any
+4. **Pull request**: open it as `release: vX.Y.Z`, with CI and review like any
    other change. Review checks that the changelog is complete and accurate for
    the release. Then merge it.
-5. **Tag** the squash commit that `Release vX.Y.Z` created on `main`, and push
+5. **Tag** the squash commit that `release: vX.Y.Z` created on `main`, and push
    the tag. Check first that `git log -1 origin/main` is that commit; if
    something else has merged since, tag the release commit's SHA instead.
 

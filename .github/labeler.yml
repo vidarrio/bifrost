@@ -10,6 +10,6 @@ docs:
 ci:
   - head-branch: ['^ci/']
 chore:
-  - head-branch: ['^chore/']
+  - head-branch: ['^chore/', '^dependabot/', '^renovate/']
 release:
   - head-branch: ['^release/']
