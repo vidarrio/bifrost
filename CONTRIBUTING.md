@@ -25,6 +25,9 @@ branch. Prefix the branch name with the kind of change:
 
 For example: `feat/season-rehearsal`, `fix/hint-credit-race`.
 
+Pull requests are labelled with their kind of change (`feat`, `fix`, …)
+automatically, from the branch prefix.
+
 Keep branches short-lived. If `main` moves on while you work, rebase onto it
 and update the pull request with `git push --force-with-lease`.
 
