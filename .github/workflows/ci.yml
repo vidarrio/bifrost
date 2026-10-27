@@ -79,7 +79,7 @@ jobs:
       - name: Archipelago cache key
         id: apkey
         run: |
-          v=$(sed -n 's/^ARG AP_VERSION=["]*\([^" \r]*\).*/\1/p' Dockerfile | head -n1)
+          v=$(tr -d '\r' < Dockerfile | sed -n 's/^ARG AP_VERSION=["]*\([^" ]*\).*/\1/p' | head -n1)
           echo "key=archipelago-$v-$(python3 -c 'import sys; print("py%d.%d" % sys.version_info[:2])')-${{ hashFiles('scripts/bifrost_ap_install.py') }}" >> "$GITHUB_OUTPUT"
       - name: Restore the Archipelago install
         id: apcache
