@@ -31,10 +31,13 @@ conclusions. The reviewer works read-only: it doesn't touch the author's
 working tree, and it commits or pushes nothing. If it needs to build, it uses
 a worktree and target directory of its own.
 
-The reviewer posts one GitHub review on the pull request's head commit:
+The reviewer posts one GitHub review on the pull request's head commit. It
+writes the review to a file outside the repository, named after the pull
+request (e.g. `pr<n>-review.json` in a scratch directory), so that it neither
+touches the author's tree nor overwrites another review:
 
 ```sh
-gh api -X POST repos/vidarrio/bifrost/pulls/<n>/reviews --input review.json
+gh api -X POST repos/vidarrio/bifrost/pulls/<n>/reviews --input pr<n>-review.json
 ```
 
 ```json
@@ -68,18 +71,22 @@ gh api -X POST repos/vidarrio/bifrost/pulls/<n>/reviews --input review.json
 The author answers every finding on the pull request.
 
 - **Inline findings** get a reply in their own thread, even when a later
-  commit has made the thread outdated:
+  commit has made the thread outdated. `<comment id>` is the id of the
+  thread's first comment (the review's inline comment), not of a reply.
 
   ```sh
-  gh api -X POST repos/vidarrio/bifrost/pulls/<n>/comments/<comment id>/replies -f body='…'
+  gh api -X POST repos/vidarrio/bifrost/pulls/<n>/comments/<comment id>/replies -F body=@reply.md
   ```
 
 - **Findings in the review body** get one reply comment on the pull request,
   with one item per finding, in the body's order:
 
   ```sh
-  gh pr comment <n> -R vidarrio/bifrost --body '…'
+  gh pr comment <n> -R vidarrio/bifrost --body-file reply.md
   ```
+
+  Write the text to a file (outside the repository) rather than quoting it on
+  the command line, where the first apostrophe would end it.
 
 - Each answer opens with "**Reply from the author (Claude).**". It then says
   **Fixed in `<sha>`**, with a sentence on how, or gives the reason the
@@ -93,8 +100,8 @@ When the fixes are substantial, ask the reviewer to look again. It reads the
 existing threads and replies first, then posts a new review the same way, on
 the new head commit. The follow-up covers whether each fix works, anything
 new, and any answer it disagrees with. It raises a disagreement as a reply in
-that finding's thread, opening with the reviewer line. The maintainer settles
-disagreements.
+that finding's thread, opening with "**Reply from the reviewer (Claude).**".
+The maintainer settles disagreements.
 
 ## If posting is blocked
 
