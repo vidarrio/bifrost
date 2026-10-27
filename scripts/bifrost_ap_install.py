@@ -36,7 +36,13 @@ def say(msg):
 
 
 def fetch(url, limit):
-    req = urllib.request.Request(url, headers=UA)
+    headers = dict(UA)
+    # GitHub allows 60 anonymous API requests an hour per address; a token
+    # (GITHUB_TOKEN, e.g. in CI) lifts that. Only ever sent to the API.
+    token = os.environ.get("GITHUB_TOKEN")
+    if token and url.startswith("https://api.github.com/"):
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=60) as r:
         data = r.read(limit + 1)
     if len(data) > limit:

@@ -36,6 +36,10 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Python helpers compile
         run: python3 -m py_compile scripts/*.py tests/e2e/*.py
+      - name: Image and bundle pin the same Archipelago
+        run: |
+          pins() { grep -E '^ARG (AP_VERSION|AP_REPO)=' "$1"; }
+          diff <(pins Dockerfile) <(pins packaging/bundle/Containerfile)
 
   test:
     runs-on: ubuntu-24.04
@@ -70,15 +74,40 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build
         run: cargo build
-      - name: Cache the Archipelago install
-        uses: actions/cache@v4
+      # Keyed on what the install depends on; restored and saved as separate
+      # steps so a failing suite doesn't throw the install away.
+      - name: Archipelago cache key
+        id: apkey
+        run: |
+          v=$(sed -n 's/^ARG AP_VERSION=["]*\([^" \r]*\).*/\1/p' Dockerfile | head -n1)
+          echo "key=archipelago-$v-$(python3 -c 'import sys; print("py%d.%d" % sys.version_info[:2])')-${{ hashFiles('scripts/bifrost_ap_install.py') }}" >> "$GITHUB_OUTPUT"
+      - name: Restore the Archipelago install
+        id: apcache
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/bifrost-dev/archipelago-bifrost
-          key: archipelago-${{ runner.os }}-${{ hashFiles('Dockerfile', 'scripts/bifrost_ap_install.py') }}
+          key: ${{ steps.apkey.outputs.key }}
       - name: Install Archipelago
         run: tests/e2e/setup-ap.sh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Save the Archipelago install
+        if: steps.apcache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/bifrost-dev/archipelago-bifrost
+          key: ${{ steps.apkey.outputs.key }}
       - name: End-to-end suites
         run: tests/e2e/run.sh native
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Logs of failed runs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: ~/.cache/bifrost-dev/run/*/bifrost.log
+          if-no-files-found: ignore
 
   packaging:
     # The container image and the native single-file bundle, built and run.
@@ -98,3 +127,12 @@ jobs:
         run: packaging/bundle/build.sh
       - name: Packaging suites
         run: tests/e2e/run.sh packaging
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Logs of failed runs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaging-logs
+          path: ~/.cache/bifrost-dev/run/*/bifrost.log
+          if-no-files-found: ignore

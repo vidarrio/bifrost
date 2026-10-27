@@ -6,10 +6,10 @@ import re
 import subprocess
 import sys
 
-from lib import DEV, Server, check, get, post, summary, wait_for
+from lib import Server, ap_servers, bundled_ap_version, check, get, post, summary, wait_for
 
 TAG = os.environ.get("AP_TAG", "0.6.7-bifrost.2")  # a release of the fork
-BUNDLED = "0.6.8-bifrost.2"
+BUNDLED = bundled_ap_version()
 
 
 def yaml(name):
@@ -17,9 +17,8 @@ def yaml(name):
 
 
 def server_pythons():
-    """python executables of running MultiServers (bifrost_server.py)."""
-    out = subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True).stdout
-    return [l.split()[0] for l in out.splitlines() if "bifrost_server.py" in l and "bwrap" not in l.split()[0]]
+    """Python executables of this instance's running AP servers."""
+    return [args[0] for _, args in ap_servers(srv)]
 
 
 srv = Server("apupdate", port=18182, ap_ports="39110-39112")

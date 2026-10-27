@@ -198,7 +198,8 @@ cargo build && BIFROST_DATA=./data BIFROST_AP_DIR=/path/to/Archipelago \
 ### End-to-end tests
 
 The suites in `tests/e2e/` start real Bifrost instances on throwaway data
-directories and drive them over HTTP. They need Python 3 with `requests`,
+directories and drive them over HTTP. They need Python 3 with `requests`
+(`pip install -r tests/e2e/requirements.txt`, or your distribution's package),
 `bubblewrap`, and an Archipelago install, which `setup-ap.sh` provides:
 
 ```sh
@@ -212,3 +213,9 @@ tests/e2e/run.sh catalog quiet       # or just some
 image as `bifrost:dev` (`podman build -t bifrost:dev .`) and the bundle
 (`packaging/bundle/build.sh`) first. Scratch space and paths are set by the
 environment variables described at the top of `tests/e2e/lib.py`.
+
+Two extras run only by hand, not in CI: `SHOT=<file.png> python3 load.py`
+saves screenshots of the load panel (it needs a Playwright headless Chromium
+under `~/.cache/ms-playwright`), and `python3 quiet.py upstream` runs the
+quiet-connections control against a plain upstream Archipelago install at
+`$BIFROST_E2E_WORK/archipelago`.

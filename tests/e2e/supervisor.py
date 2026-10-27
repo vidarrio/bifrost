@@ -8,31 +8,14 @@ import subprocess
 import sys
 import time
 
-from lib import Server, check, get, post, summary, wait_for
+from lib import Server, ap_servers, check, get, post, summary, wait_for
 
 YAML = b"name: Ann\ngame: ChecksFinder\nChecksFinder: {}\n"
 
 
-def descendants(pid):
-    out, todo = [], [pid]
-    while todo:
-        p = todo.pop()
-        r = subprocess.run(["pgrep", "-P", str(p)], capture_output=True, text=True)
-        kids = [int(x) for x in r.stdout.split()]
-        out += kids
-        todo += kids
-    return out
-
-
 def server_pid(srv):
-    for p in descendants(srv.proc.pid):
-        try:
-            cmd = open(f"/proc/{p}/cmdline", "rb").read().replace(b"\0", b" ")
-        except OSError:
-            continue
-        if b"bifrost_server.py" in cmd and b"bwrap" not in cmd:
-            return p
-    return None
+    found = ap_servers(srv)
+    return found[0][0] if found else None
 
 
 srv = Server("supervisor", port=18192, ap_ports="39172-39174")

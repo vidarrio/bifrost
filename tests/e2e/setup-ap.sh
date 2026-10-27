@@ -6,7 +6,8 @@ set -eu
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 work=${BIFROST_E2E_WORK:-$HOME/.cache/bifrost-dev}
 dest=${BIFROST_E2E_AP_DIR:-$work/archipelago-bifrost}
-version=$(sed -n 's/^ARG AP_VERSION=//p' "$repo/Dockerfile")
+version=$(sed -n 's/^ARG AP_VERSION=["]*\([^" \r]*\).*/\1/p' "$repo/Dockerfile" | head -n1)
+[ -n "$version" ] || { echo "setup-ap.sh: no ARG AP_VERSION in the Dockerfile" >&2; exit 1; }
 fork=${BIFROST_AP_REPO:-vidarrio/Archipelago}
 if [ "$(cat "$dest/BIFROST_VERSION" 2>/dev/null)" = "$version" ] && [ -x "$dest/venv/bin/python" ]; then
     echo "Archipelago $version already at $dest"

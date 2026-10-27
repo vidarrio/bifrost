@@ -13,7 +13,7 @@ from lib import check, summary, wait_for
 
 IMAGE = os.environ.get("IMAGE", "bifrost:dev")
 TAG = os.environ.get("AP_TAG", "0.6.7-bifrost.2")
-PORT = 18190
+PORT = 18193
 BASE = f"http://127.0.0.1:{PORT}"
 
 
@@ -23,8 +23,11 @@ def sh(*a, **kw):
 
 sh("podman", "rm", "-f", "bfc")
 sh("podman", "volume", "rm", "bfc-data")
+# GITHUB_TOKEN (when set, as in CI) lifts GitHub's anonymous rate limit for
+# the release check and install.
+token = ["-e", "GITHUB_TOKEN"] if os.environ.get("GITHUB_TOKEN") else []
 r = sh("podman", "run", "-d", "--name", "bfc", "--stop-timeout", "30", "--security-opt", "unmask=/proc/*",
-       "-e", "BIFROST_INSECURE_COOKIES=1", "-p", f"{PORT}:8080", "-v", "bfc-data:/var/lib/bifrost", IMAGE)
+       "-e", "BIFROST_INSECURE_COOKIES=1", *token, "-p", f"{PORT}:8080", "-v", "bfc-data:/var/lib/bifrost", IMAGE)
 assert r.returncode == 0, r.stderr
 try:
     def up():
@@ -32,7 +35,7 @@ try:
             return requests.get(BASE + "/health", timeout=1).ok
         except requests.RequestException:
             return False
-    wait_for(up, 60)
+    assert wait_for(up, 60), "the container didn't come up"
     logs = lambda: re.sub(r"\x1b\[[0-9;]*m", "", sh("podman", "logs", "bfc").stdout + sh("podman", "logs", "bfc").stderr)
     check("strong isolation in the container", "isolation: strong" in logs())
     tok = re.search(r"/setup\?token=([0-9a-f]+)", logs()).group(1)

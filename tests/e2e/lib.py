@@ -74,6 +74,10 @@ class Server:
         self.log = open(self.log_path, "a")
         self.proc = subprocess.Popen([self.bin], env=self.env, stdout=self.log, stderr=subprocess.STDOUT)
         for _ in range(100):
+            # Exited (e.g. its port is taken): don't let another process
+            # answering on that port stand in for it.
+            if self.proc.poll() is not None:
+                raise RuntimeError(f"bifrost exited with {self.proc.returncode}; see {self.log_path}")
             try:
                 if requests.get(self.base + "/health", timeout=1).ok:
                     return self
@@ -89,6 +93,7 @@ class Server:
                 self.proc.wait(40)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+                self.proc.wait()
         self.log.close()
 
     def logtext(self):
@@ -108,7 +113,7 @@ class Server:
         tok = re.search(r"/setup\?token=([0-9a-f]+)", self.logtext()).group(1)
         s = self.session()
         r = s.post(self.base + "/setup", data=dict(token=tok, username=user, password=pw, confirm=pw))
-        assert r.ok and "bifrost_session" in s.cookies.get_dict().__repr__() or s.cookies, r.text[:300]
+        assert r.ok and "bifrost_session" in s.cookies.get_dict(), r.text[:300]
         return s
 
     def invite_user(self, admin, user, pw="correct horse battery"):
@@ -134,6 +139,39 @@ def get(s, path, **kw):
 
 def post(s, path, **kw):
     return _decoded(s.post(s.base + path, **kw))
+
+
+def descendants(pid):
+    """Every process below `pid`."""
+    out, todo = [], [pid]
+    while todo:
+        p = todo.pop()
+        r = subprocess.run(["pgrep", "-P", str(p)], capture_output=True, text=True)
+        kids = [int(x) for x in r.stdout.split()]
+        out += kids
+        todo += kids
+    return out
+
+
+def ap_servers(srv):
+    """(pid, argv) of the AP servers this Bifrost runs (not other instances'),
+    without the bubblewrap wrappers."""
+    found = []
+    for p in descendants(srv.proc.pid):
+        try:
+            argv = open(f"/proc/{p}/cmdline", "rb").read().split(b"\0")
+        except OSError:
+            continue
+        args = [a.decode(errors="replace") for a in argv if a]
+        if args and any("bifrost_server.py" in a for a in args) and "bwrap" not in os.path.basename(args[0]):
+            found.append((p, args))
+    return found
+
+
+def bundled_ap_version():
+    """The version of the Archipelago install the suites run on."""
+    with open(os.path.join(AP_DIR, "BIFROST_VERSION")) as f:
+        return f.read().strip()
 
 
 def wait_for(fn, timeout=120, every=1.0):

@@ -13,7 +13,10 @@ import requests
 
 from lib import REPO, Server, check, get, post, summary, wait_for
 
-BUNDLE = sorted(glob.glob(os.path.join(REPO, "dist", "bifrost-*-x86_64-linux")))[-1]
+_built = glob.glob(os.path.join(REPO, "dist", "bifrost-*-x86_64-linux"))
+if not _built:
+    sys.exit("no bundle in dist/: build one with packaging/bundle/build.sh")
+BUNDLE = max(_built, key=os.path.getmtime)  # the newest build
 YAML = b"name: Ann\ngame: ChecksFinder\nChecksFinder: {}\n"
 print("bundle:", BUNDLE, os.path.getsize(BUNDLE) >> 20, "MiB")
 
@@ -64,13 +67,13 @@ subprocess.run(["rm", "-rf", data])
 os.makedirs(data)
 name = "bfbare"
 subprocess.run(["podman", "rm", "-f", name], capture_output=True)
-r = subprocess.run(["podman", "run", "-d", "--name", name, "-p", "18191:8080",
+r = subprocess.run(["podman", "run", "-d", "--name", name, "-p", "18194:8080",
                     "-e", "BIFROST_INSECURE_COOKIES=1", "-e", "BIFROST_DATA=/data",
                     "-v", f"{BUNDLE}:/bifrost:ro", "-v", f"{os.path.abspath(data)}:/data:U",
                     "docker.io/library/debian:bookworm-slim", "/bifrost"], capture_output=True, text=True)
 check("bare container starts", r.returncode == 0, r.stderr)
 try:
-    base = "http://127.0.0.1:18191"
+    base = "http://127.0.0.1:18194"
 
     def up():
         try:
