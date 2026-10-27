@@ -13,6 +13,6 @@
 - [ ] `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass locally
 - [ ] `CHANGELOG.md` has an entry under `[Unreleased]` (or: no user-visible change)
 - [ ] CI passes
-- [ ] Reviewed by a separate agent on this PR; every review comment answered (fixed, with the commit, or explained)
+- [ ] Reviewed on this PR; every finding (inline and in the summary) has an answer: fixed, with the commit, or explained
 
 See [CONTRIBUTING.md](https://github.com/vidarrio/bifrost/blob/main/CONTRIBUTING.md) for the process.
