@@ -90,7 +90,7 @@ src/
   season.rs         archived-season summaries (archive.rs: season bundles and import)
   backup.rs         backups and retention (bundle.rs: the single-file runtime)
   load.rs           live load sampling and warnings
-  render.rs         all HTML
+  render/           all HTML: shared page shell in mod.rs, one file per area of the site
 crates/poptracker/  PopTracker pack engine
 scripts/            Python helpers run under Archipelago's interpreter
 static/             the home page template
