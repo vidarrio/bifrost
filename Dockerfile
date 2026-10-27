@@ -23,11 +23,23 @@ ARG APT="apt-get -o APT::Sandbox::User=root"
 # ---- Bifrost ----
 FROM docker.io/library/rust:1.98-${DEBIAN} AS bifrost
 WORKDIR /src
-COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+# The toolchain rust-toolchain.toml names, in a layer of its own.
+COPY rust-toolchain.toml ./
+RUN rustup toolchain install
+# Dependencies next, built against stub sources with the real manifests, so a
+# change to Bifrost's code rebuilds only Bifrost (and poptracker) on top.
+COPY Cargo.toml Cargo.lock ./
+COPY crates/poptracker/Cargo.toml crates/poptracker/
+RUN mkdir -p src crates/poptracker/src \
+    && echo 'fn main() {}' > src/main.rs && touch crates/poptracker/src/lib.rs \
+    && cargo build --release --locked --bin bifrost \
+    && rm -rf src crates/poptracker/src
 COPY crates crates
 COPY src src
 COPY static static
-RUN cargo build --release --locked --bin bifrost
+# Newer than the stubs, so cargo rebuilds them.
+RUN touch src/main.rs crates/poptracker/src/lib.rs \
+    && cargo build --release --locked --bin bifrost
 
 # ---- Archipelago (source checkout + venv; paths match the runtime stage) ----
 FROM docker.io/library/debian:${DEBIAN}-slim AS archipelago

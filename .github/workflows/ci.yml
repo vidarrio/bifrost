@@ -18,6 +18,25 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Whether anything besides documentation changed; the slow jobs skip
+  # otherwise (a skipped job counts as passed for the required checks).
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!**/*.md'
+              - '!docs/**'
+              - '!LICENSE'
+
   lint:
     runs-on: ubuntu-24.04
     steps:
@@ -54,18 +73,33 @@ jobs:
       - name: Unit tests
         run: cargo test --workspace
 
-  e2e:
-    # The native end-to-end suites: a debug build on the runner, on the
-    # Archipelago build the image ships, sandboxed with bubblewrap.
+  # The native end-to-end suites, in parallel shards: a debug build on the
+  # runner, on the Archipelago build the image ships, under bubblewrap.
+  e2e-suites:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # Balanced by their run times on the runner (about 2 minutes each).
+        include:
+          - shard: 1
+            suites: apupdate backup homepill
+          - shard: 2
+            suites: quiet load
+          - shard: 3
+            suites: catalog supervisor season_import
+    name: e2e (${{ matrix.shard }})
     steps:
       - uses: actions/checkout@v5
       - name: Toolchain
         run: rustup update --no-self-update stable
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: e2e
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.shard == 1 }}
       - name: System packages
         run: |
           sudo apt-get update
@@ -92,27 +126,75 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
       - name: Save the Archipelago install
-        if: steps.apcache.outputs.cache-hit != 'true'
+        if: steps.apcache.outputs.cache-hit != 'true' && matrix.shard == 1
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bifrost-dev/archipelago-bifrost
           key: ${{ steps.apkey.outputs.key }}
       - name: End-to-end suites
-        run: tests/e2e/run.sh native
+        run: tests/e2e/run.sh ${{ matrix.suites }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
       - name: Logs of failed runs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-logs
+          name: e2e-logs-${{ matrix.shard }}
           path: ~/.cache/bifrost-dev/run/*/bifrost.log
           if-no-files-found: ignore
 
-  packaging:
-    # The container image and the native single-file bundle, built and run.
+  # One stable check for the ruleset, whatever the shards are.
+  e2e:
+    needs: [changes, e2e-suites]
+    if: always()
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    steps:
+      - name: All shards passed (or skipped for a docs-only change)
+        run: |
+          changes='${{ needs.changes.result }}'
+          code='${{ needs.changes.outputs.code }}'
+          suites='${{ needs.e2e-suites.result }}'
+          echo "changes: $changes, code: $code, suites: $suites"
+          [ "$changes" = success ] || exit 1
+          [ "$suites" = success ] || { [ "$code" != true ] && [ "$suites" = skipped ]; }
+
+  # The container image, built with a layer cache, then run under podman.
+  image:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-requests
+      - name: Let bubblewrap create user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: localhost/bifrost:dev
+          cache-from: type=gha,scope=image
+          # Only main writes the cache; pull requests read main's.
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=max,scope=image' || '' }}
+      - name: Hand the image to podman
+        run: docker save localhost/bifrost:dev | podman load
+      - name: Image suite
+        run: tests/e2e/run.sh container
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  # The native single-file bundle, built with a layer cache, then run.
+  bundle:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
       - name: System packages
@@ -121,18 +203,21 @@ jobs:
           sudo apt-get install -y bubblewrap python3-requests
       - name: Let bubblewrap create user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: Build the image
-        run: podman build -t bifrost:dev .
+      - name: Version
+        id: version
+        run: echo "version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
       - name: Build the bundle
-        run: packaging/bundle/build.sh
-      - name: Packaging suites
-        run: tests/e2e/run.sh packaging
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packaging/bundle/Containerfile
+          target: bundle
+          build-args: BIFROST_VERSION=${{ steps.version.outputs.version }}
+          outputs: type=local,dest=dist
+          cache-from: type=gha,scope=bundle
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=max,scope=bundle' || '' }}
+      - name: Bundle suite
+        run: tests/e2e/run.sh bundle
         env:
           GITHUB_TOKEN: ${{ github.token }}
-      - name: Logs of failed runs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: packaging-logs
-          path: ~/.cache/bifrost-dev/run/*/bifrost.log
-          if-no-files-found: ignore

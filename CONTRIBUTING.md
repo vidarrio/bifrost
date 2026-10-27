@@ -73,10 +73,16 @@ CI runs on every pull request and on every push to `main`. It checks:
 
 | Job | Runs |
 |---|---|
-| `lint` | `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, a syntax check of the Python helpers and tests |
+| `lint` | `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, a syntax check of the Python helpers and tests, and that the image and the bundle pin the same Archipelago |
 | `test` | `cargo test --workspace` |
-| `e2e` | the native end-to-end suites (`tests/e2e/run.sh native`): a debug build on real Archipelago installs, generating seeds and running servers under bubblewrap |
-| `packaging` | builds the container image and the native bundle, then runs their suites (`tests/e2e/run.sh packaging`) |
+| `e2e` | the native end-to-end suites (a debug build on real Archipelago installs, generating seeds and running servers under bubblewrap), split across parallel shards |
+| `image` | builds the container image and runs its suite (`tests/e2e/run.sh container`) |
+| `bundle` | builds the native bundle and runs its suite (`tests/e2e/run.sh bundle`) |
+
+`e2e`, `image` and `bundle` are skipped when a pull request only changes
+documentation (Markdown files, `docs/`, `LICENSE`). The image and bundle
+builds reuse a layer cache that only `main` writes, so a pull request rebuilds
+only what it changed.
 
 Run the same commands locally before pushing (see [Development](#development)).
 
