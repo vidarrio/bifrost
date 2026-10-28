@@ -652,7 +652,7 @@ pub fn game_page(
 <div id="hintstatus" class="inlinemsg"></div>"#
                 ));
                 out.push_str("<script>\nvar ITEMS=");
-                out.push_str(&items_json);
+                out.push_str(&super::script_json(&items_json));
                 out.push_str(";\n");
                 out.push_str(HINT_JS);
                 out.push_str("\n</script>");
@@ -768,7 +768,7 @@ pub fn game_page(
 <div id="hintstatus" class="inlinemsg"></div>"#
         ));
         out.push_str("<script>\nvar ITEMS=");
-        out.push_str(&items_json);
+        out.push_str(&super::script_json(&items_json));
         out.push_str(";\n");
         out.push_str(HINT_JS);
         out.push_str("\n</script>");

@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Each signup's YAML is stored in a file of its own. A refused signup, or one
   whose name makes the same file name, can no longer replace another player's
   YAML.
+- Data embedded in pages' scripts, such as item names from uploaded worlds, is
+  escaped so it can't end the script and inject markup. The page header no
+  longer builds its sign-in links from markup.
 
 ## [0.1.1] - 2026-10-28
 

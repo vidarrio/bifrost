@@ -36,6 +36,15 @@ pub fn escape(s: &str) -> String {
     esc(s)
 }
 
+/// Make JSON safe to embed in a `<script>` element: `<`, `>` and `&` (which
+/// only occur inside JSON strings) become `\u` escapes, so no data, such as an
+/// item name from an uploaded world, can end the element or open a comment.
+pub(crate) fn script_json(json: &str) -> String {
+    json.replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+}
+
 /// HTML-escape text for an element or a quoted attribute value.
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -253,7 +262,10 @@ pre.out{background:#0b0f14;border:1px solid var(--bd);border-radius:8px;padding:
 // doesn't flicker empty→filled on reload, then confirm/update from /api/me.
 function bifApplyMe(m){
  var w=document.getElementById('who');
- if(w){if(m&&m.user){w.innerHTML='signed in as <b></b>'+(m.sign_out?' · <a href="'+m.sign_out+'" id="signout">sign out</a>':'');w.querySelector('b').textContent=m.user;var so=document.getElementById('signout');if(so)so.onclick=function(e){e.preventDefault();if(m.sign_out==='/logout'){var f=document.createElement('form');f.method='post';f.action='/logout';document.body.appendChild(f);f.submit()}else location.href=m.sign_out}}else{w.innerHTML='<a href="'+((m&&m.sign_in)||'/login')+'">sign in</a>'}}
+ // Built from DOM nodes, not markup: the cached identity is replayed on every
+ // page, so nothing in it may be read as HTML.
+ function link(href,text){var l=document.createElement('a');l.href=href;l.textContent=text;return l}
+ if(w){w.textContent='';if(m&&m.user){var b=document.createElement('b');b.textContent=m.user;w.append('signed in as ',b);if(m.sign_out){var so=link(m.sign_out,'sign out');so.id='signout';so.onclick=function(e){e.preventDefault();if(m.sign_out==='/logout'){var f=document.createElement('form');f.method='post';f.action='/logout';document.body.appendChild(f);f.submit()}else location.href=m.sign_out};w.append(' · ',so)}}else{w.append(link((m&&m.sign_in)||'/login','sign in'))}}
  var a=document.getElementById('adminslot');
  if(a)a.innerHTML=(m&&m.admin)?'<a class="pill" href="/admin/seasons">admin</a>':'';
  var h=document.getElementById('homeslot');
@@ -580,6 +592,15 @@ pub fn with_base(head: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn script_json_cannot_end_the_script() {
+        let names = vec!["</script><img src=x onerror=alert(1)>", "<!--", "a&b"];
+        let json = super::script_json(&serde_json::to_string(&names).unwrap());
+        assert!(!json.contains('<') && !json.contains('>') && !json.contains('&'));
+        let back: Vec<String> = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, names);
+    }
+
     use super::*;
 
     #[test]
