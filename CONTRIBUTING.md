@@ -237,8 +237,10 @@ To cut release `X.Y.Z`:
    - creates the GitHub release with the changelog section as its notes and
      the bundle and checksums attached.
 
-   Check the run and the release page afterwards. The image package is
-   public, so an anonymous pull of the new tag should work.
+   Check the run and the release page afterwards, and that the image pulls
+   without logging in (`podman logout ghcr.io; podman pull
+   ghcr.io/vidarrio/bifrost:X.Y.Z`). The package is public; if the pull is
+   refused, make it public again in its settings on GitHub.
 
 A fix for a released version goes through a `fix/` branch like any other
 change, followed by a patch release when the maintainer calls for one.
