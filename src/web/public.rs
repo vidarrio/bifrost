@@ -90,6 +90,7 @@ pub(crate) async fn landing(State(st): State<AppState>) -> Html<String> {
                 &render::landing_connect(&live, &inst.password_note),
             )
             .replace("<!--HOMEPILL-->", &render::home_pill(&inst.home_url))
+            .replace("<!--IDENTITYJS-->", render::IDENTITY_JS)
             .replace("<!--TAG-->", &render::landing_tag(&inst.domain))
             .replace(
                 "<!--APVERSION-->",

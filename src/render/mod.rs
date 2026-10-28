@@ -43,6 +43,8 @@ pub(crate) fn script_json(json: &str) -> String {
     json.replace('<', "\\u003c")
         .replace('>', "\\u003e")
         .replace('&', "\\u0026")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
 }
 
 /// HTML-escape text for an element or a quoted attribute value.
@@ -115,7 +117,37 @@ pub fn card_status(live: &crate::ap::ApLive) -> (&'static str, &'static str) {
     }
 }
 
-const HEAD: &str = r#"<!doctype html><html lang="en"><head><meta charset="utf-8">
+/// The header's identity script, shared by every page (`HEAD`) and the landing
+/// page (`static/index.html`'s `<!--IDENTITYJS-->`), so the two can't drift.
+macro_rules! identity_js {
+    () => {
+        r#"// Fill the header from a cached identity synchronously (before paint) so it
+// doesn't flicker empty→filled on reload, then confirm/update from /api/me.
+function bifApplyMe(m){
+ var w=document.getElementById('who');
+ // Built from DOM nodes, not markup: the cached identity is replayed on every
+ // page, so nothing in it may be read as HTML.
+ function link(href,text){var l=document.createElement('a');l.href=href;l.textContent=text;return l}
+ if(w){w.textContent='';if(m&&m.user){var b=document.createElement('b');b.textContent=m.user;w.append('signed in as ',b);if(m.sign_out){var so=link(m.sign_out,'sign out');so.id='signout';so.onclick=function(e){e.preventDefault();if(m.sign_out==='/logout'){var f=document.createElement('form');f.method='post';f.action='/logout';document.body.appendChild(f);f.submit()}else location.href=m.sign_out};w.append(' · ',so)}}else{w.append(link((m&&m.sign_in)||'/login','sign in'))}}
+ var a=document.getElementById('adminslot');
+ if(a)a.innerHTML=(m&&m.admin)?'<a class="pill" href="/admin/seasons">admin</a>':'';
+ var h=document.getElementById('homeslot');
+ if(h){h.innerHTML='';if(m&&m.home){var l=document.createElement('a');l.className='pill';l.href=m.home;l.textContent='home';h.appendChild(l)}}
+}
+try{var _m=localStorage.getItem('bifme');if(_m)bifApplyMe(JSON.parse(_m));}catch(e){}
+fetch('/api/me').then(function(r){return r.json()}).then(function(m){
+ bifApplyMe(m);
+ try{localStorage.setItem('bifme',JSON.stringify({user:(m&&m.user)||null,admin:!!(m&&m.admin),sign_in:m&&m.sign_in,sign_out:m&&m.sign_out}));}catch(e){}
+}).catch(function(){});
+"#
+    };
+}
+
+/// The header's identity script (see [`identity_js`]).
+pub const IDENTITY_JS: &str = identity_js!();
+
+const HEAD: &str = concat!(
+    r#"<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Bifrost</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg"><style>
 :root{--bg:#0d1117;--panel:#161c26;--bd:#2a3542;--fg:#e6e9ef;--muted:#98a3b6;--accent:#5aa9e6;--ok:#28a56d;--bad:#e24d5f;--warn:#d98324;
@@ -258,25 +290,9 @@ pre.out{background:#0b0f14;border:1px solid var(--bd);border-radius:8px;padding:
 </style></head><body>
 <header><div class="hwrap"><a class="brand" href="/">Bifrost</a><span class="spacer"></span><span class="who" id="who"></span><span id="adminslot"></span><span id="homeslot"></span></div></header>
 <script>
-// Fill the header from a cached identity synchronously (before paint) so it
-// doesn't flicker empty→filled on reload, then confirm/update from /api/me.
-function bifApplyMe(m){
- var w=document.getElementById('who');
- // Built from DOM nodes, not markup: the cached identity is replayed on every
- // page, so nothing in it may be read as HTML.
- function link(href,text){var l=document.createElement('a');l.href=href;l.textContent=text;return l}
- if(w){w.textContent='';if(m&&m.user){var b=document.createElement('b');b.textContent=m.user;w.append('signed in as ',b);if(m.sign_out){var so=link(m.sign_out,'sign out');so.id='signout';so.onclick=function(e){e.preventDefault();if(m.sign_out==='/logout'){var f=document.createElement('form');f.method='post';f.action='/logout';document.body.appendChild(f);f.submit()}else location.href=m.sign_out};w.append(' · ',so)}}else{w.append(link((m&&m.sign_in)||'/login','sign in'))}}
- var a=document.getElementById('adminslot');
- if(a)a.innerHTML=(m&&m.admin)?'<a class="pill" href="/admin/seasons">admin</a>':'';
- var h=document.getElementById('homeslot');
- if(h){h.innerHTML='';if(m&&m.home){var l=document.createElement('a');l.className='pill';l.href=m.home;l.textContent='home';h.appendChild(l)}}
-}
-try{var _m=localStorage.getItem('bifme');if(_m)bifApplyMe(JSON.parse(_m));}catch(e){}
-fetch('/api/me').then(function(r){return r.json()}).then(function(m){
- bifApplyMe(m);
- try{localStorage.setItem('bifme',JSON.stringify({user:(m&&m.user)||null,admin:!!(m&&m.admin),sign_in:m&&m.sign_in,sign_out:m&&m.sign_out}));}catch(e){}
-}).catch(function(){});
-// Relative "x ago" for activity rows. data-ts = event epoch secs; optional
+"#,
+    identity_js!(),
+    r#"// Relative "x ago" for activity rows. data-ts = event epoch secs; optional
 // data-ref = frozen reference epoch (archived seasons) — else live "now".
 // The tooltip (title) shows the exact local date/time in the viewer's zone.
 function bifAgo(sec){
@@ -397,7 +413,8 @@ function bifLogLive(){
 }
 document.addEventListener('DOMContentLoaded',bifLogLive);
 </script>
-<main>"#;
+<main>"#
+);
 
 struct Group<'a> {
     ap_slot: i64,
@@ -592,16 +609,55 @@ pub fn with_base(head: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn script_json_cannot_end_the_script() {
-        let names = vec!["</script><img src=x onerror=alert(1)>", "<!--", "a&b"];
-        let json = super::script_json(&serde_json::to_string(&names).unwrap());
-        assert!(!json.contains('<') && !json.contains('>') && !json.contains('&'));
+        let names = vec![
+            "</script><img src=x onerror=alert(1)>",
+            "<!--",
+            "a&b",
+            "line\u{2028}sep\u{2029}",
+        ];
+        let json = script_json(&serde_json::to_string(&names).unwrap());
+        assert!(!json.contains(['<', '>', '&', '\u{2028}', '\u{2029}']));
         let back: Vec<String> = serde_json::from_str(&json).unwrap();
         assert_eq!(back, names);
     }
 
-    use super::*;
+    #[test]
+    fn page_scripts_escape_their_data() {
+        let names = vec!["</script><b>x</b>".to_string()];
+        let f = log::LogFilter {
+            kinds_selected: [true; 4],
+            classes_selected: [true; 4],
+            sender: "",
+            receiver: "",
+            within: 0,
+            since: None,
+            until: None,
+            participants: &names,
+            qs: "",
+        };
+        let html = log::filter_form("log", &f);
+        assert!(!html.contains("</script><b>"), "{html}");
+        assert!(html.contains("\\u003c/script\\u003e"));
+    }
+
+    #[test]
+    fn header_builds_no_markup_from_the_identity() {
+        // Shared by every page and the landing page; the cached identity is
+        // replayed into it, so it must not go through innerHTML.
+        for line in IDENTITY_JS.lines().filter(|l| l.contains("innerHTML")) {
+            assert!(
+                !line.contains("+m") && !line.contains("m.user") && !line.contains("m.sign"),
+                "identity data reaches innerHTML: {line}"
+            );
+        }
+        assert!(HEAD.contains(IDENTITY_JS));
+        let landing = include_str!("../../static/index.html");
+        assert!(landing.contains("<!--IDENTITYJS-->") && !landing.contains("bifApplyMe"));
+    }
 
     #[test]
     fn newer_releases_show_to_sysadmins() {
