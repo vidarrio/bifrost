@@ -1,5 +1,9 @@
 # Bifrost
 
+[![CI](https://github.com/vidarrio/bifrost/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vidarrio/bifrost/actions/workflows/ci.yml?query=branch%3Amain)
+[![Release](https://img.shields.io/github/v/release/vidarrio/bifrost?include_prereleases&sort=semver)](https://github.com/vidarrio/bifrost/releases)
+[![License: MIT](https://img.shields.io/github/license/vidarrio/bifrost)](LICENSE)
+
 A self-hosted season manager for [Archipelago](https://archipelago.gg)
 multiworlds. It's built for a friend group or community running recurring
 seasons. One program runs the whole thing: signups with live YAML checks, seed
