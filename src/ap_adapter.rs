@@ -108,8 +108,10 @@ fn helper_env(season: &SeasonDirs, ap: &Install) -> Vec<(&'static str, OsString)
 /// season dir would refuse. Create it up front: a copy of the operator's
 /// instance-wide `$BIFROST_DATA/host.yaml` when there is one (hint cost,
 /// release/collect modes… baked into each seed at generation), else AP's
-/// defaults, from a step that imports only AP's settings module (no worlds,
-/// so no world code runs with write access).
+/// defaults. Writing those defaults loads the world registry, so that step
+/// runs with an empty scratch dir as its user dir: no custom (uploaded) world
+/// is found there, and only the scratch dir is writable. The result is copied
+/// into the season.
 async fn ensure_host_yaml(season: &SeasonDirs, ap: &Install) -> Result<(), String> {
     let dest = season.root.join("host.yaml");
     if dest.exists() {
@@ -124,13 +126,22 @@ async fn ensure_host_yaml(season: &SeasonDirs, ap: &Install) -> Result<(), Strin
             .map_err(|e| format!("copying {} into the season: {e}", template.display()));
     }
     const INIT: &str = "import bifrost_ap, settings\nsettings.get_settings()\n";
+    let scratch = season.root.join(".host-init");
+    let _ = tokio::fs::remove_dir_all(&scratch).await;
+    tokio::fs::create_dir_all(&scratch)
+        .await
+        .map_err(|e| format!("{}: {e}", scratch.display()))?;
     let job = Job {
         program: &ap.python,
-        // -P: don't put the cwd (the season dir) on sys.path.
+        // -P: don't put the cwd on sys.path.
         args: vec!["-P".into(), "-c".into(), INIT.into()],
-        cwd: &season.root,
+        cwd: &scratch,
         env: {
-            let mut e = helper_env(season, ap);
+            let mut e: Vec<_> = helper_env(season, ap)
+                .into_iter()
+                .filter(|(k, _)| *k != "BIFROST_SEASON_DIR")
+                .collect();
+            e.push(("BIFROST_SEASON_DIR", scratch.clone().into_os_string()));
             e.push((
                 "PYTHONPATH",
                 cfg.runtime_dir.join("scripts").into_os_string(),
@@ -138,14 +149,23 @@ async fn ensure_host_yaml(season: &SeasonDirs, ap: &Install) -> Result<(), Strin
             e
         },
         read: vec![ap.dir.clone(), cfg.runtime_dir.join("scripts")],
-        write: vec![season.root.clone()],
+        write: vec![scratch.clone()],
         network: false,
     };
-    let out = sandbox::run(sandbox::get().command(&job), SETTINGS_TIMEOUT).await?;
-    if !season.root.join("host.yaml").exists() {
+    let out = sandbox::run(sandbox::get().command(&job), SETTINGS_TIMEOUT).await;
+    let made = scratch.join("host.yaml");
+    let copied = match &out {
+        Ok(_) if made.is_file() => tokio::fs::copy(&made, &dest).await.map(|_| ()),
+        _ => Err(std::io::Error::other("not created")),
+    };
+    let _ = tokio::fs::remove_dir_all(&scratch).await;
+    if copied.is_err() {
         return Err(format!(
             "couldn't create the season's host.yaml: {}",
-            stderr_tail(&out, 2)
+            match &out {
+                Ok(o) => stderr_tail(o, 2),
+                Err(e) => e.clone(),
+            }
         ));
     }
     Ok(())

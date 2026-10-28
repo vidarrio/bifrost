@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Data embedded in pages' scripts, such as item names from uploaded worlds, is
   escaped so it can't end the script and inject markup. The page header no
   longer builds its sign-in links from markup.
+- Creating a season's default `host.yaml` no longer loads its uploaded worlds,
+  and that step can only write to a scratch folder.
+- Sandboxed jobs are capped in how many processes and open files they can
+  have.
 
 ## [0.1.1] - 2026-10-28
 

@@ -242,6 +242,11 @@ impl Sandbox {
                 }
                 set_limit(libc::RLIMIT_FSIZE, limits.fsize_bytes);
                 set_limit(libc::RLIMIT_CORE, 0);
+                // A fork bomb or fd leak stops here rather than at the host's
+                // limits (the timeout still kills the group). Only lowered:
+                // these count per user, so they stay well above a normal job.
+                lower_limit(libc::RLIMIT_NPROC, MAX_PROCS);
+                lower_limit(libc::RLIMIT_NOFILE, MAX_FILES);
                 Ok(())
             });
         }
@@ -260,6 +265,31 @@ fn in_container() -> bool {
 type Resource = libc::__rlimit_resource_t;
 #[cfg(not(target_env = "gnu"))]
 type Resource = libc::c_int;
+
+/// Process and open-file ceilings for every sandboxed job.
+const MAX_PROCS: u64 = 4096;
+const MAX_FILES: u64 = 1024;
+
+/// Lower a limit to `value` (never raise it: an unprivileged process can't
+/// raise its hard limit, and the host's may already be lower).
+fn lower_limit(resource: Resource, value: u64) {
+    let mut cur = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: plain syscalls on stack values.
+    unsafe {
+        if libc::getrlimit(resource, &mut cur) != 0 {
+            return;
+        }
+        let v = value as libc::rlim_t;
+        let lim = libc::rlimit {
+            rlim_cur: cur.rlim_cur.min(v),
+            rlim_max: cur.rlim_max.min(v),
+        };
+        libc::setrlimit(resource, &lim);
+    }
+}
 
 fn set_limit(resource: Resource, value: u64) {
     let lim = libc::rlimit {
