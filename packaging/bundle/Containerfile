@@ -15,7 +15,7 @@ ARG DEBIAN=trixie
 ARG APT="apt-get -o APT::Sandbox::User=root"
 
 # ---- Bifrost, static (musl): runs on any x86_64 Linux ----
-FROM docker.io/library/rust:1.98-${DEBIAN} AS bifrost
+FROM docker.io/library/rust:1.99.1-${DEBIAN} AS bifrost
 ARG APT
 RUN ${APT} update && ${APT} install -y --no-install-recommends musl-tools \
     && rm -rf /var/lib/apt/lists/*
