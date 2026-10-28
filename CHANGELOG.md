@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A guide to hosting Bifrost on Windows through WSL2, with the container or
+  the single-file build.
+
+### Fixed
+
+- The user guide no longer suggests installing the single-file build in a
+  root-owned folder such as `/usr/local/bin`, where `bifrost update` can't
+  replace it.
+- The user guide's Docker flags now include `seccomp=unconfined` (and
+  `apparmor=unconfined` where AppArmor is in use). Without them, Docker's
+  defaults block bubblewrap, and Bifrost falls back to the weaker sandbox.
+
 ## [0.1.0] - 2026-10-28
 
 ### Added
