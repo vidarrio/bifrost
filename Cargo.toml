@@ -25,7 +25,9 @@ futures-util = { version = "0.3", default-features = false, features = ["std", "
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }  # Bifrost slots + claims
 poptracker = { path = "crates/poptracker" }  # PopTracker-pack engine (runs pack Lua -> tracker state)
 zip = { version = "9", default-features = false, features = ["deflate"] }  # read per-player files out of the generated seed zip + uploaded pack assets
-argon2 = { version = "0.5", features = ["std"] }  # native-account password hashing (argon2id); std brings OsRng
+# std enables rand_core/getrandom, which `argon2::password_hash::rand_core::OsRng`
+# (src/auth.rs) needs; tokio-tungstenite 0.24 used to enable it through rand 0.8.
+argon2 = { version = "0.5", features = ["std"] }  # native-account password hashing (argon2id)
 sha2 = "0.11"  # session/link tokens are stored as SHA-256, never in the clear
 libc = "0.2"  # sandbox floor: setrlimit / setsid / killpg for AP helper processes
 toml = { version = "0.8", default-features = false, features = ["parse"] }  # $BIFROST_DATA/config.toml
