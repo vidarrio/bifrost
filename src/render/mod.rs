@@ -497,6 +497,15 @@ a.gtab{display:inline-block;text-decoration:none}
 /// The instance console's tab bar: one page per tab, so these
 /// are links. Moderators see only Seasons.
 fn console_nav(active: &str, sysadmin: bool) -> String {
+    console_nav_with(active, sysadmin, crate::release_check::newer().as_ref())
+}
+
+/// The console's tab bar, plus the newer-release banner for sysadmins.
+fn console_nav_with(
+    active: &str,
+    sysadmin: bool,
+    newer: Option<&crate::release_check::Newer>,
+) -> String {
     let mut out = format!(r#"{TABS_CSS}<div class="gtabs">"#);
     for (href, label) in [
         ("/admin/seasons", "Seasons"),
@@ -511,8 +520,8 @@ fn console_nav(active: &str, sysadmin: bool) -> String {
         out.push_str(&format!(r#"<a class="gtab{on}" href="{href}">{label}</a>"#));
     }
     out.push_str("</div>");
-    if sysadmin && let Some(n) = crate::release_check::newer() {
-        out.push_str(&update_banner(&n));
+    if sysadmin && let Some(n) = newer {
+        out.push_str(&update_banner(n));
     }
     out
 }
@@ -580,6 +589,9 @@ mod tests {
             url: "https://github.com/vidarrio/bifrost/releases/tag/v0.2.0".into(),
         };
         let b = update_banner(&n);
+        assert!(console_nav_with("/admin/settings", true, Some(&n)).contains(&b));
+        assert!(!console_nav_with("/admin/seasons", false, Some(&n)).contains("is out"));
+        assert!(!console_nav_with("/admin/settings", true, None).contains("is out"));
         assert!(b.contains("Bifrost <b>0.2.0&lt;x&gt;</b> is out"), "{b}");
         assert!(b.contains(r#"href="https://github.com/vidarrio/bifrost/releases/tag/v0.2.0""#));
         use console::release_status as st;

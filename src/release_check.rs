@@ -14,6 +14,8 @@ const REPO: &str = "vidarrio/bifrost";
 /// The first check waits a little, so a restart loop doesn't hammer GitHub.
 const FIRST: Duration = Duration::from_secs(5 * 60);
 const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
+/// After a failed check, try again sooner.
+const RETRY: Duration = Duration::from_secs(60 * 60);
 
 /// A release newer than this build.
 #[derive(Clone, Debug, PartialEq)]
@@ -26,18 +28,28 @@ pub struct Newer {
 pub type Checked = (i64, Result<Option<Newer>, String>);
 
 static LAST: Mutex<Option<Checked>> = Mutex::new(None);
+/// The newest newer release any check found: a failed check doesn't hide it.
+static NEWER: Mutex<Option<Newer>> = Mutex::new(None);
 
 pub fn current() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
 pub fn enabled() -> bool {
-    config::var("BIFROST_UPDATE_CHECK").is_none_or(|v| {
-        !matches!(
-            v.trim().to_ascii_lowercase().as_str(),
-            "0" | "false" | "off" | "no"
-        )
-    })
+    config::var("BIFROST_UPDATE_CHECK").is_none_or(|v| switch(&v))
+}
+
+/// `BIFROST_UPDATE_CHECK`'s value: on unless it says off. Anything else is
+/// on, with a warning.
+fn switch(v: &str) -> bool {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "0" | "false" | "off" | "no" => false,
+        "1" | "true" | "on" | "yes" => true,
+        _ => {
+            tracing::warn!("BIFROST_UPDATE_CHECK={v:?} isn't on or off; checking for updates");
+            true
+        }
+    }
 }
 
 /// The last check's outcome, `None` before the first.
@@ -45,9 +57,9 @@ pub fn last() -> Option<Checked> {
     LAST.lock().unwrap().clone()
 }
 
-/// The newer release the last check found.
+/// The newer release the checks found, kept through failed checks.
 pub fn newer() -> Option<Newer> {
-    last().and_then(|(_, r)| r.ok().flatten())
+    NEWER.lock().unwrap().clone()
 }
 
 /// The daily check loop.
@@ -59,29 +71,41 @@ pub fn spawn() {
     tokio::spawn(async {
         tokio::time::sleep(FIRST).await;
         loop {
-            check().await;
-            tokio::time::sleep(EVERY).await;
+            let wait = if check().await { EVERY } else { RETRY };
+            tokio::time::sleep(wait).await;
         }
     });
 }
 
-async fn check() {
+/// One check; whether it reached GitHub.
+async fn check() -> bool {
     let res = apupdate::releases(REPO)
         .await
         .map(|rs| pick(&rs, current()));
+    let ok = res.is_ok();
+    record(crate::auth::now(), res);
+    ok
+}
+
+fn record(at: i64, res: Result<Option<Newer>, String>) {
     match &res {
-        Ok(Some(n)) if newer().as_ref() != Some(n) => {
-            tracing::info!(
-                "Bifrost {} is out (this is {}): {}",
-                n.version,
-                current(),
-                n.url
-            )
+        Ok(found) => {
+            let mut newer = NEWER.lock().unwrap();
+            if let Some(n) = found
+                && newer.as_ref() != Some(n)
+            {
+                tracing::info!(
+                    "Bifrost {} is out (this is {}): {}",
+                    n.version,
+                    current(),
+                    n.url
+                );
+            }
+            newer.clone_from(found);
         }
         Err(e) => tracing::warn!("checking for newer Bifrost releases: {e}"),
-        _ => {}
     }
-    *LAST.lock().unwrap() = Some((crate::auth::now(), res));
+    *LAST.lock().unwrap() = Some((at, res));
 }
 
 /// The newest release newer than `current`. Pre-releases count only when
@@ -165,6 +189,31 @@ mod tests {
             name: tag.into(),
             prerelease,
             published: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_failed_check_keeps_the_newer_release_found_before() {
+        let n = Newer {
+            version: "9.9.9".into(),
+            url: "u".into(),
+        };
+        record(1, Ok(Some(n.clone())));
+        record(2, Err("rate limited".into()));
+        assert_eq!(newer(), Some(n));
+        assert!(matches!(last(), Some((2, Err(_)))));
+        // Once a check finds nothing newer (say, after updating), it's gone.
+        record(3, Ok(None));
+        assert_eq!(newer(), None);
+    }
+
+    #[test]
+    fn the_switch_reads_config_booleans_and_words() {
+        for off in ["0", "false", "OFF", " no "] {
+            assert!(!switch(off), "{off}");
+        }
+        for on in ["1", "true", "on", "yes", "disabled?"] {
+            assert!(switch(on), "{on}");
         }
     }
 
