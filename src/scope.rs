@@ -82,12 +82,16 @@ fn split(path: &str) -> Option<(i64, String)> {
 /// that normalizes the path before matching its rule would otherwise see a
 /// different path than the one Bifrost tiers. No route needs any of these.
 fn canonical(path: &str) -> bool {
+    if path == "/" {
+        return true;
+    }
     let Some(rest) = path.strip_prefix('/') else {
         return false;
     };
     let rest = rest.strip_suffix('/').unwrap_or(rest);
     !path.contains('%')
-        && (rest.is_empty() || rest.split('/').all(|s| !matches!(s, "" | "." | "..")))
+        && !rest.is_empty()
+        && rest.split('/').all(|s| !matches!(s, "" | "." | ".."))
 }
 
 pub async fn rewrite(mut req: Request, next: Next) -> Response {
@@ -214,6 +218,7 @@ mod tests {
         }
         for bad in [
             "",
+            "//",
             "//admin",
             "/admin//users",
             "/./admin",
@@ -223,6 +228,28 @@ mod tests {
             "/s/1/game/%2e%2e/admin",
         ] {
             assert!(!canonical(bad), "{bad}");
+        }
+    }
+
+    #[tokio::test]
+    async fn rewrite_refuses_ambiguous_paths_before_routing() {
+        use tower::Service;
+        let mut app = axum::Router::new()
+            .fallback(|| async { "routed" })
+            .layer(axum::middleware::from_fn(rewrite));
+        for (path, status) in [
+            ("/board", 200),
+            ("/s/1/admin", 200),
+            ("/s/1/../admin", 400),
+            ("/%61dmin", 400),
+            ("//", 400),
+        ] {
+            let req = Request::builder()
+                .uri(path)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let res = app.call(req).await.unwrap();
+            assert_eq!(res.status().as_u16(), status, "{path}");
         }
     }
 
