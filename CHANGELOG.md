@@ -32,5 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build provenance.
 - Archipelago release checks and installs authenticate to GitHub with
   `GITHUB_TOKEN` when it's set, avoiding GitHub's anonymous rate limit.
+- Sysadmins see a banner in the console when a newer Bifrost is released
+  (checked daily; `BIFROST_UPDATE_CHECK=off` turns it off).
 
 [Unreleased]: https://github.com/vidarrio/bifrost/commits/main

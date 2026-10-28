@@ -27,7 +27,7 @@ sh("podman", "volume", "rm", "bfc-data")
 # the release check and install.
 token = ["-e", "GITHUB_TOKEN"] if os.environ.get("GITHUB_TOKEN") else []
 r = sh("podman", "run", "-d", "--name", "bfc", "--stop-timeout", "30", "--security-opt", "unmask=/proc/*",
-       "-e", "BIFROST_INSECURE_COOKIES=1", *token, "-p", f"{PORT}:8080", "-v", "bfc-data:/var/lib/bifrost", IMAGE)
+       "-e", "BIFROST_INSECURE_COOKIES=1", "-e", "BIFROST_UPDATE_CHECK=off", *token, "-p", f"{PORT}:8080", "-v", "bfc-data:/var/lib/bifrost", IMAGE)
 assert r.returncode == 0, r.stderr
 try:
     def up():

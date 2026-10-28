@@ -497,6 +497,15 @@ a.gtab{display:inline-block;text-decoration:none}
 /// The instance console's tab bar: one page per tab, so these
 /// are links. Moderators see only Seasons.
 fn console_nav(active: &str, sysadmin: bool) -> String {
+    console_nav_with(active, sysadmin, crate::release_check::newer().as_ref())
+}
+
+/// The console's tab bar, plus the newer-release banner for sysadmins.
+fn console_nav_with(
+    active: &str,
+    sysadmin: bool,
+    newer: Option<&crate::release_check::Newer>,
+) -> String {
     let mut out = format!(r#"{TABS_CSS}<div class="gtabs">"#);
     for (href, label) in [
         ("/admin/seasons", "Seasons"),
@@ -511,7 +520,19 @@ fn console_nav(active: &str, sysadmin: bool) -> String {
         out.push_str(&format!(r#"<a class="gtab{on}" href="{href}">{label}</a>"#));
     }
     out.push_str("</div>");
+    if sysadmin && let Some(n) = newer {
+        out.push_str(&update_banner(n));
+    }
     out
+}
+
+fn update_banner(n: &crate::release_check::Newer) -> String {
+    format!(
+        r#"<div class="banner warn">Bifrost <b>{}</b> is out (this is {}): <a href="{}">what's new</a> · <a href="https://github.com/vidarrio/bifrost/blob/main/docs/USER_GUIDE.md#updating-bifrost">how to update</a></div>"#,
+        esc(&n.version),
+        esc(crate::release_check::current()),
+        esc(&n.url),
+    )
 }
 
 /// Toggles `.gtabpanel`s from the `.gtabs` bar. The open tab lives in the URL
@@ -560,6 +581,28 @@ pub fn with_base(head: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn newer_releases_show_to_sysadmins() {
+        let n = crate::release_check::Newer {
+            version: "0.2.0<x>".into(),
+            url: "https://github.com/vidarrio/bifrost/releases/tag/v0.2.0".into(),
+        };
+        let b = update_banner(&n);
+        assert!(console_nav_with("/admin/settings", true, Some(&n)).contains(&b));
+        assert!(!console_nav_with("/admin/seasons", false, Some(&n)).contains("is out"));
+        assert!(!console_nav_with("/admin/settings", true, None).contains("is out"));
+        assert!(b.contains("Bifrost <b>0.2.0&lt;x&gt;</b> is out"), "{b}");
+        assert!(b.contains(r#"href="https://github.com/vidarrio/bifrost/releases/tag/v0.2.0""#));
+        use console::release_status as st;
+        assert!(st(false, Some(&(0, Ok(Some(n.clone()))))).contains("checks off"));
+        assert!(st(true, None).contains("not checked"));
+        assert!(st(true, Some(&(0, Ok(None)))).contains("newest"));
+        assert!(st(true, Some(&(0, Ok(Some(n))))).contains("0.2.0&lt;x&gt;</a> is out"));
+        assert!(
+            st(true, Some(&(0, Err("<rate limited>".into())))).contains("&lt;rate limited&gt;")
+        );
+    }
 
     #[test]
     fn attribute_values_cant_be_broken_out_of() {

@@ -68,7 +68,7 @@ os.makedirs(data)
 name = "bfbare"
 subprocess.run(["podman", "rm", "-f", name], capture_output=True)
 r = subprocess.run(["podman", "run", "-d", "--name", name, "-p", "18194:8080",
-                    "-e", "BIFROST_INSECURE_COOKIES=1", "-e", "BIFROST_DATA=/data",
+                    "-e", "BIFROST_INSECURE_COOKIES=1", "-e", "BIFROST_DATA=/data", "-e", "BIFROST_UPDATE_CHECK=off",
                     "-v", f"{BUNDLE}:/bifrost:ro", "-v", f"{os.path.abspath(data)}:/data:U",
                     "docker.io/library/debian:bookworm-slim", "/bifrost"], capture_output=True, text=True)
 check("bare container starts", r.returncode == 0, r.stderr)

@@ -343,7 +343,12 @@ pub fn settings_page(
         "AP server: external (BIFROST_AP_MODE=external)".into()
     };
     body.push_str(&format!(
-        r#"<h2>Deployment</h2><p class="statline">{ports}<br>Auth: <b>{}</b><br>Isolation: <span style="color:var({})">{}</span></p>"#,
+        r#"<h2>Deployment</h2><p class="statline">Bifrost <b>{}</b> · {}<br>{ports}<br>Auth: <b>{}</b><br>Isolation: <span style="color:var({})">{}</span></p>"#,
+        esc(crate::release_check::current()),
+        release_status(
+            crate::release_check::enabled(),
+            crate::release_check::last().as_ref()
+        ),
         esc(&status.auth_mode),
         if status.strong_isolation { "--ok" } else { "--warn" },
         esc(&status.isolation),
@@ -383,6 +388,27 @@ pub fn settings_page(
         esc(&discords),
     ));
     auth_page("Console", r#"<a href="/">← home</a>"#, err, &body)
+}
+
+/// The Deployment line's word on newer releases.
+pub(super) fn release_status(
+    enabled: bool,
+    last: Option<&crate::release_check::Checked>,
+) -> String {
+    match last {
+        _ if !enabled => "update checks off (BIFROST_UPDATE_CHECK)".into(),
+        None => "not checked for updates yet".into(),
+        Some((_, Ok(None))) => "the newest release".into(),
+        Some((_, Ok(Some(n)))) => format!(
+            r#"<a href="{}">{}</a> is out"#,
+            esc(&n.url),
+            esc(&n.version)
+        ),
+        Some((_, Err(e))) => format!(
+            r#"<span style="color:var(--warn)">couldn't check for updates: {}</span>"#,
+            esc(e)
+        ),
+    }
 }
 
 // ---- the apworld catalog (instance, sysadmin) ----
