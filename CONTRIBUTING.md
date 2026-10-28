@@ -50,7 +50,7 @@ tool attribution trailers such as `Co-Authored-By` or "Generated with"; the
 with a user-visible change adds a line under `## [Unreleased]`, in the right
 section:
 
-- **Added**: new features.
+- **Added**: new features or documentation.
 - **Changed**: changes to existing behaviour.
 - **Deprecated**: features that will be removed.
 - **Removed**: features that were removed.
@@ -191,10 +191,10 @@ collect under `[Unreleased]` until then.
 
 Versions follow [Semantic Versioning](https://semver.org/). Before 1.0, a minor
 version (`0.x.0`) carries new features or breaking changes, and a patch version
-(`0.x.y`) carries fixes only. Additions to the documentation alone, with no
-change in behaviour, can go in a patch version too. The first release is
-`0.1.0`. Only Bifrost's own version (the root `Cargo.toml`) is bumped; the
-`poptracker` crate is internal and keeps its version.
+(`0.x.y`) carries fixes only. Documentation-only additions, with no change in
+behaviour, can also go in a patch version. The first release is `0.1.0`. Only
+Bifrost's own version (the root `Cargo.toml`) is bumped; the `poptracker` crate
+is internal and keeps its version.
 
 To cut release `X.Y.Z`:
 
