@@ -1,0 +1,52 @@
+name: Pins
+
+# Weekly: compare the release pins Dependabot can't watch (the bundle's Python,
+# the Archipelago fork build) with the latest releases, and keep one issue
+# open while any are behind (.github/scripts/check_pins.py).
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+# One run at a time, so two close together can't both open the issue.
+concurrency:
+  group: pins
+
+jobs:
+  check:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compare pins with the latest releases
+        id: check
+        run: python3 .github/scripts/check_pins.py "$RUNNER_TEMP/report.md" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STALE: ${{ steps.check.outputs.stale }}
+        run: |
+          title="Pinned releases are behind"
+          report="$RUNNER_TEMP/report.md"
+          # Listed directly (the search index can lag behind a new issue) and
+          # matched on the exact title.
+          num=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --label chore --limit 200 \
+                  --json number,title -q ".[] | select(.title == \"$title\") | .number" | head -n1)
+          if [ "$STALE" = true ]; then
+            if [ -z "$num" ]; then
+              gh issue create -R "$GITHUB_REPOSITORY" --title "$title" --label chore --body-file "$report"
+            elif [ "$(gh issue view "$num" -R "$GITHUB_REPOSITORY" --json body -q .body)" != "$(cat "$report")" ]; then
+              # Editing notifies no one; the comment does.
+              gh issue edit "$num" -R "$GITHUB_REPOSITORY" --body-file "$report"
+              gh issue comment "$num" -R "$GITHUB_REPOSITORY" --body "The report above changed; see the updated values."
+            fi
+          elif [ -n "$num" ]; then
+            gh issue close "$num" -R "$GITHUB_REPOSITORY" --comment "All pinned releases are current again."
+          fi
