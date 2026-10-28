@@ -21,7 +21,7 @@ ARG DEBIAN=trixie
 ARG APT="apt-get -o APT::Sandbox::User=root"
 
 # ---- Bifrost ----
-FROM docker.io/library/rust:1.98-${DEBIAN} AS bifrost
+FROM docker.io/library/rust:1.99.1-${DEBIAN} AS bifrost
 WORKDIR /src
 # The toolchain rust-toolchain.toml names, in a layer of its own.
 COPY rust-toolchain.toml ./

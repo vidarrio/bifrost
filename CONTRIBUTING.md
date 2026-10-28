@@ -226,6 +226,13 @@ cargo build && BIFROST_DATA=./data BIFROST_AP_DIR=/path/to/Archipelago \
 
 `BIFROST_AP_DIR` must point at an Archipelago checkout with a `venv/`.
 
+The Rust toolchain is pinned to an exact release in `rust-toolchain.toml`
+(rustup installs it on first use). Bump it in a `chore:` pull request of its
+own, together with the `rust:` base image in `Dockerfile` and
+`packaging/bundle/Containerfile` and `rust-version` in `Cargo.toml` (the
+release without its patch number), and fix whatever new clippy lints it brings.
+`lint` fails until all four agree.
+
 ### End-to-end tests
 
 The suites in `tests/e2e/` start real Bifrost instances on throwaway data

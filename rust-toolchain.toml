@@ -1,2 +1,6 @@
+# The exact Rust release everyone builds with: CI, the container builds and
+# contributors. Bumped deliberately, in its own pull request (Dependabot
+# proposes them); see CONTRIBUTING.md.
 [toolchain]
-channel = "stable"
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
