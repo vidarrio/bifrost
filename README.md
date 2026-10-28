@@ -42,19 +42,19 @@ an archive of past seasons.
 ## Quick start
 
 ```sh
-podman build -t bifrost .            # or docker build
 podman run -d --name bifrost --stop-timeout 30 --security-opt unmask=/proc/* \
-    -p 8080:8080 -p 38281-38300:38281-38300 -v bifrost-data:/var/lib/bifrost bifrost
+    -p 8080:8080 -p 38281-38300:38281-38300 -v bifrost-data:/var/lib/bifrost \
+    ghcr.io/vidarrio/bifrost:latest    # or docker run
 podman logs bifrost                  # prints the first-run /setup link
 ```
 
 Open the `/setup?token=…` link to create the first sysadmin. Then set the
 connect host under *Console → Settings* and create a season.
 
-You can also build Bifrost as a single native Linux executable
-(`packaging/bundle/build.sh`). See the
-[user guide](docs/USER_GUIDE.md#installing) for both options, what the
-container flags do, and running behind a reverse proxy.
+Each [release](https://github.com/vidarrio/bifrost/releases) also has a
+single native Linux executable. See the
+[user guide](docs/USER_GUIDE.md#installing) for both options, building them
+yourself, what the container flags do, and running behind a reverse proxy.
 
 ## Development
 

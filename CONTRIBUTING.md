@@ -223,16 +223,21 @@ To cut release `X.Y.Z`:
    git push origin vX.Y.Z
    ```
 
-6. **GitHub release** from the tag, with that version's changelog section as
-   the notes:
+6. **The release workflow** (`.github/workflows/release.yml`) takes it from
+   there. It checks that the tag matches `Cargo.toml` and that the changelog
+   has a `[X.Y.Z]` section, then:
+   - builds the container image and pushes it to
+     `ghcr.io/vidarrio/bifrost` as `X.Y.Z`, `X.Y` and `latest` (a version
+     with a pre-release suffix, like `0.2.0-rc.1`, gets only `X.Y.Z-…` and is
+     marked as a pre-release);
+   - builds the native bundle and its `SHA256SUMS`;
+   - attests the build provenance of both;
+   - creates the GitHub release with the changelog section as its notes and
+     the bundle and checksums attached.
 
-   ```sh
-   awk '/^## \[X.Y.Z\]/{f=1;next} /^## \[/||/^\[[^]]*\]: /{f=0} f' CHANGELOG.md |
-       gh release create vX.Y.Z --verify-tag --title "Bifrost X.Y.Z" --notes-file -
-   ```
-
-   Build the native bundle from the tag (`packaging/bundle/build.sh`) and
-   attach it to the release.
+   Check the run and the release page afterwards. The first time an image is
+   pushed, the package on GitHub is private: make it public in its settings,
+   once.
 
 A fix for a released version goes through a `fix/` branch like any other
 change, followed by a patch release when the maintainer calls for one.

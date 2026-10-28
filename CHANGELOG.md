@@ -25,7 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with each live season pinned to the version it was generated with.
 - Nightly backups with retention, live load monitoring, and season bundles that
   can be imported on another instance.
-- A container image and a single-file native Linux build.
+- A container image and a single-file native Linux build, published with each
+  release (the image on `ghcr.io`, the file on the GitHub release), both with
+  build provenance.
 - Archipelago release checks and installs authenticate to GitHub with
   `GITHUB_TOKEN` when it's set, avoiding GitHub's anonymous rate limit.
 
