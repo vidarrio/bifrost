@@ -41,8 +41,8 @@ ARG APT
 ARG AP_VERSION=0.6.8-bifrost.2
 ARG AP_SHA256=926ef45340c1ed67305ac344240979d4e546c7cab4ba2b42ad8b1404e6d22b44
 ARG AP_REPO=https://github.com/vidarrio/Archipelago
-ARG PY_URL=https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.13.16+20261013-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
-ARG PY_SHA256=d0080766b6b74aeb81e1949ef0d9a20e6c17f7b160fb295a69b936ccb17660be
+ARG PY_URL=https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.13.18+20261026-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
+ARG PY_SHA256=df15fe60d3ff55bf9dcf25824b5572756bb8816ff93865a273d3301d7066a8b7
 RUN ${APT} update && ${APT} install -y --no-install-recommends \
         ca-certificates curl gcc git libc6-dev zip \
     && rm -rf /var/lib/apt/lists/*
