@@ -3,14 +3,20 @@ generation and a live server on its own Python + Archipelago (on this host,
 under bubblewrap), doesn't re-unpack on restart, installs another release
 with its Python; and runs on a bare Debian with no Python at all."""
 import glob
+import hashlib
+import http.server
+import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import threading
 import time
 
 import requests
 
+import lib
 from lib import REPO, Server, check, get, post, summary, wait_for
 
 _built = glob.glob(os.path.join(REPO, "dist", "bifrost-*-x86_64-linux"))
@@ -60,6 +66,88 @@ try:
           re.findall(r'class="banner[^"]*">[^<]*', done or ""))
 finally:
     srv.stop()
+
+# `bifrost update`, against a stand-in for GitHub's API serving this very
+# bundle as release 9.9.9 (and broken releases next to it).
+blob = open(BUNDLE, "rb").read()
+sha = hashlib.sha256(blob).hexdigest()
+releases = {
+    "v9.9.9": (blob, sha),
+    "v9.9.8": (blob, "0" * 64),           # the checksum doesn't match
+    "v9.9.7": (b"#!/bin/sh\n", None),     # not a bundle (checksum matches)
+}
+listing = []
+
+
+class FakeGitHub(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def send(self, body, ctype="application/octet-stream"):
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        base = f"http://127.0.0.1:{self.server.server_port}"
+        m = re.fullmatch(r"/repos/vidarrio/bifrost/releases/tags/(v[\d.]+)", self.path)
+        d = re.fullmatch(r"/dl/(v[\d.]+)/(.+)", self.path)
+        if self.path.startswith("/repos/vidarrio/bifrost/releases?"):
+            self.send(json.dumps(listing).encode(), "application/json")
+        elif m and m.group(1) in releases:
+            tag = m.group(1)
+            names = [f"bifrost-{tag[1:]}-x86_64-linux", "SHA256SUMS"]
+            assets = [{"name": n, "browser_download_url": f"{base}/dl/{tag}/{n}"} for n in names]
+            self.send(json.dumps({"tag_name": tag, "assets": assets}).encode(), "application/json")
+        elif d and d.group(1) in releases:
+            body, digest = releases[d.group(1)]
+            if d.group(2) == "SHA256SUMS":
+                digest = digest or hashlib.sha256(body).hexdigest()
+                self.send(f"{digest}  bifrost-{d.group(1)[1:]}-x86_64-linux\n".encode())
+            else:
+                self.send(body)
+        else:
+            self.send_error(404)
+
+
+api = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeGitHub)
+threading.Thread(target=api.serve_forever, daemon=True).start()
+upd = os.path.join(srv.data, "..", "bundle-update")
+subprocess.run(["rm", "-rf", upd])
+os.makedirs(upd)
+exe = os.path.join(upd, "bifrost")
+shutil.copy2(BUNDLE, exe)
+env = dict(srv.env, BIFROST_GITHUB_API=f"http://127.0.0.1:{api.server_port}")
+
+
+def update(*args):
+    return subprocess.run([exe, "update", *args], env=env, capture_output=True, text=True, timeout=600)
+
+
+def unchanged():
+    return open(exe, "rb").read() == blob and sorted(os.listdir(upd)) == ["bifrost"]
+
+
+try:
+    r = update()
+    check("update with no newer release says so", r.returncode == 0 and "newest release" in r.stdout, (r.stdout, r.stderr))
+    r = update("9.9.8")
+    check("a download that doesn't match SHA256SUMS is refused", r.returncode == 1 and "doesn't match" in r.stderr, r.stderr)
+    check("…and changes nothing", unchanged(), os.listdir(upd))
+    r = update("9.9.7")
+    check("a file that isn't a single-file build is refused", r.returncode == 1 and "isn't a Bifrost single-file build" in r.stderr, r.stderr)
+    check("…and changes nothing", unchanged(), os.listdir(upd))
+    listing[:] = [{"tag_name": "v9.9.9", "name": "v9.9.9", "prerelease": False, "published_at": ""}]
+    r = update()
+    check("update fetches the newest release", r.returncode == 0 and "to 9.9.9" in r.stdout, (r.stdout, r.stderr))
+    check("…swaps it in, executable", open(exe, "rb").read() == blob and os.access(exe, os.X_OK))
+    check("…and keeps the previous binary", sorted(os.listdir(upd)) == ["bifrost", "bifrost.previous"], os.listdir(upd))
+    r = subprocess.run([lib.BIN, "update"], env=env, capture_output=True, text=True)
+    check("a build without a bundled runtime refuses to update itself", r.returncode == 1 and "only the native single-file build" in r.stderr, r.stderr)
+finally:
+    api.shutdown()
 
 # A bare system: no Python, no bubblewrap.
 data = os.path.join(srv.data, "..", "bundle-bare")

@@ -27,7 +27,9 @@ const USAGE: &str = "usage:
   bifrost backup list                       list backups
   bifrost backup restore <file.zip>         restore one (stop Bifrost first)
   bifrost season import <bundle.tar.gz>     add a finished season from another
-                                            instance's archive bundle";
+                                            instance's archive bundle
+  bifrost update [<version>]                replace this single-file build with the
+                                            newest release (or <version>); restart after";
 
 /// Commands that need no data dir or database (run before startup touches
 /// either). Returns the exit code if `args` named one.
@@ -48,13 +50,15 @@ pub fn run_early(args: &[String]) -> Option<i32> {
 
 /// Commands that need the data dir but must run before the database is
 /// opened (restoring replaces it).
-pub fn run_offline(args: &[String]) -> Option<i32> {
+pub async fn run_offline(args: &[String]) -> Option<i32> {
     match args
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>()
         .as_slice()
     {
+        ["update"] => Some(crate::selfupdate::run(None).await),
+        ["update", version] => Some(crate::selfupdate::run(Some(version)).await),
         ["backup", "restore", file] => {
             Some(match crate::backup::restore(std::path::Path::new(file)) {
                 Ok(msg) => {

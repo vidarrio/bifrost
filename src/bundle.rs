@@ -46,7 +46,10 @@ struct Payload {
 }
 
 fn detect() -> Option<Payload> {
-    let exe = std::env::current_exe().ok()?;
+    detect_in(std::env::current_exe().ok()?)
+}
+
+fn detect_in(exe: PathBuf) -> Option<Payload> {
     let mut f = std::fs::File::open(&exe).ok()?;
     let size = f.metadata().ok()?.len();
     if size < TRAILER {
@@ -66,6 +69,11 @@ fn detect() -> Option<Payload> {
 /// Whether this binary carries a bundled runtime.
 pub fn present() -> bool {
     detect().is_some()
+}
+
+/// Whether the file at `path` is a bundle (a binary carrying a runtime).
+pub fn is_bundle(path: &Path) -> bool {
+    detect_in(path.to_path_buf()).is_some()
 }
 
 /// A window onto the payload inside the executable.
