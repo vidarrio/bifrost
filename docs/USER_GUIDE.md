@@ -127,8 +127,10 @@ them with your game's client or patcher.
 - The spoiler log and the server's own file are never offered to players.
 - The common game's page shows its own setup steps (client and mod
   downloads) instead.
-- If your game needs a file and none is listed, ask the season's moderators:
-  a world that names its files unusually isn't picked up yet.
+- If your game needs a file and none is listed, ask the season's moderators.
+  A world that names its files unusually can't be matched to a slot; the
+  moderators see such files in the season console's *Player files* tab and
+  can hand yours over.
 
 ### Bonus hints: minesweeper
 
@@ -188,7 +190,9 @@ The season console has six tabs:
 - **Player files.** The per-player output files in the current seed, for
   download, plus the seed's spoiler log (for admins only). Players get their
   own files on their game page, so there's usually no need to send them out by
-  hand.
+  hand. A file whose name doesn't say which slot it's for is listed here too,
+  marked as not matched to a slot: hand that one to the right player
+  yourself. Bifrost also logs such files after each generation.
 - **Connection.** The season's address, its **connect password** (changing it
   restarts the server), and a **server console** for Archipelago server
   commands, such as `/send`, with auto-completion.
