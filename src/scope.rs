@@ -58,10 +58,15 @@ const INSTANCE_ROUTES: &[&str] = &[
 ];
 
 /// Split `/s/{id}/rest` into `(id, "/rest")`; `/s/{id}` alone is its board.
-/// `None` for an instance-level page under `/s/` (it then 404s).
+/// `None` for an instance-level page under `/s/` (it then 404s), and for any
+/// id or tail a forward-auth proxy's path rule might not read the same way
+/// (`+1`, `/s/1//admin`): only plain digits select a season.
 fn split(path: &str) -> Option<(i64, String)> {
     let rest = path.strip_prefix("/s/")?;
     let (id, tail) = rest.split_once('/').unwrap_or((rest, ""));
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) || tail.starts_with('/') {
+        return None;
+    }
     let id = id.parse::<i64>().ok().filter(|&i| i > 0)?;
     let tail = format!("/{}", if tail.is_empty() { "board" } else { tail });
     let instance = INSTANCE_ROUTES.iter().any(|r| {
@@ -71,7 +76,28 @@ fn split(path: &str) -> Option<(i64, String)> {
     (!instance).then_some((id, tail))
 }
 
+/// A path a proxy and Bifrost can only read one way: no percent-escapes, no
+/// `.`/`..` segments and no empty segment (bar a trailing slash). Sign-in is
+/// decided by path prefix here and, in forward-auth mode, at the proxy; a proxy
+/// that normalizes the path before matching its rule would otherwise see a
+/// different path than the one Bifrost tiers. No route needs any of these.
+fn canonical(path: &str) -> bool {
+    if path == "/" {
+        return true;
+    }
+    let Some(rest) = path.strip_prefix('/') else {
+        return false;
+    };
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
+    !path.contains('%')
+        && !rest.is_empty()
+        && rest.split('/').all(|s| !matches!(s, "" | "." | ".."))
+}
+
 pub async fn rewrite(mut req: Request, next: Next) -> Response {
+    if !canonical(req.uri().path()) {
+        return (StatusCode::BAD_REQUEST, "Bad path").into_response();
+    }
     // Keep the URL as requested (e.g. for the post-login redirect).
     let original = axum::extract::OriginalUri(req.uri().clone());
     req.extensions_mut().insert(original);
@@ -186,6 +212,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_canonical_paths_pass() {
+        for ok in ["/", "/board", "/s/3/", "/s/3/game/7", "/admin/seasons"] {
+            assert!(canonical(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "//",
+            "//admin",
+            "/admin//users",
+            "/./admin",
+            "/s/1/../admin",
+            "/admin/.",
+            "/%61dmin",
+            "/s/1/game/%2e%2e/admin",
+        ] {
+            assert!(!canonical(bad), "{bad}");
+        }
+    }
+
+    #[tokio::test]
+    async fn rewrite_refuses_ambiguous_paths_before_routing() {
+        use tower::Service;
+        let mut app = axum::Router::new()
+            .fallback(|| async { "routed" })
+            .layer(axum::middleware::from_fn(rewrite));
+        for (path, status) in [
+            ("/board", 200),
+            ("/s/1/admin", 200),
+            ("/s/1/../admin", 400),
+            ("/%61dmin", 400),
+            ("//", 400),
+        ] {
+            let req = Request::builder()
+                .uri(path)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let res = app.call(req).await.unwrap();
+            assert_eq!(res.status().as_u16(), status, "{path}");
+        }
+    }
+
+    #[test]
     fn season_prefix_is_split() {
         assert_eq!(split("/s/3/board"), Some((3, "/board".into())));
         assert_eq!(
@@ -196,6 +264,14 @@ mod tests {
         assert_eq!(split("/s/3/"), Some((3, "/board".into())));
         assert_eq!(split("/s/x/board"), None);
         assert_eq!(split("/s/0/board"), None);
+        // Only plain digits: a proxy rule like `^/s/[0-9]+/admin` must see
+        // every path that reaches a season page.
+        assert_eq!(split("/s/+1/admin"), None);
+        assert_eq!(split("/s/-1/admin"), None);
+        assert_eq!(split("/s/ 1/admin"), None);
+        assert_eq!(split("/s/1//admin"), None);
+        assert_eq!(split("/s//admin"), None);
+        assert_eq!(split("/s/01/admin"), Some((1, "/admin".into())));
         assert_eq!(split("/season/3"), None);
         assert_eq!(split("/board"), None);
         // Instance pages have one URL only.

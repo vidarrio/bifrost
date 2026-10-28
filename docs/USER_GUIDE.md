@@ -638,8 +638,11 @@ prefixes are `/admin`, `/claim`, `/hint`, `/signup`, `/game`, `/prioritize`,
 for the season forms looks like:
 
 ```
-PathRegexp(`^/s/[0-9]+/(admin|claim|hint|signup|game|prioritize|minesweeper|api|mc)`)
+PathRegexp(`^/s/[^/]*/+(admin|claim|hint|signup|game|prioritize|minesweeper|api|mc)`)
 ```
+
+Match any season id there, not just digits, so that no spelling of a season
+URL slips past the rule. Bifrost itself only accepts plain digits.
 
 ### Isolation
 

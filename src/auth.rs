@@ -696,6 +696,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn guide_proxy_rule_covers_every_signed_in_prefix() {
+        // The user guide's forward-auth proxy rule must gate everything that
+        // isn't public, or a proxy set up from it lets identity headers through.
+        let guide = include_str!("../docs/USER_GUIDE.md");
+        let rule = guide
+            .lines()
+            .find(|l| l.starts_with("PathRegexp(`^/s/"))
+            .expect("the guide's season rule");
+        let alts = rule
+            .split_once('(')
+            .and_then(|(_, r)| r.rsplit_once('(').map(|(_, a)| a))
+            .and_then(|a| a.split_once(')').map(|(a, _)| a))
+            .expect("an alternation in the rule");
+        let alts: Vec<&str> = alts.split('|').collect();
+        for p in SYSADMIN_PREFIXES
+            .iter()
+            .chain(ADMIN_PREFIXES)
+            .chain(LOGGED_IN_PREFIXES)
+        {
+            let first = p.trim_start_matches('/').split('/').next().unwrap();
+            assert!(
+                alts.contains(&first),
+                "{p} isn't in the guide's rule: {rule}"
+            );
+            assert!(
+                guide.contains(&format!("`/{first}`")),
+                "{p} isn't in the guide's prefix list"
+            );
+        }
+    }
+
+    #[test]
     fn tiers_match_design_14() {
         assert_eq!(tier("/admin"), Tier::Admin);
         assert_eq!(tier("/admin/seasons"), Tier::Admin);
