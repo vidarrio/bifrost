@@ -58,10 +58,15 @@ const INSTANCE_ROUTES: &[&str] = &[
 ];
 
 /// Split `/s/{id}/rest` into `(id, "/rest")`; `/s/{id}` alone is its board.
-/// `None` for an instance-level page under `/s/` (it then 404s).
+/// `None` for an instance-level page under `/s/` (it then 404s), and for any
+/// id or tail a forward-auth proxy's path rule might not read the same way
+/// (`+1`, `/s/1//admin`): only plain digits select a season.
 fn split(path: &str) -> Option<(i64, String)> {
     let rest = path.strip_prefix("/s/")?;
     let (id, tail) = rest.split_once('/').unwrap_or((rest, ""));
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) || tail.starts_with('/') {
+        return None;
+    }
     let id = id.parse::<i64>().ok().filter(|&i| i > 0)?;
     let tail = format!("/{}", if tail.is_empty() { "board" } else { tail });
     let instance = INSTANCE_ROUTES.iter().any(|r| {
@@ -196,6 +201,14 @@ mod tests {
         assert_eq!(split("/s/3/"), Some((3, "/board".into())));
         assert_eq!(split("/s/x/board"), None);
         assert_eq!(split("/s/0/board"), None);
+        // Only plain digits: a proxy rule like `^/s/[0-9]+/admin` must see
+        // every path that reaches a season page.
+        assert_eq!(split("/s/+1/admin"), None);
+        assert_eq!(split("/s/-1/admin"), None);
+        assert_eq!(split("/s/ 1/admin"), None);
+        assert_eq!(split("/s/1//admin"), None);
+        assert_eq!(split("/s//admin"), None);
+        assert_eq!(split("/s/01/admin"), Some((1, "/admin".into())));
         assert_eq!(split("/season/3"), None);
         assert_eq!(split("/board"), None);
         // Instance pages have one URL only.

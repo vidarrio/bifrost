@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Season URLs accept only plain numeric ids, and the forward-auth proxy rule in
+  the user guide now matches any season id. Forward-auth deployments should
+  update their proxy rule to the new one.
+
 ## [0.1.1] - 2026-10-28
 
 ### Added
