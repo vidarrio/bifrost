@@ -93,9 +93,10 @@ async fn main() {
     }
 
     let db_path = cfg.db_path();
-    let mut db = db::Db::open(&db_path.to_string_lossy())
+    let mut db = db::Db::connect(&db_path.to_string_lossy())
         .await
         .unwrap_or_else(|e| panic!("open db {}: {e}", db_path.display()));
+    upgrade(&db).await;
     if cfg.ap_managed {
         db = db.with_ap_ports(cfg.ap_ports.clone());
     }
@@ -245,6 +246,57 @@ async fn main() {
         .map(|s| shutdown_seasons.stop(s.id));
     futures_util::future::join_all(stops).await;
     tracing::info!("Bifrost stopped");
+}
+
+/// Bring the database up to this build's schema. A different Bifrost version
+/// last ran on this data dir: back up first, so going back to that version
+/// is a restore away. A data dir a newer Bifrost has migrated is refused.
+async fn upgrade(db: &db::Db) {
+    let stamp = db
+        .stamp()
+        .await
+        .unwrap_or_else(|e| panic!("read the database's schema version: {e}"));
+    let this = env!("CARGO_PKG_VERSION");
+    if stamp.too_new() {
+        tracing::error!(
+            "this data dir was last used by Bifrost {}, whose database schema (version {}) \
+             is newer than this Bifrost {this} knows (version {}). Run that version or newer, \
+             or restore a backup taken before it (`bifrost backup list`, then \
+             `bifrost backup restore <file>`)",
+            stamp.version.as_deref().unwrap_or("(unknown)"),
+            stamp.schema,
+            db::SCHEMA_VERSION
+        );
+        std::process::exit(1);
+    }
+    if let Some(from) = stamp.changed_from() {
+        tracing::info!(
+            "Bifrost {from} last ran on this data dir; backing up before starting {this}"
+        );
+        match backup::create(db, &backup::Policy::from_config()).await {
+            Ok(b) => tracing::info!(
+                "to go back to {from}: stop Bifrost, run `bifrost backup restore {}`, start {from}",
+                backup::dir().join(&b.name).display()
+            ),
+            // Nothing to undo if the schema stays the same; otherwise don't
+            // change it without a way back.
+            Err(e) if stamp.schema == db::SCHEMA_VERSION => {
+                tracing::warn!(
+                    "the pre-upgrade backup failed ({e}); the schema is unchanged, so starting anyway"
+                )
+            }
+            Err(e) => {
+                tracing::error!(
+                    "the pre-upgrade backup failed ({e}); not migrating the database without one. \
+                     Free up space (or set BIFROST_BACKUP_DIR) and start again"
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+    db.migrate()
+        .await
+        .unwrap_or_else(|e| panic!("migrate the database: {e}"));
 }
 
 /// SIGTERM (service manager / `docker stop`) or Ctrl-C.

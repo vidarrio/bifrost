@@ -12,7 +12,7 @@ cd "$(dirname "$0")"
 # The native suites, in CI's parallel shards (balanced by run time, about two
 # minutes each on a runner). A new native suite goes into one of them; a new
 # shard also goes into `shard)` and `shards)` below.
-shard1="apupdate backup homepill"
+shard1="apupdate backup homepill upgrade"
 shard2="quiet load"
 shard3="catalog supervisor season_import"
 native="$shard1 $shard2 $shard3"

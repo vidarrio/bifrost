@@ -34,5 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GITHUB_TOKEN` when it's set, avoiding GitHub's anonymous rate limit.
 - Sysadmins see a banner in the console when a newer Bifrost is released
   (checked daily; `BIFROST_UPDATE_CHECK=off` turns it off).
+- Upgrading Bifrost takes a backup before the new version changes anything,
+  and the log says how to go back. A data directory a newer Bifrost has
+  already upgraded is refused rather than run on by an older one.
 
 [Unreleased]: https://github.com/vidarrio/bifrost/commits/main

@@ -349,6 +349,13 @@ bifrost backup restore <backup.zip>
 The current contents are moved aside to `.pre-restore-<time>/`, not deleted.
 Prefer a backup directory on another disk (`[backup] dir`).
 
+Bifrost also backs up on the first start after an upgrade (or a downgrade),
+before the new version touches the database, and logs the command to go back.
+If that backup fails, Bifrost doesn't start when the upgrade would change the
+database; free up space and start it again. An older Bifrost refuses a data
+directory that a newer one has already upgraded: run the newer version, or
+restore the backup taken before the upgrade.
+
 ### Live load
 
 **Settings → Load** shows host memory, CPU and disk over the last hour, and
