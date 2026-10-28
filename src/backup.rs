@@ -12,6 +12,11 @@
 //! last `weekly` weeks and the last `monthly` months that have one, then
 //! drops the oldest while the total is over `max_mb` (never the newest). A
 //! backup is skipped, not squeezed in, when the disk is nearly full.
+//!
+//! The backup taken on the first start of a new Bifrost version is named
+//! `bifrost-YYYYMMDD-HHMMSS-pre-upgrade.zip` and sits outside that policy:
+//! the newest [`UPGRADE_KEEP`] of them are kept, whatever their age or size,
+//! so going back to the previous version stays possible.
 //! Restoring is a CLI step with Bifrost stopped (`bifrost backup restore`).
 
 use std::io::{Read, Write};
@@ -19,6 +24,10 @@ use std::path::{Path, PathBuf};
 
 use crate::config;
 use crate::db::Db;
+
+/// Pre-upgrade backups kept (see the module docs).
+pub const UPGRADE_KEEP: usize = 3;
+const UPGRADE_SUFFIX: &str = "-pre-upgrade";
 
 /// Free space a backup must leave behind.
 const HEADROOM: u64 = 512 << 20;
@@ -78,20 +87,27 @@ pub struct Backup {
     pub size: u64,
 }
 
-fn name_for(at: i64) -> String {
+fn name_for(at: i64, upgrade: bool) -> String {
     let (y, m, d) = civil(at.div_euclid(86400));
     let s = at.rem_euclid(86400);
     format!(
-        "bifrost-{y:04}{m:02}{d:02}-{:02}{:02}{:02}.zip",
+        "bifrost-{y:04}{m:02}{d:02}-{:02}{:02}{:02}{}.zip",
         s / 3600,
         s / 60 % 60,
-        s % 60
+        s % 60,
+        if upgrade { UPGRADE_SUFFIX } else { "" }
     )
+}
+
+/// Is this backup one taken before an upgrade?
+pub fn is_pre_upgrade(name: &str) -> bool {
+    name.ends_with(&format!("{UPGRADE_SUFFIX}.zip"))
 }
 
 /// The time a backup's name says it was taken.
 pub fn parse_name(name: &str) -> Option<i64> {
     let ts = name.strip_prefix("bifrost-")?.strip_suffix(".zip")?;
+    let ts = ts.strip_suffix(UPGRADE_SUFFIX).unwrap_or(ts);
     let (date, time) = ts.split_once('-')?;
     if date.len() != 8 || time.len() != 6 || !ts.chars().all(|c| c.is_ascii_digit() || c == '-') {
         return None;
@@ -205,10 +221,15 @@ pub fn plan(backups: &[Backup], p: &Policy) -> Vec<bool> {
 
 /// Delete the backups the policy doesn't keep. Returns their names.
 pub fn prune(p: &Policy) -> Vec<String> {
-    let all = list();
+    let (upgrades, all): (Vec<Backup>, Vec<Backup>) =
+        list().into_iter().partition(|b| is_pre_upgrade(&b.name));
     let keep = plan(&all, p);
     let mut gone = Vec::new();
-    for (b, k) in all.iter().zip(keep) {
+    let upgrades = upgrades
+        .into_iter()
+        .enumerate()
+        .map(|(i, b)| (b, i < UPGRADE_KEEP));
+    for (b, k) in all.into_iter().zip(keep).chain(upgrades) {
         if !k && std::fs::remove_file(dir().join(&b.name)).is_ok() {
             gone.push(b.name.clone());
         }
@@ -322,7 +343,16 @@ pub fn running() -> bool {
 
 /// Take a backup now, then apply the retention policy.
 pub async fn create(db: &Db, p: &Policy) -> Result<Backup, String> {
-    let res = create_inner(db, p).await;
+    create_kind(db, p, false).await
+}
+
+/// Take the backup before an upgrade (kept outside the retention policy).
+pub async fn create_pre_upgrade(db: &Db, p: &Policy) -> Result<Backup, String> {
+    create_kind(db, p, true).await
+}
+
+async fn create_kind(db: &Db, p: &Policy, upgrade: bool) -> Result<Backup, String> {
+    let res = create_inner(db, p, upgrade).await;
     let msg = match &res {
         Ok(b) => {
             tracing::info!("backup written: {} ({} bytes)", b.name, b.size);
@@ -341,7 +371,7 @@ pub async fn create(db: &Db, p: &Policy) -> Result<Backup, String> {
     res
 }
 
-async fn create_inner(db: &Db, p: &Policy) -> Result<Backup, String> {
+async fn create_inner(db: &Db, p: &Policy, upgrade: bool) -> Result<Backup, String> {
     let _one = RUNNING
         .try_lock()
         .map_err(|_| "a backup is already running".to_string())?;
@@ -371,10 +401,10 @@ async fn create_inner(db: &Db, p: &Policy) -> Result<Backup, String> {
         ));
     }
     let mut at = crate::auth::now();
-    while dir.join(name_for(at)).exists() {
+    while dir.join(name_for(at, upgrade)).exists() {
         at += 1;
     }
-    let name = name_for(at);
+    let name = name_for(at, upgrade);
     let partial = dir.join(format!(".partial-{name}"));
     let snapshot = dir.join(format!(".partial-{name}.db"));
     let _ = std::fs::remove_file(&partial);
@@ -537,7 +567,7 @@ mod tests {
 
     fn b(at: i64, size: u64) -> Backup {
         Backup {
-            name: name_for(at),
+            name: name_for(at, false),
             at,
             size,
         }
@@ -546,8 +576,12 @@ mod tests {
     #[test]
     fn names_round_trip() {
         let at = 1_793_016_000 + 3723; // 2026-10-26 01:02:03 UTC-ish
-        assert_eq!(parse_name(&name_for(at)), Some(at));
-        assert_eq!(name_for(0), "bifrost-19700101-000000.zip");
+        assert_eq!(parse_name(&name_for(at, false)), Some(at));
+        assert_eq!(parse_name(&name_for(at, true)), Some(at));
+        assert_eq!(name_for(0, false), "bifrost-19700101-000000.zip");
+        assert_eq!(name_for(0, true), "bifrost-19700101-000000-pre-upgrade.zip");
+        assert!(is_pre_upgrade(&name_for(0, true)) && !is_pre_upgrade(&name_for(0, false)));
+        assert_eq!(parse_name("bifrost-20261026-040000-other.zip"), None);
         assert_eq!(
             parse_name("bifrost-20261026-040000.zip"),
             Some(days_from_civil(2026, 10, 26) * 86400 + 4 * 3600)

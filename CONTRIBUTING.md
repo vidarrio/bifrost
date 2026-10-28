@@ -274,9 +274,11 @@ The database records its schema version, and Bifrost migrates it on start
 baseline (`baseline` in `src/db.rs`) and stay frozen. To change the schema,
 append a step to `STEPS` in `src/db/migrate.rs`; never edit or remove a step
 that has been released. Each step runs once, in a transaction, before
-anything else reads the database. The first start of a new version backs up
-the data directory before migrating, so an upgrade can always be undone by
-restoring that backup and running the old version.
+anything else reads the database. Steps run with foreign keys off, so
+rebuilding a table (SQLite's way of changing a column) doesn't cascade into
+the tables that reference it, and the references are checked before the step
+commits. The first start of a new version takes a pre-upgrade backup before
+migrating; restoring it and running the old version undoes the upgrade.
 
 ### End-to-end tests
 

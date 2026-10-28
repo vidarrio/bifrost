@@ -351,10 +351,16 @@ Prefer a backup directory on another disk (`[backup] dir`).
 
 Bifrost also backs up on the first start after an upgrade (or a downgrade),
 before the new version touches the database, and logs the command to go back.
-If that backup fails, Bifrost doesn't start when the upgrade would change the
-database; free up space and start it again. An older Bifrost refuses a data
-directory that a newer one has already upgraded: run the newer version, or
-restore the backup taken before the upgrade.
+These are named `…-pre-upgrade.zip`, and the newest three are kept regardless
+of the retention settings. If that backup fails, Bifrost doesn't start when
+the upgrade would change the database; free up space and start it again. An
+older Bifrost refuses a data directory that a newer one has already upgraded:
+run the newer version, or restore the pre-upgrade backup.
+
+Only starting the server upgrades a data directory. Commands such as
+`bifrost auth status` leave it as it is, and refuse to run on one whose
+database belongs to another version; `bifrost backup list` and
+`bifrost backup restore` always work.
 
 ### Live load
 

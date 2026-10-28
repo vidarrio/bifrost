@@ -17,6 +17,9 @@ use super::Db;
 /// never edited, reordered or removed. A step is plain SQL and may hold
 /// several statements; SQLite can't alter a column in place, so changing one
 /// means rebuilding its table (<https://sqlite.org/lang_altertable.html>).
+/// Steps run with foreign keys off, so rebuilding a table others reference
+/// doesn't cascade into them; the references are checked before the step
+/// commits.
 const STEPS: &[&str] = &[];
 
 /// The schema version this build writes.
@@ -53,7 +56,16 @@ impl Db {
     pub async fn stamp(&self) -> Result<Stamp, sqlx::Error> {
         let schema = user_version(&self.pool).await?;
         // A fresh file has no setting table yet.
-        let version = self.get_setting(VERSION_KEY).await.ok().flatten();
+        let has_settings: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'setting')",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let version = if has_settings {
+            self.get_setting(VERSION_KEY).await?
+        } else {
+            None
+        };
         Ok(Stamp { schema, version })
     }
 
@@ -88,15 +100,43 @@ async fn apply(pool: &SqlitePool, steps: &[&str]) -> Result<(), sqlx::Error> {
     }
     for (i, sql) in steps.iter().enumerate().skip(at as usize - 1) {
         let to = i as i64 + 2;
-        let mut tx = pool.begin().await?;
-        sqlx::raw_sql(sql).execute(&mut *tx).await?;
-        sqlx::raw_sql(&format!("PRAGMA user_version = {to}"))
-            .execute(&mut *tx)
+        // `foreign_keys` can't change inside a transaction: switch it off
+        // around it, on this one connection, and back on whatever happens.
+        let mut conn = pool.acquire().await?;
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *conn)
             .await?;
-        tx.commit().await?;
+        let res = step(&mut conn, sql, to).await;
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&mut *conn)
+            .await?;
+        res?;
         tracing::info!("database schema migrated to version {to}");
     }
     Ok(())
+}
+
+/// Run one step and stamp version `to`, all in one transaction, which rolls
+/// back if the step fails or leaves a dangling reference.
+async fn step(conn: &mut sqlx::SqliteConnection, sql: &str, to: i64) -> Result<(), sqlx::Error> {
+    use sqlx::Connection;
+    let mut tx = conn.begin().await?;
+    sqlx::raw_sql(sql).execute(&mut *tx).await?;
+    let dangling: Vec<(String, i64, String)> =
+        sqlx::query_as("SELECT \"table\", rowid, parent FROM pragma_foreign_key_check")
+            .fetch_all(&mut *tx)
+            .await?;
+    if let Some((table, row, parent)) = dangling.first() {
+        return Err(sqlx::Error::Protocol(format!(
+            "schema step to version {to} left {} reference(s) dangling, e.g. {table} row {row} \
+             pointing into {parent}",
+            dangling.len()
+        )));
+    }
+    sqlx::raw_sql(&format!("PRAGMA user_version = {to}"))
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await
 }
 
 #[cfg(test)]
@@ -173,6 +213,56 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(u, None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn rebuilding_a_referenced_table_keeps_the_rows_that_reference_it() {
+        let (dir, db) = fresh("rebuild").await;
+        let steps = [
+            "CREATE TABLE p (id INTEGER PRIMARY KEY, a TEXT);
+             CREATE TABLE c (id INTEGER PRIMARY KEY, p INTEGER NOT NULL REFERENCES p(id) ON DELETE CASCADE);
+             INSERT INTO p VALUES (1, 'x'); INSERT INTO c VALUES (1, 1);",
+            // The rebuild SQLite's docs prescribe for changing a column.
+            "CREATE TABLE p_new (id INTEGER PRIMARY KEY, a TEXT NOT NULL DEFAULT '');
+             INSERT INTO p_new SELECT id, a FROM p;
+             DROP TABLE p;
+             ALTER TABLE p_new RENAME TO p;",
+        ];
+        apply(&db.pool, &steps).await.unwrap();
+        let kids: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM c")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(kids, 1, "the rebuild cascaded into the child table");
+        // Foreign keys are back on afterwards, on every connection.
+        for _ in 0..4 {
+            let on: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+            assert_eq!(on, 1);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_step_that_leaves_dangling_references_is_rolled_back() {
+        let (dir, db) = fresh("dangling").await;
+        let steps = [
+            "CREATE TABLE p (id INTEGER PRIMARY KEY);
+             CREATE TABLE c (id INTEGER PRIMARY KEY, p INTEGER REFERENCES p(id));
+             INSERT INTO p VALUES (1); INSERT INTO c VALUES (1, 1);",
+            "DELETE FROM p",
+        ];
+        let err = apply(&db.pool, &steps).await.unwrap_err().to_string();
+        assert!(err.contains("dangling"), "{err}");
+        assert_eq!(user_version(&db.pool).await.unwrap(), 2);
+        let parents: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM p")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(parents, 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

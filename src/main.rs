@@ -96,7 +96,11 @@ async fn main() {
     let mut db = db::Db::connect(&db_path.to_string_lossy())
         .await
         .unwrap_or_else(|e| panic!("open db {}: {e}", db_path.display()));
-    upgrade(&db).await;
+    if args.is_empty() {
+        upgrade(&db).await;
+    } else {
+        cli_ready(&db).await;
+    }
     if cfg.ap_managed {
         db = db.with_ap_ports(cfg.ap_ports.clone());
     }
@@ -261,8 +265,8 @@ async fn upgrade(db: &db::Db) {
         tracing::error!(
             "this data dir was last used by Bifrost {}, whose database schema (version {}) \
              is newer than this Bifrost {this} knows (version {}). Run that version or newer, \
-             or restore a backup taken before it (`bifrost backup list`, then \
-             `bifrost backup restore <file>`)",
+             or restore the backup it took before upgrading (the newest `…-pre-upgrade.zip` in \
+             `bifrost backup list`) with `bifrost backup restore <file>`",
             stamp.version.as_deref().unwrap_or("(unknown)"),
             stamp.schema,
             db::SCHEMA_VERSION
@@ -273,7 +277,7 @@ async fn upgrade(db: &db::Db) {
         tracing::info!(
             "Bifrost {from} last ran on this data dir; backing up before starting {this}"
         );
-        match backup::create(db, &backup::Policy::from_config()).await {
+        match backup::create_pre_upgrade(db, &backup::Policy::from_config()).await {
             Ok(b) => tracing::info!(
                 "to go back to {from}: stop Bifrost, run `bifrost backup restore {}`, start {from}",
                 backup::dir().join(&b.name).display()
@@ -297,6 +301,35 @@ async fn upgrade(db: &db::Db) {
     db.migrate()
         .await
         .unwrap_or_else(|e| panic!("migrate the database: {e}"));
+}
+
+/// CLI commands use the data dir as it is: only the server's start backs up
+/// and migrates it (a command may run while an older server still does). So
+/// they refuse a database whose schema isn't this build's, except a fresh one.
+async fn cli_ready(db: &db::Db) {
+    let stamp = db
+        .stamp()
+        .await
+        .unwrap_or_else(|e| panic!("read the database's schema version: {e}"));
+    let this = env!("CARGO_PKG_VERSION");
+    let last = stamp.version.as_deref().unwrap_or("(unknown)");
+    if stamp.schema == 0 && stamp.version.is_none() {
+        db.migrate()
+            .await
+            .unwrap_or_else(|e| panic!("set up the database: {e}"));
+    } else if stamp.too_new() {
+        eprintln!(
+            "this data dir was last used by Bifrost {last}, whose database is newer than this \
+             Bifrost {this} knows: use that version's commands"
+        );
+        std::process::exit(1);
+    } else if stamp.schema != db::SCHEMA_VERSION {
+        eprintln!(
+            "this data dir is still on Bifrost {last}'s database: start Bifrost {this} once, \
+             so it backs up and upgrades it, before running its commands"
+        );
+        std::process::exit(1);
+    }
 }
 
 /// SIGTERM (service manager / `docker stop`) or Ctrl-C.
