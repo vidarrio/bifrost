@@ -82,6 +82,8 @@ pub(crate) async fn landing(State(st): State<AppState>) -> Html<String> {
         .collect();
     Html(
         LANDING
+            // Constant first, so no data inserted below can be read as it.
+            .replace("<!--IDENTITYJS-->", render::IDENTITY_JS)
             .replace("<!--SEASONLABEL-->", &render::escape(&label))
             .replace("<!--ROSTER-->", &roster)
             .replace("<!--PASTSEASONS-->", &past_html)

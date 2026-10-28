@@ -241,9 +241,9 @@ pub(super) fn filter_form(base: &str, f: &LogFilter) -> String {
     out.push_str("</form>");
     // Participant pool for the custom (stylable) sender/receiver autocomplete,
     // replacing the native <datalist> popup (which can't be styled).
-    let players = serde_json::to_string(f.participants)
-        .unwrap_or_else(|_| "[]".to_string())
-        .replace("</", "<\\/");
+    let players = super::script_json(
+        &serde_json::to_string(f.participants).unwrap_or_else(|_| "[]".to_string()),
+    );
     out.push_str(&format!(r#"<script>window.bifPlayers={players}</script>"#));
     out
 }

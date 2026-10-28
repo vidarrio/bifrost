@@ -415,7 +415,7 @@ pub fn admin_page(
     // Command autocomplete: ACDATA (players/games/items/locations) is embedded,
     // then CONSOLE_JS reads it. Split so the JS's braces don't fight format!.
     b.push_str("<script>\n(function(){\nvar ACDATA=");
-    b.push_str(&acdata.replace("</", "<\\/"));
+    b.push_str(&super::script_json(acdata));
     b.push_str(";\n");
     b.push_str(CONSOLE_JS);
     b.push_str("\n})();\n</script>");
