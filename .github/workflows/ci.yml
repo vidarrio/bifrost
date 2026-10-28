@@ -121,13 +121,14 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build
         run: cargo build
-      # Keyed on what the install depends on; restored and saved as separate
-      # steps so a failing suite doesn't throw the install away.
+      # Keyed on what the install depends on (the venv links to the exact
+      # Python patch release); restored and saved as separate steps so a
+      # failing suite doesn't throw the install away.
       - name: Archipelago cache key
         id: apkey
         run: |
           v=$(tr -d '\r' < Dockerfile | sed -n 's/^ARG AP_VERSION=["]*\([^" ]*\).*/\1/p' | head -n1)
-          echo "key=archipelago-$v-$(python3 -c 'import sys; print("py%d.%d" % sys.version_info[:2])')-${{ hashFiles('scripts/bifrost_ap_install.py') }}" >> "$GITHUB_OUTPUT"
+          echo "key=archipelago-$v-$(python3 -c 'import sys; print("py%d.%d.%d" % sys.version_info[:3])')-${{ hashFiles('scripts/bifrost_ap_install.py') }}" >> "$GITHUB_OUTPUT"
       - name: Restore the Archipelago install
         id: apcache
         uses: actions/cache/restore@v6
