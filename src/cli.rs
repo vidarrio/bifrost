@@ -67,6 +67,12 @@ pub fn run_offline(args: &[String]) -> Option<i32> {
                 }
             })
         }
+        ["backup", "list"] => {
+            for b in crate::backup::list() {
+                println!("{}  {:>10}", b.name, b.size);
+            }
+            Some(0)
+        }
         _ => None,
     }
 }
@@ -105,12 +111,6 @@ pub async fn run(args: &[String], db: &Db) -> Option<i32> {
                     1
                 }
             }
-        }
-        ["backup", "list"] => {
-            for b in crate::backup::list() {
-                println!("{}  {:>10}", b.name, b.size);
-            }
-            0
         }
         _ => {
             eprintln!("{USAGE}");

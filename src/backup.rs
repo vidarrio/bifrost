@@ -12,6 +12,12 @@
 //! last `weekly` weeks and the last `monthly` months that have one, then
 //! drops the oldest while the total is over `max_mb` (never the newest). A
 //! backup is skipped, not squeezed in, when the disk is nearly full.
+//!
+//! The backup taken on the first start of a new Bifrost version is named
+//! `bifrost-YYYYMMDD-HHMMSS-pre-upgrade-from-<version>.zip`, after the
+//! version that last ran (the one to go back to), and sits outside that policy:
+//! the newest [`UPGRADE_KEEP`] of them are kept, whatever their age or size,
+//! so going back to the previous version stays possible.
 //! Restoring is a CLI step with Bifrost stopped (`bifrost backup restore`).
 
 use std::io::{Read, Write};
@@ -19,6 +25,10 @@ use std::path::{Path, PathBuf};
 
 use crate::config;
 use crate::db::Db;
+
+/// Pre-upgrade backups kept (see the module docs).
+pub const UPGRADE_KEEP: usize = 3;
+const UPGRADE_SUFFIX: &str = "-pre-upgrade-from-";
 
 /// Free space a backup must leave behind.
 const HEADROOM: u64 = 512 << 20;
@@ -78,20 +88,43 @@ pub struct Backup {
     pub size: u64,
 }
 
-fn name_for(at: i64) -> String {
+/// A backup's name; `from` is the version a pre-upgrade backup goes back to.
+fn name_for(at: i64, from: Option<&str>) -> String {
     let (y, m, d) = civil(at.div_euclid(86400));
     let s = at.rem_euclid(86400);
     format!(
-        "bifrost-{y:04}{m:02}{d:02}-{:02}{:02}{:02}.zip",
+        "bifrost-{y:04}{m:02}{d:02}-{:02}{:02}{:02}{}.zip",
         s / 3600,
         s / 60 % 60,
-        s % 60
+        s % 60,
+        from.map(|v| format!("{UPGRADE_SUFFIX}{}", version_part(v)))
+            .unwrap_or_default()
     )
+}
+
+/// A version as it may appear in a backup's name (semver's characters only).
+fn version_part(v: &str) -> String {
+    let v: String = v.chars().filter(|c| version_char(*c)).collect();
+    if v.is_empty() { "unknown".into() } else { v }
+}
+
+fn version_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+')
+}
+
+/// Is this backup one taken before an upgrade?
+pub fn is_pre_upgrade(name: &str) -> bool {
+    parse_name(name).is_some() && name.contains(UPGRADE_SUFFIX)
 }
 
 /// The time a backup's name says it was taken.
 pub fn parse_name(name: &str) -> Option<i64> {
     let ts = name.strip_prefix("bifrost-")?.strip_suffix(".zip")?;
+    let ts = match ts.split_once(UPGRADE_SUFFIX) {
+        Some((ts, from)) if !from.is_empty() && from.chars().all(version_char) => ts,
+        Some(_) => return None,
+        None => ts,
+    };
     let (date, time) = ts.split_once('-')?;
     if date.len() != 8 || time.len() != 6 || !ts.chars().all(|c| c.is_ascii_digit() || c == '-') {
         return None;
@@ -205,10 +238,15 @@ pub fn plan(backups: &[Backup], p: &Policy) -> Vec<bool> {
 
 /// Delete the backups the policy doesn't keep. Returns their names.
 pub fn prune(p: &Policy) -> Vec<String> {
-    let all = list();
+    let (upgrades, all): (Vec<Backup>, Vec<Backup>) =
+        list().into_iter().partition(|b| is_pre_upgrade(&b.name));
     let keep = plan(&all, p);
     let mut gone = Vec::new();
-    for (b, k) in all.iter().zip(keep) {
+    let upgrades = upgrades
+        .into_iter()
+        .enumerate()
+        .map(|(i, b)| (b, i < UPGRADE_KEEP));
+    for (b, k) in all.into_iter().zip(keep).chain(upgrades) {
         if !k && std::fs::remove_file(dir().join(&b.name)).is_ok() {
             gone.push(b.name.clone());
         }
@@ -322,7 +360,17 @@ pub fn running() -> bool {
 
 /// Take a backup now, then apply the retention policy.
 pub async fn create(db: &Db, p: &Policy) -> Result<Backup, String> {
-    let res = create_inner(db, p).await;
+    create_kind(db, p, None).await
+}
+
+/// Take the backup before an upgrade from version `from` (kept outside the
+/// retention policy).
+pub async fn create_pre_upgrade(db: &Db, p: &Policy, from: &str) -> Result<Backup, String> {
+    create_kind(db, p, Some(from)).await
+}
+
+async fn create_kind(db: &Db, p: &Policy, from: Option<&str>) -> Result<Backup, String> {
+    let res = create_inner(db, p, from).await;
     let msg = match &res {
         Ok(b) => {
             tracing::info!("backup written: {} ({} bytes)", b.name, b.size);
@@ -341,7 +389,7 @@ pub async fn create(db: &Db, p: &Policy) -> Result<Backup, String> {
     res
 }
 
-async fn create_inner(db: &Db, p: &Policy) -> Result<Backup, String> {
+async fn create_inner(db: &Db, p: &Policy, from: Option<&str>) -> Result<Backup, String> {
     let _one = RUNNING
         .try_lock()
         .map_err(|_| "a backup is already running".to_string())?;
@@ -371,10 +419,10 @@ async fn create_inner(db: &Db, p: &Policy) -> Result<Backup, String> {
         ));
     }
     let mut at = crate::auth::now();
-    while dir.join(name_for(at)).exists() {
+    while dir.join(name_for(at, from)).exists() {
         at += 1;
     }
-    let name = name_for(at);
+    let name = name_for(at, from);
     let partial = dir.join(format!(".partial-{name}"));
     let snapshot = dir.join(format!(".partial-{name}.db"));
     let _ = std::fs::remove_file(&partial);
@@ -537,7 +585,7 @@ mod tests {
 
     fn b(at: i64, size: u64) -> Backup {
         Backup {
-            name: name_for(at),
+            name: name_for(at, None),
             at,
             size,
         }
@@ -546,8 +594,28 @@ mod tests {
     #[test]
     fn names_round_trip() {
         let at = 1_793_016_000 + 3723; // 2026-10-26 01:02:03 UTC-ish
-        assert_eq!(parse_name(&name_for(at)), Some(at));
-        assert_eq!(name_for(0), "bifrost-19700101-000000.zip");
+        assert_eq!(parse_name(&name_for(at, None)), Some(at));
+        assert_eq!(parse_name(&name_for(at, Some("0.2.0-rc.1"))), Some(at));
+        assert_eq!(name_for(0, None), "bifrost-19700101-000000.zip");
+        assert_eq!(
+            name_for(0, Some("0.1.0")),
+            "bifrost-19700101-000000-pre-upgrade-from-0.1.0.zip"
+        );
+        assert_eq!(
+            name_for(0, Some("../x/")),
+            "bifrost-19700101-000000-pre-upgrade-from-..x.zip"
+        );
+        assert!(is_pre_upgrade(&name_for(0, Some("0.1.0"))));
+        assert!(!is_pre_upgrade(&name_for(0, None)));
+        assert_eq!(
+            parse_name("bifrost-20261026-040000-pre-upgrade-from-.zip"),
+            None
+        );
+        assert_eq!(
+            parse_name("bifrost-20261026-040000-pre-upgrade-from-a/b.zip"),
+            None
+        );
+        assert_eq!(parse_name("bifrost-20261026-040000-other.zip"), None);
         assert_eq!(
             parse_name("bifrost-20261026-040000.zip"),
             Some(days_from_civil(2026, 10, 26) * 86400 + 4 * 3600)

@@ -93,9 +93,14 @@ async fn main() {
     }
 
     let db_path = cfg.db_path();
-    let mut db = db::Db::open(&db_path.to_string_lossy())
+    let mut db = db::Db::connect(&db_path.to_string_lossy())
         .await
         .unwrap_or_else(|e| panic!("open db {}: {e}", db_path.display()));
+    if args.is_empty() {
+        upgrade(&db).await;
+    } else {
+        cli_ready(&db).await;
+    }
     if cfg.ap_managed {
         db = db.with_ap_ports(cfg.ap_ports.clone());
     }
@@ -245,6 +250,87 @@ async fn main() {
         .map(|s| shutdown_seasons.stop(s.id));
     futures_util::future::join_all(stops).await;
     tracing::info!("Bifrost stopped");
+}
+
+/// Bring the database up to this build's schema. A different Bifrost version
+/// last ran on this data dir: back up first, so going back to that version
+/// is a restore away. A data dir a newer Bifrost has migrated is refused.
+async fn upgrade(db: &db::Db) {
+    let stamp = db
+        .stamp()
+        .await
+        .unwrap_or_else(|e| panic!("read the database's schema version: {e}"));
+    let this = env!("CARGO_PKG_VERSION");
+    if stamp.too_new() {
+        tracing::error!(
+            "this data dir was last used by Bifrost {}, whose database schema (version {}) \
+             is newer than this Bifrost {this} knows (version {}). Run that version or newer, \
+             or restore the backup it took before upgrading from this version (the newest \
+             `…-pre-upgrade-from-{this}.zip` in `bifrost backup list`) with \
+             `bifrost backup restore <file>`",
+            stamp.version.as_deref().unwrap_or("(unknown)"),
+            stamp.schema,
+            db::SCHEMA_VERSION
+        );
+        std::process::exit(1);
+    }
+    if let Some(from) = stamp.changed_from() {
+        tracing::info!(
+            "Bifrost {from} last ran on this data dir; backing up before starting {this}"
+        );
+        match backup::create_pre_upgrade(db, &backup::Policy::from_config(), from).await {
+            Ok(b) => tracing::info!(
+                "to go back to {from}: stop Bifrost, run `bifrost backup restore {}`, start {from}",
+                backup::dir().join(&b.name).display()
+            ),
+            // Nothing to undo if the schema stays the same; otherwise don't
+            // change it without a way back.
+            Err(e) if stamp.schema == db::SCHEMA_VERSION => {
+                tracing::warn!(
+                    "the pre-upgrade backup failed ({e}); the schema is unchanged, so starting anyway"
+                )
+            }
+            Err(e) => {
+                tracing::error!(
+                    "the pre-upgrade backup failed ({e}); not migrating the database without one. \
+                     Free up space (or set BIFROST_BACKUP_DIR) and start again"
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+    db.migrate()
+        .await
+        .unwrap_or_else(|e| panic!("migrate the database: {e}"));
+}
+
+/// CLI commands use the data dir as it is: only the server's start backs up
+/// and migrates it (a command may run while an older server still does). So
+/// they refuse a database whose schema isn't this build's, except a fresh one.
+async fn cli_ready(db: &db::Db) {
+    let stamp = db
+        .stamp()
+        .await
+        .unwrap_or_else(|e| panic!("read the database's schema version: {e}"));
+    let this = env!("CARGO_PKG_VERSION");
+    let last = stamp.version.as_deref().unwrap_or("(unknown)");
+    if stamp.schema == 0 && stamp.version.is_none() {
+        db.migrate()
+            .await
+            .unwrap_or_else(|e| panic!("set up the database: {e}"));
+    } else if stamp.too_new() {
+        eprintln!(
+            "this data dir was last used by Bifrost {last}, whose database is newer than this \
+             Bifrost {this} knows: use that version's commands"
+        );
+        std::process::exit(1);
+    } else if stamp.schema != db::SCHEMA_VERSION {
+        eprintln!(
+            "this data dir is still on Bifrost {last}'s database: start Bifrost {this} once, \
+             so it backs up and upgrades it, before running its commands"
+        );
+        std::process::exit(1);
+    }
 }
 
 /// SIGTERM (service manager / `docker stop`) or Ctrl-C.

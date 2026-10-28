@@ -267,6 +267,19 @@ release without its patch number), and fix whatever new clippy lints it brings.
 `lint` fails until all four agree. When Dependabot proposes a toolchain bump,
 push the other three changes onto its pull request.
 
+### Database changes
+
+The database records its schema version, and Bifrost migrates it on start
+(`src/db/migrate.rs`). The tables as the first release made them are the
+baseline (`baseline` in `src/db.rs`) and stay frozen. To change the schema,
+append a step to `STEPS` in `src/db/migrate.rs`; never edit or remove a step
+that has been released. Each step runs once, in a transaction, before
+anything else reads the database. Steps run with foreign keys off, so
+rebuilding a table (SQLite's way of changing a column) doesn't cascade into
+the tables that reference it, and the references are checked before the step
+commits. The first start of a new version takes a pre-upgrade backup before
+migrating; restoring it and running the old version undoes the upgrade.
+
 ### End-to-end tests
 
 The suites in `tests/e2e/` start real Bifrost instances on throwaway data

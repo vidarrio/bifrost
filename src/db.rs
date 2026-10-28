@@ -9,6 +9,8 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{FromRow, SqlitePool};
 
 mod auth;
+mod migrate;
+pub use migrate::SCHEMA_VERSION;
 mod seasons;
 mod settings;
 mod worlds;
@@ -149,7 +151,18 @@ impl Db {
         self
     }
 
+    /// Open the database and bring its schema up to date (tests; startup
+    /// goes through `main::upgrade`).
+    #[cfg(test)]
     pub async fn open(path: &str) -> Result<Self, sqlx::Error> {
+        let db = Self::connect(path).await?;
+        db.migrate().await?;
+        Ok(db)
+    }
+
+    /// Open the database without touching its schema, so startup can look at
+    /// its [`Stamp`] (and back it up) before [`Db::migrate`] changes it.
+    pub async fn connect(path: &str) -> Result<Self, sqlx::Error> {
         let opts = SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(true);
@@ -157,13 +170,23 @@ impl Db {
             .max_connections(4)
             .connect_with(opts)
             .await?;
-        // Accounts and seasons first: the tables below reference them.
-        auth::migrate(&pool).await?;
-        seasons::migrate(&pool).await?;
-        settings::migrate(&pool).await?;
-        worlds::migrate(&pool).await?;
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS bifrost_slot (
+        Ok(Self {
+            pool,
+            ap_ports: None,
+        })
+    }
+}
+
+/// The schema as of schema version 1, the first release's. Frozen: change the
+/// schema with a step in [`migrate::STEPS`], never by editing these tables.
+async fn baseline(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    // Accounts and seasons first: the tables below reference them.
+    auth::migrate(pool).await?;
+    seasons::migrate(pool).await?;
+    settings::migrate(pool).await?;
+    worlds::migrate(pool).await?;
+    sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS bifrost_slot (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
                  season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
                  name TEXT NOT NULL,
@@ -173,21 +196,21 @@ impl Db {
                  is_common INTEGER NOT NULL DEFAULT 0,
                  UNIQUE(season, name)
                )"#,
-        )
-        .execute(&pool)
-        .await?;
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS claim (
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS claim (
                  bifrost_slot_id INTEGER PRIMARY KEY REFERENCES bifrost_slot(id) ON DELETE CASCADE,
                  account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
                  claimed_at INTEGER NOT NULL
                )"#,
-        )
-        .execute(&pool)
-        .await?;
-        // Signup submissions for a season (before its seed exists).
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS submission (
+    )
+    .execute(pool)
+    .await?;
+    // Signup submissions for a season (before its seed exists).
+    sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS submission (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
                  season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
                  account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
@@ -201,35 +224,35 @@ impl Db {
                  created_at INTEGER NOT NULL,
                  UNIQUE(season, slot_name)
                )"#,
-        )
-        .execute(&pool)
-        .await?;
-        // Bonus hint credits earned via the minesweeper minigame (per season).
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS hint_credit (
+    )
+    .execute(pool)
+    .await?;
+    // Bonus hint credits earned via the minesweeper minigame (per season).
+    sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS hint_credit (
                  season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
                  account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
                  credits INTEGER NOT NULL DEFAULT 0,
                  PRIMARY KEY (season, account_id)
                )"#,
-        )
-        .execute(&pool)
-        .await?;
-        // Hints a player has flagged to surface on the board.
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS hint_priority (
+    )
+    .execute(pool)
+    .await?;
+    // Hints a player has flagged to surface on the board.
+    sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS hint_priority (
                  season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
                  finding INTEGER NOT NULL,
                  location INTEGER NOT NULL,
                  item INTEGER NOT NULL,
                  PRIMARY KEY (season, finding, location, item)
                )"#,
-        )
-        .execute(&pool)
-        .await?;
-        // One row per finished minesweeper game, for per-slot/per-season stats.
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS mine_result (
+    )
+    .execute(pool)
+    .await?;
+    // One row per finished minesweeper game, for per-slot/per-season stats.
+    sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS mine_result (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
                  -- NULL = freeplay (outside any season).
                  season INTEGER REFERENCES season(id) ON DELETE CASCADE,
@@ -239,40 +262,40 @@ impl Db {
                  ts INTEGER NOT NULL,
                  kind TEXT NOT NULL DEFAULT 'standard'
                )"#,
-        )
-        .execute(&pool)
-        .await?;
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_mine_result ON mine_result (season, account_id, kind)",
-        )
-        .execute(&pool)
-        .await?;
-        // A player's Minecraft username, for the common-game server's whitelist.
-        // Keyed by account (persists across seasons — a returning player
-        // keeps their name); the case-insensitive unique index stops two people
-        // claiming the same Minecraft account. The *whitelist* itself is scoped
-        // to the current season's claimants (see `mc_whitelist`).
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS mc_account (
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_mine_result ON mine_result (season, account_id, kind)",
+    )
+    .execute(pool)
+    .await?;
+    // A player's Minecraft username, for the common-game server's whitelist.
+    // Keyed by account (persists across seasons — a returning player
+    // keeps their name); the case-insensitive unique index stops two people
+    // claiming the same Minecraft account. The *whitelist* itself is scoped
+    // to the current season's claimants (see `mc_whitelist`).
+    sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS mc_account (
                  account_id INTEGER PRIMARY KEY REFERENCES account(id) ON DELETE CASCADE,
                  mc_username TEXT NOT NULL,
                  updated_at INTEGER NOT NULL
                )"#,
-        )
-        .execute(&pool)
-        .await?;
-        sqlx::query(
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_mc_account_name ON mc_account (mc_username COLLATE NOCASE)",
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
-        // Persistent activity log, one row per kept AP journal event. Scoped by
-        // season so an archived season can replay it; NOT cleared by the admin
-        // reset. Ordered by `id` = journal order. De-duplication across runs is
-        // handled by the season's journal cursor, not a UNIQUE constraint, so
-        // genuine identical events in the same second are never dropped.
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS activity (
+    // Persistent activity log, one row per kept AP journal event. Scoped by
+    // season so an archived season can replay it; NOT cleared by the admin
+    // reset. Ordered by `id` = journal order. De-duplication across runs is
+    // handled by the season's journal cursor, not a UNIQUE constraint, so
+    // genuine identical events in the same second are never dropped.
+    sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS activity (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
                  season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
                  ts INTEGER NOT NULL,
@@ -282,19 +305,19 @@ impl Db {
                  receiver TEXT,
                  item_class TEXT
                )"#,
-        )
-        .execute(&pool)
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_activity ON activity (season, id)")
+        .execute(pool)
         .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_activity ON activity (season, id)")
-            .execute(&pool)
-            .await?;
-        // Universal-Tracker in-logic cache: one row per (season, ap_slot), holding
-        // that slot's currently-reachable location names (computed out-of-band by
-        // the `inlogic` recomputer shelling out to UT). `sent`/`received` are the
-        // slot state the row was computed at, so the recomputer re-runs only when
-        // the slot's state moves.
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS inlogic (
+    // Universal-Tracker in-logic cache: one row per (season, ap_slot), holding
+    // that slot's currently-reachable location names (computed out-of-band by
+    // the `inlogic` recomputer shelling out to UT). `sent`/`received` are the
+    // slot state the row was computed at, so the recomputer re-runs only when
+    // the slot's state moves.
+    sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS inlogic (
                  season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
                  ap_slot INTEGER NOT NULL,
                  ts INTEGER NOT NULL,
@@ -307,15 +330,13 @@ impl Db {
                  err TEXT,
                  PRIMARY KEY (season, ap_slot)
                )"#,
-        )
-        .execute(&pool)
-        .await?;
-        Ok(Self {
-            pool,
-            ap_ports: None,
-        })
-    }
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
 
+impl Db {
     /// A player's bonus-hint credits for a season.
     pub async fn credits(&self, season: i64, account: i64) -> i64 {
         sqlx::query_scalar("SELECT credits FROM hint_credit WHERE season = ? AND account_id = ?")
