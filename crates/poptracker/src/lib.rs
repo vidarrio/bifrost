@@ -27,7 +27,6 @@
 //! - The reactive recompute loop (`AddWatchForCode`) and renderer data
 //!   (maps/coordinates/item layout) for the visual tab.
 //! - Memory-autotracking packs (SNES/N64) are inherently unsupported server-side.
-//! - CPU/instruction-count limit on untrusted Lua (memory cap only, for now).
 
 use mlua::{Function, Lua, LuaOptions, MultiValue, StdLib, Table, Value};
 use serde::Serialize;
@@ -393,7 +392,9 @@ impl Session {
         let budget = Rc::new(std::cell::Cell::new(MAX_TICKS));
         {
             let b = budget.clone();
-            lua.set_hook(
+            // Global, not per-thread: a pack's coroutines get the cap too
+            // (set_hook only covers the main thread).
+            lua.set_global_hook(
                 mlua::HookTriggers::new().every_nth_instruction(HOOK_EVERY),
                 move |_lua, _dbg| {
                     let r = b.get();
@@ -405,7 +406,7 @@ impl Session {
                     b.set(r - 1);
                     Ok(mlua::VmState::Continue)
                 },
-            );
+            )?;
         }
         let eng: E = Rc::new(RefCell::new(Eng {
             dir: pack.dir.clone(),
@@ -519,8 +520,8 @@ impl Session {
         for (key, kind) in keys {
             if let Ok(t) = items.get::<Table>(key.as_str()) {
                 let active = t.get::<bool>("Active").unwrap_or(false);
-                let count = t.get::<i64>("AcquiredCount").unwrap_or(0);
-                let stage = t.get::<i64>("CurrentStage").unwrap_or(0);
+                let count = lua_int(&t, "AcquiredCount").unwrap_or(0);
+                let stage = lua_int(&t, "CurrentStage").unwrap_or(0);
                 let e = self.eng.borrow();
                 let staged =
                     kind == "progressive" || kind == "progressive_toggle" || kind == "static";
@@ -598,7 +599,7 @@ impl Session {
                 keys.iter().find_map(|k| {
                     objs.get::<Table>(k.as_str())
                         .ok()
-                        .and_then(|t| t.get::<i64>("AvailableChestCount").ok())
+                        .and_then(|t| lua_int(&t, "AvailableChestCount"))
                 })
             };
             let sections: Vec<SectionState> = n
@@ -727,10 +728,10 @@ fn provider_count(lua: &Lua, eng: &E, code: &str) -> i64 {
     };
     match kind.as_str() {
         "toggle" => it.get::<bool>("Active").unwrap_or(false) as i64,
-        "consumable" => it.get::<i64>("AcquiredCount").unwrap_or(0),
+        "consumable" => lua_int(&it, "AcquiredCount").unwrap_or(0),
         "progressive_toggle" | "progressive" => {
             let active = it.get::<bool>("Active").unwrap_or(false);
-            let stage = it.get::<i64>("CurrentStage").unwrap_or(0);
+            let stage = lua_int(&it, "CurrentStage").unwrap_or(0);
             // The earliest stage this code appears at; a base (non-stage) code
             // not listed in any stage is treated as stage 0 (always provided
             // while active).
@@ -1488,6 +1489,24 @@ fn to_lua(e: Error) -> mlua::Error {
     mlua::Error::runtime(e.to_string())
 }
 
+/// A whole-number field a pack keeps as a Lua number, truncated toward zero
+/// like PopTracker does (and mlua before 0.12, which now refuses `1.5` as an
+/// integer). Integers (and integral values) are read exactly; other numbers
+/// are truncated if they fit an i64. Missing, non-numeric, NaN, infinite or
+/// out-of-range values are `None`.
+fn lua_int(t: &Table, key: &str) -> Option<i64> {
+    if let Ok(i) = t.get::<i64>(key) {
+        return Some(i);
+    }
+    // -2^63 is exact as a float; 2^63 is the first value past i64::MAX.
+    const MIN: f64 = i64::MIN as f64;
+    const MAX: f64 = -(i64::MIN as f64);
+    t.get::<f64>(key)
+        .ok()
+        .filter(|n| *n >= MIN && *n < MAX)
+        .map(|n| n.trunc() as i64)
+}
+
 /// Build the sandboxed Lua VM: only string/table/math/coroutine stdlib (base
 /// functions like `print`/`pairs` are always present), i.e. no `os`/`io`/
 /// `package`/`require`/`debug`, with a memory cap. Pack Lua runs here, so this
@@ -1497,7 +1516,7 @@ fn sandboxed_lua() -> Result<Lua> {
         StdLib::STRING | StdLib::TABLE | StdLib::MATH | StdLib::COROUTINE,
         LuaOptions::default(),
     )?;
-    let _ = lua.set_memory_limit(LUA_MEMORY_LIMIT);
+    lua.set_memory_limit(LUA_MEMORY_LIMIT)?;
     // `dofile`/`loadfile` are BASE-library functions in Lua 5.4 (not `package`),
     // so excluding the package lib doesn't drop them — and they read+run files
     // off disk. Remove them explicitly; they're the obvious filesystem escape.

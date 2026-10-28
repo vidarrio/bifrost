@@ -53,10 +53,33 @@ fn instruction_cap_aborts_runaway_pack() {
     // cap, not hang the host.
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/infinite-init");
     let pack = Pack::load(dir).unwrap();
-    let r = Session::new(&pack);
+    let err = Session::new(&pack)
+        .err()
+        .expect("runaway init.lua must be aborted");
     assert!(
-        r.is_err(),
-        "runaway init.lua must be aborted by the instruction cap"
+        err.to_string().contains("instruction limit exceeded"),
+        "aborted by the instruction cap, not something else: {err}"
+    );
+}
+
+#[test]
+fn instruction_cap_covers_coroutines() {
+    // A coroutine runs on its own Lua thread; the cap must apply there too.
+    // Run it on a thread, so a regression fails within seconds instead of
+    // hanging the test run.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/infinite-coroutine");
+        let pack = Pack::load(dir).unwrap();
+        let _ = tx.send(Session::new(&pack).err().map(|e| e.to_string()));
+    });
+    let err = rx
+        .recv_timeout(std::time::Duration::from_secs(30))
+        .expect("a runaway coroutine wasn't stopped within 30 s")
+        .expect("runaway coroutine must be aborted");
+    assert!(
+        err.contains("instruction limit exceeded"),
+        "aborted by the instruction cap: {err}"
     );
 }
 
