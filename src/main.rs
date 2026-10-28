@@ -39,6 +39,7 @@ mod runtime;
 mod sandbox;
 mod scope;
 mod season;
+mod selfupdate;
 mod web;
 mod worlds;
 
@@ -88,7 +89,7 @@ async fn main() {
     cfg.ensure_dirs()
         .unwrap_or_else(|e| panic!("create data dirs under {}: {e}", cfg.data_dir.display()));
     let port = cfg.port;
-    if let Some(code) = cli::run_offline(&args) {
+    if let Some(code) = cli::run_offline(&args).await {
         std::process::exit(code);
     }
 

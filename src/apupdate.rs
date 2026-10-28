@@ -59,7 +59,7 @@ pub fn snapshot() -> Updates {
     UPDATES.lock().unwrap().clone()
 }
 
-fn installer() -> tokio::process::Command {
+pub(crate) fn installer() -> tokio::process::Command {
     let cfg = config::get();
     let mut cmd = tokio::process::Command::new(&cfg.base_python);
     cmd.arg(cfg.script("bifrost_ap_install.py"))

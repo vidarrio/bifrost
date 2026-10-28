@@ -37,5 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Upgrading Bifrost takes a backup before the new version changes anything,
   and the log says how to go back. A data directory a newer Bifrost has
   already upgraded is refused rather than run on by an older one.
+- `bifrost update` replaces the single-file build with the newest release (or
+  a given version), checked against the release's checksums. Going back means
+  restoring the pre-upgrade backup and the previous file, which it keeps.
 
 [Unreleased]: https://github.com/vidarrio/bifrost/commits/main

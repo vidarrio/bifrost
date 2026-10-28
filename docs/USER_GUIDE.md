@@ -471,6 +471,8 @@ bifrost admin set-role <username> <role>  user|moderator|sysadmin
 bifrost backup now | list | restore <zip> backups (restore with Bifrost stopped)
 bifrost season import <bundle.tar.gz>     add a finished season from a bundle
 bifrost config example                    print the configuration template
+bifrost update [<version>]                replace the single-file build with the
+                                          newest release (or <version>)
 ```
 
 ### Data directory

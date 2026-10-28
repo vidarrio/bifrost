@@ -10,7 +10,7 @@ use std::time::Duration;
 use crate::apupdate::{self, Release};
 use crate::config;
 
-const REPO: &str = "vidarrio/bifrost";
+pub const REPO: &str = "vidarrio/bifrost";
 /// The first check waits a little, so a restart loop doesn't hammer GitHub.
 const FIRST: Duration = Duration::from_secs(5 * 60);
 const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
@@ -110,7 +110,7 @@ fn record(at: i64, res: Result<Option<Newer>, String>) {
 
 /// The newest release newer than `current`. Pre-releases count only when
 /// `current` is one itself.
-fn pick(releases: &[Release], current: &str) -> Option<Newer> {
+pub fn pick(releases: &[Release], current: &str) -> Option<Newer> {
     let cur = parse(current)?;
     let pre_ok = cur.1.is_some();
     releases

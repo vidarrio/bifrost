@@ -7,6 +7,9 @@
         Download the release's source, unpack it into <dest>, create its venv
         and install its requirements. Progress lines go to stdout; the last
         line is a JSON result.
+    bifrost_ap_install.py download <owner/repo> <tag> <asset> <dest>
+        Download a release asset to <dest>, checked against the release's
+        SHA256SUMS (`bifrost update`). The last line is a JSON result.
 
 Runs under a plain Python 3 (not an AP venv), outside the sandbox: it needs
 the network, and it's what builds the interpreter the sandboxed helpers use.
@@ -16,6 +19,7 @@ requirements fail to install is reported, not fatal. AP's Cython speedups
 are built when a C compiler is around; otherwise AP uses its pure-Python
 fallback.
 """
+import hashlib
 import io
 import json
 import os
@@ -32,6 +36,9 @@ UA = {"User-Agent": "bifrost-ap-install", "Accept": "application/vnd.github+json
 # build steps below (pip, setup scripts of world requirements) never see it.
 TOKEN = os.environ.pop("GITHUB_TOKEN", None)
 MAX_TARBALL = 512 * 1024 * 1024
+MAX_ASSET = 2 * 1024 * 1024 * 1024
+# The API's address; the tests point it at a stand-in.
+API = os.environ.get("BIFROST_GITHUB_API", "https://api.github.com").rstrip("/")
 SKIP = re.compile(r"^\s*(kivy|kivymd)\b", re.I)
 
 
@@ -39,12 +46,16 @@ def say(msg):
     print(msg, flush=True)
 
 
-def fetch(url, limit):
+def request(url):
     req = urllib.request.Request(url, headers=UA)
     # Only to the API, and not carried along if it redirects elsewhere.
     if TOKEN and url.startswith("https://api.github.com/"):
         req.add_unredirected_header("Authorization", f"Bearer {TOKEN}")
-    with urllib.request.urlopen(req, timeout=60) as r:
+    return urllib.request.urlopen(req, timeout=60)
+
+
+def fetch(url, limit):
+    with request(url) as r:
         data = r.read(limit + 1)
     if len(data) > limit:
         raise RuntimeError(f"{url}: larger than {limit} bytes")
@@ -52,7 +63,7 @@ def fetch(url, limit):
 
 
 def releases(repo):
-    data = json.loads(fetch(f"https://api.github.com/repos/{repo}/releases?per_page=15", 4 << 20))
+    data = json.loads(fetch(f"{API}/repos/{repo}/releases?per_page=15", 4 << 20))
     out = [
         {
             "tag": r["tag_name"],
@@ -64,6 +75,42 @@ def releases(repo):
         if not r.get("draft")
     ]
     print(json.dumps({"ok": True, "releases": out}))
+
+
+def download(repo, tag, asset, dest):
+    rel = json.loads(fetch(f"{API}/repos/{repo}/releases/tags/{tag}", 4 << 20))
+    urls = {a["name"]: a["browser_download_url"] for a in rel.get("assets", [])}
+    for name in (asset, "SHA256SUMS"):
+        if name not in urls:
+            raise RuntimeError(f"release {tag} has no {name}")
+    want = None
+    for line in fetch(urls["SHA256SUMS"], 1 << 20).decode().splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1].lstrip("*") == asset:
+            want = parts[0].lower()
+    if not want:
+        raise RuntimeError(f"SHA256SUMS of {tag} doesn't list {asset}")
+    say(f"Downloading {asset}…")
+    h, size = hashlib.sha256(), 0
+    # A new file of our own ("x" refuses an existing one or a symlink), so
+    # what's hashed is exactly what's on disk.
+    f = open(dest, "xb")
+    try:
+        with f, request(urls[asset]) as r:
+            while chunk := r.read(1 << 20):
+                size += len(chunk)
+                if size > MAX_ASSET:
+                    raise RuntimeError(f"{asset}: larger than {MAX_ASSET} bytes")
+                h.update(chunk)
+                f.write(chunk)
+            f.flush()
+            os.fsync(f.fileno())
+        if h.hexdigest() != want:
+            raise RuntimeError(f"{asset} doesn't match its SHA256SUMS entry")
+    except BaseException:
+        os.remove(dest)
+        raise
+    print(json.dumps({"ok": True, "size": size, "sha256": want}))
 
 
 def unpack(blob, dest):
@@ -160,6 +207,8 @@ def main():
             releases(sys.argv[2])
         elif sys.argv[1:2] == ["install"] and len(sys.argv) == 5:
             install(*sys.argv[2:5])
+        elif sys.argv[1:2] == ["download"] and len(sys.argv) == 6:
+            download(*sys.argv[2:6])
         else:
             sys.exit(__doc__)
     except Exception as e:  # reported to Bifrost as the last line
