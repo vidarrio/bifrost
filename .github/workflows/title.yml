@@ -2,7 +2,7 @@ name: Title
 
 # The pull request title is `<kind>: <subject>` (optionally `<kind>(<scope>):`),
 # with the kind of the branch prefix. Squash merges make it the commit subject
-# on main. Reruns when the title is edited.
+# on main. Reruns when the pull request is edited (title or body).
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
