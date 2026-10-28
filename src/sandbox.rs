@@ -193,23 +193,24 @@ impl Sandbox {
 
     /// Build the command for `job` on this tier. Run it with [`run`].
     pub fn command(&self, job: &Job) -> Command {
-        self.build(job, true, self.limits)
+        self.build(job, true, self.limits, MAX_FILES)
     }
 
     /// Like [`command`](Self::command) with generation's ceilings
     /// (`BIFROST_GENERATE_MEM_MB` / `_CPU_SECS`).
     pub fn generation(&self, job: &Job) -> Command {
-        self.build(job, true, self.generate_limits)
+        self.build(job, true, self.generate_limits, MAX_FILES)
     }
 
     /// Like [`command`](Self::command) for a long-running service (the AP
     /// server): same jail and limits, but no CPU-time cap — a server that runs
-    /// for weeks would eventually exhaust any fixed one.
+    /// for weeks would eventually exhaust any fixed one — and room for an open
+    /// file per connected client.
     pub fn service(&self, job: &Job) -> Command {
-        self.build(job, false, self.limits)
+        self.build(job, false, self.limits, SERVER_MAX_FILES)
     }
 
-    fn build(&self, job: &Job, cpu_cap: bool, limits: Limits) -> Command {
+    fn build(&self, job: &Job, cpu_cap: bool, limits: Limits, max_files: u64) -> Command {
         let mut cmd = match (&self.tier, &self.bwrap) {
             (Tier::Bubblewrap, Some(bwrap)) => {
                 let mut c = Command::new(bwrap);
@@ -243,10 +244,13 @@ impl Sandbox {
                 set_limit(libc::RLIMIT_FSIZE, limits.fsize_bytes);
                 set_limit(libc::RLIMIT_CORE, 0);
                 // A fork bomb or fd leak stops here rather than at the host's
-                // limits (the timeout still kills the group). Only lowered:
-                // these count per user, so they stay well above a normal job.
+                // limits (the timeout still kills the group). Only lowered.
+                // The process cap counts every task of Bifrost's user, so it
+                // sits far above normal use and assumes a dedicated, non-root
+                // user (root isn't held to it); a cgroup pids limit bounds
+                // jobs properly. The file cap is per process.
                 lower_limit(libc::RLIMIT_NPROC, MAX_PROCS);
-                lower_limit(libc::RLIMIT_NOFILE, MAX_FILES);
+                lower_limit(libc::RLIMIT_NOFILE, max_files);
                 Ok(())
             });
         }
@@ -266,9 +270,11 @@ type Resource = libc::__rlimit_resource_t;
 #[cfg(not(target_env = "gnu"))]
 type Resource = libc::c_int;
 
-/// Process and open-file ceilings for every sandboxed job.
+/// Process and open-file ceilings for sandboxed jobs; AP servers get more
+/// files, one per connected client.
 const MAX_PROCS: u64 = 4096;
 const MAX_FILES: u64 = 1024;
+const SERVER_MAX_FILES: u64 = 16384;
 
 /// Lower a limit to `value` (never raise it: an unprivileged process can't
 /// raise its hard limit, and the host's may already be lower).

@@ -109,9 +109,9 @@ fn helper_env(season: &SeasonDirs, ap: &Install) -> Vec<(&'static str, OsString)
 /// instance-wide `$BIFROST_DATA/host.yaml` when there is one (hint cost,
 /// release/collect modes… baked into each seed at generation), else AP's
 /// defaults. Writing those defaults loads the world registry, so that step
-/// runs with an empty scratch dir as its user dir: no custom (uploaded) world
-/// is found there, and only the scratch dir is writable. The result is copied
-/// into the season.
+/// runs with an empty scratch dir (private, outside the season) as its user
+/// dir: no custom (uploaded) world is found there, and only the scratch dir is
+/// writable. The result is copied into the season.
 async fn ensure_host_yaml(season: &SeasonDirs, ap: &Install) -> Result<(), String> {
     let dest = season.root.join("host.yaml");
     if dest.exists() {
@@ -126,11 +126,7 @@ async fn ensure_host_yaml(season: &SeasonDirs, ap: &Install) -> Result<(), Strin
             .map_err(|e| format!("copying {} into the season: {e}", template.display()));
     }
     const INIT: &str = "import bifrost_ap, settings\nsettings.get_settings()\n";
-    let scratch = season.root.join(".host-init");
-    let _ = tokio::fs::remove_dir_all(&scratch).await;
-    tokio::fs::create_dir_all(&scratch)
-        .await
-        .map_err(|e| format!("{}: {e}", scratch.display()))?;
+    let scratch = scratch_dir("host-init").await?;
     let job = Job {
         program: &ap.python,
         // -P: don't put the cwd on sys.path.
@@ -154,10 +150,20 @@ async fn ensure_host_yaml(season: &SeasonDirs, ap: &Install) -> Result<(), Strin
     };
     let out = sandbox::run(sandbox::get().command(&job), SETTINGS_TIMEOUT).await;
     let made = scratch.join("host.yaml");
+    // Copied under a temporary name and renamed, so a concurrent reader sees
+    // either no host.yaml or the whole file.
+    let partial = season.root.join(format!(
+        ".host.yaml.{}",
+        scratch.file_name().unwrap_or_default().to_string_lossy()
+    ));
     let copied = match &out {
-        Ok(_) if made.is_file() => tokio::fs::copy(&made, &dest).await.map(|_| ()),
+        Ok(_) if made.is_file() => match tokio::fs::copy(&made, &partial).await {
+            Ok(_) => tokio::fs::rename(&partial, &dest).await,
+            Err(e) => Err(e),
+        },
         _ => Err(std::io::Error::other("not created")),
     };
+    let _ = tokio::fs::remove_file(&partial).await;
     let _ = tokio::fs::remove_dir_all(&scratch).await;
     if copied.is_err() {
         return Err(format!(
