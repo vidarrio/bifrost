@@ -106,6 +106,31 @@ new, and any answer it disagrees with. It raises a disagreement as a reply in
 that finding's thread, opening with "**Reply from the reviewer (Claude).**".
 The maintainer settles disagreements.
 
+## Merging
+
+When CI passes and every review finding has an answer, finish the pull
+request's description before merging:
+
+1. Tick its remaining checklist boxes, typically "CI passes" and the review
+   item, on the head commit you're about to merge, and only the ones that
+   are now true. If one isn't, the pull request isn't ready to merge. Tick
+   the items by name, keep the files outside the repository, and look at the
+   diff before saving:
+
+   ```sh
+   d=$(mktemp -d)
+   gh pr view <n> -R vidarrio/bifrost --json body -q .body > "$d/old.md"
+   sed -E 's/^- \[ \] (CI passes|Reviewed on this PR;.*)$/- [x] \1/' "$d/old.md" > "$d/new.md"
+   diff "$d/old.md" "$d/new.md"    # only those checkbox lines may change
+   gh pr edit <n> -R vidarrio/bifrost --body-file "$d/new.md"
+   ```
+
+2. Merge with `gh pr merge <n> -R vidarrio/bifrost --squash`. Never use
+   `--admin`. If the merge is refused, either a required check is still
+   running or failing (editing the title or body reruns `title`), so wait
+   for it, or the branch is behind `main`. In that case update it, wait for
+   CI on the new head, and only then treat "CI passes" as true.
+
 ## If posting is blocked
 
 Claude Code's permission settings may block writes to GitHub. Don't look for a
