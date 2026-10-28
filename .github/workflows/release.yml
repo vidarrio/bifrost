@@ -4,7 +4,8 @@ name: Release
 # the native bundle and its checksum on a GitHub release with the version's
 # changelog notes, and build provenance for both (CONTRIBUTING.md, Releases).
 # A pull request that changes this workflow runs it as a dry run: everything
-# is built, nothing is published.
+# is built and the release assembled, nothing is published. (Job ids differ
+# from ci.yml's so they can't stand in for its required checks.)
 on:
   push:
     tags: ["v*"]
@@ -25,7 +26,7 @@ env:
   DOCKER_BUILD_RECORD_UPLOAD: false
 
 jobs:
-  notes:
+  release-notes:
     runs-on: ubuntu-26.04
     outputs:
       version: ${{ steps.v.outputs.version }}
@@ -34,6 +35,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: The tag is on main
+        if: github.event_name == 'push'
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::$GITHUB_REF_NAME isn't on main"; exit 1; }
       - name: Version and notes
         id: v
         env:
@@ -54,8 +61,10 @@ jobs:
           name: notes
           path: notes.md
 
-  image:
-    needs: notes
+  release-image:
+    # After the bundle: a bundle failure shouldn't leave a published image
+    # without a release.
+    needs: [release-notes, release-bundle]
     runs-on: ubuntu-26.04
     permissions:
       contents: read
@@ -80,10 +89,12 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           # X.Y.Z and X.Y; latest only for non-prereleases.
+          # latest is set explicitly below, so no automatic one.
+          flavor: latest=false
           tags: |
-            type=semver,pattern={{version}},value=v${{ needs.notes.outputs.version }}
-            type=semver,pattern={{major}}.{{minor}},value=v${{ needs.notes.outputs.version }},enable=${{ needs.notes.outputs.prerelease == 'false' }}
-            type=raw,value=latest,enable=${{ needs.notes.outputs.prerelease == 'false' }}
+            type=semver,pattern={{version}},value=v${{ needs.release-notes.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ needs.release-notes.outputs.version }},enable=${{ needs.release-notes.outputs.prerelease == 'false' }}
+            type=raw,value=latest,enable=${{ needs.release-notes.outputs.prerelease == 'false' }}
           labels: |
             org.opencontainers.image.title=Bifrost
             org.opencontainers.image.licenses=MIT
@@ -104,8 +115,8 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
-  bundle:
-    needs: notes
+  release-bundle:
+    needs: release-notes
     runs-on: ubuntu-26.04
     permissions:
       contents: read
@@ -122,8 +133,10 @@ jobs:
           context: .
           file: packaging/bundle/Containerfile
           target: bundle
-          build-args: BIFROST_VERSION=${{ needs.notes.outputs.version }}
+          build-args: BIFROST_VERSION=${{ needs.release-notes.outputs.version }}
           outputs: type=local,dest=dist
+          # The attestation below covers the file; no provenance.json beside it.
+          provenance: false
           cache-from: type=gha,scope=bundle
       - name: Checksum
         working-directory: dist
@@ -142,9 +155,8 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  release:
-    needs: [notes, image, bundle]
-    if: github.event_name == 'push'
+  publish:
+    needs: [release-notes, release-image, release-bundle]
     runs-on: ubuntu-26.04
     permissions:
       contents: write
@@ -155,8 +167,8 @@ jobs:
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.notes.outputs.version }}
-          PRERELEASE: ${{ needs.notes.outputs.prerelease }}
+          VERSION: ${{ needs.release-notes.outputs.version }}
+          PRERELEASE: ${{ needs.release-notes.outputs.prerelease }}
         run: |
           {
             cat artifacts/notes/notes.md
@@ -169,7 +181,13 @@ jobs:
             echo
             echo "Both carry build provenance: \`gh attestation verify <file> -R $GITHUB_REPOSITORY\`, or \`gh attestation verify oci://$IMAGE:$VERSION -R $GITHUB_REPOSITORY\`."
           } > notes.md
+          files=(artifacts/bundle/bifrost-* artifacts/bundle/SHA256SUMS)
+          ls -l "${files[@]}"
+          cat notes.md
+          if [ "$GITHUB_EVENT_NAME" != push ]; then
+            echo "Dry run: would create release v$VERSION with the notes and files above."
+            exit 0
+          fi
           pre=(); [ "$PRERELEASE" = true ] && pre=(--prerelease)
           gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --verify-tag "${pre[@]}" \
-            --title "Bifrost $VERSION" --notes-file notes.md \
-            artifacts/bundle/bifrost-* artifacts/bundle/SHA256SUMS
+            --title "Bifrost $VERSION" --notes-file notes.md "${files[@]}"

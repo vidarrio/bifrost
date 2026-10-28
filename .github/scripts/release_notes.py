@@ -28,7 +28,7 @@ def section(changelog, name):
             break
         if inside:
             out.append(line)
-    return "\n".join(out).strip() if inside or out else None
+    return "\n".join(out).strip() if inside else None
 
 
 def main():
