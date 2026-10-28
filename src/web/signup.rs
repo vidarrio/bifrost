@@ -216,14 +216,27 @@ pub(crate) async fn signup_post(
         )
     };
 
+    // A file of its own, never another signup's: names that slugify alike
+    // (`Ann B`, `Ann-B`) or a refused duplicate must not touch an existing one.
     let slug = slugify(&slot_name);
     let uploads = ctx.dirs().submissions;
     let _ = tokio::fs::create_dir_all(&uploads).await;
+    let nonce = &auth::new_token()[..16];
     let yaml_path = uploads
-        .join(format!("{slug}.yaml"))
+        .join(format!("{slug}-{nonce}.yaml"))
         .to_string_lossy()
         .into_owned();
-    if tokio::fs::write(&yaml_path, &yaml).await.is_err() {
+    let written = async {
+        use tokio::io::AsyncWriteExt;
+        let mut f = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&yaml_path)
+            .await?;
+        f.write_all(&yaml).await
+    };
+    if written.await.is_err() {
+        let _ = tokio::fs::remove_file(&yaml_path).await;
         return render::signup_result("Couldn't store the YAML.", false);
     }
     let coop_clean: String = coop
@@ -254,10 +267,15 @@ pub(crate) async fn signup_post(
             true,
         ),
         Ok(_) => render::signup_result(&format!("Signed up: {slot_name} — {game}."), true),
-        Err(_) => render::signup_result(
-            &format!("'{slot_name}' is already signed up — delete that entry first to resubmit."),
-            false,
-        ),
+        Err(_) => {
+            let _ = tokio::fs::remove_file(&yaml_path).await;
+            render::signup_result(
+                &format!(
+                    "'{slot_name}' is already signed up — delete that entry first to resubmit."
+                ),
+                false,
+            )
+        }
     }
 }
 

@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   forward-auth proxy and Bifrost always read a path the same way. Upgrading is
   enough; the user guide's proxy rule now also matches any season id, which
   protects instances that haven't upgraded yet.
+- Each signup's YAML is stored in a file of its own. A refused signup, or one
+  whose name makes the same file name, can no longer replace another player's
+  YAML.
 
 ## [0.1.1] - 2026-10-28
 
