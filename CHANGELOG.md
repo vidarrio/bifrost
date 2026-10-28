@@ -27,7 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Creating a season's default `host.yaml` no longer loads its uploaded worlds,
   and that step can only write to a scratch folder.
 - Sandboxed jobs are capped in how many processes and open files they can
-  have.
+  have. The process cap counts all of Bifrost's user's processes, so run
+  Bifrost as a dedicated, non-root user (see Isolation in the user guide).
 
 ## [0.1.1] - 2026-10-28
 
