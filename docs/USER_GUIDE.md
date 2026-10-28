@@ -258,6 +258,11 @@ chmod +x bifrost-<version>-x86_64-linux
 ./bifrost-<version>-x86_64-linux
 ```
 
+To keep it, install it under a plain name, such as `/usr/local/bin/bifrost`
+(owned by the user Bifrost runs as, if it should update itself), and run it
+from a service. `bifrost update` keeps whatever name the file has, so a name
+with a version in it would go stale.
+
 To build it yourself instead: `packaging/bundle/build.sh` in a checkout puts it
 in `dist/`.
 
@@ -336,17 +341,21 @@ restarts the container when it moved. With Docker, Watchtower does the same.
 **Native single file.** Update it in place:
 
 ```sh
-sudo -u bifrost bifrost update           # the newest release
-sudo -u bifrost bifrost update 0.2.1     # or a given version
+sudo -u bifrost env BIFROST_DATA=/var/lib/bifrost bifrost update        # the newest release
+sudo -u bifrost env BIFROST_DATA=/var/lib/bifrost bifrost update 0.2.1  # or a given version
 sudo systemctl restart bifrost
 ```
 
 `bifrost update` downloads the release's file and checks it against the
 release's `SHA256SUMS`. It then puts the file in place of the running one and
 keeps the old one next to it as `<name>.previous`. Run it as the user that
-owns the file. Bifrost keeps running the old version until you restart it. To
-check the file's build provenance as well, download it yourself and verify
-it as described under [Installing](#installing).
+owns the file, with the service's data directory (`BIFROST_DATA`): it uses
+the Python unpacked there, and with another data directory it would unpack a
+fresh copy first. Bifrost keeps running the old version until you restart it.
+The checksum comes from the same release as the file, so it catches a broken
+download, not a tampered release. To check the file's build provenance as
+well, download it yourself and verify it as described under
+[Installing](#installing).
 
 **Going back.** If a new version misbehaves, stop it, restore the
 pre-upgrade backup it took, and start the old version. The new version's log
