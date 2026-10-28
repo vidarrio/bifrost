@@ -156,6 +156,22 @@ These GitHub settings enforce the process:
   - no force pushes and no deletion;
   - nobody can bypass it, the maintainer included.
 
+## Dependency updates
+
+[Dependabot](.github/dependabot.yml) checks weekly for newer GitHub Actions,
+Cargo dependencies and Rust toolchains, and opens a pull request for each.
+Actions come as one grouped pull request, and so do Cargo patch updates; any
+other Cargo update gets its own, since a minor bump of a `0.x` crate can be
+breaking. Its
+pull requests follow the same rules as any other: CI, a review, every finding
+answered, squash merge.
+
+GitHub Actions are pinned to full commit SHAs, with the version in a comment
+(`uses: actions/checkout@<sha> # v7.0.1`), so a moved tag can't change what
+runs. Dependabot updates both. Pin new actions the same way. Note that
+Dependabot's security alerts don't cover SHA-pinned actions; its weekly
+version updates are what keeps them current.
+
 ## Releases
 
 Releases are cut from `main` **only when the maintainer says so**. Changes
@@ -231,7 +247,8 @@ The Rust toolchain is pinned to an exact release in `rust-toolchain.toml`
 own, together with the `rust:` base image in `Dockerfile` and
 `packaging/bundle/Containerfile` and `rust-version` in `Cargo.toml` (the
 release without its patch number), and fix whatever new clippy lints it brings.
-`lint` fails until all four agree.
+`lint` fails until all four agree. When Dependabot proposes a toolchain bump,
+push the other three changes onto its pull request.
 
 ### End-to-end tests
 

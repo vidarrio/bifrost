@@ -1,0 +1,49 @@
+# Dependabot proposes version updates as pull requests, weekly. Each goes
+# through CI and review like any other change (CONTRIBUTING.md). The commit
+# prefix makes titles `chore(deps): …`, which the title check accepts for
+# dependabot/ branches.
+version: 2
+updates:
+  # Actions are pinned to commit SHAs (with the version in a comment);
+  # Dependabot updates both.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+      include: scope
+    # Instead of Dependabot's own labels (dependencies, rust, …).
+    labels: [chore]
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # Patch updates together. Everything else gets a PR of its own: most of
+      # our crates are 0.x, where Dependabot counts a breaking 0.8 → 0.9 as
+      # "minor".
+      cargo:
+        update-types: [patch]
+    commit-message:
+      prefix: chore
+      include: scope
+    # Instead of Dependabot's own labels (dependencies, rust, …).
+    labels: [chore]
+
+  # A toolchain bump fails lint until the rust: base images and rust-version
+  # follow on the same PR (CONTRIBUTING.md, Development). There's no docker
+  # entry for those images, so they never arrive as a separate PR.
+  - package-ecosystem: rust-toolchain
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+    # Instead of Dependabot's own labels (dependencies, rust, …).
+    labels: [chore]
