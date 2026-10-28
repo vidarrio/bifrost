@@ -16,18 +16,24 @@ updates:
     commit-message:
       prefix: chore
       include: scope
+    # Instead of Dependabot's own labels (dependencies, rust, …).
+    labels: [chore]
 
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
     groups:
-      # Minor and patch updates together; majors get a PR each.
+      # Patch updates together. Everything else gets a PR of its own: most of
+      # our crates are 0.x, where Dependabot counts a breaking 0.8 → 0.9 as
+      # "minor".
       cargo:
-        update-types: [minor, patch]
+        update-types: [patch]
     commit-message:
       prefix: chore
       include: scope
+    # Instead of Dependabot's own labels (dependencies, rust, …).
+    labels: [chore]
 
   # A toolchain bump fails lint until the rust: base images and rust-version
   # follow on the same PR (CONTRIBUTING.md, Development). There's no docker
@@ -39,3 +45,5 @@ updates:
     commit-message:
       prefix: chore
       include: scope
+    # Instead of Dependabot's own labels (dependencies, rust, …).
+    labels: [chore]
