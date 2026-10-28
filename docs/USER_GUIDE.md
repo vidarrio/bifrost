@@ -660,6 +660,12 @@ apworlds unless you explicitly set `allow_unsandboxed_custom_worlds`. The
 settings page shows which tier is active. Resource limits for checks and
 generation are under `[sandbox]`.
 
+Every sandboxed job is also capped in processes and open files. The process
+cap counts all of Bifrost's user's processes, so run Bifrost as a dedicated,
+non-root user (the image and the systemd unit above do). For a firmer bound,
+give Bifrost a cgroup process limit as well: `TasksMax=` in its systemd unit,
+or `--pids-limit` on the container.
+
 ### Configuration
 
 Settings come from the environment or from `$BIFROST_DATA/config.toml`. The
