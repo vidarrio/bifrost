@@ -2,7 +2,7 @@
 name = "bifrost"
 version = "0.0.1"
 edition = "2024"
-rust-version = "1.98"
+rust-version = "1.99"
 description = "Bifrost — the hub for all things Archipelago."
 license = "MIT"
 publish = false
