@@ -20,7 +20,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1", features = ["derive"] }   # form bodies + checker JSON
 serde_json = "1"
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake"] }  # AP tracker websocket (ws://)
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake"] }  # AP tracker websocket (ws://)
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }  # Bifrost slots + claims
 poptracker = { path = "crates/poptracker" }  # PopTracker-pack engine (runs pack Lua -> tracker state)
