@@ -53,10 +53,26 @@ fn instruction_cap_aborts_runaway_pack() {
     // cap, not hang the host.
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/infinite-init");
     let pack = Pack::load(dir).unwrap();
-    let r = Session::new(&pack);
+    let err = Session::new(&pack)
+        .err()
+        .expect("runaway init.lua must be aborted");
     assert!(
-        r.is_err(),
-        "runaway init.lua must be aborted by the instruction cap"
+        err.to_string().contains("instruction limit exceeded"),
+        "aborted by the instruction cap, not something else: {err}"
+    );
+}
+
+#[test]
+fn instruction_cap_covers_coroutines() {
+    // A coroutine runs on its own Lua thread; the cap must apply there too.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/infinite-coroutine");
+    let pack = Pack::load(dir).unwrap();
+    let err = Session::new(&pack)
+        .err()
+        .expect("runaway coroutine must be aborted");
+    assert!(
+        err.to_string().contains("instruction limit exceeded"),
+        "aborted by the instruction cap: {err}"
     );
 }
 
