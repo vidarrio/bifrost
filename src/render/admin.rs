@@ -352,6 +352,12 @@ pub fn admin_page(
                     esc(&o.ext),
                     human_size(o.size),
                 ));
+            } else if o.unassigned {
+                b.push_str(&format!(
+                    r#"<div class="hintrow"><span><b>{}</b> · {} · not matched to a slot (its name doesn't say which), so no game page offers it: hand it to the right player yourself</span>{link}</div>"#,
+                    esc(&o.member),
+                    human_size(o.size),
+                ));
             } else {
                 let game = out_slots
                     .iter()
