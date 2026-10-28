@@ -76,7 +76,24 @@ fn split(path: &str) -> Option<(i64, String)> {
     (!instance).then_some((id, tail))
 }
 
+/// A path a proxy and Bifrost can only read one way: no percent-escapes, no
+/// `.`/`..` segments and no empty segment (bar a trailing slash). Sign-in is
+/// decided by path prefix here and, in forward-auth mode, at the proxy; a proxy
+/// that normalizes the path before matching its rule would otherwise see a
+/// different path than the one Bifrost tiers. No route needs any of these.
+fn canonical(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix('/') else {
+        return false;
+    };
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
+    !path.contains('%')
+        && (rest.is_empty() || rest.split('/').all(|s| !matches!(s, "" | "." | "..")))
+}
+
 pub async fn rewrite(mut req: Request, next: Next) -> Response {
+    if !canonical(req.uri().path()) {
+        return (StatusCode::BAD_REQUEST, "Bad path").into_response();
+    }
     // Keep the URL as requested (e.g. for the post-login redirect).
     let original = axum::extract::OriginalUri(req.uri().clone());
     req.extensions_mut().insert(original);
@@ -189,6 +206,25 @@ impl axum::extract::OptionalFromRequestParts<AppState> for SeasonCtx {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_canonical_paths_pass() {
+        for ok in ["/", "/board", "/s/3/", "/s/3/game/7", "/admin/seasons"] {
+            assert!(canonical(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "//admin",
+            "/admin//users",
+            "/./admin",
+            "/s/1/../admin",
+            "/admin/.",
+            "/%61dmin",
+            "/s/1/game/%2e%2e/admin",
+        ] {
+            assert!(!canonical(bad), "{bad}");
+        }
+    }
 
     #[test]
     fn season_prefix_is_split() {

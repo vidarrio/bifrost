@@ -9,9 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Season URLs accept only plain numeric ids, and the forward-auth proxy rule in
-  the user guide now matches any season id. Forward-auth deployments should
-  update their proxy rule to the new one.
+- Season URLs accept only plain numeric ids, and requests whose path has
+  percent-escapes, `.` or `..` segments or empty segments are refused, so a
+  forward-auth proxy and Bifrost always read a path the same way. Upgrading is
+  enough; the user guide's proxy rule now also matches any season id, which
+  protects instances that haven't upgraded yet.
 
 ## [0.1.1] - 2026-10-28
 
