@@ -405,7 +405,7 @@ impl Session {
                     b.set(r - 1);
                     Ok(mlua::VmState::Continue)
                 },
-            );
+            )?;
         }
         let eng: E = Rc::new(RefCell::new(Eng {
             dir: pack.dir.clone(),
