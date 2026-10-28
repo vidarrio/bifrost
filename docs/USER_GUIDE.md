@@ -200,13 +200,14 @@ settings come from the instance's `host.yaml` (see
 
 ### Installing
 
-**Container (recommended).** The image contains Bifrost, a pinned Archipelago
-build and bubblewrap:
+**Container (recommended).** The image, published on `ghcr.io` with every
+release (`latest`, or a version like `0.1.0`), contains Bifrost, a pinned
+Archipelago build and bubblewrap:
 
 ```sh
-podman build -t bifrost .            # or docker build
 podman run -d --name bifrost --stop-timeout 30 --security-opt unmask=/proc/* \
-    -p 8080:8080 -p 38281-38300:38281-38300 -v bifrost-data:/var/lib/bifrost bifrost
+    -p 8080:8080 -p 38281-38300:38281-38300 -v bifrost-data:/var/lib/bifrost \
+    ghcr.io/vidarrio/bifrost:latest    # or docker run
 podman logs bifrost                  # the first-run /setup link
 ```
 
@@ -216,14 +217,27 @@ podman logs bifrost                  # the first-run /setup link
 - `--stop-timeout 30` gives live servers time to save on shutdown.
 - Publish the whole Archipelago port range. Its size caps how many seasons can
   be live at once.
+- To build the image yourself instead: `podman build -t bifrost .` in a
+  checkout, then run `bifrost` in place of the published image.
 
 **Native single file (Linux x86_64).** A static binary with its own Python and
-Archipelago appended. It unpacks them into the data directory on first run:
+Archipelago appended. It unpacks them into the data directory on first run.
+Download `bifrost-<version>-x86_64-linux` and `SHA256SUMS` from a
+[release](https://github.com/vidarrio/bifrost/releases), then:
 
 ```sh
-packaging/bundle/build.sh            # → dist/bifrost-<version>-x86_64-linux
-./dist/bifrost-<version>-x86_64-linux
+sha256sum -c SHA256SUMS
+chmod +x bifrost-<version>-x86_64-linux
+./bifrost-<version>-x86_64-linux
 ```
+
+To build it yourself instead: `packaging/bundle/build.sh` in a checkout puts it
+in `dist/`.
+
+Both the image and the file carry build provenance from the release workflow;
+`gh attestation verify <file> -R vidarrio/bifrost` (or
+`gh attestation verify oci://ghcr.io/vidarrio/bifrost:<version> -R vidarrio/bifrost`)
+checks that they were built by this repository from the release's tag.
 
 Without `BIFROST_DATA`, it keeps its data in `~/.local/share/bifrost`, or in
 `/var/lib/bifrost` when run as root. Install `bubblewrap` on the host for the

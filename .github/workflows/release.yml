@@ -1,0 +1,175 @@
+name: Release
+
+# A pushed vX.Y.Z tag publishes the release: the container image to ghcr.io,
+# the native bundle and its checksum on a GitHub release with the version's
+# changelog notes, and build provenance for both (CONTRIBUTING.md, Releases).
+# A pull request that changes this workflow runs it as a dry run: everything
+# is built, nothing is published.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/scripts/release_notes.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+  # docker/build-push-action would upload a build record artifact every run.
+  DOCKER_BUILD_RECORD_UPLOAD: false
+
+jobs:
+  notes:
+    runs-on: ubuntu-26.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Version and notes
+        id: v
+        env:
+          DRY: ${{ github.event_name == 'pull_request' }}
+        run: |
+          if [ "$DRY" = true ]; then
+            version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+            python3 .github/scripts/release_notes.py "$version" --dry-run > notes.md
+          else
+            version=${GITHUB_REF_NAME#v}
+            python3 .github/scripts/release_notes.py "$version" > notes.md
+          fi
+          case "$version" in *-*) pre=true ;; *) pre=false ;; esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$pre" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: notes
+          path: notes.md
+
+  image:
+    needs: notes
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to ghcr.io
+        if: github.event_name == 'push'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Tags and labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          # X.Y.Z and X.Y; latest only for non-prereleases.
+          tags: |
+            type=semver,pattern={{version}},value=v${{ needs.notes.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ needs.notes.outputs.version }},enable=${{ needs.notes.outputs.prerelease == 'false' }}
+            type=raw,value=latest,enable=${{ needs.notes.outputs.prerelease == 'false' }}
+          labels: |
+            org.opencontainers.image.title=Bifrost
+            org.opencontainers.image.licenses=MIT
+      - name: Build and push the image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=image
+      - name: Attest the image's provenance
+        if: github.event_name == 'push'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  bundle:
+    needs: notes
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the bundle
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: packaging/bundle/Containerfile
+          target: bundle
+          build-args: BIFROST_VERSION=${{ needs.notes.outputs.version }}
+          outputs: type=local,dest=dist
+          cache-from: type=gha,scope=bundle
+      - name: Checksum
+        working-directory: dist
+        run: |
+          ls -l
+          sha256sum bifrost-* > SHA256SUMS
+          cat SHA256SUMS
+      - name: Attest the bundle's provenance
+        if: github.event_name == 'push'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/bifrost-*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bundle
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    needs: [notes, image, bundle]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: artifacts
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.notes.outputs.version }}
+          PRERELEASE: ${{ needs.notes.outputs.prerelease }}
+        run: |
+          {
+            cat artifacts/notes/notes.md
+            echo
+            echo "## Install"
+            echo
+            echo "Container image: \`podman pull $IMAGE:$VERSION\` (see the [user guide](https://github.com/$GITHUB_REPOSITORY/blob/v$VERSION/docs/USER_GUIDE.md#installing))."
+            echo
+            echo "Native single file (Linux x86_64): \`bifrost-$VERSION-x86_64-linux\` below, with \`SHA256SUMS\`."
+            echo
+            echo "Both carry build provenance: \`gh attestation verify <file> -R $GITHUB_REPOSITORY\`, or \`gh attestation verify oci://$IMAGE:$VERSION -R $GITHUB_REPOSITORY\`."
+          } > notes.md
+          pre=(); [ "$PRERELEASE" = true ] && pre=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --verify-tag "${pre[@]}" \
+            --title "Bifrost $VERSION" --notes-file notes.md \
+            artifacts/bundle/bifrost-* artifacts/bundle/SHA256SUMS
