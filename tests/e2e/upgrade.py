@@ -71,7 +71,7 @@ srv.start()
 try:
     log = srv.logtext()
     taken = backups(srv)
-    check("an upgrade backs up first, as a pre-upgrade backup", len(taken) == 1 and taken[0].endswith("-pre-upgrade.zip"), taken)
+    check("an upgrade backs up first, as a pre-upgrade backup", len(taken) == 1 and taken[0].endswith("-pre-upgrade-from-0.0.0-old.zip"), taken)
     check("and says how to go back", "to go back to 0.0.0-old" in log and "bifrost backup restore" in log, log[-2000:])
     if taken:
         with zipfile.ZipFile(os.path.join(srv.data, "backups", taken[0])) as z:
@@ -116,11 +116,11 @@ code = refused(srv)
 log = srv.logtext()
 check("a database from a newer Bifrost is refused", code == 1, code)
 check("with a message naming the version and the way back",
-      "last used by Bifrost 99.0.0" in log and "pre-upgrade.zip" in log, log[-2000:])
+      "last used by Bifrost 99.0.0" in log and "pre-upgrade-from-" in log, log[-2000:])
 r = srv.cli("auth", "status")
 check("commands that use the database are refused too", r.returncode == 1 and "99.0.0" in r.stderr, (r.returncode, r.stderr))
 r = srv.cli("backup", "list")
-check("but the backups can still be listed", r.returncode == 0 and "pre-upgrade.zip" in r.stdout, (r.returncode, r.stdout, r.stderr))
+check("but the backups can still be listed", r.returncode == 0 and "pre-upgrade-from-0.0.0-old.zip" in r.stdout, (r.returncode, r.stdout, r.stderr))
 check("and the database is left alone", stamp(srv) == (schema + 1, "99.0.0"), stamp(srv))
 
 sys.exit(summary())

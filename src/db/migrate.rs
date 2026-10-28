@@ -235,14 +235,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(kids, 1, "the rebuild cascaded into the child table");
-        // Foreign keys are back on afterwards, on every connection.
-        for _ in 0..4 {
-            let on: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
-                .fetch_one(&db.pool)
-                .await
-                .unwrap();
-            assert_eq!(on, 1);
-        }
+        // Foreign keys are back on afterwards (the pool hands back the
+        // idle connection the step ran on).
+        let on: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(on, 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -257,6 +256,11 @@ mod tests {
         ];
         let err = apply(&db.pool, &steps).await.unwrap_err().to_string();
         assert!(err.contains("dangling"), "{err}");
+        let on: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(on, 1, "foreign keys stay off after a failed step");
         assert_eq!(user_version(&db.pool).await.unwrap(), 2);
         let parents: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM p")
             .fetch_one(&db.pool)

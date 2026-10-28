@@ -265,8 +265,9 @@ async fn upgrade(db: &db::Db) {
         tracing::error!(
             "this data dir was last used by Bifrost {}, whose database schema (version {}) \
              is newer than this Bifrost {this} knows (version {}). Run that version or newer, \
-             or restore the backup it took before upgrading (the newest `…-pre-upgrade.zip` in \
-             `bifrost backup list`) with `bifrost backup restore <file>`",
+             or restore the backup it took before upgrading from this version (the newest \
+             `…-pre-upgrade-from-{this}.zip` in `bifrost backup list`) with \
+             `bifrost backup restore <file>`",
             stamp.version.as_deref().unwrap_or("(unknown)"),
             stamp.schema,
             db::SCHEMA_VERSION
@@ -277,7 +278,7 @@ async fn upgrade(db: &db::Db) {
         tracing::info!(
             "Bifrost {from} last ran on this data dir; backing up before starting {this}"
         );
-        match backup::create_pre_upgrade(db, &backup::Policy::from_config()).await {
+        match backup::create_pre_upgrade(db, &backup::Policy::from_config(), from).await {
             Ok(b) => tracing::info!(
                 "to go back to {from}: stop Bifrost, run `bifrost backup restore {}`, start {from}",
                 backup::dir().join(&b.name).display()
