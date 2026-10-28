@@ -418,7 +418,7 @@ impl Session {
 
         budget.set(MAX_TICKS);
         let init = read_pack_file(&eng, "scripts/init.lua")?;
-        lua.load(&init).set_name("init.lua").exec()?;
+        run_pack_source(&lua, &init, "init.lua")?;
 
         Ok(Session { lua, eng, budget })
     }
@@ -1411,7 +1411,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
             "LoadScript",
             lua.create_function(move |lua, (_t, file): (Table, String)| {
                 let txt = read_pack_file(&eng2, &file).map_err(to_lua)?;
-                lua.load(&txt).set_name(file).exec()
+                run_pack_source(lua, &txt, &file)
             })?,
         )?;
     }
@@ -1507,6 +1507,16 @@ fn lua_int(t: &Table, key: &str) -> Option<i64> {
         .map(|n| n.trunc() as i64)
 }
 
+/// Run a pack's Lua file, as source only: a chunk that starts with Lua's
+/// bytecode signature is refused (see `sandboxed_lua`). Pack files are read as
+/// UTF-8 first, which already rejects real bytecode; this is the backstop.
+fn run_pack_source(lua: &Lua, src: &str, name: &str) -> mlua::Result<()> {
+    lua.load(src)
+        .set_name(name)
+        .set_mode(mlua::chunk::ChunkMode::Text)
+        .exec()
+}
+
 /// Build the sandboxed Lua VM: only string/table/math/coroutine stdlib (base
 /// functions like `print`/`pairs` are always present), i.e. no `os`/`io`/
 /// `package`/`require`/`debug`, with a memory cap. Pack Lua runs here, so this
@@ -1526,12 +1536,96 @@ fn sandboxed_lua() -> Result<Lua> {
             let _ = g.set(f, Value::Nil);
         }
     }
+    // Source code only, never precompiled chunks: Lua 5.4 doesn't verify
+    // bytecode, and crafted bytecode can break out of the sandbox. `load`
+    // always gets mode "t" (its env argument is passed on only when given,
+    // since an explicit nil would mean an empty environment), and
+    // `string.dump`, the way to produce bytecode from inside, is removed.
+    // Pack files are loaded as text by the host as well (ChunkMode::Text).
+    lua.load(
+        r##"
+        local load, select = load, select
+        _G.load = function(chunk, name, _mode, ...)
+          if select("#", ...) > 0 then return load(chunk, name, "t", ...) end
+          return load(chunk, name, "t")
+        end
+        string.dump = nil
+        "##,
+    )
+    .set_name("sandbox")
+    .set_mode(mlua::chunk::ChunkMode::Text)
+    .exec()?;
     Ok(lua)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Bytecode for `x = 1`, compiled outside the sandbox.
+    fn bytecode() -> Vec<u8> {
+        Lua::new().load("x = 1").into_function().unwrap().dump(true)
+    }
+
+    #[test]
+    fn sandbox_load_takes_source_only() {
+        let lua = sandboxed_lua().unwrap();
+        // Source still loads, with the globals as its environment by default...
+        let n: i64 = lua
+            .load(r#"return load("return math.floor(2.5)")()"#)
+            .eval()
+            .unwrap();
+        assert_eq!(n, 2);
+        // ...or an explicit one.
+        let v: i64 = lua
+            .load(r#"return load("return y", "c", "t", { y = 7 })()"#)
+            .eval()
+            .unwrap();
+        assert_eq!(v, 7);
+        // Binary chunks are refused, even when the caller asks for mode "b".
+        lua.globals()
+            .set("BC", lua.create_string(bytecode()).unwrap())
+            .unwrap();
+        for call in [
+            r#"return load(BC, "bc", "b")"#,
+            r#"return load(BC)"#,
+            r#"local s = BC; return load(function() local r = s; s = nil; return r end)"#,
+        ] {
+            let (f, err): (Value, Option<String>) = lua.load(call).eval().unwrap();
+            assert!(f.is_nil(), "a binary chunk must not load: {call}");
+            let err = err.unwrap_or_default();
+            assert!(err.contains("binary"), "{call}: {err}");
+        }
+        // And there's no way to make bytecode inside.
+        let dump: Value = lua.load("return string.dump").eval().unwrap();
+        assert!(dump.is_nil());
+    }
+
+    #[test]
+    fn pack_scripts_must_be_source() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("scripts")).unwrap();
+        std::fs::write(dir.path().join("scripts/init.lua"), bytecode()).unwrap();
+        let pack = Pack::load(dir.path()).unwrap();
+        // Real bytecode always contains bytes that aren't valid UTF-8, so
+        // reading the file refuses it first.
+        let err = Session::new(&pack)
+            .err()
+            .expect("a precompiled init.lua must be refused");
+        assert!(err.to_string().contains("UTF-8"), "{err}");
+    }
+
+    #[test]
+    fn pack_files_run_as_text_only() {
+        // The backstop behind the UTF-8 read: a chunk that starts with the
+        // bytecode signature is refused by the text-only mode itself.
+        let lua = sandboxed_lua().unwrap();
+        let err = run_pack_source(&lua, "\x1bLua x = 1", "fake.lua").unwrap_err();
+        // Refused for being binary at all, not merely for being malformed
+        // ("bad binary format"), which is what happens without the mode.
+        assert!(err.to_string().contains("mode is 't'"), "{err}");
+        run_pack_source(&lua, "x = 1", "ok.lua").unwrap();
+    }
 
     #[test]
     fn layout_inlines_refs_inside_tabs() {
