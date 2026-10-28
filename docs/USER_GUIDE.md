@@ -424,7 +424,8 @@ sysadmin. Then:
 
 Bifrost's version numbers follow [semantic versioning](https://semver.org/).
 Before 1.0, a new minor version (`0.2.0`) can bring new features or breaking
-changes, and a patch version (`0.2.1`) brings fixes only. Each release's notes
+changes, and a patch version (`0.2.1`) brings fixes, and sometimes new
+documentation, but no new features or behaviour changes. Each release's notes
 are on the [releases page](https://github.com/vidarrio/bifrost/releases) and
 in the [changelog](../CHANGELOG.md). Sysadmins see a banner in the console
 when a newer release is out (see [Configuration](#configuration)).
