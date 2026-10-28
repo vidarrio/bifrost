@@ -258,10 +258,12 @@ chmod +x bifrost-<version>-x86_64-linux
 ./bifrost-<version>-x86_64-linux
 ```
 
-To keep it, install it under a plain name, such as `/usr/local/bin/bifrost`
-(owned by the user Bifrost runs as, if it should update itself), and run it
-from a service. `bifrost update` keeps whatever name the file has, so a name
-with a version in it would go stale.
+To keep it, install it under a plain name, such as `/opt/bifrost/bifrost`, and
+run it from a service. For it to update itself, the user Bifrost runs as must
+own the file and be able to write to its folder (`bifrost update` writes the
+new file next to it), so a root-owned folder like `/usr/local/bin` won't do.
+`bifrost update` keeps whatever name the file has, so a name with a version in
+it would go stale.
 
 To build it yourself instead: `packaging/bundle/build.sh` in a checkout puts it
 in `dist/`.
@@ -278,6 +280,98 @@ strong sandbox, which custom apworlds need.
 Put Bifrost behind a reverse proxy that terminates HTTPS. Session cookies are
 marked `Secure`. Add the proxy's address to `trusted_proxies` so per-client
 rate limiting sees real client addresses.
+
+### Running on Windows
+
+Bifrost needs Linux, but a Windows PC can host it through
+[WSL2](https://learn.microsoft.com/windows/wsl/), which runs a real Linux
+kernel. Either build from [Installing](#installing) then runs unchanged, with
+the strong sandbox. These steps haven't been tested on Windows by the project
+yet; please report what does or doesn't work in an issue.
+
+Install WSL2 from an administrator PowerShell, then restart:
+
+```powershell
+wsl --install            # Ubuntu by default
+```
+
+**Container, through Docker Desktop or Podman Desktop.** Install either one
+with its WSL2 backend, then run the image with the same command and flags as
+under [Installing](#installing), from PowerShell or a WSL shell. Add
+`--restart unless-stopped` so the container comes back when the desktop app
+starts, and set the app to start when you sign in. The data stays in the
+named volume, inside the app's Linux VM.
+
+**Native single file, inside the WSL2 distro.** In the Ubuntu shell, follow the
+native steps under [Installing](#installing), plus `sudo apt install
+bubblewrap` for the strong sandbox. To run it as a service, systemd must be on
+(it is in a fresh Ubuntu from `wsl --install`; otherwise put
+`[boot]` / `systemd=true` in `/etc/wsl.conf` and run `wsl --shutdown`):
+
+```sh
+sudo useradd --system --create-home --home-dir /var/lib/bifrost bifrost
+sudo install -d -o bifrost /opt/bifrost
+sudo install -o bifrost -m 755 bifrost-<version>-x86_64-linux /opt/bifrost/bifrost
+sudo tee /etc/systemd/system/bifrost.service >/dev/null <<'UNIT'
+[Unit]
+Description=Bifrost
+After=network-online.target
+
+[Service]
+User=bifrost
+Environment=BIFROST_DATA=/var/lib/bifrost
+ExecStart=/opt/bifrost/bifrost
+Restart=on-failure
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+sudo systemctl enable --now bifrost
+journalctl -u bifrost     # the first-run /setup link
+```
+
+Keep the data directory on the Linux side (as above), not under `/mnt/c`:
+files on the Windows drive are much slower from WSL, and Linux permissions
+don't hold there.
+
+**Reaching it from other machines.** Docker Desktop and Podman Desktop publish
+the ports on Windows itself. WSL2's own network sits behind NAT by default, so
+for the native file turn on mirrored networking (Windows 11 22H2 or later) in
+`%UserProfile%\.wslconfig`, then run `wsl --shutdown`:
+
+```ini
+[wsl2]
+networkingMode=mirrored
+```
+
+Either way, allow the web port and the whole Archipelago port range through the
+Windows firewall, from an administrator PowerShell:
+
+```powershell
+New-NetFirewallRule -DisplayName Bifrost -Direction Inbound -Protocol TCP `
+    -LocalPort 8080,38281-38300 -Action Allow
+# Native file with mirrored networking: WSL's own firewall too
+New-NetFirewallHyperVRule -Name Bifrost -DisplayName Bifrost -Direction Inbound `
+    -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP `
+    -LocalPorts 8080,38281-38300 -Action Allow
+```
+
+Players outside your network also need those ports forwarded on your router.
+Set the **connect host** under *Console → Settings* to the address they reach,
+and put Bifrost behind a reverse proxy for HTTPS as on Linux.
+
+**Keeping it running.** WSL2 starts with the first `wsl` command, not with
+Windows, and stops a little while after its last one exits. To keep the
+native service up, add a Task Scheduler task that runs at log on (or at
+startup, with "Run whether user is logged on or not"):
+
+```text
+wsl.exe -d Ubuntu --exec sleep infinity
+```
+
+Turn off sleep in Windows' power settings too: a sleeping PC disconnects every
+player and pauses the seasons.
 
 ### First run
 
@@ -341,8 +435,8 @@ restarts the container when it moved. With Docker, Watchtower does the same.
 **Native single file.** Update it in place:
 
 ```sh
-sudo -u bifrost env BIFROST_DATA=/var/lib/bifrost bifrost update        # the newest release
-sudo -u bifrost env BIFROST_DATA=/var/lib/bifrost bifrost update 0.2.1  # or a given version
+sudo -u bifrost env BIFROST_DATA=/var/lib/bifrost /opt/bifrost/bifrost update        # the newest release
+sudo -u bifrost env BIFROST_DATA=/var/lib/bifrost /opt/bifrost/bifrost update 0.2.1  # or a given version
 sudo systemctl restart bifrost
 ```
 

@@ -61,7 +61,8 @@ Open the `/setup?token=…` link to create the first sysadmin. Then set the
 connect host under *Console → Settings* and create a season.
 
 Each [release](https://github.com/vidarrio/bifrost/releases) also has a
-single native Linux executable. See the
+single native Linux executable. On Windows, either one runs under WSL2 (see
+[Running on Windows](docs/USER_GUIDE.md#running-on-windows)). See the
 [user guide](docs/USER_GUIDE.md#installing) for both options, building them
 yourself, what the container flags do, and running behind a reverse proxy,
 and [Updating Bifrost](docs/USER_GUIDE.md#updating-bifrost) for keeping it
