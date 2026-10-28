@@ -645,9 +645,10 @@ async fn run_inner(
     clear_ext(&season.players, "yaml").await?;
     clear_old_seeds(season_id).await;
     for sub in &subs {
+        // By id too: names that slugify alike mustn't overwrite each other.
         let dst = season
             .players
-            .join(format!("{}.yaml", slug(&sub.slot_name)));
+            .join(format!("{}-{}.yaml", sub.id, slug(&sub.slot_name)));
         tokio::fs::copy(&sub.yaml_file, &dst)
             .await
             .map_err(|e| format!("staging {}'s YAML: {e}", sub.slot_name))?;
