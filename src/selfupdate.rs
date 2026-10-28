@@ -69,7 +69,9 @@ async fn update(version: Option<&str>) -> Result<String, String> {
         .and_then(|n| n.to_str())
         .ok_or("this binary's name isn't UTF-8")?
         .to_string();
-    let partial = exe.with_file_name(format!(".{name}.update-{target}"));
+    // Per process: the helper creates it exclusively, and two concurrent
+    // runs never share one.
+    let partial = exe.with_file_name(format!(".{name}.update-{target}-{}", std::process::id()));
     let _ = std::fs::remove_file(&partial);
     println!("Downloading Bifrost {target}…");
     let res = install(&exe, &partial, &target).await;
@@ -79,8 +81,10 @@ async fn update(version: Option<&str>) -> Result<String, String> {
     let previous = res?;
     Ok(format!(
         "Updated {} from {current} to {target}. Restart Bifrost to run it (for example \
-         `systemctl restart bifrost`); it backs up the data dir before upgrading it. \
-         The previous binary is kept as {}.",
+         `systemctl restart bifrost`); its first start backs up the data dir before \
+         upgrading it. The previous binary is kept as {}: to go back after the new \
+         version has run, restore that pre-upgrade backup (`bifrost backup restore`) \
+         and put the previous binary back.",
         exe.display(),
         previous.display()
     ))
@@ -134,6 +138,14 @@ async fn install(exe: &Path, partial: &Path, target: &str) -> Result<PathBuf, St
     std::fs::hard_link(exe, &previous)
         .or_else(|_| std::fs::copy(exe, &previous).map(|_| ()))
         .map_err(|e| format!("keeping the previous binary as {}: {e}", previous.display()))?;
+    // On disk before it takes the old binary's name (the helper synced the
+    // data; this covers the permissions too).
+    std::fs::File::open(partial)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| format!("{}: {e}", partial.display()))?;
     std::fs::rename(partial, exe).map_err(|e| format!("replacing {}: {e}", exe.display()))?;
+    if let Some(dir) = exe.parent() {
+        let _ = std::fs::File::open(dir).and_then(|d| d.sync_all());
+    }
     Ok(previous)
 }

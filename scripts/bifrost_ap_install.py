@@ -92,19 +92,23 @@ def download(repo, tag, asset, dest):
         raise RuntimeError(f"SHA256SUMS of {tag} doesn't list {asset}")
     say(f"Downloading {asset}…")
     h, size = hashlib.sha256(), 0
+    # A new file of our own ("x" refuses an existing one or a symlink), so
+    # what's hashed is exactly what's on disk.
+    f = open(dest, "xb")
     try:
-        with request(urls[asset]) as r, open(dest, "wb") as f:
+        with f, request(urls[asset]) as r:
             while chunk := r.read(1 << 20):
                 size += len(chunk)
                 if size > MAX_ASSET:
                     raise RuntimeError(f"{asset}: larger than {MAX_ASSET} bytes")
                 h.update(chunk)
                 f.write(chunk)
+            f.flush()
+            os.fsync(f.fileno())
         if h.hexdigest() != want:
             raise RuntimeError(f"{asset} doesn't match its SHA256SUMS entry")
     except BaseException:
-        if os.path.exists(dest):
-            os.remove(dest)
+        os.remove(dest)
         raise
     print(json.dumps({"ok": True, "size": size, "sha256": want}))
 
