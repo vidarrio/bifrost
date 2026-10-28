@@ -258,6 +258,11 @@ chmod +x bifrost-<version>-x86_64-linux
 ./bifrost-<version>-x86_64-linux
 ```
 
+To keep it, install it under a plain name, such as `/usr/local/bin/bifrost`
+(owned by the user Bifrost runs as, if it should update itself), and run it
+from a service. `bifrost update` keeps whatever name the file has, so a name
+with a version in it would go stale.
+
 To build it yourself instead: `packaging/bundle/build.sh` in a checkout puts it
 in `dist/`.
 
@@ -285,6 +290,94 @@ sysadmin. Then:
 2. **Console → Users & links**: mint invites.
 3. **Console → Seasons**: create a season and open its signups. Or hand that
    job to a moderator.
+
+### Updating Bifrost
+
+Bifrost's version numbers follow [semantic versioning](https://semver.org/).
+Before 1.0, a new minor version (`0.2.0`) can bring new features or breaking
+changes, and a patch version (`0.2.1`) brings fixes only. Each release's notes
+are on the [releases page](https://github.com/vidarrio/bifrost/releases) and
+in the [changelog](../CHANGELOG.md). Sysadmins see a banner in the console
+when a newer release is out (see [Configuration](#configuration)).
+
+**What an update does.** Updating means stopping Bifrost, swapping the image
+or file, and starting it again. Everything else carries over:
+
+- **The data directory and database.** On its first start the new version
+  takes a pre-upgrade backup and then upgrades the database (see
+  [Backups](#backups)). It logs the exact command to go back.
+- **Live seasons.** Their Archipelago servers save and stop with Bifrost, and
+  start again with it. Players' clients reconnect on their own after a few
+  seconds, and the web pages work again once Bifrost is back. Give the container
+  a stop timeout (`--stop-timeout 30`) or the service manager a stop delay, so
+  the servers have time to save.
+- **Archipelago versions.** Each season stays on the Archipelago version it
+  was generated with, even when a new Bifrost bundles a newer one. If that
+  version's install is gone (say, a new image no longer bundles it), Bifrost
+  reinstalls it on start; only if that fails does the season start on the
+  active version instead, with a warning in the log. New seasons use whichever
+  version is active on the settings page.
+
+Pick a quiet moment, such as between seasons or when few players are
+connected, but there's no need to wait for a season to end.
+
+**Container image.** Each release is tagged `X.Y.Z`, `X.Y` and `latest`
+(a pre-release gets only its `X.Y.Z-…` tag).
+Pinning `X.Y` (say `ghcr.io/vidarrio/bifrost:0.2`) gets fixes but no
+surprise minor versions. To update, pull the image and recreate the container
+with the same volume and flags:
+
+```sh
+podman pull ghcr.io/vidarrio/bifrost:0.2
+podman stop bifrost && podman rm bifrost
+podman run -d --name bifrost … ghcr.io/vidarrio/bifrost:0.2   # as before
+```
+
+To update automatically, run the container under systemd (a Quadlet
+`.container` file) with the label `io.containers.autoupdate=registry`, and
+enable `podman-auto-update.timer`. Podman then pulls the tag daily and
+restarts the container when it moved. With Docker, Watchtower does the same.
+
+**Native single file.** Update it in place:
+
+```sh
+sudo -u bifrost env BIFROST_DATA=/var/lib/bifrost bifrost update        # the newest release
+sudo -u bifrost env BIFROST_DATA=/var/lib/bifrost bifrost update 0.2.1  # or a given version
+sudo systemctl restart bifrost
+```
+
+`bifrost update` downloads the release's file and checks it against the
+release's `SHA256SUMS`. It then puts the file in place of the running one and
+keeps the old one next to it as `<name>.previous`. Run it as the user that
+owns the file, with the service's data directory (`BIFROST_DATA`): it uses
+the Python unpacked there, and with another data directory it would unpack a
+fresh copy first. Bifrost keeps running the old version until you restart it.
+The checksum comes from the same release as the file, so it catches a broken
+download, not a tampered release. To check the file's build provenance as
+well, download it yourself and verify it as described under
+[Installing](#installing).
+
+**Going back.** If a new version misbehaves, stop it, restore the
+pre-upgrade backup it took, and start the old version. The new version's log
+gives the restore command with the backup's full path; `bifrost backup list`
+lists the backups by name (find `…-pre-upgrade-from-<old version>.zip`), and
+they live in the backup directory (`$BIFROST_DATA/backups` unless moved).
+Pass `restore` the full path:
+
+```sh
+bifrost backup restore /var/lib/bifrost/backups/bifrost-…-pre-upgrade-from-0.1.0.zip
+```
+
+With the container stopped, run the restore in a one-off container on the
+same volume, then start the old image tag:
+
+```sh
+podman run --rm -v bifrost-data:/var/lib/bifrost ghcr.io/vidarrio/bifrost:0.1 \
+    backup restore /var/lib/bifrost/backups/bifrost-…-pre-upgrade-from-0.1.0.zip
+```
+
+For the single file, move `<name>.previous` back into place. An older Bifrost refuses a data directory that a newer one has
+already upgraded, so restore the backup first.
 
 ### Users and invites
 

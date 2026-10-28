@@ -44,6 +44,9 @@ an archive of past seasons.
   which carries small compatibility patches.
 - **Operations.** Nightly backups with retention, live load monitoring, and
   season bundles you can download and import on another instance.
+- **Painless updates.** A banner when a new Bifrost is out, a backup before
+  each upgrade with the command to go back, and `bifrost update` for the
+  single-file build.
 
 ## Quick start
 
@@ -60,7 +63,9 @@ connect host under *Console → Settings* and create a season.
 Each [release](https://github.com/vidarrio/bifrost/releases) also has a
 single native Linux executable. See the
 [user guide](docs/USER_GUIDE.md#installing) for both options, building them
-yourself, what the container flags do, and running behind a reverse proxy.
+yourself, what the container flags do, and running behind a reverse proxy,
+and [Updating Bifrost](docs/USER_GUIDE.md#updating-bifrost) for keeping it
+current.
 
 ## Development
 
