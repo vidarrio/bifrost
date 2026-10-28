@@ -106,6 +106,25 @@ new, and any answer it disagrees with. It raises a disagreement as a reply in
 that finding's thread, opening with "**Reply from the reviewer (Claude).**".
 The maintainer settles disagreements.
 
+## Merging
+
+When CI passes and every review finding has an answer, finish the pull
+request's description before merging:
+
+1. Tick its remaining checklist boxes, typically "CI passes" and the review
+   item, but only the ones that are now true. If one isn't, the pull request
+   isn't ready to merge.
+
+   ```sh
+   gh pr view <n> -R vidarrio/bifrost --json body -q .body | sed 's/^- \[ \]/- [x]/' > body.md
+   # check body.md: every ticked item must hold
+   gh pr edit <n> -R vidarrio/bifrost --body-file body.md
+   ```
+
+2. Merge with `gh pr merge <n> -R vidarrio/bifrost --squash`. Never use
+   `--admin`. If the merge is refused, a required check is still running or
+   failing (editing the title or body reruns `title`): wait for it.
+
 ## If posting is blocked
 
 Claude Code's permission settings may block writes to GitHub. Don't look for a

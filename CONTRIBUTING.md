@@ -135,6 +135,8 @@ A pull request merges when all of these hold:
    answered).
 3. The changelog has its entry, if one is needed.
 4. The branch is up to date with `main`.
+5. The pull request's checklist is fully ticked: its last items (CI, review)
+   get ticked once they're true, just before merging.
 
 Merge with **squash and merge**, the only merge method the repository allows.
 The pull request title, kind included, becomes the commit subject on `main`,
