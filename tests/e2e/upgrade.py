@@ -123,4 +123,10 @@ r = srv.cli("backup", "list")
 check("but the backups can still be listed", r.returncode == 0 and "pre-upgrade-from-0.0.0-old.zip" in r.stdout, (r.returncode, r.stdout, r.stderr))
 check("and the database is left alone", stamp(srv) == (schema + 1, "99.0.0"), stamp(srv))
 
+# `bifrost update` is for the single-file build (see bundle.py); this one has
+# no bundled runtime.
+r = srv.cli("update")
+check("a build without a bundled runtime refuses to update itself",
+      r.returncode == 1 and "only the native single-file build" in r.stderr, (r.returncode, r.stderr))
+
 sys.exit(summary())

@@ -16,7 +16,6 @@ import time
 
 import requests
 
-import lib
 from lib import REPO, Server, check, get, post, summary, wait_for
 
 _built = glob.glob(os.path.join(REPO, "dist", "bifrost-*-x86_64-linux"))
@@ -144,8 +143,6 @@ try:
     check("update fetches the newest release", r.returncode == 0 and "to 9.9.9" in r.stdout, (r.stdout, r.stderr))
     check("…swaps it in, executable", open(exe, "rb").read() == blob and os.access(exe, os.X_OK))
     check("…and keeps the previous binary", sorted(os.listdir(upd)) == ["bifrost", "bifrost.previous"], os.listdir(upd))
-    r = subprocess.run([lib.BIN, "update"], env=env, capture_output=True, text=True, timeout=60)
-    check("a build without a bundled runtime refuses to update itself", r.returncode == 1 and "only the native single-file build" in r.stderr, r.stderr)
 finally:
     api.shutdown()
 
