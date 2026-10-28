@@ -19,6 +19,9 @@ top of it. Where the two disagree, CONTRIBUTING.md wins.
   end-to-end suites that cover it (`tests/e2e/run.sh <suite>…`).
 - Add a `CHANGELOG.md` entry for user-visible changes, under the rules in
   CONTRIBUTING.md.
+- Pin any GitHub Action you add to a full commit SHA, with its version in a
+  comment (`@<sha> # vX.Y.Z`); resolve the SHA from the release tag
+  (`gh api repos/<owner>/<repo>/commits/<tag> -q .sha`).
 - The `gh` CLI posts as the maintainer's account. Anything an agent posts has
   to say which agent wrote it (see below).
 
