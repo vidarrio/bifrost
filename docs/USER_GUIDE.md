@@ -239,8 +239,12 @@ podman logs bifrost                  # the first-run /setup link
 ```
 
 - `--security-opt unmask=/proc/*` lets the sandbox mount its own `/proc`.
-  Docker's equivalent is `--security-opt systempaths=unconfined`. Without it,
-  Bifrost falls back to a weaker sandbox and refuses custom apworlds.
+  Without it, Bifrost falls back to a weaker sandbox and refuses custom
+  apworlds. Docker needs `--security-opt systempaths=unconfined` for the same,
+  plus `--security-opt seccomp=unconfined`, because Docker's default seccomp
+  filter blocks the namespace calls bubblewrap makes (Podman's allows them),
+  and `--security-opt apparmor=unconfined` on hosts that use AppArmor. The
+  console's settings page shows which sandbox tier is active.
 - `--stop-timeout 30` gives live servers time to save on shutdown.
 - Publish the whole Archipelago port range. Its size caps how many seasons can
   be live at once.
@@ -259,7 +263,8 @@ chmod +x bifrost-<version>-x86_64-linux
 ```
 
 To keep it, install it under a plain name, such as `/opt/bifrost/bifrost`, and
-run it from a service. For it to update itself, the user Bifrost runs as must
+run it from a service (there's a systemd unit under
+[Running on Windows](#running-on-windows) that works on any Linux). For it to update itself, the user Bifrost runs as must
 own the file and be able to write to its folder (`bifrost update` writes the
 new file next to it), so a root-owned folder like `/usr/local/bin` won't do.
 `bifrost update` keeps whatever name the file has, so a name with a version in
@@ -285,9 +290,10 @@ rate limiting sees real client addresses.
 
 Bifrost needs Linux, but a Windows PC can host it through
 [WSL2](https://learn.microsoft.com/windows/wsl/), which runs a real Linux
-kernel. Either build from [Installing](#installing) then runs unchanged, with
-the strong sandbox. These steps haven't been tested on Windows by the project
-yet; please report what does or doesn't work in an issue.
+kernel. These steps haven't been tested on Windows by the project yet; please
+report what does or doesn't work in an issue. Whichever route you take, check
+afterwards that **Console → Settings** shows the bubblewrap sandbox tier,
+which custom apworlds need.
 
 Install WSL2 from an administrator PowerShell, then restart:
 
@@ -295,26 +301,47 @@ Install WSL2 from an administrator PowerShell, then restart:
 wsl --install            # Ubuntu by default
 ```
 
-**Container, through Docker Desktop or Podman Desktop.** Install either one
-with its WSL2 backend, then run the image with the same command and flags as
-under [Installing](#installing), from PowerShell or a WSL shell. Add
-`--restart unless-stopped` so the container comes back when the desktop app
-starts, and set the app to start when you sign in. The data stays in the
-named volume, inside the app's Linux VM.
+**Container, through Docker Desktop.** Install
+[Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/)
+with its WSL2 backend, turn on *Start Docker Desktop when you sign in*, and
+run in PowerShell:
 
-**Native single file, inside the WSL2 distro.** In the Ubuntu shell, follow the
-native steps under [Installing](#installing), plus `sudo apt install
-bubblewrap` for the strong sandbox. To run it as a service, systemd must be on
-(it is in a fresh Ubuntu from `wsl --install`; otherwise put
-`[boot]` / `systemd=true` in `/etc/wsl.conf` and run `wsl --shutdown`):
+```powershell
+docker run -d --name bifrost --restart unless-stopped --stop-timeout 30 `
+    --security-opt seccomp=unconfined --security-opt systempaths=unconfined `
+    -p 8080:8080 -p 38281-38300:38281-38300 -v bifrost-data:/var/lib/bifrost `
+    ghcr.io/vidarrio/bifrost:latest
+docker logs bifrost      # the first-run /setup link
+```
+
+The two `--security-opt` flags let bubblewrap run inside the container (see
+[Installing](#installing)). The data stays in the named volume, inside Docker
+Desktop's Linux VM. The container only runs while someone is signed in to
+Windows, since Docker Desktop is a desktop app. Podman Desktop also runs the
+image (with the Podman flags from [Installing](#installing)), but on Windows
+it publishes ports on `127.0.0.1` only, so other machines can't reach it.
+
+**Native single file, inside the WSL2 distro.** This route runs without anyone
+signed in and needs Windows 11 22H2 or later to be reachable from other
+machines (see below). In the Ubuntu shell, systemd must be on: it is in a fresh
+Ubuntu from `wsl --install`; otherwise put `[boot]` / `systemd=true` in
+`/etc/wsl.conf` and run `wsl --shutdown` from PowerShell. Then download the
+release straight into Ubuntu and install it as a service:
 
 ```sh
-sudo useradd --system --create-home --home-dir /var/lib/bifrost bifrost
+v=0.1.0    # the release you want
+curl -LO https://github.com/vidarrio/bifrost/releases/download/v$v/bifrost-$v-x86_64-linux
+curl -LO https://github.com/vidarrio/bifrost/releases/download/v$v/SHA256SUMS
+sha256sum -c SHA256SUMS
+sudo apt install bubblewrap
+sudo useradd --system --shell /usr/sbin/nologin bifrost
+sudo install -d -o bifrost -m 700 /var/lib/bifrost
 sudo install -d -o bifrost /opt/bifrost
-sudo install -o bifrost -m 755 bifrost-<version>-x86_64-linux /opt/bifrost/bifrost
+sudo install -o bifrost -m 755 bifrost-$v-x86_64-linux /opt/bifrost/bifrost
 sudo tee /etc/systemd/system/bifrost.service >/dev/null <<'UNIT'
 [Unit]
 Description=Bifrost
+Wants=network-online.target
 After=network-online.target
 
 [Service]
@@ -322,6 +349,9 @@ User=bifrost
 Environment=BIFROST_DATA=/var/lib/bifrost
 ExecStart=/opt/bifrost/bifrost
 Restart=on-failure
+# Stop Bifrost first and let it shut the Archipelago servers down (they save);
+# systemd's default would stop them all at once.
+KillMode=mixed
 TimeoutStopSec=30
 
 [Install]
@@ -331,22 +361,24 @@ sudo systemctl enable --now bifrost
 journalctl -u bifrost     # the first-run /setup link
 ```
 
-Keep the data directory on the Linux side (as above), not under `/mnt/c`:
-files on the Windows drive are much slower from WSL, and Linux permissions
-don't hold there.
+The same unit works on any Linux with systemd. Keep the data directory on the
+Linux side (as above), not under `/mnt/c`: files on the Windows drive are much
+slower from WSL, and Linux permissions don't hold there.
 
-**Reaching it from other machines.** Docker Desktop and Podman Desktop publish
-the ports on Windows itself. WSL2's own network sits behind NAT by default, so
-for the native file turn on mirrored networking (Windows 11 22H2 or later) in
-`%UserProfile%\.wslconfig`, then run `wsl --shutdown`:
+**Reaching it from other machines.** Docker Desktop publishes the ports on
+Windows itself. WSL2's own network sits behind NAT by default, so for the
+native file turn on mirrored networking in `%UserProfile%\.wslconfig`, then
+run `wsl --shutdown`:
 
 ```ini
 [wsl2]
 networkingMode=mirrored
 ```
 
-Either way, allow the web port and the whole Archipelago port range through the
-Windows firewall, from an administrator PowerShell:
+Mirrored networking needs Windows 11 22H2 or later. On older Windows, use the
+Docker Desktop route instead. Either way, allow the web port and the whole
+Archipelago port range through the Windows firewall, from an administrator
+PowerShell:
 
 ```powershell
 New-NetFirewallRule -DisplayName Bifrost -Direction Inbound -Protocol TCP `
@@ -362,9 +394,9 @@ Set the **connect host** under *Console → Settings* to the address they reach,
 and put Bifrost behind a reverse proxy for HTTPS as on Linux.
 
 **Keeping it running.** WSL2 starts with the first `wsl` command, not with
-Windows, and stops a little while after its last one exits. To keep the
-native service up, add a Task Scheduler task that runs at log on (or at
-startup, with "Run whether user is logged on or not"):
+Windows, and stops a little while after its last one exits. To start the
+native service with Windows and keep it up, add a Task Scheduler task that
+runs at startup, with *Run whether user is logged on or not*:
 
 ```text
 wsl.exe -d Ubuntu --exec sleep infinity
