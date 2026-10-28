@@ -243,7 +243,9 @@ podman logs bifrost                  # the first-run /setup link
   apworlds. Docker needs `--security-opt systempaths=unconfined` for the same,
   plus `--security-opt seccomp=unconfined`, because Docker's default seccomp
   filter blocks the namespace calls bubblewrap makes (Podman's allows them),
-  and `--security-opt apparmor=unconfined` on hosts that use AppArmor. The
+  and `--security-opt apparmor=unconfined` on hosts that use AppArmor. Those
+  turn Docker's own filters off for the whole container, Bifrost included,
+  leaving bubblewrap to isolate the apworld code; Podman needs neither. The
   console's settings page shows which sandbox tier is active.
 - `--stop-timeout 30` gives live servers time to save on shutdown.
 - Publish the whole Archipelago port range. Its size caps how many seasons can
@@ -264,9 +266,10 @@ chmod +x bifrost-<version>-x86_64-linux
 
 To keep it, install it under a plain name, such as `/opt/bifrost/bifrost`, and
 run it from a service (there's a systemd unit under
-[Running on Windows](#running-on-windows) that works on any Linux). For it to update itself, the user Bifrost runs as must
-own the file and be able to write to its folder (`bifrost update` writes the
-new file next to it), so a root-owned folder like `/usr/local/bin` won't do.
+[Running on Windows](#running-on-windows) that works on any Linux). For it to
+update itself, the user Bifrost runs as must own the file and be able to write
+to its folder (`bifrost update` writes the new file next to it), so a
+root-owned folder like `/usr/local/bin` won't do.
 `bifrost update` keeps whatever name the file has, so a name with a version in
 it would go stale.
 
@@ -333,8 +336,8 @@ v=0.1.0    # the release you want
 curl -LO https://github.com/vidarrio/bifrost/releases/download/v$v/bifrost-$v-x86_64-linux
 curl -LO https://github.com/vidarrio/bifrost/releases/download/v$v/SHA256SUMS
 sha256sum -c SHA256SUMS
-sudo apt install bubblewrap
-sudo useradd --system --shell /usr/sbin/nologin bifrost
+sudo apt update && sudo apt install bubblewrap
+sudo useradd --system --home-dir /var/lib/bifrost --shell /usr/sbin/nologin bifrost
 sudo install -d -o bifrost -m 700 /var/lib/bifrost
 sudo install -d -o bifrost /opt/bifrost
 sudo install -o bifrost -m 755 bifrost-$v-x86_64-linux /opt/bifrost/bifrost
