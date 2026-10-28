@@ -58,7 +58,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Python helpers compile
-        run: python3 -m py_compile scripts/*.py tests/e2e/*.py
+        run: python3 -m py_compile scripts/*.py tests/e2e/*.py .github/scripts/*.py
       - name: Every end-to-end suite runs in CI
         run: |
           diff <(tests/e2e/run.sh list | sort) \

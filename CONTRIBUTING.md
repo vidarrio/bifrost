@@ -166,6 +166,16 @@ breaking. Its
 pull requests follow the same rules as any other: CI, a review, every finding
 answered, squash merge.
 
+Two pins are releases rather than packages, so Dependabot can't see them: the
+bundle's Python (`PY_URL`/`PY_SHA256` in `packaging/bundle/Containerfile`)
+and the Archipelago build (`AP_VERSION` in both container files, `AP_SHA256`
+in the bundle's). A weekly workflow (`.github/workflows/pins.yml`) compares
+them with the latest releases and keeps an issue, "Pinned releases are
+behind", open while either lags, with the exact values to set; bump them in a
+`chore:` pull request. It also reports an upstream Archipelago release that
+Bifrost's fork has no build of yet; cutting one is the maintainer's call
+(`packaging/archipelago/README.md`).
+
 GitHub Actions are pinned to full commit SHAs, with the version in a comment
 (`uses: actions/checkout@<sha> # v7.0.1`), so a moved tag can't change what
 runs. Dependabot updates both. Pin new actions the same way. Note that
