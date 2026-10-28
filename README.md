@@ -28,7 +28,9 @@ an archive of past seasons.
   the server. Re-rolls keep claims.
 - **Live board and game pages.** Slot status, goals and item flow, hints with
   item search and prioritization, Universal Tracker's in-logic list,
-  PopTracker maps in the browser, and minesweeper for bonus hints.
+  PopTracker maps in the browser, and minesweeper for bonus hints. Each
+  player's patch or output files from the generated seed are waiting on their
+  game page, ready to download.
 - **Roles.** Players, moderators who run their own seasons, and sysadmins who
   run the instance. Accounts are invite-only with built-in passwords, or come
   from your identity provider through forward-auth.
