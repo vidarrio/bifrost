@@ -110,6 +110,10 @@ pub struct OutputFile {
     /// File extension (world-specific, e.g. `apbg3`, `apmc`), or `txt`.
     pub ext: String,
     pub is_spoiler: bool,
+    /// A file in the seed that isn't the server file or the spoiler and whose
+    /// name doesn't say which slot it's for: listed for admins only, to hand
+    /// out by hand.
+    pub unassigned: bool,
     pub size: u64,
     /// AP slot number parsed from `P<n>` — matches a file to its game page.
     /// `None` for the spoiler.
@@ -117,11 +121,18 @@ pub struct OutputFile {
 }
 
 /// List the player-facing files in the current seed zip: per-player output files
-/// (see [`parse_player_file`] for the naming schemes handled) plus the spoiler.
-/// Excludes the `.archipelago` multidata (the server file). Blocking — call from
-/// `spawn_blocking`. Empty if no seed has been generated yet.
+/// (see [`parse_player_file`] for the naming schemes handled, matched on the
+/// file's name even inside a folder), the spoiler, and any other file as
+/// `unassigned`. Excludes the `.archipelago` multidata (the server file).
+/// Blocking — call from `spawn_blocking`. Empty if no seed has been generated
+/// yet.
 pub fn list_outputs(season: i64) -> Vec<OutputFile> {
-    let Ok(f) = std::fs::File::open(config::get().season(season).current_zip()) else {
+    list_zip_outputs(&config::get().season(season).current_zip())
+}
+
+/// [`list_outputs`] for a seed zip at `path`.
+fn list_zip_outputs(path: &Path) -> Vec<OutputFile> {
+    let Ok(f) = std::fs::File::open(path) else {
         return Vec::new();
     };
     let Ok(mut zip) = zip::ZipArchive::new(f) else {
@@ -133,36 +144,56 @@ pub fn list_outputs(season: i64) -> Vec<OutputFile> {
         let Ok(name) = e.name() else { continue };
         let name = name.to_string();
         let size = e.size();
-        if name.ends_with(".archipelago") {
-            continue; // server multidata, not for players
+        if e.is_dir() || name.ends_with(".archipelago") {
+            continue; // folders; server multidata, not for players
         }
-        if name.ends_with("_Spoiler.txt") {
+        let base = file_name(&name).to_string();
+        if base.ends_with("_Spoiler.txt") {
             out.push(OutputFile {
                 member: name,
                 label: "Spoiler".into(),
                 ext: "txt".into(),
                 is_spoiler: true,
+                unassigned: false,
                 size,
                 player: None,
             });
             continue;
         }
-        if let Some((num, slot, ext)) = parse_player_file(&name) {
+        if let Some((num, slot, ext)) = parse_player_file(&base) {
             out.push(OutputFile {
                 member: name,
                 label: slot,
                 ext,
                 is_spoiler: false,
+                unassigned: false,
                 size,
                 player: Some(num),
             });
+        } else {
+            let ext = base
+                .rsplit_once('.')
+                .map(|(_, e)| e)
+                .unwrap_or("")
+                .to_string();
+            out.push(OutputFile {
+                member: name,
+                label: base,
+                ext,
+                is_spoiler: false,
+                unassigned: true,
+                size,
+                player: None,
+            });
         }
     }
-    // Players first (A→Z), spoiler last.
+    // Players first (A→Z), then unassigned files by their path in the zip
+    // (as the admin page shows them), spoiler last.
+    let key = |o: &OutputFile| if o.unassigned { &o.member } else { &o.label }.to_lowercase();
     out.sort_by(|a, b| {
-        a.is_spoiler
-            .cmp(&b.is_spoiler)
-            .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
+        (a.is_spoiler, a.unassigned)
+            .cmp(&(b.is_spoiler, b.unassigned))
+            .then_with(|| key(a).cmp(&key(b)))
     });
     out
 }
@@ -214,7 +245,12 @@ fn strip_version_suffix(label: &str) -> &str {
 /// used to gate a claimant to only their own slot's files. `None` for the
 /// spoiler or anything that isn't a per-player file.
 pub fn member_player(name: &str) -> Option<i64> {
-    parse_player_file(name).map(|(n, _, _)| n)
+    parse_player_file(file_name(name)).map(|(n, _, _)| n)
+}
+
+/// A zip member's file name, without any folders before it.
+fn file_name(member: &str) -> &str {
+    member.rsplit('/').next().unwrap_or(member)
 }
 
 /// Read a staged Minecraft client asset for download: `which` is "neoforge" (the
@@ -504,6 +540,21 @@ async fn deploy(
         let _ = pin(before).await;
         return Err(e);
     }
+    // Files the seed has that no game page will offer: worth a look, since a
+    // world naming its files unusually means its players can't fetch them.
+    let unassigned: Vec<String> = tokio::task::spawn_blocking(move || list_outputs(season))
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|o| o.unassigned)
+        .map(|o| o.member)
+        .collect();
+    if !unassigned.is_empty() {
+        tracing::warn!(
+            "season {season}: the seed has files no game page offers (listed under Player files): {}",
+            unassigned.join(", ")
+        );
+    }
     Ok(())
 }
 
@@ -662,7 +713,59 @@ async fn run_inner(
 
 #[cfg(test)]
 mod tests {
-    use super::{member_player, parse_player_file};
+    use super::{list_zip_outputs, member_player, parse_player_file};
+
+    #[test]
+    fn lists_player_files_unassigned_files_and_the_spoiler() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("bifrost-outputs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("seed.zip");
+        {
+            let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+            let opts = zip::write::SimpleFileOptions::default();
+            for name in [
+                "AP_123_P1_Ann.apbp",
+                "AP_123.archipelago",
+                "AP_123_Spoiler.txt",
+                "patches/AP_123_P2_Bob.apz5",
+                "OddWorld_Cleo_save.dat",
+            ] {
+                zip.start_file(name, opts).unwrap();
+                zip.write_all(b"x").unwrap();
+            }
+            zip.add_directory("patches/", opts).unwrap();
+            zip.finish().unwrap();
+        }
+        let outs = list_zip_outputs(&path);
+        let _ = std::fs::remove_dir_all(&dir);
+        let row = |m: &str| outs.iter().find(|o| o.member == m);
+        // Player files, also inside a folder, go to their slot's game page.
+        let ann = row("AP_123_P1_Ann.apbp").unwrap();
+        assert_eq!((ann.player, ann.unassigned), (Some(1), false));
+        let bob = row("patches/AP_123_P2_Bob.apz5").unwrap();
+        assert_eq!((bob.player, bob.label.as_str()), (Some(2), "Bob"));
+        // Anything else is listed for admins, not dropped.
+        let odd = row("OddWorld_Cleo_save.dat").unwrap();
+        assert!(odd.unassigned && odd.player.is_none() && odd.ext == "dat");
+        assert!(row("AP_123_Spoiler.txt").unwrap().is_spoiler);
+        // Never the server file, and no folder entries.
+        assert!(row("AP_123.archipelago").is_none() && row("patches/").is_none());
+        assert_eq!(outs.len(), 4);
+        // Players first, then unassigned, spoiler last.
+        let order: Vec<_> = outs.iter().map(|o| o.member.as_str()).collect();
+        assert_eq!(
+            order,
+            [
+                "AP_123_P1_Ann.apbp",
+                "patches/AP_123_P2_Bob.apz5",
+                "OddWorld_Cleo_save.dat",
+                "AP_123_Spoiler.txt"
+            ]
+        );
+        // A claimant's download check uses the file name too.
+        assert_eq!(member_player("patches/AP_123_P2_Bob.apz5"), Some(2));
+    }
 
     #[test]
     fn parses_the_standard_underscore_name() {
