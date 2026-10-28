@@ -247,10 +247,12 @@ impl Sandbox {
                 // limits (the timeout still kills the group). Only lowered.
                 // The process cap counts every task of Bifrost's user, so it
                 // sits far above normal use and assumes a dedicated, non-root
-                // user (root isn't held to it); a cgroup pids limit bounds
-                // jobs properly. The file cap is per process.
+                // user (root isn't held to it); a cgroup pids limit
+                // (`TasksMax=`, `--pids-limit`) bounds the whole service. The
+                // file cap is per process, and its soft limit is the cap
+                // itself, so a server isn't held to systemd's default 1024.
                 lower_limit(libc::RLIMIT_NPROC, MAX_PROCS);
-                lower_limit(libc::RLIMIT_NOFILE, max_files);
+                file_limit(max_files);
                 Ok(())
             });
         }
@@ -294,6 +296,27 @@ fn lower_limit(resource: Resource, value: u64) {
             rlim_max: cur.rlim_max.min(v),
         };
         libc::setrlimit(resource, &lim);
+    }
+}
+
+/// Open files: hard limit lowered to `value`, soft limit set to that hard
+/// limit. Raising the soft limit up to the hard one is always allowed.
+fn file_limit(value: u64) {
+    let mut cur = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: plain syscalls on stack values.
+    unsafe {
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut cur) != 0 {
+            return;
+        }
+        let max = cur.rlim_max.min(value as libc::rlim_t);
+        let lim = libc::rlimit {
+            rlim_cur: max,
+            rlim_max: max,
+        };
+        libc::setrlimit(libc::RLIMIT_NOFILE, &lim);
     }
 }
 
@@ -493,6 +516,28 @@ mod tests {
         assert!(r.unwrap_err().contains("timed out"));
         tokio::time::sleep(Duration::from_millis(2500)).await;
         assert!(!marker.exists(), "grandchild survived the timeout");
+    }
+
+    #[tokio::test]
+    async fn file_caps_apply_up_to_the_hard_limit() {
+        let sb = limits_only();
+        let mut hard = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: plain syscall on a stack value.
+        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut hard) };
+        let hard = hard.rlim_max;
+        for (cmd, cap) in [
+            (sb.command(&sh("ulimit -Sn; ulimit -Hn")), MAX_FILES),
+            (sb.service(&sh("ulimit -Sn; ulimit -Hn")), SERVER_MAX_FILES),
+        ] {
+            let out = run(cmd, Duration::from_secs(5)).await.unwrap();
+            let want = cap.min(hard).to_string();
+            let got = String::from_utf8_lossy(&out.stdout);
+            // Soft and hard are both the cap (or the host's lower hard limit).
+            assert_eq!(got.split_whitespace().collect::<Vec<_>>(), [&want, &want]);
+        }
     }
 
     #[tokio::test]
