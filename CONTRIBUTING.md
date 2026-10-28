@@ -237,9 +237,8 @@ To cut release `X.Y.Z`:
    - creates the GitHub release with the changelog section as its notes and
      the bundle and checksums attached.
 
-   Check the run and the release page afterwards. The first time an image is
-   pushed, the package on GitHub is private: make it public in its settings,
-   once.
+   Check the run and the release page afterwards. The image package is
+   public, so an anonymous pull of the new tag should work.
 
 A fix for a released version goes through a `fix/` branch like any other
 change, followed by a patch release when the maintainer calls for one.
