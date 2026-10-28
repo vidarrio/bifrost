@@ -187,11 +187,13 @@ fn list_zip_outputs(path: &Path) -> Vec<OutputFile> {
             });
         }
     }
-    // Players first (A→Z), then unassigned files, spoiler last.
+    // Players first (A→Z), then unassigned files by their path in the zip
+    // (as the admin page shows them), spoiler last.
+    let key = |o: &OutputFile| if o.unassigned { &o.member } else { &o.label }.to_lowercase();
     out.sort_by(|a, b| {
         (a.is_spoiler, a.unassigned)
             .cmp(&(b.is_spoiler, b.unassigned))
-            .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
+            .then_with(|| key(a).cmp(&key(b)))
     });
     out
 }
