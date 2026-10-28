@@ -340,7 +340,7 @@ pub fn admin_page(
     if outputs.is_empty() {
         b.push_str(r#"<div class="empty">No per-player files in the current seed — most games connect directly and produce none; only patch/ROM-based games and a few others (BG3, Minecraft, …) emit one. (Nothing here until a season is generated.)</div>"#);
     } else {
-        b.push_str(r#"<p class="empty">Files the generator produced for specific slots — give each to the right player (Discord, etc.). The slot name and game are taken straight from the filename, so there's no guessing which goes where.</p>"#);
+        b.push_str(r#"<p class="empty">Files the generator produced for specific slots. Each player already gets theirs on their game page once they've claimed it; these copies are for reference or for handing out by hand. The slot name and game are taken straight from the filename, so there's no guessing which goes where.</p>"#);
         for o in outputs {
             let link = format!(
                 r#"<a class="ghost" href="admin/output?file={}">download</a>"#,

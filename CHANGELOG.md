@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - One-click generation and re-rolls that keep claims.
 - A live board and per-slot game pages: hints with search and prioritization,
   Universal Tracker's in-logic list, PopTracker maps, and activity logs.
+- Each player's patch or output files, picked out of the generated seed and
+  offered for download on their game page.
 - Minesweeper for bonus hints, and an optional shared Minecraft common game.
 - Roles (player, moderator, sysadmin), invite-only accounts with built-in
   passwords, or sign-in through an identity provider via forward-auth.

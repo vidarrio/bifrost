@@ -91,9 +91,10 @@ The home page lists each live season's address (`host:port`) and, if one is
 set, the connect password. In your game's Archipelago client, connect to that
 address using your slot name.
 
-If your game needs a patch or output file, download it from your slot's
-**game page** (live board → your slot). Most games connect directly and need
-no file.
+If your game needs a patch or output file (a ROM patch, a mod file, a save to
+load), it's usually waiting on your slot's game page: see
+[Your game files](#your-game-files) below. Most games connect directly and
+need no file.
 
 ### Your game page
 
@@ -109,6 +110,25 @@ Click your slot on the live board to open its game page. It has four tabs:
 - **PopTracker.** Upload a PopTracker pack (`.zip`) for your game to get its
   map and auto-tracking in the browser.
 - **Log.** This game's activity: items sent and received, hints, goal.
+
+#### Your game files
+
+When a season is generated, Archipelago produces a patch or output file for
+each game that needs one. Bifrost picks out each slot's files from the seed
+(by the slot number in Archipelago's usual file names) and lists them on that
+slot's game page under **Your game files**, with a download link, the file
+type and its size. Once you've claimed your slot, download them there and use
+them with your game's client or patcher.
+
+- Only players who've claimed a seat on the slot (every seat, for a co-op
+  slot) and the season's admins can see and download them.
+- After a re-roll, the page offers the new seed's files; the old ones no
+  longer fit the new game.
+- The spoiler log and the server's own file are never offered to players.
+- The common game's page shows its own setup steps (client and mod
+  downloads) instead.
+- If your game needs a file and none is listed, ask the season's moderators:
+  a world that names its files unusually isn't picked up yet.
 
 ### Bonus hints: minesweeper
 
@@ -165,7 +185,10 @@ The season console has six tabs:
   waiting for approval**. Approving installs the world and re-checks the
   signups held for it. Rejecting leaves them flagged. Sysadmins can also
   promote an installed world into the catalog from here.
-- **Player files.** Each player's YAML and output files, for download.
+- **Player files.** The per-player output files in the current seed, for
+  download, plus the seed's spoiler log (for admins only). Players get their
+  own files on their game page, so there's usually no need to send them out by
+  hand.
 - **Connection.** The season's address, its **connect password** (changing it
   restarts the server), and a **server console** for Archipelago server
   commands, such as `/send`, with auto-completion.
