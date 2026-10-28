@@ -286,6 +286,76 @@ sysadmin. Then:
 3. **Console → Seasons**: create a season and open its signups. Or hand that
    job to a moderator.
 
+### Updating Bifrost
+
+Bifrost's version numbers follow [semantic versioning](https://semver.org/).
+Before 1.0, a new minor version (`0.2.0`) can bring new features or breaking
+changes, and a patch version (`0.2.1`) brings fixes only. Each release's notes
+are on the [releases page](https://github.com/vidarrio/bifrost/releases) and
+in the [changelog](../CHANGELOG.md). Sysadmins see a banner in the console
+when a newer release is out (see [Configuration](#configuration)).
+
+**What an update does.** Updating means stopping Bifrost, swapping the image
+or file, and starting it again. Everything else carries over:
+
+- **The data directory and database.** On its first start the new version
+  takes a pre-upgrade backup and then upgrades the database (see
+  [Backups](#backups)). It logs the exact command to go back.
+- **Live seasons.** Their Archipelago servers save and stop with Bifrost, and
+  start again with it. Players' clients reconnect on their own after a few
+  seconds, and the web pages work again once Bifrost is back. Give the container
+  a stop timeout (`--stop-timeout 30`) or the service manager a stop delay, so
+  the servers have time to save.
+- **Archipelago versions.** Each season stays on the Archipelago version it
+  was generated with, even when a new Bifrost bundles a newer one. New seasons
+  use whichever version is active on the settings page.
+
+Pick a quiet moment, such as between seasons or when few players are
+connected, but there's no need to wait for a season to end.
+
+**Container image.** The image is tagged `X.Y.Z`, `X.Y` and `latest`.
+Pinning `X.Y` (say `ghcr.io/vidarrio/bifrost:0.2`) gets fixes but no
+surprise minor versions. To update, pull the image and recreate the container
+with the same volume and flags:
+
+```sh
+podman pull ghcr.io/vidarrio/bifrost:0.2
+podman stop bifrost && podman rm bifrost
+podman run -d --name bifrost … ghcr.io/vidarrio/bifrost:0.2   # as before
+```
+
+To update automatically, run the container under systemd (a Quadlet
+`.container` file) with the label `io.containers.autoupdate=registry`, and
+enable `podman-auto-update.timer`. Podman then pulls the tag daily and
+restarts the container when it moved. With Docker, Watchtower does the same.
+
+**Native single file.** Update it in place:
+
+```sh
+sudo -u bifrost bifrost update           # the newest release
+sudo -u bifrost bifrost update 0.2.1     # or a given version
+sudo systemctl restart bifrost
+```
+
+`bifrost update` downloads the release's file and checks it against the
+release's `SHA256SUMS`. It then puts the file in place of the running one and
+keeps the old one next to it as `<name>.previous`. Run it as the user that
+owns the file. Bifrost keeps running the old version until you restart it. To
+check the file's build provenance as well, download it yourself and verify
+it as described under [Installing](#installing).
+
+**Going back.** If a new version misbehaves, stop it, restore the
+pre-upgrade backup it took, and start the old version:
+
+```sh
+bifrost backup list                      # find …-pre-upgrade-from-<old version>.zip
+bifrost backup restore <that file>
+```
+
+Then run the old image tag, or move `<name>.previous` back into place for the
+single file. An older Bifrost refuses a data directory that a newer one has
+already upgraded, so restore the backup first.
+
 ### Users and invites
 
 **Console → Users & links**:
