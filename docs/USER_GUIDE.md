@@ -307,13 +307,17 @@ or file, and starting it again. Everything else carries over:
   a stop timeout (`--stop-timeout 30`) or the service manager a stop delay, so
   the servers have time to save.
 - **Archipelago versions.** Each season stays on the Archipelago version it
-  was generated with, even when a new Bifrost bundles a newer one. New seasons
-  use whichever version is active on the settings page.
+  was generated with, even when a new Bifrost bundles a newer one. If that
+  version's install is gone (say, a new image no longer bundles it), Bifrost
+  reinstalls it on start; only if that fails does the season start on the
+  active version instead, with a warning in the log. New seasons use whichever
+  version is active on the settings page.
 
 Pick a quiet moment, such as between seasons or when few players are
 connected, but there's no need to wait for a season to end.
 
-**Container image.** The image is tagged `X.Y.Z`, `X.Y` and `latest`.
+**Container image.** Each release is tagged `X.Y.Z`, `X.Y` and `latest`
+(a pre-release gets only its `X.Y.Z-…` tag).
 Pinning `X.Y` (say `ghcr.io/vidarrio/bifrost:0.2`) gets fixes but no
 surprise minor versions. To update, pull the image and recreate the container
 with the same volume and flags:
@@ -345,15 +349,25 @@ check the file's build provenance as well, download it yourself and verify
 it as described under [Installing](#installing).
 
 **Going back.** If a new version misbehaves, stop it, restore the
-pre-upgrade backup it took, and start the old version:
+pre-upgrade backup it took, and start the old version. The new version's log
+gives the restore command with the backup's full path; `bifrost backup list`
+lists the backups by name (find `…-pre-upgrade-from-<old version>.zip`), and
+they live in the backup directory (`$BIFROST_DATA/backups` unless moved).
+Pass `restore` the full path:
 
 ```sh
-bifrost backup list                      # find …-pre-upgrade-from-<old version>.zip
-bifrost backup restore <that file>
+bifrost backup restore /var/lib/bifrost/backups/bifrost-…-pre-upgrade-from-0.1.0.zip
 ```
 
-Then run the old image tag, or move `<name>.previous` back into place for the
-single file. An older Bifrost refuses a data directory that a newer one has
+With the container stopped, run the restore in a one-off container on the
+same volume, then start the old image tag:
+
+```sh
+podman run --rm -v bifrost-data:/var/lib/bifrost ghcr.io/vidarrio/bifrost:0.1 \
+    backup restore /var/lib/bifrost/backups/bifrost-…-pre-upgrade-from-0.1.0.zip
+```
+
+For the single file, move `<name>.previous` back into place. An older Bifrost refuses a data directory that a newer one has
 already upgraded, so restore the backup first.
 
 ### Users and invites
