@@ -53,12 +53,18 @@ def releases(repo):
 def python_pin(bundle):
     url, sha = bundle["PY_URL"], bundle["PY_SHA256"]
     m = re.search(r"/download/(\d+)/cpython-(\d+)\.(\d+)\.(\d+)\+\d+-(.+)$", url)
+    if m is None:
+        sys.exit(f"can't parse PY_URL: {url}")
     tag, major, minor, suffix = m.group(1), m.group(2), m.group(3), m.group(5)
     latest = get(f"https://api.github.com/repos/{PBS}/releases/latest")
     want = re.compile(rf"^cpython-{major}\.{minor}\.(\d+)\+{latest['tag_name']}-{re.escape(suffix)}$")
-    asset = next((a for a in latest["assets"] if want.match(a["name"])), None)
-    if asset is None or latest["tag_name"] <= tag:
+    if latest["tag_name"] <= tag:
         return None
+    asset = next((a for a in latest["assets"] if want.match(a["name"])), None)
+    if asset is None:
+        # Silence here would read as "current" and close the issue.
+        sys.exit(f"python-build-standalone {latest['tag_name']} has no Python {major}.{minor} asset "
+                 f"ending in -{suffix}; check PY_URL by hand")
     new_sha = (asset.get("digest") or "").removeprefix("sha256:") or hashlib.sha256(get(asset["browser_download_url"], raw=True)).hexdigest()
     return (f"### Bundle Python\n\n"
             f"python-build-standalone {latest['tag_name']} has Python {major}.{minor}.{want.match(asset['name']).group(1)} "
@@ -68,17 +74,22 @@ def python_pin(bundle):
 
 def ap_pin(bundle, image):
     pinned = bundle["AP_VERSION"]
+    pinned_m = FORK_TAG.match(pinned)
+    if pinned_m is None:
+        sys.exit(f"can't parse AP_VERSION {pinned!r} (expected X.Y.Z-bifrost.N)")
     fork = [(tuple(map(int, m.groups())), r["tag_name"]) for r in releases(FORK) if (m := FORK_TAG.match(r["tag_name"]))]
     up = [(tuple(map(int, m.groups())), r["tag_name"]) for r in releases(UPSTREAM) if (m := UPSTREAM_TAG.match(r["tag_name"]))]
+    if not fork:
+        sys.exit(f"no X.Y.Z-bifrost.N releases found in {FORK}")
     parts = []
-    newest_fork = max(fork)[1] if fork else pinned
-    if FORK_TAG.match(pinned) and newest_fork != pinned and max(fork)[0] > tuple(map(int, FORK_TAG.match(pinned).groups())):
+    newest_fork = max(fork)[1]
+    if max(fork)[0] > tuple(map(int, pinned_m.groups())):
         tarball = get(f"https://github.com/{FORK}/archive/refs/tags/{newest_fork}.tar.gz", raw=True)
         parts.append(f"### Archipelago build\n\n"
                      f"The fork has a newer build, `{newest_fork}` (pinned: `{pinned}`). Set it in both "
                      f"`Dockerfile` and `packaging/bundle/Containerfile`, with the source tarball's checksum "
                      f"in the latter:\n\n```\nARG AP_VERSION={newest_fork}\nARG AP_SHA256={hashlib.sha256(tarball).hexdigest()}\n```\n")
-    if up and fork:
+    if up:
         newest_up, built = max(up), {v[:3] for v, _ in fork}
         if newest_up[0] not in built and newest_up[0] > max(built):
             parts.append(f"### Upstream Archipelago\n\n"
