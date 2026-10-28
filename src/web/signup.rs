@@ -226,19 +226,23 @@ pub(crate) async fn signup_post(
         .join(format!("{slug}-{nonce}.yaml"))
         .to_string_lossy()
         .into_owned();
-    let written = async {
-        use tokio::io::AsyncWriteExt;
-        let mut f = tokio::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&yaml_path)
-            .await?;
-        f.write_all(&yaml).await
+    let created = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&yaml_path)
+        .await;
+    let Ok(mut f) = created else {
+        // Not ours (or not made): leave whatever is there alone.
+        return render::signup_result("Couldn't store the YAML.", false);
     };
-    if written.await.is_err() {
+    if tokio::io::AsyncWriteExt::write_all(&mut f, &yaml)
+        .await
+        .is_err()
+    {
         let _ = tokio::fs::remove_file(&yaml_path).await;
         return render::signup_result("Couldn't store the YAML.", false);
     }
+    drop(f);
     let coop_clean: String = coop
         .split([',', '\n'])
         .map(str::trim)
