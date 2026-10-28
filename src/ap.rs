@@ -499,7 +499,7 @@ async fn run_once(
                             b.hint_cost = hc;
                         }
                     }
-                    tx.send(Message::Text(connect.to_string()))
+                    tx.send(Message::Text(connect.to_string().into()))
                         .await
                         .map_err(|e| format!("send Connect: {e}"))?;
                 }
@@ -514,7 +514,7 @@ async fn run_once(
                         {"cmd": "Get", "keys": keys},
                         {"cmd": "SetNotify", "keys": keys},
                     ]);
-                    tx.send(Message::Text(sub.to_string()))
+                    tx.send(Message::Text(sub.to_string().into()))
                         .await
                         .map_err(|e| format!("send Get/SetNotify: {e}"))?;
                     // Seed this season's Bifrost slots (1:1 + co-op extras) —
@@ -734,7 +734,7 @@ pub async fn mark_goal(url: &str, password: &str, name: &str, game: &str) -> Res
                             "password": password,
                         }]);
                         let connect = keyed(connect);
-                        tx.send(Message::Text(connect.to_string()))
+                        tx.send(Message::Text(connect.to_string().into()))
                             .await
                             .map_err(|e| format!("send Connect: {e}"))?;
                     }
@@ -744,7 +744,7 @@ pub async fn mark_goal(url: &str, password: &str, name: &str, game: &str) -> Res
                     }
                     "Connected" => {
                         let upd = json!([{ "cmd": "StatusUpdate", "status": CLIENT_GOAL }]);
-                        tx.send(Message::Text(upd.to_string()))
+                        tx.send(Message::Text(upd.to_string().into()))
                             .await
                             .map_err(|e| format!("send StatusUpdate: {e}"))?;
                     }
@@ -850,7 +850,7 @@ pub async fn send_hint(
                             "password": password,
                         }]);
                         let connect = keyed(connect);
-                        tx.send(Message::Text(connect.to_string()))
+                        tx.send(Message::Text(connect.to_string().into()))
                             .await
                             .map_err(|e| format!("send Connect: {e}"))?;
                     }
@@ -863,7 +863,7 @@ pub async fn send_hint(
                         let slot = pkt.get("slot").and_then(Value::as_i64).unwrap_or(0);
                         hints_key = format!("_read_hints_0_{slot}");
                         let get = json!([{ "cmd": "Get", "keys": [hints_key] }]);
-                        tx.send(Message::Text(get.to_string()))
+                        tx.send(Message::Text(get.to_string().into()))
                             .await
                             .map_err(|e| format!("send Get: {e}"))?;
                     }
@@ -876,7 +876,7 @@ pub async fn send_hint(
                             .unwrap_or_default();
                         before = Some(set);
                         let say = json!([{ "cmd": "Say", "text": format!("!hint {item}") }]);
-                        tx.send(Message::Text(say.to_string()))
+                        tx.send(Message::Text(say.to_string().into()))
                             .await
                             .map_err(|e| format!("send Say: {e}"))?;
                         said = true;
@@ -991,7 +991,7 @@ pub async fn send_admin(
                             "password": password,
                         }]);
                         let connect = keyed(connect);
-                        tx.send(Message::Text(connect.to_string()))
+                        tx.send(Message::Text(connect.to_string().into()))
                             .await
                             .map_err(|e| format!("send Connect: {e}"))?;
                     }
@@ -1001,7 +1001,7 @@ pub async fn send_admin(
                     }
                     "Connected" if !login_sent => {
                         let say = json!([{ "cmd": "Say", "text": format!("!admin login {admin_password}") }]);
-                        tx.send(Message::Text(say.to_string()))
+                        tx.send(Message::Text(say.to_string().into()))
                             .await
                             .map_err(|e| format!("send login: {e}"))?;
                         login_sent = true;
@@ -1030,7 +1030,7 @@ pub async fn send_admin(
                             if txt.to_lowercase().contains("successful") {
                                 let say =
                                     json!([{ "cmd": "Say", "text": format!("!admin {command}") }]);
-                                tx.send(Message::Text(say.to_string()))
+                                tx.send(Message::Text(say.to_string().into()))
                                     .await
                                     .map_err(|e| format!("send command: {e}"))?;
                                 collecting = true;
@@ -1105,7 +1105,9 @@ pub async fn slot_points(url: &str, password: &str, name: &str) -> Option<i64> {
                             "password": password,
                         }]);
                         let connect = keyed(connect);
-                        tx.send(Message::Text(connect.to_string())).await.ok()?;
+                        tx.send(Message::Text(connect.to_string().into()))
+                            .await
+                            .ok()?;
                     }
                     "ConnectionRefused" => return None,
                     "Connected" => {
