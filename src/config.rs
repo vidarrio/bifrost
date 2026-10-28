@@ -365,6 +365,7 @@ const FILE_KEYS: &[(&str, &str, &str)] = &[
     ("backup", "keep_weekly", "BIFROST_BACKUP_KEEP_WEEKLY"),
     ("backup", "keep_monthly", "BIFROST_BACKUP_KEEP_MONTHLY"),
     ("backup", "max_mb", "BIFROST_BACKUP_MAX_MB"),
+    ("updates", "check", "BIFROST_UPDATE_CHECK"),
     ("sandbox", "mode", "BIFROST_SANDBOX"),
     ("sandbox", "bwrap", "BIFROST_BWRAP"),
     ("sandbox", "mem_mb", "BIFROST_SANDBOX_MEM_MB"),
@@ -505,6 +506,9 @@ pub const EXAMPLE: &str = r#"# $BIFROST_DATA/config.toml — every setting here 
 # keep_weekly = 4                    # BIFROST_BACKUP_KEEP_WEEKLY: … of the last N weeks
 # keep_monthly = 3                   # BIFROST_BACKUP_KEEP_MONTHLY: … of the last N months
 # max_mb = 5120                      # BIFROST_BACKUP_MAX_MB: drop the oldest beyond this total
+
+[updates]
+# check = true                       # BIFROST_UPDATE_CHECK: ask GitHub daily for a newer Bifrost (shown to sysadmins)
 
 [sandbox]
 # mode = "auto"                      # BIFROST_SANDBOX: auto | bwrap | none

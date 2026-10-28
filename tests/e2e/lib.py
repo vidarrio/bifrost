@@ -60,6 +60,7 @@ class Server:
             BIFROST_AP_BIND="127.0.0.1",
             RUST_LOG="info",
             BIFROST_INSECURE_COOKIES="1",
+            BIFROST_UPDATE_CHECK="off",
         )
         self.env.pop("BIFROST_AP_PYTHON", None)
         if bundle:  # a bundle brings its own AP, Python and scripts

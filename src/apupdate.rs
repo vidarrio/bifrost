@@ -69,44 +69,46 @@ fn installer() -> tokio::process::Command {
     cmd
 }
 
-/// Ask GitHub for recent releases (a few seconds).
+/// Ask GitHub for recent Archipelago releases (a few seconds).
 pub async fn check_releases() {
-    let cfg = config::get();
-    let res = async {
-        let out = tokio::time::timeout(
-            RELEASES_TIMEOUT,
-            installer().arg("releases").arg(&cfg.ap_repo).output(),
-        )
-        .await
-        .map_err(|_| "GitHub didn't answer in time".to_string())?
-        .map_err(|e| format!("couldn't run {}: {e}", cfg.base_python.display()))?;
-        #[derive(Deserialize)]
-        struct Reply {
-            ok: bool,
-            #[serde(default)]
-            releases: Vec<Release>,
-            #[serde(default)]
-            error: String,
-        }
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let line = stdout
-            .lines()
-            .rev()
-            .find(|l| !l.trim().is_empty())
-            .unwrap_or("");
-        let r: Reply = serde_json::from_str(line).map_err(|_| {
-            format!(
-                "unexpected reply: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            )
-        })?;
-        if r.ok { Ok(r.releases) } else { Err(r.error) }
-    }
-    .await;
+    let res = releases(&config::get().ap_repo).await;
     if let Err(e) = &res {
         tracing::warn!("checking Archipelago releases: {e}");
     }
     UPDATES.lock().unwrap().releases = Some((crate::auth::now(), res));
+}
+
+/// The recent releases (drafts left out) of GitHub repo `owner/name`.
+pub async fn releases(repo: &str) -> Result<Vec<Release>, String> {
+    let cfg = config::get();
+    let out = tokio::time::timeout(
+        RELEASES_TIMEOUT,
+        installer().arg("releases").arg(repo).output(),
+    )
+    .await
+    .map_err(|_| "GitHub didn't answer in time".to_string())?
+    .map_err(|e| format!("couldn't run {}: {e}", cfg.base_python.display()))?;
+    #[derive(Deserialize)]
+    struct Reply {
+        ok: bool,
+        #[serde(default)]
+        releases: Vec<Release>,
+        #[serde(default)]
+        error: String,
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let line = stdout
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("");
+    let r: Reply = serde_json::from_str(line).map_err(|_| {
+        format!(
+            "unexpected reply: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )
+    })?;
+    if r.ok { Ok(r.releases) } else { Err(r.error) }
 }
 
 fn log(line: impl Into<String>) {

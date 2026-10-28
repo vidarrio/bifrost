@@ -33,6 +33,7 @@ mod mine;
 mod net;
 mod ptrack;
 mod ratelimit;
+mod release_check;
 mod render;
 mod runtime;
 mod sandbox;
@@ -204,6 +205,7 @@ async fn main() {
     }
 
     backup::spawn_nightly(db.clone());
+    release_check::spawn();
     load::spawn_sampler(cfg.data_dir.clone());
 
     let shutdown_seasons = seasons.clone();

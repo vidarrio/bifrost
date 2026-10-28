@@ -433,6 +433,12 @@ Keep `config.toml` at `chmod 600`, since it can hold secrets. Page-level
 settings, such as the connect host, home page, Discords, apworld approval and
 Archipelago versions, are set in the console instead.
 
+Once a day Bifrost asks GitHub whether a newer Bifrost has been released, and
+sysadmins see a banner in the console when one has (**Settings** shows the
+running version and what the last check found). It downloads nothing. Turn it
+off with `[updates] check = false` (`BIFROST_UPDATE_CHECK=off`). Set
+`GITHUB_TOKEN` to avoid GitHub's anonymous rate limit.
+
 Archipelago's own generation settings (hint cost, release and collect modes,
 and so on) come from `$BIFROST_DATA/host.yaml` if you put one there. Each new
 season starts from a copy of it. Archipelago's defaults apply otherwise.
