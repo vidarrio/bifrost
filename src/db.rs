@@ -496,6 +496,21 @@ impl Db {
         .await;
     }
 
+    /// Seasonal minesweeper wins by this account in the last `secs` seconds.
+    pub async fn recent_mine_wins(&self, season: i64, account: i64, secs: i64) -> i64 {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM mine_result
+             WHERE season = ? AND account_id = ? AND won = 1
+               AND ts > strftime('%s','now') - ?",
+        )
+        .bind(season)
+        .bind(account)
+        .bind(secs)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(i64::MAX)
+    }
+
     /// Per-kind minesweeper stats for a player. `season = Some(s)` scopes to one
     /// season; `None` is all-time (across every season + freeplay) — the
     /// "permanent" view. Time stats are over wins only; `None` = no wins yet.

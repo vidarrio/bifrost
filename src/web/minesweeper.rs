@@ -62,6 +62,9 @@ pub(crate) fn mine_key(account: i64, free: bool, season: i64, kind: mine::Kind) 
     (account, format!("{mode}{}", kind.id()))
 }
 
+/// Bonus hints a player can earn per season in any 24 hours.
+pub(crate) const DAILY_BONUS_HINTS: i64 = 5;
+
 #[derive(Deserialize)]
 pub(crate) struct NewForm {
     #[serde(default)]
@@ -234,7 +237,14 @@ pub(crate) async fn mine_reveal(
         st.db
             .record_mine_result(scope, my_id, kind, won, elapsed_ms)
             .await;
-        if won && !f.free && ctx.row.minesweeper_enabled && ctx.state() != db::State::Archived {
+        // At most DAILY_BONUS_HINTS a day: every board is solvable without
+        // guessing, so a script could otherwise win them without end.
+        if won
+            && !f.free
+            && ctx.row.minesweeper_enabled
+            && ctx.state() != db::State::Archived
+            && st.db.recent_mine_wins(ctx.id, my_id, 24 * 3600).await <= DAILY_BONUS_HINTS
+        {
             credits = st.db.add_credits(ctx.id, my_id, 1).await.ok();
         }
         // Freeplay stats are all-time; seasonal stats scope to the season.

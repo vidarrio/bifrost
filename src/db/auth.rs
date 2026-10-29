@@ -599,6 +599,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn recent_mine_wins_count_seasonal_wins_only() {
+        let db = db().await;
+        let season = db.create_season("S", None, 0).await.unwrap();
+        let id = db.create_account("Ann", "h", Role::User, 0).await.unwrap();
+        for won in [true, true, false] {
+            db.record_mine_result(Some(season), id, "standard", won, 1000)
+                .await;
+        }
+        db.record_mine_result(None, id, "standard", true, 1000)
+            .await;
+        assert_eq!(db.recent_mine_wins(season, id, 3600).await, 2);
+    }
+
+    #[tokio::test]
     async fn session_resolves_until_expiry_or_disable() {
         let db = db().await;
         let id = db

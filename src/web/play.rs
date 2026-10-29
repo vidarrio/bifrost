@@ -178,7 +178,13 @@ pub(crate) async fn hint_post(
             // bonus-hint credit, place the hint as admin (free) and spend one.
             // Communal slots have no personal credits — they just use their own
             // shared points, so skip the bonus fallback there.
-            if !is_common && rejected_for_points(&text) && creds > 0 {
+            // The credit is spent first (atomically), so parallel requests
+            // can't place several hints for one; it's refunded on failure.
+            if !is_common
+                && rejected_for_points(&text)
+                && creds > 0
+                && st.db.spend_credit(season, my_id).await
+            {
                 // Hint exactly ONE copy — the first unhinted location of this
                 // item — via /hint_location, so a multi-copy item doesn't reveal
                 // every copy for a single credit. Fall back to /hint by name if
@@ -192,10 +198,20 @@ pub(crate) async fn hint_post(
                         let (finder, loc) = b.first_unhinted_location(ap_slot, item_id)?;
                         let finder_game = b.slots.get(&finder)?.game.clone();
                         let loc_name = m.location_name(&finder_game, loc)?.to_string();
-                        Some(format!("/hint_location {} {}", b.name_of(finder), loc_name))
+                        Some(format!(
+                            "/hint_location {} {}",
+                            ap::quote_arg(&b.name_of(finder)),
+                            ap::quote_arg(&loc_name)
+                        ))
                     })
                     .flatten()
-                    .unwrap_or_else(|| format!("/hint {name} {}", f.item.trim()));
+                    .unwrap_or_else(|| {
+                        format!(
+                            "/hint {} {}",
+                            ap::quote_arg(&name),
+                            ap::quote_arg(f.item.trim())
+                        )
+                    });
                 match ap::send_admin(
                     &cfg.url,
                     &cfg.slot,
@@ -217,11 +233,11 @@ pub(crate) async fn hint_post(
                             })
                             .unwrap_or_default();
                         if hint_rejected(&msg) {
+                            let _ = st.db.add_credits(season, my_id, 1).await;
                             return Json(serde_json::json!({
                                 "ok": false, "message": msg, "credits": creds
                             }));
                         }
-                        st.db.spend_credit(season, my_id).await;
                         let newc = st.db.credits(season, my_id).await;
                         let points = ap::slot_points(&cfg.url, &cfg.password, &name).await;
                         // The admin /hint returns no text on success, so confirm
@@ -238,6 +254,7 @@ pub(crate) async fn hint_post(
                         }));
                     }
                     Err(e) => {
+                        let _ = st.db.add_credits(season, my_id, 1).await;
                         return Json(serde_json::json!({
                             "ok": false, "message": format!("Bonus hint failed: {e}"), "credits": creds
                         }));

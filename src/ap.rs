@@ -939,6 +939,17 @@ pub async fn send_hint(
 /// `connect_name` (any valid slot), `!admin login <admin_password>`, then
 /// `!admin <command>` (e.g. `/send Player Item`, `/hint Player Item`). Returns
 /// each `CommandResult` line's message parts for the caller to render.
+/// Quote one argument for an AP server command, which the server splits with
+/// Python's `shlex` (so a name with spaces or quotes stays one argument).
+pub fn quote_arg(s: &str) -> String {
+    let safe = |c: char| c.is_ascii_alphanumeric() || "@%+=:,./-_".contains(c);
+    if !s.is_empty() && s.chars().all(safe) {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\"'\"'"))
+    }
+}
+
 pub async fn send_admin(
     url: &str,
     connect_name: &str,
@@ -1123,4 +1134,18 @@ pub async fn slot_points(url: &str, password: &str, name: &str) -> Option<i64> {
         .await
         .ok()
         .flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn admin_command_args_stay_whole() {
+        // AP splits commands with shlex: each stays one argument.
+        assert_eq!(quote_arg("Ann"), "Ann");
+        assert_eq!(quote_arg("Ann B"), "'Ann B'");
+        assert_eq!(quote_arg("Link's House"), r#"'Link'"'"'s House'"#);
+        assert_eq!(quote_arg(""), "''");
+    }
 }

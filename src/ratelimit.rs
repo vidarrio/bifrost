@@ -51,6 +51,7 @@ pub fn rule_for(method: &Method, path: &str) -> Option<Rule> {
         "/login" => r("login", 20, 10, true),
         "/setup" => r("link", 10, 10, true),
         "/hint" => r("hint", 30, 10, false),
+        "/minesweeper/new" => r("minesweeper", 60, 10, false),
         p if p.starts_with("/invite/") || p.starts_with("/reset/") => r("link", 10, 10, true),
         _ => None,
     }
