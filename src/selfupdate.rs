@@ -3,8 +3,8 @@
 //! release's `SHA256SUMS`, whose signature (`SHA256SUMS.sig`, made by the
 //! release workflow) must verify against [`RELEASE_KEY`]. The download is
 //! `scripts/bifrost_ap_install.py`, the helper that already talks to GitHub.
-//! The new file is written next to this one and renamed over it, so a failure leaves this one in place; this
-//! one is kept as `<name>.previous`. Bifrost isn't restarted: the service
+//! The new file is written next to this one and renamed over it, so a
+//! failure leaves this one in place; this one is kept as `<name>.previous`. Bifrost isn't restarted: the service
 //! manager does that, and the first start of the new version backs up the
 //! data dir before upgrading it (see `main::upgrade`).
 

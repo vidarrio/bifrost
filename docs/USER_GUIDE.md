@@ -494,11 +494,10 @@ The signature is made by the release workflow with a key only the project
 holds, so a file swapped into a release, or a release published without that
 key, is refused. Releases before signing started (0.1.0 to 0.1.2) can't be
 installed this way; download those by hand. Those versions' own
-`bifrost update` doesn't check signatures yet, so the first signed release is
-best installed by hand too: download the file and `SHA256SUMS`, check its
-provenance as described under [Installing](#installing), and put it in place
-of the old one. From then on `bifrost update` checks every release. To check the file's build
-provenance as well, download it yourself and verify it as described under
+`bifrost update` doesn't check signatures yet, so install the first signed
+release by hand too, and put it in place of the old one. From then on
+`bifrost update` checks every release. To check a file's build provenance,
+download it yourself and verify it as described under
 [Installing](#installing).
 
 **Going back.** If a new version misbehaves, stop it, restore the

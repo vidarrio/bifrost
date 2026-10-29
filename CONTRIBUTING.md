@@ -157,6 +157,12 @@ These GitHub settings enforce the process:
     up to date with `main`;
   - no force pushes and no deletion;
   - nobody can bypass it, the maintainer included.
+- **A `release` environment** holds the `RELEASE_SIGNING_KEY` secret (there
+  is no repository-level copy). Only `v*` tags can deploy to it, and the
+  maintainer is its required reviewer, so every release waits for their
+  approval before it is signed: a tag runs the workflow from the tagged
+  commit, so the tag rule alone wouldn't keep the key from an edited
+  `release.yml`.
 
 ## Dependency updates
 

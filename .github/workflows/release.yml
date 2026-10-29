@@ -62,9 +62,10 @@ jobs:
           path: notes.md
 
   release-image:
-    # After the bundle: a bundle failure shouldn't leave a published image
-    # without a release.
-    needs: [release-notes, release-bundle]
+    # After the bundle and its signature: a failure there shouldn't leave a
+    # published image without a release. (`sign` is skipped on pull requests.)
+    needs: [release-notes, release-bundle, sign]
+    if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-26.04
     permissions:
       contents: read
