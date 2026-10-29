@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-29
+
+Upgrading from 0.1.x:
+
+- Install 0.2.0 by hand: `bifrost update` in 0.1.x can't check the new
+  signatures (user guide, Updating Bifrost).
+- The first start backs up the database and then upgrades it, so 0.1.x can no
+  longer open it. To go back, restore that pre-upgrade backup before starting
+  0.1.x (user guide, Going back); anything done on 0.2.0 since is lost.
+- Over HTTPS, everyone signs in once more (the session cookie is renamed).
+
 ### Added
 
 - `bind` (`BIFROST_BIND`) sets the address Bifrost listens on, for example
@@ -140,7 +151,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a given version), checked against the release's checksums. Going back means
   restoring the pre-upgrade backup and the previous file, which it keeps.
 
-[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/vidarrio/bifrost/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/vidarrio/bifrost/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/vidarrio/bifrost/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/vidarrio/bifrost/releases/tag/v0.1.0
