@@ -528,6 +528,7 @@ impl Db {
         .execute(&mut *tx)
         .await?;
         if marked.rows_affected() == 0 {
+            tx.rollback().await?;
             return Ok(None);
         }
         sqlx::query(
