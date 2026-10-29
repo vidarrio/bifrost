@@ -474,7 +474,7 @@ impl Db {
     }
 
     /// Record a finished minesweeper game (win or loss, with its duration) for a
-    /// given board kind ("standard" / "expert").
+    /// given board kind ("standard" / "expert"). False if it couldn't be stored.
     pub async fn record_mine_result(
         &self,
         season: Option<i64>,
@@ -482,8 +482,8 @@ impl Db {
         kind: &str,
         won: bool,
         duration_ms: i64,
-    ) {
-        let _ = sqlx::query(
+    ) -> bool {
+        sqlx::query(
             "INSERT INTO mine_result (season, account_id, kind, won, duration_ms, ts)
              VALUES (?, ?, ?, ?, ?, strftime('%s','now'))",
         )
@@ -493,7 +493,23 @@ impl Db {
         .bind(won as i64)
         .bind(duration_ms)
         .execute(&self.pool)
-        .await;
+        .await
+        .is_ok()
+    }
+
+    /// Seasonal minesweeper wins by this account in the last `secs` seconds.
+    pub async fn recent_mine_wins(&self, season: i64, account: i64, secs: i64) -> i64 {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM mine_result
+             WHERE season = ? AND account_id = ? AND won = 1
+               AND ts > strftime('%s','now') - ?",
+        )
+        .bind(season)
+        .bind(account)
+        .bind(secs)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(i64::MAX)
     }
 
     /// Per-kind minesweeper stats for a player. `season = Some(s)` scopes to one

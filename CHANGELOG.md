@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Seasonal minesweeper earns at most five bonus hints per player per season in
+  any 24 hours, and new boards are rate-limited.
+
 ### Security
 
 - Sign-in backoff can't be raced by parallel attempts, and counts an IPv6
@@ -16,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Under a flood of sign-ins to many accounts, new browsers may also wait up to
   a minute. The backoff's and the rate limiter's memory is bounded, and
   password hashing runs a few at a time.
+- A bonus hint is spent before the free hint is placed, so parallel requests
+  can't place several for one, and it's refunded only when the server refuses
+  the hint. The free hint names one exact location, so it can't reveal several
+  items or, through a slot name with spaces, target another player. An item
+  name that can't be matched exactly isn't hinted for free.
 
 ## [0.1.2] - 2026-10-29
 

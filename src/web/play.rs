@@ -178,11 +178,24 @@ pub(crate) async fn hint_post(
             // bonus-hint credit, place the hint as admin (free) and spend one.
             // Communal slots have no personal credits — they just use their own
             // shared points, so skip the bonus fallback there.
-            if !is_common && rejected_for_points(&text) && creds > 0 {
+            // The credit is spent first (atomically), so parallel requests
+            // can't place several hints for one; it's refunded on failure.
+            // One bonus hint per player at a time, so two requests don't pick
+            // the same location from the board before either is placed.
+            let wants_bonus = !is_common && rejected_for_points(&text) && creds > 0;
+            let _one_at_a_time = if wants_bonus {
+                Some(ap::keyed_lock(&format!("bonus:{season}:{my_id}")).await)
+            } else {
+                None
+            };
+            if wants_bonus && st.db.spend_credit(season, my_id).await {
                 // Hint exactly ONE copy — the first unhinted location of this
-                // item — via /hint_location, so a multi-copy item doesn't reveal
-                // every copy for a single credit. Fall back to /hint by name if
-                // we can't resolve a specific location.
+                // item — by its location id, so the server matches nothing
+                // fuzzily and no item group or second copy comes along. An item
+                // that can't be pinned down this way isn't hinted for free.
+                let refund = || async {
+                    let _ = st.db.add_credits(season, my_id, 1).await;
+                };
                 let admin_cmd = ctx
                     .rt
                     .with_board(|b| {
@@ -190,13 +203,24 @@ pub(crate) async fn hint_post(
                         let m = b.meta.as_ref()?;
                         let item_id = m.item_id_by_name(&game, f.item.trim())?;
                         let (finder, loc) = b.first_unhinted_location(ap_slot, item_id)?;
-                        let finder_game = b.slots.get(&finder)?.game.clone();
-                        let loc_name = m.location_name(&finder_game, loc)?.to_string();
-                        Some(format!("/hint_location {} {}", b.name_of(finder), loc_name))
+                        Some(format!(
+                            "/hint_location {} {loc}",
+                            ap::quote_arg(&b.name_of(finder))
+                        ))
                     })
-                    .flatten()
-                    .unwrap_or_else(|| format!("/hint {name} {}", f.item.trim()));
-                match ap::send_admin(
+                    .flatten();
+                let Some(admin_cmd) = admin_cmd else {
+                    refund().await;
+                    return Json(serde_json::json!({
+                        "ok": false,
+                        "message": "Out of points, and a bonus hint needs an exact item name from this world that still has an unhinted copy.",
+                        "credits": creds
+                    }));
+                };
+                // Success is judged by the server's reply to us alone: a hint
+                // that's placed is only broadcast, a refusal answers. Once the
+                // command has gone out, a lost connection isn't refunded.
+                match ap::send_admin_results(
                     &cfg.url,
                     &cfg.slot,
                     &cfg.password,
@@ -205,41 +229,37 @@ pub(crate) async fn hint_post(
                 )
                 .await
                 {
-                    Ok(lists) => {
-                        let msg = ctx
-                            .rt
-                            .with_board(|b| {
-                                lists
-                                    .iter()
-                                    .map(|p| ap::resolve_parts(b, p))
-                                    .collect::<Vec<_>>()
-                                    .join(" ")
-                            })
-                            .unwrap_or_default();
-                        if hint_rejected(&msg) {
-                            return Json(serde_json::json!({
-                                "ok": false, "message": msg, "credits": creds
-                            }));
-                        }
-                        st.db.spend_credit(season, my_id).await;
+                    Ok(replies) if !replies.is_empty() => {
+                        refund().await;
+                        return Json(serde_json::json!({
+                            "ok": false, "message": replies.join(" "), "credits": creds
+                        }));
+                    }
+                    Ok(_) => {
                         let newc = st.db.credits(season, my_id).await;
                         let points = ap::slot_points(&cfg.url, &cfg.password, &name).await;
-                        // The admin /hint returns no text on success, so confirm
-                        // it ourselves; the new hint shows in the list below.
-                        let confirm = if msg.trim().is_empty() {
-                            format!(
-                                "Out of points — spent a bonus hint ({newc} left). It's in this world's hints below."
-                            )
-                        } else {
-                            format!("Out of points — spent a bonus hint ({newc} left). {msg}")
-                        };
                         return Json(serde_json::json!({
-                            "ok": true, "message": confirm, "points": points, "credits": newc
+                            "ok": true,
+                            "message": format!(
+                                "Out of points — spent a bonus hint ({newc} left). It's in this world's hints below."
+                            ),
+                            "points": points,
+                            "credits": newc
                         }));
                     }
                     Err(e) => {
+                        if !e.sent {
+                            refund().await;
+                        }
+                        let newc = st.db.credits(season, my_id).await;
                         return Json(serde_json::json!({
-                            "ok": false, "message": format!("Bonus hint failed: {e}"), "credits": creds
+                            "ok": false,
+                            "message": if e.sent {
+                                format!("The bonus hint was sent, but the server didn't confirm it ({}); check this world's hints.", e.message)
+                            } else {
+                                format!("Bonus hint failed: {}", e.message)
+                            },
+                            "credits": newc
                         }));
                     }
                 }

@@ -43,6 +43,26 @@ try:
     hint = lambda: (j := post(root, f"/s/{sid}/hint", data=dict(slot_id=ids[0], item="Map Width")).json()) \
         and "isn't live" not in j.get("message", "") and j                             # hint relay, once the tracker's in
     check("hint relay answers", wait_for(hint, 60, 2))
+
+    # Bonus hints: out of AP points, a credit places exactly one hint; a name
+    # that isn't one of this world's items is refused and the credit kept.
+    import sqlite3
+    def credits():
+        with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
+            row = c.execute("SELECT credits FROM hint_credit WHERE season = ?", (sid,)).fetchone()
+            return row[0] if row else 0
+    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
+        acct = c.execute("SELECT id FROM account WHERE username = 'root'").fetchone()[0]
+        c.execute("INSERT INTO hint_credit (season, account_id, credits) VALUES (?, ?, 1)", (sid, acct))
+    j = post(root, f"/s/{sid}/hint", data=dict(slot_id=ids[0], item="Everything")).json()
+    check("a bonus hint for a non-item is refused", not j.get("ok") and "exact item name" in j.get("message", ""), j)
+    check("…and keeps the credit", credits() == 1)
+    # (Retried while the seed's metadata is still loading: until then nothing
+    # can be pinned to a location, and the credit is kept.)
+    bonus = lambda: (j := post(root, f"/s/{sid}/hint", data=dict(slot_id=ids[0], item="Map Width")).json()) \
+        and "exact item name" not in j.get("message", "") and j
+    j = wait_for(bonus, 90, 3) or {}
+    check("a bonus hint is placed for one credit", j.get("ok") and "spent a bonus hint" in j.get("message", "") and credits() == 0, j)
     r = post(root, f"/s/{sid}/admin/console", data=dict(cmd="/players")).json()  # admin relay
     check("admin relay works", r.get("ok"), r)
 
@@ -92,6 +112,28 @@ asyncio.run(main())
     check("spoofed tag and wrong key still announced", sum("Bob (" in l and "viewing" in l and "has joined" in l for l in joins) == 3, joins)
     check("players' !admin attempts still echoed", log.count("Bob: !admin login") == 3)
     check("hint request still echoed", "!hint Map Width" in log)
+    # Another player's `!players` output (a broadcast) arriving meanwhile
+    # isn't taken for a refusal: the hint stays placed and paid for.
+    ap_port = re.search(r"127\.0\.0\.1:(391\d\d)", get(root, f"/s/{sid}/admin").text + srv.logtext()).group(1)
+    spam = subprocess.Popen([os.path.join(AP, "venv/bin/python"), "-c", f'''
+import asyncio, json, websockets
+async def main():
+    async with websockets.connect("ws://127.0.0.1:{ap_port}") as ws:
+        await ws.recv()
+        await ws.send(json.dumps([{{"cmd": "Connect", "game": "", "name": "Bob", "uuid": "s",
+            "version": {{"class": "Version", "major": 0, "minor": 6, "build": 8}}, "items_handling": 0,
+            "tags": ["TextOnly"], "slot_data": False, "password": ""}}]))
+        for _ in range(20):
+            await ws.send(json.dumps([{{"cmd": "Say", "text": "!players"}}]))
+            await asyncio.sleep(0.5)
+asyncio.run(main())
+'''])
+    time.sleep(2)
+    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
+        c.execute("UPDATE hint_credit SET credits = 1 WHERE season = ?", (sid,))
+    j = post(root, f"/s/{sid}/hint", data=dict(slot_id=ids[0], item="Map Height")).json()
+    spam.wait(30)
+    check("…even while another player sends !players", j.get("ok") and credits() == 0, j)
 finally:
     srv.stop()
 
