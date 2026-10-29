@@ -255,8 +255,9 @@ async fn main() {
 }
 
 /// Bring the database up to this build's schema. A different Bifrost version
-/// last ran on this data dir: back up first, so going back to that version
-/// is a restore away. A data dir a newer Bifrost has migrated is refused.
+/// last ran on this data dir, or the schema is about to change: back up
+/// first, so going back is a restore away. A data dir a newer Bifrost has
+/// migrated is refused.
 async fn upgrade(db: &db::Db) {
     let stamp = db
         .stamp()
@@ -276,10 +277,33 @@ async fn upgrade(db: &db::Db) {
         );
         std::process::exit(1);
     }
-    if let Some(from) = stamp.changed_from() {
-        tracing::info!(
-            "Bifrost {from} last ran on this data dir; backing up before starting {this}"
-        );
+    // A schema change under the same version number (a build between
+    // releases) needs the backup as much as a new version does.
+    let fresh = stamp.schema == 0 && stamp.version.is_none();
+    let from = match stamp.changed_from() {
+        Some(v) => {
+            tracing::info!(
+                "Bifrost {v} last ran on this data dir; backing up before starting {this}"
+            );
+            Some(v.to_string())
+        }
+        None if !fresh && stamp.schema != db::SCHEMA_VERSION => {
+            tracing::info!(
+                "the database is on schema version {}, this build's is {}; backing up before \
+                 migrating it",
+                stamp.schema,
+                db::SCHEMA_VERSION
+            );
+            Some(
+                stamp
+                    .version
+                    .clone()
+                    .unwrap_or_else(|| format!("schema-{}", stamp.schema)),
+            )
+        }
+        None => None,
+    };
+    if let Some(from) = from.as_deref() {
         match backup::create_pre_upgrade(db, &backup::Policy::from_config(), from).await {
             Ok(b) => tracing::info!(
                 "to go back to {from}: stop Bifrost, run `bifrost backup restore {}`, start {from}",

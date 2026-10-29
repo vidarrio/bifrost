@@ -6,7 +6,7 @@ import sys
 
 from lib import Server, check, get, post, summary
 
-srv = Server("minesweeper", port=18193, ap_ports="39175-39177")
+srv = Server("minesweeper", port=18195, ap_ports="39178-39180")
 srv.start()
 try:
     root = srv.setup_sysadmin()
