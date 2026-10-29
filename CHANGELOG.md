@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `bind` (`BIFROST_BIND`) sets the address Bifrost listens on, for example
+  `127.0.0.1` behind a reverse proxy on the same host. The user guide explains
+  when that matters for forward-auth.
+
 ### Changed
 
 - Seasonal minesweeper earns at most five bonus hints per player per season in

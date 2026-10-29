@@ -288,7 +288,10 @@ strong sandbox, which custom apworlds need.
 
 Put Bifrost behind a reverse proxy that terminates HTTPS. Session cookies are
 marked `Secure`. Add the proxy's address to `trusted_proxies` so per-client
-rate limiting sees real client addresses.
+rate limiting sees real client addresses. Bifrost listens on every interface
+by default; with the proxy on the same host, set `bind = "127.0.0.1"`
+(`BIFROST_BIND`) so nothing reaches Bifrost around the proxy. The Archipelago
+port range still has to be reachable by players.
 
 ### Running on Windows
 
@@ -626,7 +629,12 @@ Configure it under `[forward_auth]`:
 - Bifrost trusts identity headers only from a configured proxy: a shared
   secret header the proxy adds (`secret_header` + `secret`), and/or the proxy's
   address in `trusted_proxies`. Every configured check must pass. With neither
-  configured, nobody is trusted.
+  configured, nobody is trusted. Prefer the secret header: in some container
+  and NAT setups every client appears to come from the same gateway address,
+  and if that address is in `trusted_proxies`, a client that reaches Bifrost
+  directly is trusted too. Binding Bifrost to `127.0.0.1` (see
+  [Installing](#installing)) closes that path when the proxy runs on the same
+  host.
 - `role_groups` maps groups to roles, for example
   `sysadmin=archipelago_admins,moderator=archipelago_moderators,user=archipelago_users`.
   When it's set, the identity provider decides roles, and users in none of the
