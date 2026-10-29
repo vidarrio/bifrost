@@ -233,10 +233,14 @@ To cut release `X.Y.Z`:
      `ghcr.io/vidarrio/bifrost` as `X.Y.Z`, `X.Y` and `latest` (a version
      with a pre-release suffix, like `0.2.0-rc.1`, gets only `X.Y.Z-…` and is
      marked as a pre-release);
-   - builds the native bundle and its `SHA256SUMS`;
+   - builds the native bundle and its `SHA256SUMS`, and signs `SHA256SUMS`
+     with the `RELEASE_SIGNING_KEY` secret (an ed25519 key in PEM form) into
+     `SHA256SUMS.sig`, after checking it matches the public key in
+     `src/selfupdate.rs` (`RELEASE_KEY`). `bifrost update` refuses a release
+     whose signature doesn't verify, so a release can't go out without it;
    - attests the build provenance of both;
    - creates the GitHub release with the changelog section as its notes and
-     the bundle and checksums attached.
+     the bundle, checksums and signature attached.
 
    Check the run and the release page afterwards, and that the image pulls
    without logging in (`podman logout ghcr.io; podman pull

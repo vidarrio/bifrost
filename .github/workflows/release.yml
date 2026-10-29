@@ -144,6 +144,36 @@ jobs:
           ls -l
           sha256sum bifrost-* > SHA256SUMS
           cat SHA256SUMS
+      # `bifrost update` only takes a release whose SHA256SUMS verifies against
+      # the public key in src/selfupdate.rs (RELEASE_KEY). The private key is
+      # the RELEASE_SIGNING_KEY secret (PEM); a real release can't go out
+      # without it, and the signature is checked against the compiled-in key.
+      - name: Sign the checksums
+        if: github.event_name == 'push'
+        working-directory: dist
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo "::error::the RELEASE_SIGNING_KEY secret isn't set"
+            exit 1
+          fi
+          umask 077
+          key=$(mktemp) pub=$(mktemp)
+          trap 'rm -f "$key" "$pub"' EXIT
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > "$key"
+          openssl pkeyutl -sign -rawin -inkey "$key" -in SHA256SUMS -out SHA256SUMS.sig
+          test "$(stat -c %s SHA256SUMS.sig)" -eq 64
+          want=$(sed -n 's/^const RELEASE_KEY: &str = "\([0-9a-f]\{64\}\)";$/\1/p' "$GITHUB_WORKSPACE/src/selfupdate.rs")
+          if [ -z "$want" ]; then
+            echo "::error::src/selfupdate.rs has no RELEASE_KEY"
+            exit 1
+          fi
+          # SubjectPublicKeyInfo for an ed25519 key, then the raw key.
+          python3 -c 'import sys; sys.stdout.buffer.write(bytes.fromhex(sys.argv[1]))' \
+            "302a300506032b6570032100$want" > "$pub"
+          openssl pkeyutl -verify -rawin -pubin -keyform DER -inkey "$pub" \
+            -in SHA256SUMS -sigfile SHA256SUMS.sig
       - name: Attest the bundle's provenance
         if: github.event_name == 'push'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -182,6 +212,7 @@ jobs:
             echo "Both carry build provenance: \`gh attestation verify <file> -R $GITHUB_REPOSITORY\`, or \`gh attestation verify oci://$IMAGE:$VERSION -R $GITHUB_REPOSITORY\`."
           } > notes.md
           files=(artifacts/bundle/bifrost-* artifacts/bundle/SHA256SUMS)
+          [ -e artifacts/bundle/SHA256SUMS.sig ] && files+=(artifacts/bundle/SHA256SUMS.sig)
           ls -l "${files[@]}"
           cat notes.md
           if [ "$GITHUB_EVENT_NAME" != push ]; then

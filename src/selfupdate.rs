@@ -1,7 +1,8 @@
 //! `bifrost update`: replace the native single-file build with another
 //! release of it. The file comes from the GitHub release and must match the
-//! release's `SHA256SUMS` (the download is `scripts/bifrost_ap_install.py`,
-//! the helper that already talks to GitHub). The new file is written next to
+//! release's `SHA256SUMS`, whose signature (`SHA256SUMS.sig`, made by the
+//! release workflow) must verify against [`RELEASE_KEY`] (the download is
+//! `scripts/bifrost_ap_install.py`, the helper that already talks to GitHub). The new file is written next to
 //! this one and renamed over it, so a failure leaves this one in place; this
 //! one is kept as `<name>.previous`. Bifrost isn't restarted: the service
 //! manager does that, and the first start of the new version backs up the
@@ -122,6 +123,7 @@ async fn install(exe: &Path, partial: &Path, target: &str) -> Result<PathBuf, St
             .unwrap_or("download failed")
             .to_string());
     }
+    verify_release(&reply, &asset, partial)?;
     if !bundle::is_bundle(partial) {
         return Err(format!("{asset} isn't a Bifrost single-file build"));
     }
@@ -148,4 +150,110 @@ async fn install(exe: &Path, partial: &Path, target: &str) -> Result<PathBuf, St
         let _ = std::fs::File::open(dir).and_then(|d| d.sync_all());
     }
     Ok(previous)
+}
+
+/// The public key release checksums are signed with (ed25519, hex). Its
+/// private half is the release workflow's `RELEASE_SIGNING_KEY` secret.
+const RELEASE_KEY: &str = "";
+
+/// The key to check releases against: [`RELEASE_KEY`], or for tests a
+/// `BIFROST_UPDATE_KEY` (as `BIFROST_GITHUB_API` points at a test server).
+fn release_key() -> Result<ed25519_dalek::VerifyingKey, String> {
+    let hex = crate::config::var("BIFROST_UPDATE_KEY").unwrap_or_else(|| RELEASE_KEY.into());
+    let bytes: [u8; 32] = unhex(&hex)
+        .and_then(|b| b.try_into().ok())
+        .ok_or("this build has no release signing key")?;
+    ed25519_dalek::VerifyingKey::from_bytes(&bytes).map_err(|e| format!("release key: {e}"))
+}
+
+/// The release's `SHA256SUMS` must carry a valid signature, and list the
+/// downloaded file with its actual SHA-256 (checked here, not trusted from
+/// the helper).
+fn verify_release(reply: &serde_json::Value, asset: &str, file: &Path) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let sums = reply["sums"]
+        .as_str()
+        .and_then(unhex)
+        .ok_or("the download helper didn't return SHA256SUMS")?;
+    let sig: [u8; 64] = reply["sig"]
+        .as_str()
+        .and_then(unhex)
+        .and_then(|b| b.try_into().ok())
+        .ok_or("this release isn't signed (no SHA256SUMS.sig), so it can't be verified")?;
+    release_key()?
+        .verify_strict(&sums, &ed25519_dalek::Signature::from_bytes(&sig))
+        .map_err(|_| "SHA256SUMS's signature doesn't verify: not a genuine release")?;
+    let want = String::from_utf8_lossy(&sums)
+        .lines()
+        .filter_map(|l| l.split_once(char::is_whitespace))
+        .find(|(_, name)| name.trim().trim_start_matches('*') == asset)
+        .map(|(h, _)| h.to_ascii_lowercase())
+        .ok_or_else(|| format!("SHA256SUMS doesn't list {asset}"))?;
+    let bytes = std::fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let got: String = Sha256::digest(&bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    if got != want {
+        return Err(format!("{asset} doesn't match the signed SHA256SUMS"));
+    }
+    Ok(())
+}
+
+fn unhex(s: &str) -> Option<Vec<u8>> {
+    let s = s.trim();
+    if !s.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    fn setup(name: &str, contents: &[u8]) -> (std::path::PathBuf, String) {
+        use sha2::{Digest, Sha256};
+        let dir = std::env::temp_dir().join(format!("bifrost-upd-{}-{name}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let f = dir.join("asset");
+        std::fs::write(&f, contents).unwrap();
+        let h: String = Sha256::digest(contents)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        (f, format!("{h}  bifrost-9.9.9-x86_64-linux\n"))
+    }
+
+    fn hexs(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+
+    #[test]
+    fn releases_must_be_signed_by_the_release_key() {
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let other = SigningKey::from_bytes(&[9u8; 32]);
+        // SAFETY: test-only; nothing else reads this variable concurrently
+        // in a way that matters (the value is the same for every test).
+        unsafe { std::env::set_var("BIFROST_UPDATE_KEY", hexs(key.verifying_key().as_bytes())) };
+        let asset = "bifrost-9.9.9-x86_64-linux";
+        let (file, sums) = setup("sig", b"payload");
+        let reply = |sig: Option<&[u8]>, sums: &str| serde_json::json!({"sums": hexs(sums.as_bytes()), "sig": sig.map(hexs)});
+        let good = key.sign(sums.as_bytes()).to_bytes();
+        assert!(verify_release(&reply(Some(&good), &sums), asset, &file).is_ok());
+        let e = verify_release(&reply(None, &sums), asset, &file).unwrap_err();
+        assert!(e.contains("isn't signed"), "{e}");
+        let forged = other.sign(sums.as_bytes()).to_bytes();
+        assert!(verify_release(&reply(Some(&forged), &sums), asset, &file).is_err());
+        // A signature over other sums doesn't carry over.
+        let (_, other_sums) = setup("other", b"other payload");
+        let sig = key.sign(other_sums.as_bytes()).to_bytes();
+        let e = verify_release(&reply(Some(&sig), &other_sums), asset, &file).unwrap_err();
+        assert!(e.contains("doesn't match"), "{e}");
+        let _ = std::fs::remove_dir_all(file.parent().unwrap());
+    }
 }

@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Releases' `SHA256SUMS` are signed, and `bifrost update` only installs a
+  release whose signature verifies against the key built into Bifrost, so a
+  file swapped into a release is refused. Releases before signing started
+  can't be installed with `bifrost update`.
 - Sign-in backoff can't be raced by parallel attempts, and counts an IPv6
   client by its /64, as rate limits now do too. Guessing one account from many
   addresses gets a short wait per attempt (at most a minute); a browser that
