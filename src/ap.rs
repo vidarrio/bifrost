@@ -1000,7 +1000,10 @@ pub async fn send_admin_results(
             (ty, text)
         })
         .filter(|(ty, text)| {
-            ty == "AdminCommandResult" || ADMIN_NOT_RUN.iter().any(|m| text.contains(m))
+            ty == "AdminCommandResult"
+                || ADMIN_NOT_RUN
+                    .iter()
+                    .any(|m| text.trim_start().starts_with(m))
         })
         .map(|(_, text)| text)
         .collect())
