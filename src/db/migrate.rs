@@ -22,8 +22,9 @@ use super::Db;
 /// commits.
 const STEPS: &[&str] = &[
     // 2: the cap on bonus hints from seasonal minesweeper (per player, in any
-    // 24 hours; 0 = no cap).
-    "ALTER TABLE season ADD COLUMN mine_daily_hints INTEGER NOT NULL DEFAULT 5",
+    // 24 hours; 0 = no cap), and which wins earned one (the cap counts those).
+    "ALTER TABLE season ADD COLUMN mine_daily_hints INTEGER NOT NULL DEFAULT 5;
+     ALTER TABLE mine_result ADD COLUMN earned INTEGER NOT NULL DEFAULT 0",
 ];
 
 /// The schema version this build writes.

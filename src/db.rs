@@ -482,7 +482,7 @@ impl Db {
         kind: &str,
         won: bool,
         duration_ms: i64,
-    ) -> bool {
+    ) -> Option<i64> {
         sqlx::query(
             "INSERT INTO mine_result (season, account_id, kind, won, duration_ms, ts)
              VALUES (?, ?, ?, ?, ?, strftime('%s','now'))",
@@ -494,22 +494,52 @@ impl Db {
         .bind(duration_ms)
         .execute(&self.pool)
         .await
-        .is_ok()
+        .ok()
+        .map(|r| r.last_insert_rowid())
     }
 
-    /// Seasonal minesweeper wins by this account in the last `secs` seconds.
-    pub async fn recent_mine_wins(&self, season: i64, account: i64, secs: i64) -> i64 {
-        sqlx::query_scalar(
-            "SELECT COUNT(*) FROM mine_result
-             WHERE season = ? AND account_id = ? AND won = 1
-               AND ts > strftime('%s','now') - ?",
+    /// Award a bonus hint for the seasonal win recorded as `result`, unless
+    /// the account has already earned `cap` of them in the last `secs`
+    /// seconds (`cap` 0: no limit). Marking the win and adding the credit
+    /// happen in one transaction, and the count is taken under the write
+    /// lock, so parallel wins can't overshoot the cap. Returns the new credit
+    /// total, or `None` when the cap was reached.
+    pub async fn award_mine_hint(
+        &self,
+        result: i64,
+        season: i64,
+        account: i64,
+        cap: i64,
+        secs: i64,
+    ) -> Result<Option<i64>, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        let marked = sqlx::query(
+            "UPDATE mine_result SET earned = 1
+             WHERE id = ?1 AND season = ?2 AND account_id = ?3 AND won = 1 AND earned = 0
+               AND (?4 = 0 OR (SELECT COUNT(*) FROM mine_result
+                               WHERE season = ?2 AND account_id = ?3 AND earned = 1
+                                 AND ts > strftime('%s','now') - ?5) < ?4)",
+        )
+        .bind(result)
+        .bind(season)
+        .bind(account)
+        .bind(cap)
+        .bind(secs)
+        .execute(&mut *tx)
+        .await?;
+        if marked.rows_affected() == 0 {
+            return Ok(None);
+        }
+        sqlx::query(
+            "INSERT INTO hint_credit (season, account_id, credits) VALUES (?, ?, 1)
+             ON CONFLICT(season, account_id) DO UPDATE SET credits = credits + 1",
         )
         .bind(season)
         .bind(account)
-        .bind(secs)
-        .fetch_one(&self.pool)
-        .await
-        .unwrap_or(i64::MAX)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(Some(self.credits(season, account).await))
     }
 
     /// Per-kind minesweeper stats for a player. `season = Some(s)` scopes to one
