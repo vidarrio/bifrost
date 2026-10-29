@@ -41,6 +41,9 @@ use crate::net::Cidr;
 pub struct Config {
     /// HTTP listen port (`BIFROST_PORT`).
     pub port: u16,
+    /// HTTP listen address (`BIFROST_BIND`): every interface by default;
+    /// `127.0.0.1` behind a reverse proxy on the same host.
+    pub bind: std::net::IpAddr,
     /// Root of all mutable state (`BIFROST_DATA`).
     pub data_dir: PathBuf,
     /// The Archipelago install, read-only (`BIFROST_AP_DIR`).
@@ -199,6 +202,13 @@ impl Config {
             port: var("BIFROST_PORT")
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(8080),
+            bind: var("BIFROST_BIND")
+                .map(|s| {
+                    s.trim()
+                        .parse()
+                        .unwrap_or_else(|_| panic!("BIFROST_BIND: not an IP address: {s:?}"))
+                })
+                .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)),
             data_dir: var("BIFROST_DATA")
                 .unwrap_or_else(|| "/var/lib/bifrost".into())
                 .into(),
@@ -225,6 +235,18 @@ impl Config {
                 })
                 .unwrap_or_default(),
         }
+    }
+
+    /// Where to reach this instance's own HTTP listener from the same host:
+    /// the bind address, or loopback when bound to every interface.
+    pub fn local_addr(&self) -> std::net::SocketAddr {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+        let ip = match self.bind {
+            IpAddr::V4(v4) if v4.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
+            IpAddr::V6(v6) if v6.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
+            ip => ip,
+        };
+        std::net::SocketAddr::new(ip, self.port)
     }
 
     pub fn db_path(&self) -> PathBuf {
@@ -343,6 +365,7 @@ fn parse_port_range(s: &str) -> Result<RangeInclusive<u16>, String> {
 /// `[section] key` in config.toml ↔ the `BIFROST_*` setting it provides.
 const FILE_KEYS: &[(&str, &str, &str)] = &[
     ("server", "port", "BIFROST_PORT"),
+    ("server", "bind", "BIFROST_BIND"),
     ("server", "public_url", "BIFROST_PUBLIC_URL"),
     ("server", "trusted_proxies", "BIFROST_TRUSTED_PROXIES"),
     ("server", "insecure_cookies", "BIFROST_INSECURE_COOKIES"),
@@ -475,6 +498,7 @@ pub const EXAMPLE: &str = r#"# $BIFROST_DATA/config.toml — every setting here 
 
 [server]
 # port = 8080                        # BIFROST_PORT
+# bind = "0.0.0.0"                   # BIFROST_BIND (127.0.0.1 behind a proxy on this host)
 # public_url = "https://ap.example"  # BIFROST_PUBLIC_URL (CLI-printed links)
 # trusted_proxies = ["10.0.0.5"]     # BIFROST_TRUSTED_PROXIES (reverse proxies: X-Forwarded-For, forward-auth)
 # insecure_cookies = false           # BIFROST_INSECURE_COOKIES (plain-HTTP dev only)
@@ -564,6 +588,7 @@ mod tests {
     fn defaults() {
         let c = with(&[]);
         assert_eq!(c.port, 8080);
+        assert_eq!(c.bind.to_string(), "0.0.0.0");
         assert_eq!(c.data_dir, Path::new("/var/lib/bifrost"));
         assert_eq!(c.ap_dir, Path::new("/opt/archipelago"));
         assert_eq!(c.ap_python, Path::new("/opt/archipelago/venv/bin/python"));
@@ -573,6 +598,18 @@ mod tests {
         );
         assert_eq!(c.ap_journal_unit, "archipelago");
         assert_eq!(c.ap_ports, 38281..=38300);
+    }
+
+    #[test]
+    fn bind_address() {
+        let b = |v: &str| with(&[("BIFROST_BIND", v)]);
+        assert_eq!(b(" 127.0.0.1 ").bind.to_string(), "127.0.0.1");
+        assert_eq!(b("::1").bind.to_string(), "::1");
+        // Reaching our own listener: loopback for "every interface".
+        assert_eq!(with(&[]).local_addr().to_string(), "127.0.0.1:8080");
+        assert_eq!(b("::").local_addr().to_string(), "[::1]:8080");
+        assert_eq!(b("192.0.2.5").local_addr().to_string(), "192.0.2.5:8080");
+        assert!(std::panic::catch_unwind(|| with(&[("BIFROST_BIND", "nope")])).is_err());
     }
 
     #[test]

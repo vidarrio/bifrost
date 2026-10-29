@@ -224,7 +224,7 @@ async fn main() {
     };
     let app = web::router(state, auth, cfg.trusted_proxies.clone());
 
-    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+    let addr = std::net::SocketAddr::new(cfg.bind, port);
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .unwrap_or_else(|e| panic!("bind {addr}: {e}"));

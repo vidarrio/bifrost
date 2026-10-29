@@ -495,10 +495,11 @@ pub fn spawn_nightly(db: Db) {
 pub fn restore(file: &Path) -> Result<String, String> {
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
     let cfg = config::get();
-    if std::net::TcpStream::connect(("127.0.0.1", cfg.port)).is_ok() {
+    // Where Bifrost would be listening, whatever `bind` says.
+    let addr = cfg.local_addr();
+    if std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(2)).is_ok() {
         return Err(format!(
-            "something is listening on port {} — stop Bifrost before restoring",
-            cfg.port
+            "something is listening on {addr} — stop Bifrost before restoring"
         ));
     }
     let data = &cfg.data_dir;
