@@ -14,8 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   addresses gets a short wait per attempt (at most a minute); a browser that
   has signed in to that account before (with its current password) skips it.
   Under a flood of sign-ins to many accounts, new browsers may also wait up to
-  a minute. The backoff's and the rate
-  limiter's memory is bounded, and password hashing runs a few at a time.
+  a minute. The backoff's and the rate limiter's memory is bounded, and
+  password hashing runs a few at a time.
 
 ## [0.1.2] - 2026-10-29
 
