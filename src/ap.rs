@@ -977,9 +977,10 @@ pub struct AdminFail {
 }
 
 /// The server's replies to an admin command: the texts it sent back to us
-/// alone — `AdminCommandResult` (e.g. "No hints found.") or, if the command
-/// never ran, `CommandResult` (e.g. another admin session took over). Empty
-/// when the command produced only broadcasts (as a placed hint does).
+/// alone — `AdminCommandResult` (e.g. "No hints found."), or the
+/// `CommandResult` saying the command never ran ([`ADMIN_NOT_RUN`]). Other
+/// `CommandResult`s aren't replies: a player's `!players` is broadcast as one.
+/// Empty when the command produced only broadcasts (as a placed hint does).
 pub async fn send_admin_results(
     url: &str,
     connect_name: &str,
@@ -991,13 +992,22 @@ pub async fn send_admin_results(
     Ok(out
         .into_iter()
         .filter(|(ty, _)| ty == "AdminCommandResult" || ty == "CommandResult")
-        .map(|(_, data)| {
-            data.iter()
+        .map(|(ty, data)| {
+            let text: String = data
+                .iter()
                 .filter_map(|d| d.get("text").and_then(Value::as_str))
-                .collect()
+                .collect();
+            (ty, text)
         })
+        .filter(|(ty, text)| {
+            ty == "AdminCommandResult" || ADMIN_NOT_RUN.iter().any(|m| text.contains(m))
+        })
+        .map(|(_, text)| text)
         .collect())
 }
+
+/// The server's replies when an `!admin` command didn't run at all.
+const ADMIN_NOT_RUN: &[&str] = &["You must first login", "Remote administration is disabled"];
 
 /// A lock per key (e.g. one per AP server), held across an async exchange.
 pub async fn keyed_lock(key: &str) -> tokio::sync::OwnedMutexGuard<()> {
@@ -1029,7 +1039,16 @@ async fn admin_exchange(
             sent: false,
         });
     }
-    let _one_at_a_time = keyed_lock(&format!("admin:{url}")).await;
+    // Bounded: a request queued behind slow exchanges gives up rather than
+    // hang (and as nothing was sent, a bonus hint is refunded).
+    let Ok(_one_at_a_time) =
+        tokio::time::timeout(Duration::from_secs(15), keyed_lock(&format!("admin:{url}"))).await
+    else {
+        return Err(AdminFail {
+            message: "the server is busy with another admin command — try again".into(),
+            sent: false,
+        });
+    };
     let sent = std::sync::atomic::AtomicBool::new(false);
     let fut = async {
         let (ws, _) = tokio_tungstenite::connect_async(url)
