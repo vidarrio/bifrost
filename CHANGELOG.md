@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.0] - 2026-10-29
 
+Upgrading from 0.1.x:
+
+- Install 0.2.0 by hand: `bifrost update` in 0.1.x can't check the new
+  signatures (user guide, Updating Bifrost).
+- The first start backs up the database and then upgrades it, so 0.1.x can no
+  longer open it. To go back, restore that pre-upgrade backup before starting
+  0.1.x (user guide, Going back); anything done on 0.2.0 since is lost.
+- Over HTTPS, everyone signs in once more (the session cookie is renamed).
+
 ### Added
 
 - `bind` (`BIFROST_BIND`) sets the address Bifrost listens on, for example
