@@ -25,7 +25,15 @@ pub(crate) async fn minesweeper_page(
     let standard = st.db.mine_stats(stat_scope, my_id, "standard").await;
     let expert = st.db.mine_stats(stat_scope, my_id, "expert").await;
     let back = ctx.back(q.back.as_deref(), "/board");
-    render::minesweeper_page(enabled, free, credits, &standard, &expert, &back)
+    render::minesweeper_page(
+        enabled,
+        free,
+        credits,
+        ctx.row.mine_daily_hints,
+        &standard,
+        &expert,
+        &back,
+    )
 }
 
 pub(crate) fn now_nanos() -> u64 {
@@ -62,8 +70,12 @@ pub(crate) fn mine_key(account: i64, free: bool, season: i64, kind: mine::Kind) 
     (account, format!("{mode}{}", kind.id()))
 }
 
-/// Bonus hints a player can earn in any 24 hours, in each season.
-pub(crate) const DAILY_BONUS_HINTS: i64 = 5;
+/// Whether a seasonal win earns a bonus hint, given the season's cap (bonus
+/// hints in any 24 hours; 0 is no cap) and the player's wins in the last 24
+/// hours, this one included.
+pub(crate) fn earns_hint(cap: i64, wins: i64) -> bool {
+    cap == 0 || wins <= cap
+}
 
 #[derive(Deserialize)]
 pub(crate) struct NewForm {
@@ -226,6 +238,8 @@ pub(crate) async fn mine_reveal(
         return Json(serde_json::json!({"ok": false, "error": "No active game."}));
     };
     let mut credits: Option<i64> = None;
+    // A seasonal win that earned nothing because of the daily cap.
+    let mut capped = false;
     // On a finished game (win or loss), record the result and return fresh stats.
     // Seasonal games record under the season, count toward the seasonal
     // leaderboard/stats, and a win earns a bonus hint. Freeplay (minigame
@@ -240,16 +254,21 @@ pub(crate) async fn mine_reveal(
             .db
             .record_mine_result(scope, my_id, kind, won, elapsed_ms)
             .await;
-        // At most DAILY_BONUS_HINTS a day: every board is solvable without
+        // At most the season's cap a day: every board is solvable without
         // guessing, so a script could otherwise win them without end.
+        let cap = ctx.row.mine_daily_hints;
         if won
             && recorded
             && !f.free
             && ctx.row.minesweeper_enabled
             && ctx.state() != db::State::Archived
-            && st.db.recent_mine_wins(ctx.id, my_id, 24 * 3600).await <= DAILY_BONUS_HINTS
         {
-            credits = st.db.add_credits(ctx.id, my_id, 1).await.ok();
+            // No need to count wins when there's no cap.
+            if cap == 0 || earns_hint(cap, st.db.recent_mine_wins(ctx.id, my_id, 24 * 3600).await) {
+                credits = st.db.add_credits(ctx.id, my_id, 1).await.ok();
+            } else {
+                capped = true;
+            }
         }
         // Freeplay stats are all-time; seasonal stats scope to the season.
         let stat_scope = scope;
@@ -272,7 +291,8 @@ pub(crate) async fn mine_reveal(
         })),
         mine::Reveal::Won(cells) => Json(serde_json::json!({
             "ok": true, "state": "won", "cells": cells_json(&cells),
-            "credits": credits, "stats": stats_html, "elapsed_ms": elapsed_ms, "running": running
+            "credits": credits, "earned": credits.is_some(), "capped": capped,
+            "cap": ctx.row.mine_daily_hints, "stats": stats_html, "elapsed_ms": elapsed_ms, "running": running
         })),
         mine::Reveal::Lost(mines) => {
             let ms: Vec<_> = mines
@@ -285,5 +305,20 @@ pub(crate) async fn mine_reveal(
             }))
         }
         mine::Reveal::Invalid => Json(serde_json::json!({"ok": false, "error": "Invalid move."})),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::earns_hint;
+
+    #[test]
+    fn the_daily_cap_counts_this_win() {
+        assert!(earns_hint(5, 1));
+        assert!(earns_hint(5, 5));
+        assert!(!earns_hint(5, 6));
+        assert!(!earns_hint(1, 2));
+        // 0 is no cap.
+        assert!(earns_hint(0, 1_000_000));
     }
 }

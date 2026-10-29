@@ -15,7 +15,7 @@ mod seasons;
 mod settings;
 mod worlds;
 pub use auth::{AccountRow, LinkKind, LinkRow, RedeemError};
-pub use seasons::{SeasonRow, State};
+pub use seasons::{MAX_DAILY_HINTS, SeasonRow, State};
 pub use settings::{Approval, Discord, Instance};
 pub use worlds::{CatalogWorld, WorldRequest};
 

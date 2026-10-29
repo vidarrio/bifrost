@@ -20,7 +20,11 @@ use super::Db;
 /// Steps run with foreign keys off, so rebuilding a table others reference
 /// doesn't cascade into them; the references are checked before the step
 /// commits.
-const STEPS: &[&str] = &[];
+const STEPS: &[&str] = &[
+    // 2: the cap on bonus hints from seasonal minesweeper (per player, in any
+    // 24 hours; 0 = no cap).
+    "ALTER TABLE season ADD COLUMN mine_daily_hints INTEGER NOT NULL DEFAULT 5",
+];
 
 /// The schema version this build writes.
 pub const SCHEMA_VERSION: i64 = 1 + STEPS.len() as i64;
@@ -172,6 +176,23 @@ mod tests {
         // Opening it again changes nothing.
         db.migrate().await.unwrap();
         assert_eq!(db.stamp().await.unwrap(), stamp);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn seasons_from_the_baseline_get_the_default_bonus_hint_cap() {
+        let (dir, db) = fresh("cap").await;
+        apply(&db.pool, &[]).await.unwrap();
+        sqlx::query("INSERT INTO season (name, created_at) VALUES ('Old', 0)")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        db.migrate().await.unwrap();
+        let caps: Vec<i64> = sqlx::query_scalar("SELECT mine_daily_hints FROM season")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(caps, vec![5]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

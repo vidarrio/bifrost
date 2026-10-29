@@ -100,6 +100,7 @@ pub fn minesweeper_page(
     enabled: bool,
     free: bool,
     credits: i64,
+    daily_cap: i64,
     standard: &crate::db::MineStats,
     expert: &crate::db::MineStats,
     back: &str,
@@ -129,10 +130,17 @@ pub fn minesweeper_page(
         return Html(b);
     }
     // Intro + stat scope differ by mode; freeplay drops the "Bonus hints:" tally.
+    let cap_note = match daily_cap {
+        0 => String::new(),
+        1 => " You can earn 1 bonus hint in any 24 hours.".to_string(),
+        n => format!(" You can earn up to {n} bonus hints in any 24 hours."),
+    };
     let intro = if free {
-        "Just for fun — results count toward the all-time leaderboards (no bonus hints here). Every board is solvable by logic alone, no guessing needed, on both difficulties. Left-click a cell to reveal, right-click to flag. On a revealed number: left-click chord-reveals its neighbours once you've flagged that many mines, right-click flags all remaining neighbours when they must all be mines."
+        "Just for fun — results count toward the all-time leaderboards (no bonus hints here). Every board is solvable by logic alone, no guessing needed, on both difficulties. Left-click a cell to reveal, right-click to flag. On a revealed number: left-click chord-reveals its neighbours once you've flagged that many mines, right-click flags all remaining neighbours when they must all be mines.".to_string()
     } else {
-        "Clear the board without hitting a mine to earn a bonus hint — worth 1 either way. Every board is solvable by logic alone, no guessing needed, on both difficulties. Left-click a cell to reveal, right-click to flag. On a revealed number: left-click chord-reveals its neighbours once you've flagged that many mines, right-click flags all remaining neighbours when they must all be mines. Bonus hints are spent automatically when you hint without enough points."
+        format!(
+            "Clear the board without hitting a mine to earn a bonus hint — worth 1 either way. Every board is solvable by logic alone, no guessing needed, on both difficulties. Left-click a cell to reveal, right-click to flag. On a revealed number: left-click chord-reveals its neighbours once you've flagged that many mines, right-click flags all remaining neighbours when they must all be mines. Bonus hints are spent automatically when you hint without enough points.{cap_note}"
+        )
     };
     let statline = if free {
         r#"<div class="statline"><span id="minesleft"></span> · ⏱ <b id="mstimer">0:00</b></div>"#
@@ -327,7 +335,7 @@ function reveal(r,c){
   if(j.state==='lost'){over=true;(j.mines||[]).forEach(function(m){var mb=cells[m.r][m.c];mb.classList.add('open','mine');mb.textContent='✱';});msg.className='inlinemsg bad';msg.textContent='Boom — try again.';setStats(j.stats);setTimer(j.elapsed_ms,false);showNewBtn(true);return;}
   (j.cells||[]).forEach(openCell);
   setTimer(j.elapsed_ms,j.running);
-  if(j.state==='won'){over=true;msg.className='inlinemsg ok';msg.textContent='Cleared! You earned a bonus hint.';if(j.credits!=null&&creditsEl)creditsEl.textContent=j.credits;setStats(j.stats);showNewBtn(true);}
+  if(j.state==='won'){over=true;msg.className='inlinemsg ok';msg.textContent=j.earned?'Cleared! You earned a bonus hint.':j.capped?'Cleared! No bonus hint this time: you have earned the limit of '+j.cap+' in 24 hours.':'Cleared!';if(j.credits!=null&&creditsEl)creditsEl.textContent=j.credits;setStats(j.stats);showNewBtn(true);}
  }).catch(function(){if(!over){msg.className='inlinemsg bad';msg.textContent='Request failed.';}});
 }
 function startBoard(w,h,mn){W=w;H=h;minesN=mn;over=false;flags=0;buildGrid();updateMines();}

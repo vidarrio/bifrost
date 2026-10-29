@@ -451,6 +451,19 @@ pub fn admin_page(
         ));
     }
 
+    let cap = season.mine_daily_hints;
+    let cap_text = if cap == 0 {
+        "no limit".to_string()
+    } else {
+        format!("at most <b>{cap}</b> in any 24 hours")
+    };
+    b.push_str(&format!(
+        r#"<div class="statline">Bonus hints per player: {cap_text}.</div>
+<form class="console" method="post" action="admin/minesweeper/hints" autocomplete="off"><input type="number" name="hints" value="{cap}" min="0" max="{max}" step="1" title="Bonus hints a player can earn in any 24 hours (0 = no limit)" style="flex:1;min-width:0" required><button type="submit">Set limit</button></form>
+<p class="empty">Bonus hints a player can earn from minesweeper in any 24 hours; 0 means no limit.</p>"#,
+        max = crate::db::MAX_DAILY_HINTS,
+    ));
+
     // Common game (shared Minecraft server) — read at generation time to decide
     // whether the communal in-pool slot is included. Toggle it before generating.
     b.push_str(r#"<h2>Common game (Minecraft)</h2>"#);
