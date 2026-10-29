@@ -63,9 +63,21 @@ struct Bucket {
 
 #[derive(Default)]
 pub struct Limiter {
-    buckets: Mutex<HashMap<(&'static str, String), Bucket>>,
+    buckets: Mutex<Buckets>,
     pub trusted_proxies: Vec<Cidr>,
 }
+
+#[derive(Default)]
+struct Buckets {
+    map: HashMap<(&'static str, String), Bucket>,
+    pruned: Option<Instant>,
+}
+
+/// Buckets kept before idle ones are pruned (at most once a minute), and the
+/// most kept at all: past that, the least recently used half goes. A dropped
+/// bucket is a full one, which only ever forgives.
+const PRUNE_AT: usize = 50_000;
+const MAX_BUCKETS: usize = 200_000;
 
 impl Limiter {
     pub fn new(trusted_proxies: Vec<Cidr>) -> Self {
@@ -77,16 +89,32 @@ impl Limiter {
 
     /// Take a token for `key` under `rule`; on refusal, seconds until one frees.
     pub fn take(&self, rule: &Rule, key: &str, now: Instant) -> Result<(), u64> {
-        let mut map = self.buckets.lock().unwrap();
-        if map.len() > 50_000 {
-            // Drop idle buckets (no window exceeds an hour) so a key-spraying
-            // client can't grow the map without bound; past that, drop all but
-            // the last few minutes' (a full refill of every rule is cheap).
+        let mut buckets = self.buckets.lock().unwrap();
+        let due = buckets
+            .pruned
+            .is_none_or(|t| now.duration_since(t) >= Duration::from_secs(60));
+        if (buckets.map.len() > PRUNE_AT && due) || buckets.map.len() >= MAX_BUCKETS {
+            buckets.pruned = Some(now);
+            // No window exceeds an hour.
+            let map = &mut buckets.map;
             map.retain(|_, b| now.duration_since(b.last) < Duration::from_secs(3600));
-            if map.len() > 50_000 {
-                map.retain(|_, b| now.duration_since(b.last) < Duration::from_secs(300));
+            if map.len() > MAX_BUCKETS / 2 {
+                let mut times: Vec<Instant> = map.values().map(|b| b.last).collect();
+                times.sort_unstable();
+                let keep = MAX_BUCKETS / 2;
+                let cutoff = times[times.len() - keep];
+                // Ties at the cutoff fill only the slots left.
+                let mut ties = keep - times.iter().filter(|&&t| t > cutoff).count();
+                map.retain(|_, b| {
+                    b.last > cutoff
+                        || (b.last == cutoff && ties > 0 && {
+                            ties -= 1;
+                            true
+                        })
+                });
             }
         }
+        let map = &mut buckets.map;
         let cap = rule.n as f64;
         let rate = cap / rule.per.as_secs_f64();
         let b = map.entry((rule.name, key.to_string())).or_insert(Bucket {
@@ -175,6 +203,22 @@ pub async fn middleware(State(limiter): State<Arc<Limiter>>, req: Request, next:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn buckets_stay_bounded_under_key_spraying() {
+        let l = Limiter::default();
+        let rule = Rule {
+            name: "t",
+            n: 5,
+            per: MIN,
+            by_ip: true,
+        };
+        let now = Instant::now();
+        for i in 0..(MAX_BUCKETS + 1_000) {
+            let _ = l.take(&rule, &format!("k{i}"), now);
+        }
+        assert!(l.buckets.lock().unwrap().map.len() <= MAX_BUCKETS);
+    }
 
     #[test]
     fn bucket_refuses_then_refills() {

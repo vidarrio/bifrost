@@ -73,9 +73,10 @@ pub fn client_group(ip: IpAddr) -> IpAddr {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn clients_group_by_ipv4_address_or_ipv6_64() {
-        use super::client_group;
         let g = |s: &str| client_group(s.parse().unwrap()).to_string();
         assert_eq!(g("192.0.2.7"), "192.0.2.7");
         assert_eq!(g("::ffff:192.0.2.7"), "192.0.2.7");
@@ -83,8 +84,6 @@ mod tests {
         assert_eq!(g("2001:db8:1:2:ffff:ffff:ffff:ffff"), "2001:db8:1:2::");
         assert_ne!(g("2001:db8:1:3::1"), g("2001:db8:1:2::1"));
     }
-
-    use super::*;
 
     #[test]
     fn cidrs() {

@@ -100,6 +100,16 @@ impl Db {
         Ok(())
     }
 
+    /// The key for known-device cookies: made once, then kept.
+    pub async fn device_key(&self) -> String {
+        if let Some(k) = self.setting("device_key").await.filter(|k| !k.is_empty()) {
+            return k;
+        }
+        let k = crate::auth::new_token();
+        let _ = self.set_setting("device_key", &k).await;
+        self.setting("device_key").await.unwrap_or(k)
+    }
+
     /// A consistent copy of the whole database at `path` (for backups).
     pub async fn snapshot_to(&self, path: &std::path::Path) -> Result<(), sqlx::Error> {
         sqlx::query("VACUUM INTO ?")

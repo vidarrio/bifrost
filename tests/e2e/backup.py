@@ -91,6 +91,8 @@ try:
     root = srv.session()
     post(root, "/login", data=dict(username="root", password="correct horse battery"))
     seasons = get(root, "/admin/seasons").text
+    check("signing in sets the session and the known-device cookie",
+          {"bifrost_session", "bifrost_device"} <= set(root.cookies.keys()), list(root.cookies.keys()))
     check("restored state is the backup's", "Kept" in seasons and "AfterBackup" not in seasons)
 finally:
     srv.stop()

@@ -173,6 +173,7 @@ fn offline_auth(db: &Db) -> AuthInner {
         fwd: ForwardAuth::default(),
         secure_cookies: true,
         throttle: Throttle::default(),
+        device_key: String::new(),
         setup_token: Default::default(),
     }
 }

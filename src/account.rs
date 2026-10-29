@@ -104,24 +104,37 @@ async fn login_post(
         &headers,
         peer.map(|p| p.0.0.ip()),
     );
-    if let Err(wait) = st.auth.throttle.attempt(&username, client) {
+    // Usernames are at most 32 bytes: anything longer can't sign in, and
+    // isn't worth remembering.
+    if !auth::valid_username(&username) {
+        return render::login_page(&rd, &username, Some("Wrong username or password."))
+            .into_response();
+    }
+    let known = st.auth.known_device(&headers, &username);
+    if let Err(wait) = st.auth.throttle.attempt(&username, client, known) {
         let msg = format!("Too many failed attempts — try again in {wait} s.");
         return render::login_page(&rd, &username, Some(&msg)).into_response();
     }
     let found = st.auth.db.login_lookup(&username).await;
     // Verify against a dummy hash when the user doesn't exist, so a miss takes
     // as long as a wrong password.
-    let hash = found
-        .as_ref()
-        .map(|(_, h)| h.clone())
-        .unwrap_or_else(|| auth::dummy_hash().to_string());
-    let password = f.password;
-    let ok = auth::verify_password_async(hash, password).await;
+    let hash = found.as_ref().map(|(_, h)| h.clone());
+    let Some(ok) = auth::verify_password_async(hash, f.password).await else {
+        return render::login_page(&rd, &username, Some(auth::BUSY)).into_response();
+    };
     match found {
         Some((id, _)) if ok => {
             st.auth.throttle.succeed(&username, client);
             match st.auth.start_session(id).await {
-                Ok(cookie) => with_cookie(&rd, cookie),
+                // Appended, not inserted: both cookies must be sent.
+                Ok(cookie) => (
+                    axum::response::AppendHeaders([
+                        (header::SET_COOKIE, cookie),
+                        (header::SET_COOKIE, st.auth.device_cookie(&username)),
+                    ]),
+                    Redirect::to(&rd),
+                )
+                    .into_response(),
                 Err(e) => {
                     render::login_page(&rd, &username, Some(&format!("Couldn't sign in: {e}")))
                         .into_response()
