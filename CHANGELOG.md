@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-29
+
 ### Security
 
 - Season URLs accept only plain numeric ids, and requests whose path has
@@ -16,14 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   protects instances that haven't upgraded yet.
 - Each signup's YAML is stored in a file of its own. A refused signup, or one
   whose name makes the same file name, can no longer replace another player's
-  YAML.
+  YAML. Signups made before upgrading keep their files: on an instance with
+  signups open, check that no two of them share one (names like `Bo b` and
+  `Bo_b`).
 - Data embedded in pages' scripts, such as item names from uploaded worlds, is
   escaped so it can't end the script and inject markup. The page header no
   longer builds its sign-in links from markup.
 - Creating a season's default `host.yaml` no longer loads its uploaded worlds,
   and that step can only write to a scratch folder.
 - Sandboxed jobs are capped in how many processes and open files they can
-  have.
+  have. The process cap counts all of Bifrost's user's processes, so run
+  Bifrost as a dedicated, non-root user (see Isolation in the user guide).
 
 ## [0.1.1] - 2026-10-28
 
@@ -86,6 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a given version), checked against the release's checksums. Going back means
   restoring the pre-upgrade backup and the previous file, which it keeps.
 
-[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/vidarrio/bifrost/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/vidarrio/bifrost/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/vidarrio/bifrost/releases/tag/v0.1.0
