@@ -110,27 +110,31 @@ async fn login_post(
         return render::login_page(&rd, &username, Some("Wrong username or password."))
             .into_response();
     }
-    let known = st.auth.known_device(&headers, &username);
+    let found = st.auth.db.login_lookup(&username).await;
+    let known = found
+        .as_ref()
+        .is_some_and(|(_, h)| st.auth.known_device(&headers, &username, h));
     if let Err(wait) = st.auth.throttle.attempt(&username, client, known) {
         let msg = format!("Too many failed attempts — try again in {wait} s.");
         return render::login_page(&rd, &username, Some(&msg)).into_response();
     }
-    let found = st.auth.db.login_lookup(&username).await;
     // Verify against a dummy hash when the user doesn't exist, so a miss takes
     // as long as a wrong password.
     let hash = found.as_ref().map(|(_, h)| h.clone());
     let Some(ok) = auth::verify_password_async(hash, f.password).await else {
+        // The password was never checked: don't count it.
+        st.auth.throttle.cancel(&username, client);
         return render::login_page(&rd, &username, Some(auth::BUSY)).into_response();
     };
     match found {
-        Some((id, _)) if ok => {
+        Some((id, hash)) if ok => {
             st.auth.throttle.succeed(&username, client);
             match st.auth.start_session(id).await {
                 // Appended, not inserted: both cookies must be sent.
                 Ok(cookie) => (
                     axum::response::AppendHeaders([
                         (header::SET_COOKIE, cookie),
-                        (header::SET_COOKIE, st.auth.device_cookie(&username)),
+                        (header::SET_COOKIE, st.auth.device_cookie(&username, &hash)),
                     ]),
                     Redirect::to(&rd),
                 )
