@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Sign-in backoff can't be raced by parallel attempts, slows guessing spread
+  over many addresses (a short wait per account, never more than a minute),
+  and counts an IPv6 client by its /64, as rate limits now do too. Its memory
+  is bounded, and password hashing runs a few at a time.
+
 ## [0.1.2] - 2026-10-29
 
 ### Security

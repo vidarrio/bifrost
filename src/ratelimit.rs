@@ -80,8 +80,12 @@ impl Limiter {
         let mut map = self.buckets.lock().unwrap();
         if map.len() > 50_000 {
             // Drop idle buckets (no window exceeds an hour) so a key-spraying
-            // client can't grow the map without bound.
+            // client can't grow the map without bound; past that, drop all but
+            // the last few minutes' (a full refill of every rule is cheap).
             map.retain(|_, b| now.duration_since(b.last) < Duration::from_secs(3600));
+            if map.len() > 50_000 {
+                map.retain(|_, b| now.duration_since(b.last) < Duration::from_secs(300));
+            }
         }
         let cap = rule.n as f64;
         let rate = cap / rule.per.as_secs_f64();
@@ -146,7 +150,7 @@ pub async fn middleware(State(limiter): State<Arc<Limiter>>, req: Request, next:
                 .get::<ConnectInfo<SocketAddr>>()
                 .map(|c| c.0.ip());
             match limiter.client_ip(req.headers(), peer) {
-                Some(ip) => format!("i{ip}"),
+                Some(ip) => format!("i{}", crate::net::client_group(ip)),
                 None => "unknown".into(),
             }
         }

@@ -52,9 +52,7 @@ fn with_cookie(to: &str, cookie: axum::http::HeaderValue) -> Response {
 }
 
 async fn hash(password: String) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || auth::hash_password(&password))
-        .await
-        .map_err(|e| e.to_string())?
+    auth::hash_password_async(password).await
 }
 
 /// Shared checks for a chosen password + its confirmation.
@@ -106,8 +104,7 @@ async fn login_post(
         &headers,
         peer.map(|p| p.0.0.ip()),
     );
-    let wait = st.auth.throttle.wait(&username, client);
-    if wait > 0 {
+    if let Err(wait) = st.auth.throttle.attempt(&username, client) {
         let msg = format!("Too many failed attempts — try again in {wait} s.");
         return render::login_page(&rd, &username, Some(&msg)).into_response();
     }
@@ -119,9 +116,7 @@ async fn login_post(
         .map(|(_, h)| h.clone())
         .unwrap_or_else(|| auth::dummy_hash().to_string());
     let password = f.password;
-    let ok = tokio::task::spawn_blocking(move || auth::verify_password(&hash, &password))
-        .await
-        .unwrap_or(false);
+    let ok = auth::verify_password_async(hash, password).await;
     match found {
         Some((id, _)) if ok => {
             st.auth.throttle.succeed(&username, client);
@@ -134,7 +129,7 @@ async fn login_post(
             }
         }
         _ => {
-            st.auth.throttle.fail(&username, client);
+            // Already counted by `attempt`.
             render::login_page(&rd, &username, Some("Wrong username or password.")).into_response()
         }
     }

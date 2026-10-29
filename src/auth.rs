@@ -350,57 +350,103 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// Failed-login backoff per username *and client*: after [`FREE_FAILURES`],
-/// each further failure doubles the lockout (from 30 s, capped at 15 min).
-/// Keyed by client too, so one client's failures can't lock an account for
-/// everyone (the per-IP rate limit bounds guessing across usernames). In
-/// memory only — a restart forgives.
+/// Failed-login backoff, per username and client, plus a softer one per
+/// username across all clients.
+///
+/// - Per client: after [`FREE_FAILURES`], each further failure doubles the
+///   lockout (from 30 s, capped at 15 min). Keyed by client too, so one
+///   client's failures can't lock an account for everyone. A client is an IPv4
+///   address or an IPv6 /64 ([`crate::net::client_group`]).
+/// - Per username: after [`NAME_FREE_FAILURES`] failures from any clients, every
+///   attempt waits a little (doubling, capped at a minute). That bounds guessing
+///   spread over many addresses, while the account's owner is never held up
+///   for more than a minute.
+///
+/// An attempt counts as a failure until it succeeds ([`Throttle::attempt`]
+/// before checking the password), so parallel attempts can't slip past the
+/// backoff. Entries idle for an hour are forgotten. In memory only — a restart
+/// forgives.
 #[derive(Default)]
 pub struct Throttle {
-    failures: Mutex<HashMap<ThrottleKey, (u32, Instant)>>,
+    state: Mutex<ThrottleState>,
 }
 
-/// (username, client address).
+#[derive(Default)]
+struct ThrottleState {
+    clients: HashMap<ThrottleKey, (u32, Instant)>,
+    names: HashMap<String, (u32, Instant)>,
+}
+
+/// (username, client group).
 type ThrottleKey = (String, Option<IpAddr>);
 
 const FREE_FAILURES: u32 = 5;
+const NAME_FREE_FAILURES: u32 = 20;
+/// How long a failure is remembered without further attempts.
+const FORGET_AFTER: Duration = Duration::from_secs(3600);
+/// Entries kept before idle ones are pruned.
+const THROTTLE_PRUNE_AT: usize = 10_000;
 
 impl Throttle {
-    fn key(username: &str, client: Option<IpAddr>) -> (String, Option<IpAddr>) {
-        (username.to_lowercase(), client)
+    fn key(username: &str, client: Option<IpAddr>) -> ThrottleKey {
+        (
+            username.to_lowercase(),
+            client.map(crate::net::client_group),
+        )
     }
-    /// Seconds until `client` may try `username` again (0 = now).
-    pub fn wait(&self, username: &str, client: Option<IpAddr>) -> u64 {
-        let map = self.failures.lock().unwrap();
-        let Some(&(n, last)) = map.get(&Self::key(username, client)) else {
-            return 0;
+
+    /// Start a sign-in attempt: `Err(seconds)` while `client` must wait, else
+    /// the attempt is counted as a failure until [`succeed`](Self::succeed).
+    pub fn attempt(&self, username: &str, client: Option<IpAddr>) -> Result<(), u64> {
+        let mut st = self.state.lock().unwrap();
+        let now = Instant::now();
+        if st.clients.len().max(st.names.len()) > THROTTLE_PRUNE_AT {
+            st.clients
+                .retain(|_, e| now.duration_since(e.1) < FORGET_AFTER);
+            st.names
+                .retain(|_, e| now.duration_since(e.1) < FORGET_AFTER);
+        }
+        let key = Self::key(username, client);
+        let wait = |e: Option<&(u32, Instant)>, lockout: fn(u32) -> Duration| match e {
+            Some(&(n, last)) if now.duration_since(last) < FORGET_AFTER => {
+                lockout(n).saturating_sub(now.duration_since(last))
+            }
+            _ => Duration::ZERO,
         };
-        let lock = Self::lockout(n);
-        lock.saturating_sub(last.elapsed()).as_secs()
+        let w = wait(st.clients.get(&key), Self::lockout)
+            .max(wait(st.names.get(&key.0), Self::name_lockout));
+        if !w.is_zero() {
+            return Err(w.as_secs().max(1));
+        }
+        Self::bump(st.clients.entry(key.clone()).or_insert((0, now)), now);
+        Self::bump(st.names.entry(key.0).or_insert((0, now)), now);
+        Ok(())
     }
-    pub fn fail(&self, username: &str, client: Option<IpAddr>) {
-        let mut map = self.failures.lock().unwrap();
-        let e = map
-            .entry(Self::key(username, client))
-            .or_insert((0, Instant::now()));
+
+    fn bump(e: &mut (u32, Instant), now: Instant) {
+        if now.duration_since(e.1) >= FORGET_AFTER {
+            e.0 = 0;
+        }
         e.0 += 1;
-        e.1 = Instant::now();
+        e.1 = now;
     }
-    /// A successful sign-in: forgive that client.
+
+    /// A successful sign-in: forgive that client, and the username's count.
     pub fn succeed(&self, username: &str, client: Option<IpAddr>) {
-        self.failures
-            .lock()
-            .unwrap()
-            .remove(&Self::key(username, client));
+        let key = Self::key(username, client);
+        let mut st = self.state.lock().unwrap();
+        st.names.remove(&key.0);
+        st.clients.remove(&key);
     }
+
     /// A password reset: forgive every client.
     pub fn forgive(&self, username: &str) {
         let u = username.to_lowercase();
-        self.failures
-            .lock()
-            .unwrap()
-            .retain(|(name, _), _| *name != u);
+        let mut st = self.state.lock().unwrap();
+        st.clients.retain(|(name, _), _| *name != u);
+        st.names.remove(&u);
     }
+
     fn lockout(failures: u32) -> Duration {
         if failures < FREE_FAILURES {
             return Duration::ZERO;
@@ -408,6 +454,36 @@ impl Throttle {
         let secs = 30u64.saturating_mul(1 << (failures - FREE_FAILURES).min(10));
         Duration::from_secs(secs.min(15 * 60))
     }
+
+    fn name_lockout(failures: u32) -> Duration {
+        if failures < NAME_FREE_FAILURES {
+            return Duration::ZERO;
+        }
+        let secs = 1u64 << (failures - NAME_FREE_FAILURES).min(6);
+        Duration::from_secs(secs.min(60))
+    }
+}
+
+/// Password hashing (argon2, 19 MiB each) runs a few at a time, so a burst of
+/// sign-ins, invites or resets can't take the host's memory.
+static HASHING: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+
+/// Hash a password off the async runtime, a few at a time.
+pub async fn hash_password_async(password: String) -> Result<String, String> {
+    let _permit = HASHING.acquire().await.map_err(|e| e.to_string())?;
+    tokio::task::spawn_blocking(move || hash_password(&password))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Verify a password off the async runtime, a few at a time.
+pub async fn verify_password_async(hash: String, password: String) -> bool {
+    let Ok(_permit) = HASHING.acquire().await else {
+        return false;
+    };
+    tokio::task::spawn_blocking(move || verify_password(&hash, &password))
+        .await
+        .unwrap_or(false)
 }
 
 /// Everything the middleware and the account handlers share.
@@ -881,29 +957,54 @@ mod tests {
     #[test]
     fn throttle_backs_off_then_forgives() {
         let t = Throttle::default();
-        let (me, them) = (
-            Some("10.0.0.1".parse().unwrap()),
-            Some("10.0.0.2".parse().unwrap()),
-        );
-        for _ in 0..FREE_FAILURES - 1 {
-            t.fail("Ann", them);
-        }
-        assert_eq!(t.wait("ann", them), 0);
-        t.fail("ann", them);
-        assert!(t.wait("ANN", them) > 0);
-        // Another client's failures don't lock the account for me.
-        assert_eq!(t.wait("ann", me), 0);
-        t.succeed("ann", me);
-        assert!(t.wait("ann", them) > 0, "my sign-in doesn't forgive them");
-        t.succeed("ann", them);
-        assert_eq!(t.wait("ann", them), 0);
-        t.fail("ann", them);
+        let ip = |s: &str| Some(s.parse().unwrap());
+        let (me, them) = (ip("10.0.0.1"), ip("10.0.0.2"));
+        // Each attempt counts until it succeeds.
         for _ in 0..FREE_FAILURES {
-            t.fail("ann", them);
+            assert_eq!(t.attempt("Ann", them), Ok(()));
         }
+        assert!(t.attempt("ANN", them).is_err());
+        // Another client's failures don't lock the account for me.
+        assert_eq!(t.attempt("ann", me), Ok(()));
+        t.succeed("ann", me);
+        assert!(
+            t.attempt("ann", them).is_err(),
+            "my sign-in doesn't forgive them"
+        );
         t.forgive("ANN");
-        assert_eq!(t.wait("ann", them), 0, "a reset forgives everyone");
+        assert_eq!(t.attempt("ann", them), Ok(()), "a reset forgives everyone");
         assert_eq!(Throttle::lockout(100), Duration::from_secs(15 * 60));
+    }
+
+    #[test]
+    fn throttle_counts_an_ipv6_64_as_one_client() {
+        let t = Throttle::default();
+        for i in 0..FREE_FAILURES {
+            let addr = format!("2001:db8:1:2::{}", i + 1);
+            assert_eq!(t.attempt("ann", Some(addr.parse().unwrap())), Ok(()));
+        }
+        assert!(
+            t.attempt("ann", Some("2001:db8:1:2::ff".parse().unwrap()))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn throttle_slows_guessing_spread_over_many_clients() {
+        let t = Throttle::default();
+        for i in 0..NAME_FREE_FAILURES {
+            let addr = format!("10.1.{}.{}", i / 250, i % 250 + 1);
+            assert_eq!(t.attempt("ann", Some(addr.parse().unwrap())), Ok(()));
+        }
+        // A fresh client now waits briefly; never longer than a minute.
+        let wait = t
+            .attempt("ann", Some("10.9.9.9".parse().unwrap()))
+            .unwrap_err();
+        assert!((1..=60).contains(&wait), "{wait}");
+        assert_eq!(Throttle::name_lockout(1000), Duration::from_secs(60));
+        // The owner's sign-in clears the username's count.
+        t.succeed("ann", Some("10.9.9.9".parse().unwrap()));
+        assert_eq!(t.attempt("ann", Some("10.9.9.9".parse().unwrap())), Ok(()));
     }
 
     #[test]
