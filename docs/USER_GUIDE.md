@@ -619,6 +619,8 @@ there are no Bifrost passwords. Switch with:
 bifrost auth mode forward-auth       # or: native — restart Bifrost to apply
 ```
 
+Switching ends every session, so everyone signs in again afterwards.
+
 Configure it under `[forward_auth]`:
 
 - Bifrost trusts identity headers only from a configured proxy: a shared

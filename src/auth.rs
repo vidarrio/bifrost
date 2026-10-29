@@ -234,6 +234,10 @@ pub fn now() -> i64 {
 // ---------------------------------------------------------------- state
 
 pub const SESSION_COOKIE: &str = "bifrost_session";
+/// The session cookie's name over HTTPS: the `__Host-` prefix makes browsers
+/// refuse it unless it was set by this host, `Secure`, for `/`, so a sibling
+/// subdomain can't plant one.
+pub const SECURE_SESSION_COOKIE: &str = "__Host-bifrost_session";
 pub const SESSION_TTL: Duration = Duration::from_secs(30 * 24 * 3600);
 
 /// Forward-auth settings (`BIFROST_FWD_*`). Identity headers are trusted only
@@ -346,7 +350,7 @@ fn parse_role_groups(list: &str) -> Result<Vec<(Role, String)>, String> {
         .collect()
 }
 
-fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
@@ -654,17 +658,26 @@ pub struct AuthInner {
 pub type Auth = Arc<AuthInner>;
 
 impl AuthInner {
+    /// The session cookie's name: `__Host-` prefixed unless cookies are
+    /// insecure (plain-HTTP development, where browsers refuse the prefix).
+    pub fn session_cookie_name(&self) -> &'static str {
+        if self.secure_cookies {
+            SECURE_SESSION_COOKIE
+        } else {
+            SESSION_COOKIE
+        }
+    }
+
     /// `Set-Cookie` value for a new session (or, with `None`, clearing it).
     pub fn session_cookie(&self, token: Option<&str>) -> HeaderValue {
-        let secure = if self.secure_cookies { "; Secure" } else { "" };
-        let v = match token {
-            Some(t) => format!(
-                "{SESSION_COOKIE}={t}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}{secure}",
-                SESSION_TTL.as_secs()
-            ),
-            None => format!("{SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure}"),
-        };
-        HeaderValue::from_str(&v).expect("cookie is ascii")
+        HeaderValue::from_str(&session_cookie_value(self.secure_cookies, token))
+            .expect("cookie is ascii")
+    }
+
+    /// The session token from the request's cookies, if any (only under this
+    /// instance's cookie name: over HTTPS, an unprefixed one is ignored).
+    pub fn session_token(&self, headers: &HeaderMap) -> Option<String> {
+        cookie(headers, self.session_cookie_name())
     }
 
     /// Bound to the account's current password hash too, so a password
@@ -727,13 +740,23 @@ impl AuthInner {
     }
 }
 
-/// The session token from the request's cookies, if any.
-pub fn session_token(headers: &HeaderMap) -> Option<String> {
-    cookie(headers, SESSION_COOKIE)
+/// The session `Set-Cookie` value: `__Host-` named and `Secure` over HTTPS,
+/// always `Path=/` with no `Domain` (as the prefix requires).
+fn session_cookie_value(secure: bool, token: Option<&str>) -> String {
+    let (name, flag) = if secure {
+        (SECURE_SESSION_COOKIE, "; Secure")
+    } else {
+        (SESSION_COOKIE, "")
+    };
+    let (value, age) = match token {
+        Some(t) => (t, SESSION_TTL.as_secs()),
+        None => ("", 0),
+    };
+    format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={age}{flag}")
 }
 
 /// A cookie's value from the request, if set and non-empty.
-fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+pub fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
         .get_all(header::COOKIE)
         .iter()
@@ -821,7 +844,7 @@ pub async fn middleware(State(auth): State<Auth>, mut req: Request, next: Next) 
     let path = req.uri().path().to_string();
     let tier = tier(&path);
     let principal = match auth.mode {
-        AuthMode::Native => match session_token(req.headers()) {
+        AuthMode::Native => match auth.session_token(req.headers()) {
             Some(t) => auth.db.session_principal(&token_hash(&t), now()).await,
             None => None,
         },
@@ -1123,8 +1146,28 @@ mod tests {
     #[test]
     fn session_cookie_is_read() {
         let h = hm(&[("cookie", "a=1; bifrost_session=abc; b=2")]);
-        assert_eq!(session_token(&h).as_deref(), Some("abc"));
-        assert_eq!(session_token(&hm(&[("cookie", "bifrost_session=")])), None);
+        assert_eq!(cookie(&h, SESSION_COOKIE).as_deref(), Some("abc"));
+        assert_eq!(
+            cookie(&hm(&[("cookie", "bifrost_session=")]), SESSION_COOKIE),
+            None
+        );
+        // Over HTTPS only the __Host- cookie counts.
+        assert_eq!(cookie(&h, SECURE_SESSION_COOKIE), None);
+        // …and it's set the way the prefix requires.
+        let v = session_cookie_value(true, Some("t"));
+        assert!(v.starts_with("__Host-bifrost_session=t; Path=/;"), "{v}");
+        assert!(v.ends_with("; Secure") && !v.contains("Domain"), "{v}");
+        let v = session_cookie_value(false, None);
+        assert!(
+            v.starts_with("bifrost_session=; Path=/;") && v.contains("Max-Age=0"),
+            "{v}"
+        );
+        assert!(!v.contains("Secure"), "{v}");
+        let h = hm(&[("cookie", "bifrost_session=x; __Host-bifrost_session=y")]);
+        assert_eq!(
+            cookie(&h, SECURE_SESSION_COOKIE).as_deref(),
+            Some("y")
+        );
     }
 
     #[test]
