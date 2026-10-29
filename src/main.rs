@@ -39,6 +39,7 @@ mod runtime;
 mod sandbox;
 mod scope;
 mod season;
+mod seccomp;
 mod selfupdate;
 mod web;
 mod worlds;
