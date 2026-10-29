@@ -257,6 +257,7 @@ mod tests {
             "/invite/abc",
             "/reset/abc",
             "/hint",
+            "/minesweeper/new",
         ] {
             assert!(rule_for(&post, p).is_some(), "{p}");
         }

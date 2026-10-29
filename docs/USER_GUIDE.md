@@ -136,7 +136,7 @@ them with your game's client or patcher.
 
 If the season's moderators turned it on, **minesweeper** on the season board
 earns bonus hints. Each board you clear without hitting a mine earns one
-bonus hint, up to five in any 24 hours. Every board can be solved without
+bonus hint, up to five a season in any 24 hours. Every board can be solved without
 guessing. Bonus hints are spent automatically when you're out of hint points.
 
 The minesweeper linked from the home page is free play: it counts toward the

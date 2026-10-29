@@ -935,10 +935,6 @@ pub async fn send_hint(
         .map_err(|_| "hint timed out".to_string())?
 }
 
-/// Run a server command as an admin, over a short-lived connection: connect as
-/// `connect_name` (any valid slot), `!admin login <admin_password>`, then
-/// `!admin <command>` (e.g. `/send Player Item`, `/hint Player Item`). Returns
-/// each `CommandResult` line's message parts for the caller to render.
 /// Quote one argument for an AP server command, which the server splits with
 /// Python's `shlex` (so a name with spaces or quotes stays one argument).
 pub fn quote_arg(s: &str) -> String {
@@ -950,6 +946,10 @@ pub fn quote_arg(s: &str) -> String {
     }
 }
 
+/// Run a server command as an admin, over a short-lived connection: connect as
+/// `connect_name` (any valid slot), `!admin login <admin_password>`, then
+/// `!admin <command>` (e.g. `/send Player Item`, `/hint Player Item`). Returns
+/// each `CommandResult` line's message parts for the caller to render.
 pub async fn send_admin(
     url: &str,
     connect_name: &str,
@@ -957,9 +957,62 @@ pub async fn send_admin(
     admin_password: &str,
     command: &str,
 ) -> Result<Vec<Vec<Value>>, String> {
+    admin_exchange(url, connect_name, password, admin_password, command)
+        .await
+        .map(|out| {
+            out.into_iter()
+                .filter(|(ty, _)| ty != "Chat")
+                .map(|(_, data)| data)
+                .collect()
+        })
+        .map_err(|e| e.message)
+}
+
+/// Why an admin command failed, and whether it had been sent by then (after
+/// which it may well have taken effect).
+#[derive(Debug)]
+pub struct AdminFail {
+    pub message: String,
+    pub sent: bool,
+}
+
+/// The server's replies to an admin command: the texts it sent back to us
+/// alone (`AdminCommandResult`, e.g. "No hints found."). Empty when the
+/// command produced only broadcasts (as a placed hint does).
+pub async fn send_admin_results(
+    url: &str,
+    connect_name: &str,
+    password: &str,
+    admin_password: &str,
+    command: &str,
+) -> Result<Vec<String>, AdminFail> {
+    let out = admin_exchange(url, connect_name, password, admin_password, command).await?;
+    Ok(out
+        .into_iter()
+        .filter(|(ty, _)| ty == "AdminCommandResult")
+        .map(|(_, data)| {
+            data.iter()
+                .filter_map(|d| d.get("text").and_then(Value::as_str))
+                .collect()
+        })
+        .collect())
+}
+
+/// Every PrintJSON (type, parts) the server sent after the command.
+async fn admin_exchange(
+    url: &str,
+    connect_name: &str,
+    password: &str,
+    admin_password: &str,
+    command: &str,
+) -> Result<Vec<(String, Vec<Value>)>, AdminFail> {
     if admin_password.is_empty() {
-        return Err("no server admin password configured (BIFROST_AP_ADMIN_PASSWORD)".into());
+        return Err(AdminFail {
+            message: "no server admin password configured (BIFROST_AP_ADMIN_PASSWORD)".into(),
+            sent: false,
+        });
     }
+    let sent = std::sync::atomic::AtomicBool::new(false);
     let fut = async {
         let (ws, _) = tokio_tungstenite::connect_async(url)
             .await
@@ -967,7 +1020,7 @@ pub async fn send_admin(
         let (mut tx, mut rx) = ws.split();
         let mut login_sent = false;
         let mut collecting = false;
-        let mut out: Vec<Vec<Value>> = Vec::new();
+        let mut out: Vec<(String, Vec<Value>)> = Vec::new();
         loop {
             // Once the command is issued, gather its output until a short idle gap.
             let next = if collecting {
@@ -1029,9 +1082,7 @@ pub async fn send_admin(
                             // /send_location an ItemSend, /hint a Hint, etc. Capture
                             // every broadcast except plain player Chat so the console
                             // shows what happened. (`!admin …` isn't echoed to chat.)
-                            if ty != "Chat" {
-                                out.push(data.clone());
-                            }
+                            out.push((ty.to_string(), data.clone()));
                         } else if ty == "CommandResult" {
                             // The login reply (from the client command processor).
                             let txt: String = data
@@ -1041,6 +1092,8 @@ pub async fn send_admin(
                             if txt.to_lowercase().contains("successful") {
                                 let say =
                                     json!([{ "cmd": "Say", "text": format!("!admin {command}") }]);
+                                // From here on the command may have run.
+                                sent.store(true, std::sync::atomic::Ordering::SeqCst);
                                 tx.send(Message::Text(say.to_string().into()))
                                     .await
                                     .map_err(|e| format!("send command: {e}"))?;
@@ -1054,11 +1107,16 @@ pub async fn send_admin(
                 }
             }
         }
-        Ok(out)
+        Ok::<_, String>(out)
     };
-    tokio::time::timeout(Duration::from_secs(14), fut)
-        .await
-        .map_err(|_| "admin timed out".to_string())?
+    let fail = |message: String| AdminFail {
+        message,
+        sent: sent.load(std::sync::atomic::Ordering::SeqCst),
+    };
+    match tokio::time::timeout(Duration::from_secs(14), fut).await {
+        Ok(r) => r.map_err(fail),
+        Err(_) => Err(fail("admin timed out".to_string())),
+    }
 }
 
 /// Resolve a PrintJSON `data` list into readable text, using the board's slot

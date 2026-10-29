@@ -62,7 +62,7 @@ pub(crate) fn mine_key(account: i64, free: bool, season: i64, kind: mine::Kind) 
     (account, format!("{mode}{}", kind.id()))
 }
 
-/// Bonus hints a player can earn per season in any 24 hours.
+/// Bonus hints a player can earn in any 24 hours, in each season.
 pub(crate) const DAILY_BONUS_HINTS: i64 = 5;
 
 #[derive(Deserialize)]
@@ -234,12 +234,16 @@ pub(crate) async fn mine_reveal(
     // stats panel shows the matching scope.
     let stats_html = if over {
         let scope: Option<i64> = if f.free { None } else { Some(ctx.id) };
-        st.db
+        // A win that couldn't be recorded doesn't count toward the daily cap,
+        // so it earns nothing either.
+        let recorded = st
+            .db
             .record_mine_result(scope, my_id, kind, won, elapsed_ms)
             .await;
         // At most DAILY_BONUS_HINTS a day: every board is solvable without
         // guessing, so a script could otherwise win them without end.
         if won
+            && recorded
             && !f.free
             && ctx.row.minesweeper_enabled
             && ctx.state() != db::State::Archived

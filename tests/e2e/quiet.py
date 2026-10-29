@@ -43,6 +43,26 @@ try:
     hint = lambda: (j := post(root, f"/s/{sid}/hint", data=dict(slot_id=ids[0], item="Map Width")).json()) \
         and "isn't live" not in j.get("message", "") and j                             # hint relay, once the tracker's in
     check("hint relay answers", wait_for(hint, 60, 2))
+
+    # Bonus hints: out of AP points, a credit places exactly one hint; a name
+    # that isn't one of this world's items is refused and the credit kept.
+    import sqlite3
+    def credits():
+        with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
+            row = c.execute("SELECT credits FROM hint_credit WHERE season = ?", (sid,)).fetchone()
+            return row[0] if row else 0
+    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
+        acct = c.execute("SELECT id FROM account WHERE username = 'root'").fetchone()[0]
+        c.execute("INSERT INTO hint_credit (season, account_id, credits) VALUES (?, ?, 1)", (sid, acct))
+    j = post(root, f"/s/{sid}/hint", data=dict(slot_id=ids[0], item="Everything")).json()
+    check("a bonus hint for a non-item is refused", not j.get("ok") and "exact item name" in j.get("message", ""), j)
+    check("…and keeps the credit", credits() == 1)
+    # (Retried while the seed's metadata is still loading: until then nothing
+    # can be pinned to a location, and the credit is kept.)
+    bonus = lambda: (j := post(root, f"/s/{sid}/hint", data=dict(slot_id=ids[0], item="Map Width")).json()) \
+        and "exact item name" not in j.get("message", "") and j
+    j = wait_for(bonus, 90, 3) or {}
+    check("a bonus hint is placed for one credit", j.get("ok") and "spent a bonus hint" in j.get("message", "") and credits() == 0, j)
     r = post(root, f"/s/{sid}/admin/console", data=dict(cmd="/players")).json()  # admin relay
     check("admin relay works", r.get("ok"), r)
 
