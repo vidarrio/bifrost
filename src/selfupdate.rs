@@ -154,7 +154,7 @@ async fn install(exe: &Path, partial: &Path, target: &str) -> Result<PathBuf, St
 
 /// The public key release checksums are signed with (ed25519, hex). Its
 /// private half is the release workflow's `RELEASE_SIGNING_KEY` secret.
-const RELEASE_KEY: &str = "";
+const RELEASE_KEY: &str = "ff564625fda5723ffdefddfb226b1d0748ac658b5f46acf795caec1822b44c24";
 
 /// The key to check releases against: [`RELEASE_KEY`], or for tests a
 /// `BIFROST_UPDATE_KEY` (as `BIFROST_GITHUB_API` points at a test server).
