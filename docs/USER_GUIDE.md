@@ -136,9 +136,10 @@ them with your game's client or patcher.
 
 If the season's moderators turned it on, **minesweeper** on the season board
 earns bonus hints. Each board you clear without hitting a mine earns one
-bonus hint, up to five a season in any 24 hours. Every board can be solved
-without guessing. Bonus hints are spent automatically when you're out of hint
-points.
+bonus hint, up to a daily limit the moderators set for the season (five
+unless they change it; the minesweeper page says what it is), counted over
+any 24 hours. Every board can be solved without guessing. Bonus hints are
+spent automatically when you're out of hint points.
 
 The minesweeper linked from the home page is free play: it counts toward the
 all-time leaderboard but earns no hints.
@@ -197,7 +198,9 @@ The season console has six tabs:
 - **Connection.** The season's address, its **connect password** (changing it
   restarts the server), and a **server console** for Archipelago server
   commands, such as `/send`, with auto-completion.
-- **Options.** Turn the season's minesweeper and the common game on or off.
+- **Options.** Turn the season's minesweeper and the common game on or off,
+  and set how many bonus hints a player can earn from minesweeper in any
+  24 hours (5 by default; 0 means no limit).
 - **Archive & reset.**
   - **Archive this season.** Finishes it: the server is stopped, a summary is
     written for *Past seasons*, and the season's files are packed into a

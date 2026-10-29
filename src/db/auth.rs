@@ -607,17 +607,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recent_mine_wins_count_seasonal_wins_only() {
+    async fn the_bonus_hint_cap_counts_hints_earned() {
         let db = db().await;
         let season = db.create_season("S", None, 0).await.unwrap();
+        let other = db.create_season("T", None, 0).await.unwrap();
         let id = db.create_account("Ann", "h", Role::User, 0).await.unwrap();
-        for won in [true, true, false] {
-            db.record_mine_result(Some(season), id, "standard", won, 1000)
-                .await;
+        let win = |s: Option<i64>, won: bool| {
+            let db = db.clone();
+            async move {
+                db.record_mine_result(s, id, "standard", won, 1000)
+                    .await
+                    .unwrap()
+            }
+        };
+        let award = |r: i64, s: i64, cap: i64| {
+            let db = db.clone();
+            async move { db.award_mine_hint(r, s, id, cap, 3600).await.unwrap() }
+        };
+        // Two hints a day: the first two wins earn one each.
+        assert_eq!(
+            award(win(Some(season), true).await, season, 2).await,
+            Some(1)
+        );
+        assert_eq!(
+            award(win(Some(season), true).await, season, 2).await,
+            Some(2)
+        );
+        // Wins past the cap earn nothing, and don't count against later days:
+        // only wins that earned a hint do.
+        for _ in 0..3 {
+            assert_eq!(award(win(Some(season), true).await, season, 2).await, None);
         }
-        db.record_mine_result(None, id, "standard", true, 1000)
-            .await;
-        assert_eq!(db.recent_mine_wins(season, id, 3600).await, 2);
+        let earned: i64 = sqlx::query_scalar("SELECT SUM(earned) FROM mine_result")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(earned, 2);
+        // A loss, a free-play win, or a win already rewarded earn nothing.
+        assert_eq!(award(win(Some(season), false).await, season, 0).await, None);
+        assert_eq!(award(win(None, true).await, season, 0).await, None);
+        let r = win(Some(season), true).await;
+        assert_eq!(award(r, season, 0).await, Some(3));
+        assert_eq!(award(r, season, 0).await, None);
+        // Each season has its own cap; 0 is no limit.
+        assert_eq!(award(win(Some(other), true).await, other, 1).await, Some(1));
+        assert_eq!(award(win(Some(other), true).await, other, 1).await, None);
+        for n in 2..=4 {
+            assert_eq!(award(win(Some(other), true).await, other, 0).await, Some(n));
+        }
     }
 
     #[tokio::test]

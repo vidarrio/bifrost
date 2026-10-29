@@ -739,6 +739,37 @@ pub(crate) async fn admin_minesweeper(
 }
 
 #[derive(Deserialize)]
+pub(crate) struct MineHintsForm {
+    pub(crate) hints: String,
+}
+
+/// Set the season's cap on minesweeper bonus hints (0 = no cap).
+pub(crate) async fn admin_mine_hints(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Form(f): Form<MineHintsForm>,
+) -> Response {
+    let (_me, is_admin) = ctx.ident(&me);
+    if !is_admin {
+        return Redirect::to(&ctx.url("/admin")).into_response();
+    }
+    let max = db::MAX_DAILY_HINTS;
+    match f.hints.trim().parse::<i64>() {
+        Ok(n) if (0..=max).contains(&n) => {
+            let _ = st.db.set_mine_daily_hints(ctx.id, n).await;
+            Redirect::to(&ctx.url("/admin")).into_response()
+        }
+        _ => render::notice(
+            &format!("The bonus-hint limit must be a whole number from 0 (no limit) to {max}."),
+            false,
+            "admin",
+        )
+        .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
 pub(crate) struct OutputQuery {
     pub(crate) file: String,
 }

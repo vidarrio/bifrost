@@ -163,6 +163,7 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         .route("/admin/console", post(admin_console))
         .route("/admin/connect-password", post(admin_connect_password))
         .route("/admin/minesweeper", post(admin_minesweeper))
+        .route("/admin/minesweeper/hints", post(admin_mine_hints))
         .route("/admin/mc", post(admin_mc))
         .route("/admin/output", get(admin_output))
         .route("/admin/archive-season", post(admin_archive_season))

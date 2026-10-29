@@ -15,8 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Seasonal minesweeper earns at most five bonus hints per player per season in
-  any 24 hours, and new boards are rate-limited.
+- Seasonal minesweeper earns a limited number of bonus hints per player in
+  any 24 hours: five unless the season's moderators change it on the
+  season's Options tab (0 means no limit). New boards are rate-limited.
+
+### Fixed
+
+- Clearing a minesweeper board says whether it earned a bonus hint: free play
+  and wins past the daily limit no longer claim one.
 
 ### Security
 
