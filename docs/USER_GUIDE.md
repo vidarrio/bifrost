@@ -484,14 +484,20 @@ sudo systemctl restart bifrost
 ```
 
 `bifrost update` downloads the release's file and checks it against the
-release's `SHA256SUMS`. It then puts the file in place of the running one and
+release's `SHA256SUMS`, whose signature must verify against the release key
+built into Bifrost. It then puts the file in place of the running one and
 keeps the old one next to it as `<name>.previous`. Run it as the user that
 owns the file, with the service's data directory (`BIFROST_DATA`): it uses
 the Python unpacked there, and with another data directory it would unpack a
 fresh copy first. Bifrost keeps running the old version until you restart it.
-The checksum comes from the same release as the file, so it catches a broken
-download, not a tampered release. To check the file's build provenance as
-well, download it yourself and verify it as described under
+The signature is made by the release workflow with a key only the project
+holds, so a file swapped into a release, or a release published without that
+key, is refused. Releases before signing started (0.1.0 to 0.1.2) can't be
+installed this way; download those by hand. Those versions' own
+`bifrost update` doesn't check signatures yet, so install the first signed
+release by hand too, and put it in place of the old one. From then on
+`bifrost update` checks every release. To check a file's build provenance,
+download it yourself and verify it as described under
 [Installing](#installing).
 
 **Going back.** If a new version misbehaves, stop it, restore the

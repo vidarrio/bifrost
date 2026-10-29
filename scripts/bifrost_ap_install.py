@@ -9,7 +9,8 @@
         line is a JSON result.
     bifrost_ap_install.py download <owner/repo> <tag> <asset> <dest>
         Download a release asset to <dest>, checked against the release's
-        SHA256SUMS (`bifrost update`). The last line is a JSON result.
+        SHA256SUMS (`bifrost update`). The last line is a JSON result, with
+        SHA256SUMS and SHA256SUMS.sig in hex for Bifrost to verify.
 
 Runs under a plain Python 3 (not an AP venv), outside the sandbox: it needs
 the network, and it's what builds the interpreter the sandboxed helpers use.
@@ -84,7 +85,11 @@ def download(repo, tag, asset, dest):
         if name not in urls:
             raise RuntimeError(f"release {tag} has no {name}")
     want = None
-    for line in fetch(urls["SHA256SUMS"], 1 << 20).decode().splitlines():
+    sums = fetch(urls["SHA256SUMS"], 1 << 20)
+    # Its signature, when the release has one; Bifrost checks it (the helper
+    # only passes the bytes on).
+    sig = fetch(urls["SHA256SUMS.sig"], 4096) if "SHA256SUMS.sig" in urls else None
+    for line in sums.decode().splitlines():
         parts = line.split()
         if len(parts) == 2 and parts[1].lstrip("*") == asset:
             want = parts[0].lower()
@@ -110,7 +115,11 @@ def download(repo, tag, asset, dest):
     except BaseException:
         os.remove(dest)
         raise
-    print(json.dumps({"ok": True, "size": size, "sha256": want}))
+    print(json.dumps({
+        "ok": True, "size": size, "sha256": want,
+        "sums": sums.hex(),
+        "sig": sig.hex() if sig is not None else None,
+    }))
 
 
 def unpack(blob, dest):

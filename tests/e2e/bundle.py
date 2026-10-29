@@ -74,8 +74,32 @@ releases = {
     "v9.9.9": (blob, sha),
     "v9.9.8": (blob, "0" * 64),           # the checksum doesn't match
     "v9.9.7": (b"#!/bin/sh\n", None),     # not a bundle (checksum matches)
+    "v9.9.6": (blob, sha),                # no SHA256SUMS.sig
+    "v9.9.5": (blob, sha),                # signed with another key
 }
 listing = []
+
+# Release signing, as the release workflow does it: an ed25519 key signs
+# SHA256SUMS; Bifrost is pointed at the test key's public half.
+keys = os.path.join(srv.data, "..", "bundle-keys")
+subprocess.run(["rm", "-rf", keys])
+os.makedirs(keys)
+for k in ("good", "other"):
+    subprocess.run(["openssl", "genpkey", "-algorithm", "ed25519", "-out", os.path.join(keys, k)], check=True)
+pub = subprocess.run(["openssl", "pkey", "-in", os.path.join(keys, "good"), "-pubout", "-outform", "DER"],
+                     capture_output=True, check=True).stdout[-32:].hex()
+
+
+def sums_for(tag):
+    body, digest = releases[tag]
+    return f"{digest or hashlib.sha256(body).hexdigest()}  bifrost-{tag[1:]}-x86_64-linux\n".encode()
+
+
+def sign(data, key):
+    f = os.path.join(keys, "msg")
+    open(f, "wb").write(data)
+    return subprocess.run(["openssl", "pkeyutl", "-sign", "-rawin", "-inkey", os.path.join(keys, key), "-in", f],
+                          capture_output=True, check=True).stdout
 
 
 class FakeGitHub(http.server.BaseHTTPRequestHandler):
@@ -98,13 +122,16 @@ class FakeGitHub(http.server.BaseHTTPRequestHandler):
         elif m and m.group(1) in releases:
             tag = m.group(1)
             names = [f"bifrost-{tag[1:]}-x86_64-linux", "SHA256SUMS"]
+            if tag != "v9.9.6":
+                names.append("SHA256SUMS.sig")
             assets = [{"name": n, "browser_download_url": f"{base}/dl/{tag}/{n}"} for n in names]
             self.send(json.dumps({"tag_name": tag, "assets": assets}).encode(), "application/json")
         elif d and d.group(1) in releases:
-            body, digest = releases[d.group(1)]
+            body, _ = releases[d.group(1)]
             if d.group(2) == "SHA256SUMS":
-                digest = digest or hashlib.sha256(body).hexdigest()
-                self.send(f"{digest}  bifrost-{d.group(1)[1:]}-x86_64-linux\n".encode())
+                self.send(sums_for(d.group(1)))
+            elif d.group(2) == "SHA256SUMS.sig":
+                self.send(sign(sums_for(d.group(1)), "other" if d.group(1) == "v9.9.5" else "good"))
             else:
                 self.send(body)
         else:
@@ -118,7 +145,7 @@ subprocess.run(["rm", "-rf", upd])
 os.makedirs(upd)
 exe = os.path.join(upd, "bifrost")
 shutil.copy2(BUNDLE, exe)
-env = dict(srv.env, BIFROST_GITHUB_API=f"http://127.0.0.1:{api.server_port}")
+env = dict(srv.env, BIFROST_GITHUB_API=f"http://127.0.0.1:{api.server_port}", BIFROST_UPDATE_KEY=pub)
 
 
 def update(*args):
@@ -134,6 +161,12 @@ try:
     check("update with no newer release says so", r.returncode == 0 and "newest release" in r.stdout, (r.stdout, r.stderr))
     r = update("9.9.8")
     check("a download that doesn't match SHA256SUMS is refused", r.returncode == 1 and "doesn't match" in r.stderr, r.stderr)
+    check("…and changes nothing", unchanged(), os.listdir(upd))
+    r = update("9.9.6")
+    check("an unsigned release is refused", r.returncode == 1 and "isn't signed" in r.stderr, r.stderr)
+    check("…and changes nothing", unchanged(), os.listdir(upd))
+    r = update("9.9.5")
+    check("a release signed with another key is refused", r.returncode == 1 and "not a genuine release" in r.stderr, r.stderr)
     check("…and changes nothing", unchanged(), os.listdir(upd))
     r = update("9.9.7")
     check("a file that isn't a single-file build is refused", r.returncode == 1 and "isn't a Bifrost single-file build" in r.stderr, r.stderr)
