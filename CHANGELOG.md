@@ -12,7 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sign-in backoff can't be raced by parallel attempts, and counts an IPv6
   client by its /64, as rate limits now do too. Guessing one account from many
   addresses gets a short wait per attempt (at most a minute); a browser that
-  has signed in to that account before skips it. The backoff's and the rate
+  has signed in to that account before (with its current password) skips it.
+  Under a flood of sign-ins to many accounts, new browsers may also wait up to
+  a minute. The backoff's and the rate
   limiter's memory is bounded, and password hashing runs a few at a time.
 
 ## [0.1.2] - 2026-10-29

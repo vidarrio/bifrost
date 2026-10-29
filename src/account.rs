@@ -114,16 +114,19 @@ async fn login_post(
     let known = found
         .as_ref()
         .is_some_and(|(_, h)| st.auth.known_device(&headers, &username, h));
-    if let Err(wait) = st.auth.throttle.attempt(&username, client, known) {
-        let msg = format!("Too many failed attempts — try again in {wait} s.");
-        return render::login_page(&rd, &username, Some(&msg)).into_response();
-    }
+    let attempt = match st.auth.throttle.attempt(&username, client, known) {
+        Ok(a) => a,
+        Err(wait) => {
+            let msg = format!("Too many failed attempts — try again in {wait} s.");
+            return render::login_page(&rd, &username, Some(&msg)).into_response();
+        }
+    };
     // Verify against a dummy hash when the user doesn't exist, so a miss takes
     // as long as a wrong password.
     let hash = found.as_ref().map(|(_, h)| h.clone());
     let Some(ok) = auth::verify_password_async(hash, f.password).await else {
         // The password was never checked: don't count it.
-        st.auth.throttle.cancel(&username, client);
+        st.auth.throttle.cancel(&attempt);
         return render::login_page(&rd, &username, Some(auth::BUSY)).into_response();
     };
     match found {

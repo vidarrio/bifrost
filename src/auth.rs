@@ -365,7 +365,9 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 ///
 /// An attempt counts as a failure until it succeeds ([`Throttle::attempt`]
 /// before checking the password), so parallel attempts can't slip past the
-/// backoff. Entries idle for an hour are forgotten; past [`THROTTLE_PRUNE_AT`]
+/// backoff. While a map is full, keys without an entry share one overflow
+/// entry, held to the per-username schedule (at most a minute) and skipped by
+/// known browsers. Entries idle for an hour are forgotten; past [`THROTTLE_PRUNE_AT`]
 /// entries they're pruned (at most once a minute), and past
 /// [`THROTTLE_MAX`] the older half goes. In memory only — a restart forgives.
 #[derive(Default)]
@@ -378,6 +380,13 @@ struct ThrottleState {
     clients: HashMap<ThrottleKey, (u32, Instant)>,
     names: HashMap<String, (u32, Instant)>,
     pruned: Option<Instant>,
+}
+
+/// The entries an attempt was counted against (for [`Throttle::cancel`]).
+#[derive(Debug)]
+pub struct Attempt {
+    ckey: ThrottleKey,
+    nkey: String,
 }
 
 impl ThrottleState {
@@ -438,7 +447,12 @@ impl Throttle {
     /// the attempt is counted as a failure until [`succeed`](Self::succeed).
     /// `known` (a browser that signed in to this account before) skips the
     /// per-username wait.
-    pub fn attempt(&self, username: &str, client: Option<IpAddr>, known: bool) -> Result<(), u64> {
+    pub fn attempt(
+        &self,
+        username: &str,
+        client: Option<IpAddr>,
+        known: bool,
+    ) -> Result<Attempt, u64> {
         let mut st = self.state.lock().unwrap();
         let now = Instant::now();
         let busy = st.clients.len().max(st.names.len()) > THROTTLE_PRUNE_AT;
@@ -462,27 +476,36 @@ impl Throttle {
             }
             _ => Duration::ZERO,
         };
-        let mut w = wait(st.clients.get(&ckey), Self::lockout);
+        // The shared overflow entries are held to the gentle per-username
+        // schedule, and a known browser skips them, so keeping the maps full
+        // can't lock the owner out.
+        let overflow = ckey.0 == OVERFLOW;
+        let mut w = if overflow && known {
+            Duration::ZERO
+        } else if overflow {
+            wait(st.clients.get(&ckey), Self::name_lockout)
+        } else {
+            wait(st.clients.get(&ckey), Self::lockout)
+        };
         if !known {
             w = w.max(wait(st.names.get(&nkey), Self::name_lockout));
         }
         if !w.is_zero() {
             return Err(w.as_secs().max(1));
         }
-        Self::bump(st.clients.entry(ckey).or_insert((0, now)), now);
-        Self::bump(st.names.entry(nkey).or_insert((0, now)), now);
-        Ok(())
+        Self::bump(st.clients.entry(ckey.clone()).or_insert((0, now)), now);
+        Self::bump(st.names.entry(nkey.clone()).or_insert((0, now)), now);
+        Ok(Attempt { ckey, nkey })
     }
 
     /// Take back an attempt that never got to check the password (the
     /// server was too busy).
-    pub fn cancel(&self, username: &str, client: Option<IpAddr>) {
+    pub fn cancel(&self, attempt: &Attempt) {
         let mut st = self.state.lock().unwrap();
-        let (ckey, nkey) = st.keys(Self::key(username, client));
-        if let Some(e) = st.clients.get_mut(&ckey) {
+        if let Some(e) = st.clients.get_mut(&attempt.ckey) {
             e.0 = e.0.saturating_sub(1);
         }
-        if let Some(e) = st.names.get_mut(&nkey) {
+        if let Some(e) = st.names.get_mut(&attempt.nkey) {
             e.0 = e.0.saturating_sub(1);
         }
     }
@@ -1124,20 +1147,19 @@ mod tests {
         let (me, them) = (ip("10.0.0.1"), ip("10.0.0.2"));
         // Each attempt counts until it succeeds.
         for _ in 0..FREE_FAILURES {
-            assert_eq!(t.attempt("Ann", them, false), Ok(()));
+            assert!(t.attempt("Ann", them, false).is_ok());
         }
         assert!(t.attempt("ANN", them, false).is_err());
         // Another client's failures don't lock the account for me.
-        assert_eq!(t.attempt("ann", me, false), Ok(()));
+        assert!(t.attempt("ann", me, false).is_ok());
         t.succeed("ann", me);
         assert!(
             t.attempt("ann", them, false).is_err(),
             "my sign-in doesn't forgive them"
         );
         t.forgive("ANN");
-        assert_eq!(
-            t.attempt("ann", them, false),
-            Ok(()),
+        assert!(
+            t.attempt("ann", them, false).is_ok(),
             "a reset forgives everyone"
         );
         assert_eq!(Throttle::lockout(100), Duration::from_secs(15 * 60));
@@ -1148,7 +1170,7 @@ mod tests {
         let t = Throttle::default();
         for i in 0..FREE_FAILURES {
             let addr = format!("2001:db8:1:2::{}", i + 1);
-            assert_eq!(t.attempt("ann", Some(addr.parse().unwrap()), false), Ok(()));
+            assert!(t.attempt("ann", Some(addr.parse().unwrap()), false).is_ok());
         }
         assert!(
             t.attempt("ann", Some("2001:db8:1:2::ff".parse().unwrap()), false)
@@ -1161,7 +1183,7 @@ mod tests {
         let t = Throttle::default();
         for i in 0..NAME_FREE_FAILURES {
             let addr = format!("10.1.{}.{}", i / 250, i % 250 + 1);
-            assert_eq!(t.attempt("ann", Some(addr.parse().unwrap()), false), Ok(()));
+            assert!(t.attempt("ann", Some(addr.parse().unwrap()), false).is_ok());
         }
         // A fresh client now waits briefly; never longer than a minute.
         let fresh = Some("10.9.9.9".parse().unwrap());
@@ -1169,10 +1191,10 @@ mod tests {
         assert!((1..=60).contains(&wait), "{wait}");
         assert_eq!(Throttle::name_lockout(1000), Duration::from_secs(60));
         // A browser that signed in to the account before isn't held up.
-        assert_eq!(t.attempt("ann", fresh, true), Ok(()));
+        assert!(t.attempt("ann", fresh, true).is_ok());
         // The owner's sign-in clears the username's count.
         t.succeed("ann", fresh);
-        assert_eq!(t.attempt("ann", fresh, false), Ok(()));
+        assert!(t.attempt("ann", fresh, false).is_ok());
     }
 
     #[test]
@@ -1192,7 +1214,7 @@ mod tests {
         let t = Throttle::default();
         for i in 0..NAME_FREE_FAILURES {
             let ip = std::net::Ipv4Addr::from(0x0a01_0000 + i);
-            assert_eq!(t.attempt("ann", Some(ip.into()), false), Ok(()));
+            assert!(t.attempt("ann", Some(ip.into()), false).is_ok());
         }
         for i in 0..(THROTTLE_MAX as u32 + 5_000) {
             let ip = std::net::Ipv4Addr::from(0x0b00_0000 + i);
@@ -1204,14 +1226,32 @@ mod tests {
     }
 
     #[test]
+    fn a_full_map_cant_lock_the_owner_out() {
+        let t = Throttle::default();
+        for i in 0..(THROTTLE_MAX as u32 + 50) {
+            let ip = std::net::Ipv4Addr::from(0x0c00_0000 + i);
+            let _ = t.attempt(&format!("u{i}"), Some(ip.into()), false);
+        }
+        let fresh = Some("10.250.0.1".parse().unwrap());
+        // A new browser waits at most a minute; a known one not at all.
+        if let Err(w) = t.attempt("ann", fresh, false) {
+            assert!(w <= 60, "{w}");
+        }
+        for _ in 0..50 {
+            let _ = t.attempt("x", Some("10.251.0.1".parse().unwrap()), false);
+        }
+        assert!(t.attempt("ann", fresh, true).is_ok());
+    }
+
+    #[test]
     fn a_cancelled_attempt_isnt_counted() {
         let t = Throttle::default();
         let me = Some("10.0.0.1".parse().unwrap());
         for _ in 0..FREE_FAILURES + 3 {
-            assert_eq!(t.attempt("ann", me, false), Ok(()));
-            t.cancel("ann", me);
+            let a = t.attempt("ann", me, false).unwrap();
+            t.cancel(&a);
         }
-        assert_eq!(t.attempt("ann", me, false), Ok(()));
+        assert!(t.attempt("ann", me, false).is_ok());
     }
 
     #[test]
