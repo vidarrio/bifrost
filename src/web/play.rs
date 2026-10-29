@@ -180,11 +180,15 @@ pub(crate) async fn hint_post(
             // shared points, so skip the bonus fallback there.
             // The credit is spent first (atomically), so parallel requests
             // can't place several hints for one; it's refunded on failure.
-            if !is_common
-                && rejected_for_points(&text)
-                && creds > 0
-                && st.db.spend_credit(season, my_id).await
-            {
+            // One bonus hint per player at a time, so two requests don't pick
+            // the same location from the board before either is placed.
+            let wants_bonus = !is_common && rejected_for_points(&text) && creds > 0;
+            let _one_at_a_time = if wants_bonus {
+                Some(ap::keyed_lock(&format!("bonus:{season}:{my_id}")).await)
+            } else {
+                None
+            };
+            if wants_bonus && st.db.spend_credit(season, my_id).await {
                 // Hint exactly ONE copy — the first unhinted location of this
                 // item — by its location id, so the server matches nothing
                 // fuzzily and no item group or second copy comes along. An item

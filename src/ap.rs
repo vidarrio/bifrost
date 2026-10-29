@@ -8,7 +8,7 @@
 //! `activity.rs`); the only live `PrintJSON` handling left here is flipping a
 //! slot to "goaled" immediately so the board doesn't wait for the next poll.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -977,8 +977,9 @@ pub struct AdminFail {
 }
 
 /// The server's replies to an admin command: the texts it sent back to us
-/// alone (`AdminCommandResult`, e.g. "No hints found."). Empty when the
-/// command produced only broadcasts (as a placed hint does).
+/// alone — `AdminCommandResult` (e.g. "No hints found.") or, if the command
+/// never ran, `CommandResult` (e.g. another admin session took over). Empty
+/// when the command produced only broadcasts (as a placed hint does).
 pub async fn send_admin_results(
     url: &str,
     connect_name: &str,
@@ -989,7 +990,7 @@ pub async fn send_admin_results(
     let out = admin_exchange(url, connect_name, password, admin_password, command).await?;
     Ok(out
         .into_iter()
-        .filter(|(ty, _)| ty == "AdminCommandResult")
+        .filter(|(ty, _)| ty == "AdminCommandResult" || ty == "CommandResult")
         .map(|(_, data)| {
             data.iter()
                 .filter_map(|d| d.get("text").and_then(Value::as_str))
@@ -998,7 +999,23 @@ pub async fn send_admin_results(
         .collect())
 }
 
-/// Every PrintJSON (type, parts) the server sent after the command.
+/// A lock per key (e.g. one per AP server), held across an async exchange.
+pub async fn keyed_lock(key: &str) -> tokio::sync::OwnedMutexGuard<()> {
+    static LOCKS: std::sync::LazyLock<
+        std::sync::Mutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
+    > = std::sync::LazyLock::new(Default::default);
+    let lock = {
+        let mut map = LOCKS.lock().unwrap();
+        // Drop locks nobody holds or waits for, so the map stays small.
+        map.retain(|_, l| std::sync::Arc::strong_count(l) > 1);
+        map.entry(key.to_string()).or_default().clone()
+    };
+    lock.lock_owned().await
+}
+
+/// Every PrintJSON (type, parts) the server sent after the command. One
+/// exchange per server at a time: the server keeps a single admin session, so
+/// a second login in between would leave the first command refused.
 async fn admin_exchange(
     url: &str,
     connect_name: &str,
@@ -1012,6 +1029,7 @@ async fn admin_exchange(
             sent: false,
         });
     }
+    let _one_at_a_time = keyed_lock(&format!("admin:{url}")).await;
     let sent = std::sync::atomic::AtomicBool::new(false);
     let fut = async {
         let (ws, _) = tokio_tungstenite::connect_async(url)
