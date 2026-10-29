@@ -287,7 +287,7 @@ impl Sandbox {
                     "custom apworlds are refused — install bubblewrap or use the container image"
                 };
                 format!(
-                    "minimal — resource limits + timeouts only{} ({why}); {custom}",
+                    "minimal — resource limits + timeouts{}, no namespace jail ({why}); {custom}",
                     self.filter_note()
                 )
             }
