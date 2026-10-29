@@ -234,7 +234,8 @@ To cut release `X.Y.Z`:
      with a pre-release suffix, like `0.2.0-rc.1`, gets only `X.Y.Z-…` and is
      marked as a pre-release);
    - builds the native bundle and its `SHA256SUMS`, and signs `SHA256SUMS`
-     with the `RELEASE_SIGNING_KEY` secret (an ed25519 key in PEM form) into
+     with the `RELEASE_SIGNING_KEY` secret of the `release` environment
+     (which only `v*` tags can deploy to; an ed25519 key in PEM form) into
      `SHA256SUMS.sig`, after checking it matches the public key in
      `src/selfupdate.rs` (`RELEASE_KEY`). `bifrost update` refuses a release
      whose signature doesn't verify, so a release can't go out without it;

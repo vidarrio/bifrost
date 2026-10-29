@@ -46,7 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Releases' `SHA256SUMS` are signed, and `bifrost update` only installs a
   release whose signature verifies against the key built into Bifrost, so a
   file swapped into a release is refused. Releases before signing started
-  can't be installed with `bifrost update`.
+  can't be installed with `bifrost update`. Since `bifrost update` in 0.1.0 to
+  0.1.2 doesn't check signatures, install this release by hand and verify it
+  (user guide, Updating Bifrost).
 
 ## [0.1.2] - 2026-10-29
 

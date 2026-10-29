@@ -9,7 +9,8 @@
         line is a JSON result.
     bifrost_ap_install.py download <owner/repo> <tag> <asset> <dest>
         Download a release asset to <dest>, checked against the release's
-        SHA256SUMS (`bifrost update`). The last line is a JSON result.
+        SHA256SUMS (`bifrost update`). The last line is a JSON result, with
+        SHA256SUMS and SHA256SUMS.sig in hex for Bifrost to verify.
 
 Runs under a plain Python 3 (not an AP venv), outside the sandbox: it needs
 the network, and it's what builds the interpreter the sandboxed helpers use.

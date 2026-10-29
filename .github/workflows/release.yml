@@ -144,12 +144,42 @@ jobs:
           ls -l
           sha256sum bifrost-* > SHA256SUMS
           cat SHA256SUMS
+      - name: Attest the bundle's provenance
+        if: github.event_name == 'push'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/bifrost-*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bundle
+          path: dist/
+          if-no-files-found: error
+
+  # Signing runs apart from the build, in the `release` environment: only a
+  # vX.Y.Z tag can deploy to it, so its secret is out of reach of workflows
+  # on branches and pull requests.
+  sign:
+    if: github.event_name == 'push'
+    needs: release-bundle
+    runs-on: ubuntu-26.04
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: src/selfupdate.rs
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bundle
+          path: dist
       # `bifrost update` only takes a release whose SHA256SUMS verifies against
       # the public key in src/selfupdate.rs (RELEASE_KEY). The private key is
       # the RELEASE_SIGNING_KEY secret (PEM); a real release can't go out
       # without it, and the signature is checked against the compiled-in key.
       - name: Sign the checksums
-        if: github.event_name == 'push'
         working-directory: dist
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
@@ -174,19 +204,16 @@ jobs:
             "302a300506032b6570032100$want" > "$pub"
           openssl pkeyutl -verify -rawin -pubin -keyform DER -inkey "$pub" \
             -in SHA256SUMS -sigfile SHA256SUMS.sig
-      - name: Attest the bundle's provenance
-        if: github.event_name == 'push'
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: dist/bifrost-*
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: bundle
-          path: dist/
+          name: signature
+          path: dist/SHA256SUMS.sig
           if-no-files-found: error
 
   publish:
-    needs: [release-notes, release-image, release-bundle]
+    needs: [release-notes, release-image, release-bundle, sign]
+    # `sign` only runs for a tag; a pull request's dry run goes on without it.
+    if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-26.04
     permissions:
       contents: write
@@ -207,12 +234,17 @@ jobs:
             echo
             echo "Container image: \`podman pull $IMAGE:$VERSION\` (see the [user guide](https://github.com/$GITHUB_REPOSITORY/blob/v$VERSION/docs/USER_GUIDE.md#installing))."
             echo
-            echo "Native single file (Linux x86_64): \`bifrost-$VERSION-x86_64-linux\` below, with \`SHA256SUMS\`."
+            echo "Native single file (Linux x86_64): \`bifrost-$VERSION-x86_64-linux\` below, with \`SHA256SUMS\` and its signature \`SHA256SUMS.sig\` (checked by \`bifrost update\`)."
             echo
             echo "Both carry build provenance: \`gh attestation verify <file> -R $GITHUB_REPOSITORY\`, or \`gh attestation verify oci://$IMAGE:$VERSION -R $GITHUB_REPOSITORY\`."
           } > notes.md
           files=(artifacts/bundle/bifrost-* artifacts/bundle/SHA256SUMS)
-          [ -e artifacts/bundle/SHA256SUMS.sig ] && files+=(artifacts/bundle/SHA256SUMS.sig)
+          if [ -e artifacts/signature/SHA256SUMS.sig ]; then
+            files+=(artifacts/signature/SHA256SUMS.sig)
+          elif [ "$GITHUB_EVENT_NAME" = push ]; then
+            echo "::error::SHA256SUMS.sig is missing"
+            exit 1
+          fi
           ls -l "${files[@]}"
           cat notes.md
           if [ "$GITHUB_EVENT_NAME" != push ]; then
