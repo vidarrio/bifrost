@@ -1009,8 +1009,12 @@ pub async fn send_admin_results(
         .collect())
 }
 
-/// The server's replies when an `!admin` command didn't run at all.
-const ADMIN_NOT_RUN: &[&str] = &["You must first login", "Remote administration is disabled"];
+/// The server's replies when an `!admin` command didn't run at all (they
+/// always start the message, unlike names in a broadcast).
+const ADMIN_NOT_RUN: &[&str] = &[
+    "You must first login",
+    "Sorry, Remote administration is disabled",
+];
 
 /// A lock per key (e.g. one per AP server), held across an async exchange.
 pub async fn keyed_lock(key: &str) -> tokio::sync::OwnedMutexGuard<()> {
