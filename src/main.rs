@@ -375,6 +375,7 @@ async fn init_auth(db: &db::Db) -> auth::Auth {
         fwd,
         secure_cookies: config::var("BIFROST_INSECURE_COOKIES").as_deref() != Some("1"),
         throttle: auth::Throttle::default(),
+        device_key: db.device_key().await,
         setup_token: Mutex::new(setup_token),
     });
     // Drop expired sessions now and then.

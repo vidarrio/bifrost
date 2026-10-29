@@ -350,57 +350,190 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// Failed-login backoff per username *and client*: after [`FREE_FAILURES`],
-/// each further failure doubles the lockout (from 30 s, capped at 15 min).
-/// Keyed by client too, so one client's failures can't lock an account for
-/// everyone (the per-IP rate limit bounds guessing across usernames). In
-/// memory only — a restart forgives.
+/// Failed-login backoff, per username and client, plus a softer one per
+/// username across all clients.
+///
+/// - Per client: after [`FREE_FAILURES`], each further failure doubles the
+///   lockout (from 30 s, capped at 15 min). Keyed by client too, so one
+///   client's failures can't lock an account for everyone. A client is an IPv4
+///   address or an IPv6 /64 ([`crate::net::client_group`]).
+/// - Per username: after [`NAME_FREE_FAILURES`] failures from any clients,
+///   attempts on that username wait a little (doubling, capped at a minute).
+///   That bounds guessing spread over many addresses. Browsers that have
+///   signed in to the account before ([`AuthInner::known_device`]) skip this
+///   wait, so nobody can keep the owner out by re-arming it.
+///
+/// An attempt counts as a failure until it succeeds ([`Throttle::attempt`]
+/// before checking the password), so parallel attempts can't slip past the
+/// backoff. While a map is full, keys without an entry share one overflow
+/// entry, held to the per-username schedule (at most a minute) and skipped by
+/// known browsers. Entries idle for an hour are forgotten; past [`THROTTLE_PRUNE_AT`]
+/// entries they're pruned (at most once a minute), and past
+/// [`THROTTLE_MAX`] the older half goes. In memory only — a restart forgives.
 #[derive(Default)]
 pub struct Throttle {
-    failures: Mutex<HashMap<ThrottleKey, (u32, Instant)>>,
+    state: Mutex<ThrottleState>,
 }
 
-/// (username, client address).
+#[derive(Default)]
+struct ThrottleState {
+    clients: HashMap<ThrottleKey, (u32, Instant)>,
+    names: HashMap<String, (u32, Instant)>,
+    pruned: Option<Instant>,
+}
+
+/// The entries an attempt was counted against (for [`Throttle::cancel`]).
+#[derive(Debug)]
+pub struct Attempt {
+    ckey: ThrottleKey,
+    nkey: String,
+}
+
+impl ThrottleState {
+    /// The entries a key counts against: its own, or once a map is full and
+    /// it has none there, the shared overflow entry.
+    fn keys(&self, key: ThrottleKey) -> (ThrottleKey, String) {
+        let name = if self.names.contains_key(&key.0) || self.names.len() < THROTTLE_MAX {
+            key.0.clone()
+        } else {
+            OVERFLOW.to_string()
+        };
+        let client = if self.clients.contains_key(&key) || self.clients.len() < THROTTLE_MAX {
+            key
+        } else {
+            (OVERFLOW.to_string(), None)
+        };
+        (client, name)
+    }
+}
+
+/// (username, client group).
 type ThrottleKey = (String, Option<IpAddr>);
 
 const FREE_FAILURES: u32 = 5;
+const NAME_FREE_FAILURES: u32 = 20;
+/// How long a failure is remembered without further attempts.
+const FORGET_AFTER: Duration = Duration::from_secs(3600);
+/// Entries kept before idle ones are pruned, and the most kept at all.
+const THROTTLE_PRUNE_AT: usize = 10_000;
+const THROTTLE_MAX: usize = 50_000;
+
+/// Keep at most `max` entries of `map`: those with the most failures, then
+/// the most recent. A spray of one-off keys can't push out an account or a
+/// client that's actually being guessed at.
+fn keep_heaviest<K: std::hash::Hash + Eq>(map: &mut HashMap<K, (u32, Instant)>, max: usize) {
+    if map.len() <= max {
+        return;
+    }
+    let mut v: Vec<_> = map.drain().collect();
+    v.sort_unstable_by_key(|e| std::cmp::Reverse(e.1));
+    v.truncate(max);
+    map.extend(v);
+}
+
+/// Where failures for keys that no longer fit are counted (no valid username
+/// contains a NUL), so a full map still holds new keys back as one.
+const OVERFLOW: &str = "\0overflow";
 
 impl Throttle {
-    fn key(username: &str, client: Option<IpAddr>) -> (String, Option<IpAddr>) {
-        (username.to_lowercase(), client)
+    fn key(username: &str, client: Option<IpAddr>) -> ThrottleKey {
+        (
+            username.to_lowercase(),
+            client.map(crate::net::client_group),
+        )
     }
-    /// Seconds until `client` may try `username` again (0 = now).
-    pub fn wait(&self, username: &str, client: Option<IpAddr>) -> u64 {
-        let map = self.failures.lock().unwrap();
-        let Some(&(n, last)) = map.get(&Self::key(username, client)) else {
-            return 0;
+
+    /// Start a sign-in attempt: `Err(seconds)` while `client` must wait, else
+    /// the attempt is counted as a failure until [`succeed`](Self::succeed).
+    /// `known` (a browser that signed in to this account before) skips the
+    /// per-username wait.
+    pub fn attempt(
+        &self,
+        username: &str,
+        client: Option<IpAddr>,
+        known: bool,
+    ) -> Result<Attempt, u64> {
+        let mut st = self.state.lock().unwrap();
+        let now = Instant::now();
+        let busy = st.clients.len().max(st.names.len()) > THROTTLE_PRUNE_AT;
+        if busy
+            && st
+                .pruned
+                .is_none_or(|t| now.duration_since(t) >= Duration::from_secs(60))
+        {
+            st.pruned = Some(now);
+            st.clients
+                .retain(|_, e| now.duration_since(e.1) < FORGET_AFTER);
+            st.names
+                .retain(|_, e| now.duration_since(e.1) < FORGET_AFTER);
+            keep_heaviest(&mut st.clients, THROTTLE_MAX / 2);
+            keep_heaviest(&mut st.names, THROTTLE_MAX / 2);
+        }
+        let (ckey, nkey) = st.keys(Self::key(username, client));
+        let wait = |e: Option<&(u32, Instant)>, lockout: fn(u32) -> Duration| match e {
+            Some(&(n, last)) if now.duration_since(last) < FORGET_AFTER => {
+                lockout(n).saturating_sub(now.duration_since(last))
+            }
+            _ => Duration::ZERO,
         };
-        let lock = Self::lockout(n);
-        lock.saturating_sub(last.elapsed()).as_secs()
+        // The shared overflow entries are held to the gentle per-username
+        // schedule, and a known browser skips them, so keeping the maps full
+        // can't lock the owner out.
+        let overflow = ckey.0 == OVERFLOW;
+        let mut w = if overflow && known {
+            Duration::ZERO
+        } else if overflow {
+            wait(st.clients.get(&ckey), Self::name_lockout)
+        } else {
+            wait(st.clients.get(&ckey), Self::lockout)
+        };
+        if !known {
+            w = w.max(wait(st.names.get(&nkey), Self::name_lockout));
+        }
+        if !w.is_zero() {
+            return Err(w.as_secs().max(1));
+        }
+        Self::bump(st.clients.entry(ckey.clone()).or_insert((0, now)), now);
+        Self::bump(st.names.entry(nkey.clone()).or_insert((0, now)), now);
+        Ok(Attempt { ckey, nkey })
     }
-    pub fn fail(&self, username: &str, client: Option<IpAddr>) {
-        let mut map = self.failures.lock().unwrap();
-        let e = map
-            .entry(Self::key(username, client))
-            .or_insert((0, Instant::now()));
+
+    /// Take back an attempt that never got to check the password (the
+    /// server was too busy).
+    pub fn cancel(&self, attempt: &Attempt) {
+        let mut st = self.state.lock().unwrap();
+        if let Some(e) = st.clients.get_mut(&attempt.ckey) {
+            e.0 = e.0.saturating_sub(1);
+        }
+        if let Some(e) = st.names.get_mut(&attempt.nkey) {
+            e.0 = e.0.saturating_sub(1);
+        }
+    }
+
+    fn bump(e: &mut (u32, Instant), now: Instant) {
+        if now.duration_since(e.1) >= FORGET_AFTER {
+            e.0 = 0;
+        }
         e.0 += 1;
-        e.1 = Instant::now();
+        e.1 = now;
     }
-    /// A successful sign-in: forgive that client.
+
+    /// A successful sign-in: forgive that client, and the username's count.
     pub fn succeed(&self, username: &str, client: Option<IpAddr>) {
-        self.failures
-            .lock()
-            .unwrap()
-            .remove(&Self::key(username, client));
+        let key = Self::key(username, client);
+        let mut st = self.state.lock().unwrap();
+        st.names.remove(&key.0);
+        st.clients.remove(&key);
     }
+
     /// A password reset: forgive every client.
     pub fn forgive(&self, username: &str) {
         let u = username.to_lowercase();
-        self.failures
-            .lock()
-            .unwrap()
-            .retain(|(name, _), _| *name != u);
+        let mut st = self.state.lock().unwrap();
+        st.clients.retain(|(name, _), _| *name != u);
+        st.names.remove(&u);
     }
+
     fn lockout(failures: u32) -> Duration {
         if failures < FREE_FAILURES {
             return Duration::ZERO;
@@ -408,7 +541,99 @@ impl Throttle {
         let secs = 30u64.saturating_mul(1 << (failures - FREE_FAILURES).min(10));
         Duration::from_secs(secs.min(15 * 60))
     }
+
+    fn name_lockout(failures: u32) -> Duration {
+        if failures < NAME_FREE_FAILURES {
+            return Duration::ZERO;
+        }
+        let secs = 1u64 << (failures - NAME_FREE_FAILURES).min(6);
+        Duration::from_secs(secs.min(60))
+    }
 }
+
+/// Password hashing (argon2, 19 MiB each) runs a few at a time, so a burst of
+/// sign-ins, invites or resets can't take the host's memory. The permit
+/// travels with the blocking job, so it's held until argon2 is done even if
+/// the request goes away; and only so many may queue for one.
+static HASHING: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+static HASHING_QUEUE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+const HASHING_QUEUE_MAX: usize = 64;
+
+pub const BUSY: &str = "The server is busy — try again in a moment.";
+
+/// Run `f` on the blocking pool under a hashing permit; `None` when too many
+/// are already waiting.
+async fn hashing<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    use std::sync::atomic::Ordering;
+    /// A place in the queue, given back however the wait ends (also when
+    /// the request is dropped while waiting).
+    struct Queued;
+    impl Drop for Queued {
+        fn drop(&mut self) {
+            HASHING_QUEUE.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    if HASHING_QUEUE.fetch_add(1, Ordering::SeqCst) >= HASHING_QUEUE_MAX {
+        HASHING_QUEUE.fetch_sub(1, Ordering::SeqCst);
+        return None;
+    }
+    let queued = Queued;
+    let permit = HASHING.acquire().await;
+    drop(queued);
+    let permit = permit.ok()?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        f()
+    })
+    .await
+    .ok()
+}
+
+/// Hash a password off the async runtime, a few at a time.
+pub async fn hash_password_async(password: String) -> Result<String, String> {
+    hashing(move || hash_password(&password))
+        .await
+        .unwrap_or_else(|| Err(BUSY.into()))
+}
+
+/// Verify a password off the async runtime, a few at a time (against the
+/// dummy hash when `hash` is `None`, so a missing user takes as long).
+/// `None` when the server is too busy to try.
+pub async fn verify_password_async(hash: Option<String>, password: String) -> Option<bool> {
+    hashing(move || verify_password(hash.as_deref().unwrap_or_else(|| dummy_hash()), &password))
+        .await
+}
+
+/// The known-device MAC for an account.
+fn device_mac(key: &str, username: &str, password_hash: &str) -> [u8; 32] {
+    let msg = format!("device:{}:{password_hash}", username.to_lowercase());
+    hmac_sha256(key.as_bytes(), msg.as_bytes())
+}
+
+/// HMAC-SHA256 (RFC 2104).
+fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
+    let mut k = [0u8; 64];
+    if key.len() > 64 {
+        k[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        k[..key.len()].copy_from_slice(key);
+    }
+    let pad = |b: u8| k.map(|x| x ^ b);
+    let inner = Sha256::new()
+        .chain_update(pad(0x36))
+        .chain_update(msg)
+        .finalize();
+    Sha256::new()
+        .chain_update(pad(0x5c))
+        .chain_update(inner)
+        .finalize()
+        .into()
+}
+
+/// Remembers that this browser signed in to an account: exempts it from the
+/// per-username sign-in wait ([`Throttle`]).
+pub const DEVICE_COOKIE: &str = "bifrost_device";
+const DEVICE_TTL: Duration = Duration::from_secs(365 * 24 * 3600);
 
 /// Everything the middleware and the account handlers share.
 pub struct AuthInner {
@@ -419,6 +644,9 @@ pub struct AuthInner {
     /// off for plain-HTTP development).
     pub secure_cookies: bool,
     pub throttle: Throttle,
+    /// Key for the known-device cookie ([`DEVICE_COOKIE`]), kept in the
+    /// database so it survives restarts.
+    pub device_key: String,
     /// First-run setup token while no account exists (native mode).
     pub setup_token: Mutex<Option<String>>,
 }
@@ -437,6 +665,35 @@ impl AuthInner {
             None => format!("{SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure}"),
         };
         HeaderValue::from_str(&v).expect("cookie is ascii")
+    }
+
+    /// Bound to the account's current password hash too, so a password
+    /// reset retires every browser's tag.
+    fn device_tag(&self, username: &str, password_hash: &str) -> String {
+        hex(&device_mac(&self.device_key, username, password_hash))
+    }
+
+    /// `Set-Cookie` value marking this browser as one that signed in as
+    /// `username` (with the password whose hash is `password_hash`). Sent only
+    /// to `/login`, the one page that reads it.
+    pub fn device_cookie(&self, username: &str, password_hash: &str) -> HeaderValue {
+        let secure = if self.secure_cookies { "; Secure" } else { "" };
+        let v = format!(
+            "{DEVICE_COOKIE}={}; Path=/login; HttpOnly; SameSite=Lax; Max-Age={}{secure}",
+            self.device_tag(username, password_hash),
+            DEVICE_TTL.as_secs()
+        );
+        HeaderValue::from_str(&v).expect("cookie is ascii")
+    }
+
+    /// Has this browser signed in as `username`, with its current password?
+    pub fn known_device(&self, headers: &HeaderMap, username: &str, password_hash: &str) -> bool {
+        cookie(headers, DEVICE_COOKIE).is_some_and(|t| {
+            ct_eq(
+                t.as_bytes(),
+                self.device_tag(username, password_hash).as_bytes(),
+            )
+        })
     }
 
     /// Where "sign in" / "sign out" point for this mode (the header bar).
@@ -472,13 +729,18 @@ impl AuthInner {
 
 /// The session token from the request's cookies, if any.
 pub fn session_token(headers: &HeaderMap) -> Option<String> {
+    cookie(headers, SESSION_COOKIE)
+}
+
+/// A cookie's value from the request, if set and non-empty.
+fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
         .get_all(header::COOKIE)
         .iter()
         .filter_map(|v| v.to_str().ok())
         .flat_map(|v| v.split(';'))
         .filter_map(|kv| kv.trim().split_once('='))
-        .find(|(k, _)| *k == SESSION_COOKIE)
+        .find(|(k, _)| *k == name)
         .map(|(_, v)| v.to_string())
         .filter(|v| !v.is_empty())
 }
@@ -881,29 +1143,133 @@ mod tests {
     #[test]
     fn throttle_backs_off_then_forgives() {
         let t = Throttle::default();
-        let (me, them) = (
-            Some("10.0.0.1".parse().unwrap()),
-            Some("10.0.0.2".parse().unwrap()),
-        );
-        for _ in 0..FREE_FAILURES - 1 {
-            t.fail("Ann", them);
-        }
-        assert_eq!(t.wait("ann", them), 0);
-        t.fail("ann", them);
-        assert!(t.wait("ANN", them) > 0);
-        // Another client's failures don't lock the account for me.
-        assert_eq!(t.wait("ann", me), 0);
-        t.succeed("ann", me);
-        assert!(t.wait("ann", them) > 0, "my sign-in doesn't forgive them");
-        t.succeed("ann", them);
-        assert_eq!(t.wait("ann", them), 0);
-        t.fail("ann", them);
+        let ip = |s: &str| Some(s.parse().unwrap());
+        let (me, them) = (ip("10.0.0.1"), ip("10.0.0.2"));
+        // Each attempt counts until it succeeds.
         for _ in 0..FREE_FAILURES {
-            t.fail("ann", them);
+            assert!(t.attempt("Ann", them, false).is_ok());
         }
+        assert!(t.attempt("ANN", them, false).is_err());
+        // Another client's failures don't lock the account for me.
+        assert!(t.attempt("ann", me, false).is_ok());
+        t.succeed("ann", me);
+        assert!(
+            t.attempt("ann", them, false).is_err(),
+            "my sign-in doesn't forgive them"
+        );
         t.forgive("ANN");
-        assert_eq!(t.wait("ann", them), 0, "a reset forgives everyone");
+        assert!(
+            t.attempt("ann", them, false).is_ok(),
+            "a reset forgives everyone"
+        );
         assert_eq!(Throttle::lockout(100), Duration::from_secs(15 * 60));
+    }
+
+    #[test]
+    fn throttle_counts_an_ipv6_64_as_one_client() {
+        let t = Throttle::default();
+        for i in 0..FREE_FAILURES {
+            let addr = format!("2001:db8:1:2::{}", i + 1);
+            assert!(t.attempt("ann", Some(addr.parse().unwrap()), false).is_ok());
+        }
+        assert!(
+            t.attempt("ann", Some("2001:db8:1:2::ff".parse().unwrap()), false)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn throttle_slows_guessing_spread_over_many_clients() {
+        let t = Throttle::default();
+        for i in 0..NAME_FREE_FAILURES {
+            let addr = format!("10.1.{}.{}", i / 250, i % 250 + 1);
+            assert!(t.attempt("ann", Some(addr.parse().unwrap()), false).is_ok());
+        }
+        // A fresh client now waits briefly; never longer than a minute.
+        let fresh = Some("10.9.9.9".parse().unwrap());
+        let wait = t.attempt("ann", fresh, false).unwrap_err();
+        assert!((1..=60).contains(&wait), "{wait}");
+        assert_eq!(Throttle::name_lockout(1000), Duration::from_secs(60));
+        // A browser that signed in to the account before isn't held up.
+        assert!(t.attempt("ann", fresh, true).is_ok());
+        // The owner's sign-in clears the username's count.
+        t.succeed("ann", fresh);
+        assert!(t.attempt("ann", fresh, false).is_ok());
+    }
+
+    #[test]
+    fn throttle_memory_stays_bounded() {
+        let t = Throttle::default();
+        for i in 0..(THROTTLE_MAX as u32 + 5_000) {
+            let ip = std::net::Ipv4Addr::from(0x0a00_0000 + i);
+            let _ = t.attempt(&format!("u{i}"), Some(ip.into()), false);
+        }
+        let st = t.state.lock().unwrap();
+        // (Plus the one shared overflow entry each.)
+        assert!(st.clients.len() <= THROTTLE_MAX + 1 && st.names.len() <= THROTTLE_MAX + 1);
+    }
+
+    #[test]
+    fn spraying_names_doesnt_evict_an_account_under_attack() {
+        let t = Throttle::default();
+        for i in 0..NAME_FREE_FAILURES {
+            let ip = std::net::Ipv4Addr::from(0x0a01_0000 + i);
+            assert!(t.attempt("ann", Some(ip.into()), false).is_ok());
+        }
+        for i in 0..(THROTTLE_MAX as u32 + 5_000) {
+            let ip = std::net::Ipv4Addr::from(0x0b00_0000 + i);
+            let _ = t.attempt(&format!("u{i}"), Some(ip.into()), false);
+        }
+        // Still counted: a new browser still waits.
+        let fresh = Some("10.200.0.1".parse().unwrap());
+        assert!(t.attempt("ann", fresh, false).is_err());
+    }
+
+    #[test]
+    fn a_full_map_cant_lock_the_owner_out() {
+        let t = Throttle::default();
+        for i in 0..(THROTTLE_MAX as u32 + 50) {
+            let ip = std::net::Ipv4Addr::from(0x0c00_0000 + i);
+            let _ = t.attempt(&format!("u{i}"), Some(ip.into()), false);
+        }
+        let fresh = Some("10.250.0.1".parse().unwrap());
+        // A new browser waits at most a minute; a known one not at all.
+        if let Err(w) = t.attempt("ann", fresh, false) {
+            assert!(w <= 60, "{w}");
+        }
+        for _ in 0..50 {
+            let _ = t.attempt("x", Some("10.251.0.1".parse().unwrap()), false);
+        }
+        assert!(t.attempt("ann", fresh, true).is_ok());
+    }
+
+    #[test]
+    fn a_cancelled_attempt_isnt_counted() {
+        let t = Throttle::default();
+        let me = Some("10.0.0.1".parse().unwrap());
+        for _ in 0..FREE_FAILURES + 3 {
+            let a = t.attempt("ann", me, false).unwrap();
+            t.cancel(&a);
+        }
+        assert!(t.attempt("ann", me, false).is_ok());
+    }
+
+    #[test]
+    fn device_cookie_is_per_account_and_keyed() {
+        let tag = |key, user, pw| device_mac(key, user, pw);
+        assert_eq!(tag("k", "Ann", "h"), tag("k", "ann", "h"));
+        assert_ne!(tag("k", "ann", "h"), tag("k", "bob", "h"));
+        assert_ne!(tag("k", "ann", "h"), tag("other", "ann", "h"));
+        assert_ne!(
+            tag("k", "ann", "h"),
+            tag("k", "ann", "h2"),
+            "a reset retires it"
+        );
+        // RFC 4231 test case 2.
+        assert_eq!(
+            hex(&hmac_sha256(b"Jefe", b"what do ya want for nothing?")),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
     }
 
     #[test]

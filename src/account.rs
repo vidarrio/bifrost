@@ -52,9 +52,7 @@ fn with_cookie(to: &str, cookie: axum::http::HeaderValue) -> Response {
 }
 
 async fn hash(password: String) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || auth::hash_password(&password))
-        .await
-        .map_err(|e| e.to_string())?
+    auth::hash_password_async(password).await
 }
 
 /// Shared checks for a chosen password + its confirmation.
@@ -106,27 +104,44 @@ async fn login_post(
         &headers,
         peer.map(|p| p.0.0.ip()),
     );
-    let wait = st.auth.throttle.wait(&username, client);
-    if wait > 0 {
-        let msg = format!("Too many failed attempts — try again in {wait} s.");
-        return render::login_page(&rd, &username, Some(&msg)).into_response();
+    // Usernames are at most 32 bytes: anything longer can't sign in, and
+    // isn't worth remembering.
+    if !auth::valid_username(&username) {
+        return render::login_page(&rd, &username, Some("Wrong username or password."))
+            .into_response();
     }
     let found = st.auth.db.login_lookup(&username).await;
+    let known = found
+        .as_ref()
+        .is_some_and(|(_, h)| st.auth.known_device(&headers, &username, h));
+    let attempt = match st.auth.throttle.attempt(&username, client, known) {
+        Ok(a) => a,
+        Err(wait) => {
+            let msg = format!("Too many failed attempts — try again in {wait} s.");
+            return render::login_page(&rd, &username, Some(&msg)).into_response();
+        }
+    };
     // Verify against a dummy hash when the user doesn't exist, so a miss takes
     // as long as a wrong password.
-    let hash = found
-        .as_ref()
-        .map(|(_, h)| h.clone())
-        .unwrap_or_else(|| auth::dummy_hash().to_string());
-    let password = f.password;
-    let ok = tokio::task::spawn_blocking(move || auth::verify_password(&hash, &password))
-        .await
-        .unwrap_or(false);
+    let hash = found.as_ref().map(|(_, h)| h.clone());
+    let Some(ok) = auth::verify_password_async(hash, f.password).await else {
+        // The password was never checked: don't count it.
+        st.auth.throttle.cancel(&attempt);
+        return render::login_page(&rd, &username, Some(auth::BUSY)).into_response();
+    };
     match found {
-        Some((id, _)) if ok => {
+        Some((id, hash)) if ok => {
             st.auth.throttle.succeed(&username, client);
             match st.auth.start_session(id).await {
-                Ok(cookie) => with_cookie(&rd, cookie),
+                // Appended, not inserted: both cookies must be sent.
+                Ok(cookie) => (
+                    axum::response::AppendHeaders([
+                        (header::SET_COOKIE, cookie),
+                        (header::SET_COOKIE, st.auth.device_cookie(&username, &hash)),
+                    ]),
+                    Redirect::to(&rd),
+                )
+                    .into_response(),
                 Err(e) => {
                     render::login_page(&rd, &username, Some(&format!("Couldn't sign in: {e}")))
                         .into_response()
@@ -134,7 +149,7 @@ async fn login_post(
             }
         }
         _ => {
-            st.auth.throttle.fail(&username, client);
+            // Already counted by `attempt`.
             render::login_page(&rd, &username, Some("Wrong username or password.")).into_response()
         }
     }
