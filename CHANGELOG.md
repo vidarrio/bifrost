@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the hint. The free hint names one exact location, so it can't reveal several
   items or, through a slot name with spaces, target another player. An item
   name that can't be matched exactly isn't hinted for free.
+- Over HTTPS the session cookie is now `__Host-bifrost_session`, which
+  browsers only accept from this host, so a sibling subdomain can't plant one.
+  Everyone signs in once more after upgrading.
+- Switching the sign-in mode (`bifrost auth mode`) ends every session, so old
+  sessions don't come back after switching back.
 
 ## [0.1.2] - 2026-10-29
 

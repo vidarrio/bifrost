@@ -297,6 +297,14 @@ impl Db {
         Ok(())
     }
 
+    /// End every session (e.g. when the sign-in mode changes).
+    pub async fn end_all_sessions(&self) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM session")
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn purge_expired_sessions(&self, now: i64) {
         let _ = sqlx::query("DELETE FROM session WHERE expires_at <= ?")
             .bind(now)
@@ -610,6 +618,18 @@ mod tests {
         db.record_mine_result(None, id, "standard", true, 1000)
             .await;
         assert_eq!(db.recent_mine_wins(season, id, 3600).await, 2);
+    }
+
+    #[tokio::test]
+    async fn ending_all_sessions_signs_everyone_out() {
+        let db = db().await;
+        let a = db.create_account("Ann", "h", Role::User, 0).await.unwrap();
+        let b = db.create_account("Bob", "h", Role::User, 0).await.unwrap();
+        db.create_session("ta", a, 0, 100).await.unwrap();
+        db.create_session("tb", b, 0, 100).await.unwrap();
+        db.end_all_sessions().await.unwrap();
+        assert!(db.session_principal("ta", 50).await.is_none());
+        assert!(db.session_principal("tb", 50).await.is_none());
     }
 
     #[tokio::test]

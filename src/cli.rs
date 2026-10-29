@@ -150,11 +150,23 @@ async fn set_mode(db: &Db, mode: &str) -> i32 {
             Err(e) => eprintln!("warning: forward-auth config: {e}"),
         }
     }
+    let changed = db.auth_mode().await != mode;
     match db.set_auth_mode(mode).await {
         Ok(()) => {
+            // Sessions from before a switch don't come back with a later one.
+            if changed && let Err(e) = db.end_all_sessions().await {
+                eprintln!("auth mode set, but ending the old sessions failed: {e}");
+                return 1;
+            }
             println!(
-                "auth mode set to {} — restart Bifrost to apply",
-                mode.as_str()
+                "auth mode set to {} — restart Bifrost now to apply it{}",
+                mode.as_str(),
+                if changed {
+                    " (everyone signs in again; sessions made before the restart \
+                     won't work in the new mode)"
+                } else {
+                    ""
+                }
             );
             0
         }

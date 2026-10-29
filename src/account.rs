@@ -156,10 +156,18 @@ async fn login_post(
 }
 
 async fn logout(State(st): State<AppState>, headers: axum::http::HeaderMap) -> Response {
-    if let Some(t) = auth::session_token(&headers) {
+    if let Some(t) = st.auth.session_token(&headers) {
         st.auth.db.end_session(&auth::token_hash(&t)).await;
     }
-    with_cookie("/", st.auth.session_cookie(None))
+    let mut resp = with_cookie("/", st.auth.session_cookie(None));
+    if st.auth.secure_cookies {
+        // Clear the pre-`__Host-` cookie an older version may have left.
+        resp.headers_mut().append(
+            header::SET_COOKIE,
+            axum::http::HeaderValue::from_static("bifrost_session=; Path=/; Max-Age=0; Secure"),
+        );
+    }
+    resp
 }
 
 // ---------------------------------------------------------------- first run
@@ -172,7 +180,7 @@ struct SetupQuery {
 /// Is `token` the current first-run setup token?
 fn setup_token_ok(st: &AppState, token: &str) -> bool {
     let cur = st.auth.setup_token.lock().unwrap();
-    matches!(cur.as_deref(), Some(t) if !token.is_empty() && t == token)
+    matches!(cur.as_deref(), Some(t) if !token.is_empty() && auth::ct_eq(t.as_bytes(), token.as_bytes()))
 }
 
 async fn setup_get(State(st): State<AppState>, Query(q): Query<SetupQuery>) -> Response {
