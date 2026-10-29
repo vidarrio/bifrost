@@ -1164,10 +1164,7 @@ mod tests {
         );
         assert!(!v.contains("Secure"), "{v}");
         let h = hm(&[("cookie", "bifrost_session=x; __Host-bifrost_session=y")]);
-        assert_eq!(
-            cookie(&h, SECURE_SESSION_COOKIE).as_deref(),
-            Some("y")
-        );
+        assert_eq!(cookie(&h, SECURE_SESSION_COOKIE).as_deref(), Some("y"));
     }
 
     #[test]
