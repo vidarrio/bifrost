@@ -22,6 +22,9 @@ srv = Server("supervisor", port=18192, ap_ports="39172-39174")
 srv.start()
 try:
     root = srv.setup_sysadmin()
+    iso = re.search(r"isolation: (.*)", srv.logtext())
+    check("jobs run under the syscall filter", iso and "syscall filter" in iso.group(1) and "no syscall filter" not in iso.group(1),
+          iso and iso.group(1))
     post(root, "/admin/seasons", data=dict(name="Super"))
     sid = int(re.search(r"/s/(\d+)/admin", get(root, "/admin/seasons").text).group(1))
     post(root, f"/s/{sid}/admin/signups", data=dict(open="1"))

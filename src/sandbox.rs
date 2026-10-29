@@ -18,9 +18,10 @@
 //! Custom (uploaded) apworlds need the strong tier unless the operator opts in
 //! (`BIFROST_ALLOW_UNSANDBOXED_CUSTOM_WORLDS=1`); see [`Sandbox::custom_worlds_allowed`].
 
-use std::ffi::OsString;
+use std::ffi::{CString, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
+use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -53,6 +54,71 @@ pub struct Sandbox {
     allow_unsandboxed_custom: bool,
     /// Why bubblewrap isn't in use (for the posture line), if it isn't.
     weak_reason: Option<String>,
+    /// The syscall filter every job gets ([`crate::seccomp`]), if this build
+    /// has one and it works here.
+    filter: Option<Arc<Filter>>,
+    /// Why the filter was turned off, if it was.
+    filter_off: Option<String>,
+}
+
+/// The syscall filter: its program, a file bubblewrap reads it from, and the
+/// descriptor it's handed over on (`--seccomp`).
+struct Filter {
+    bytes: Vec<u8>,
+    path: CString,
+    fd: libc::c_int,
+}
+
+impl Filter {
+    /// Write the program to `dir` (owner-only, written aside and renamed into
+    /// place) for bubblewrap to read.
+    fn new(dir: &Path) -> Option<Filter> {
+        use std::io::Write;
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::OpenOptionsExt;
+        let bytes = crate::seccomp::bytes()?;
+        let path = dir.join("sandbox-seccomp.bpf");
+        let partial = dir.join(format!(".sandbox-seccomp.bpf.{}", std::process::id()));
+        let _ = std::fs::remove_file(&partial);
+        let written = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&partial)
+            .and_then(|mut f| f.write_all(&bytes))
+            .and_then(|()| std::fs::rename(&partial, &path));
+        if let Err(e) = written {
+            let _ = std::fs::remove_file(&partial);
+            tracing::warn!(
+                "sandbox: couldn't write the syscall filter to {}: {e}",
+                dir.display()
+            );
+            return None;
+        }
+        let path = CString::new(path.as_os_str().as_bytes()).ok()?;
+        Some(Filter {
+            bytes,
+            path,
+            fd: handover_fd(),
+        })
+    }
+}
+
+/// The descriptor the filter is handed to bubblewrap on: the highest one this
+/// process may open (below 4096). Descriptors are handed out lowest first, so
+/// it's free unless the process is at its limit; a job checks before using it.
+fn handover_fd() -> libc::c_int {
+    let mut lim = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: plain syscall on a stack value.
+    let soft = if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) } == 0 {
+        lim.rlim_cur
+    } else {
+        1024
+    };
+    (soft.min(4096) as libc::c_int - 1).max(3)
 }
 
 /// One sandboxed run.
@@ -100,9 +166,12 @@ impl Sandbox {
             generate_limits,
             allow_unsandboxed_custom,
             weak_reason: None,
+            filter: Filter::new(&crate::config::get().data_dir).map(Arc::new),
+            filter_off: None,
         };
         if want == "none" {
             sb.weak_reason = Some("disabled by BIFROST_SANDBOX=none".into());
+            sb.filter = None;
             return sb;
         }
         let bwrap = var("BIFROST_BWRAP")
@@ -113,10 +182,12 @@ impl Sandbox {
                 panic!("BIFROST_SANDBOX=bwrap but bubblewrap (bwrap) isn't installed");
             }
             sb.weak_reason = Some("bubblewrap is not installed".into());
+            sb.check_filter(probe).await;
             return sb;
         };
         sb.bwrap = Some(bwrap);
         sb.tier = Tier::Bubblewrap;
+        sb.check_filter(probe).await;
         match sb.probe(probe).await {
             Ok(()) => sb,
             Err(e) => {
@@ -126,8 +197,35 @@ impl Sandbox {
                 sb.tier = Tier::Limits;
                 sb.bwrap = None;
                 sb.weak_reason = Some(format!("bubblewrap doesn't work here ({e})"));
+                sb.check_filter(probe).await;
                 sb
             }
+        }
+    }
+
+    /// Keep the syscall filter only if jobs still run with it (a bubblewrap
+    /// too old for `--seccomp`, an architecture quirk): tried twice before
+    /// it's given up, and the reason is logged and shown in the posture.
+    async fn check_filter(&mut self, probe: &Path) {
+        if self.filter.is_none() {
+            return;
+        }
+        let mut last = String::new();
+        for _ in 0..2 {
+            match self.probe(probe).await {
+                Ok(()) => return,
+                Err(e) => last = e,
+            }
+        }
+        let filter = self.filter.take();
+        if self.probe(probe).await.is_ok() {
+            tracing::warn!(
+                "sandbox: jobs fail under the syscall filter here ({last}); running without it"
+            );
+            self.filter_off = Some(last);
+        } else {
+            // Failing either way: not the filter's fault.
+            self.filter = filter;
         }
     }
 
@@ -167,9 +265,11 @@ impl Sandbox {
     /// One line for the sysadmin: what protects the host from world code.
     pub fn posture(&self) -> String {
         match self.tier {
-            Tier::Bubblewrap => "strong — bubblewrap: no network for any helper, \
-                                 read-only system, only the season's files writable"
-                .into(),
+            Tier::Bubblewrap => format!(
+                "strong — bubblewrap: no network for any helper, read-only system, \
+                 only the season's files writable{}",
+                self.filter_note()
+            ),
             Tier::Limits => {
                 let why = self
                     .weak_reason
@@ -186,8 +286,19 @@ impl Sandbox {
                 } else {
                     "custom apworlds are refused — install bubblewrap or use the container image"
                 };
-                format!("minimal — resource limits + timeouts only ({why}); {custom}")
+                format!(
+                    "minimal — resource limits + timeouts{}, no namespace jail ({why}); {custom}",
+                    self.filter_note()
+                )
             }
+        }
+    }
+
+    fn filter_note(&self) -> String {
+        match (&self.filter, &self.filter_off) {
+            (Some(_), _) => ", syscall filter".into(),
+            (None, Some(why)) => format!(", no syscall filter ({why})"),
+            (None, None) => String::new(),
         }
     }
 
@@ -215,6 +326,9 @@ impl Sandbox {
             (Tier::Bubblewrap, Some(bwrap)) => {
                 let mut c = Command::new(bwrap);
                 c.args(bwrap_args(job));
+                if let Some(f) = &self.filter {
+                    c.arg("--seccomp").arg(f.fd.to_string());
+                }
                 c.arg("--").arg(job.program).args(&job.args);
                 c
             }
@@ -231,12 +345,33 @@ impl Sandbox {
             .envs(job.env.iter().map(|(k, v)| (*k, v)))
             .stdin(Stdio::null())
             .kill_on_drop(true);
+        let filter = self.filter.clone();
+        let bwrap = self.tier == Tier::Bubblewrap && self.bwrap.is_some();
         // SAFETY: only async-signal-safe libc calls between fork and exec.
         unsafe {
             cmd.pre_exec(move || {
                 // Own session/process group, so a timeout can kill everything
                 // the job spawned.
                 libc::setsid();
+                // Hand bubblewrap the syscall filter on `f.fd` first: the
+                // open-file cap below would make that descriptor invalid.
+                // (Bubblewrap installs it for the job after building the jail,
+                // which needs calls it refuses.) A job that can't have the
+                // filter doesn't run.
+                if let Some(f) = &filter
+                    && bwrap
+                {
+                    if libc::fcntl(f.fd, libc::F_GETFD) != -1 {
+                        return Err(std::io::Error::from_raw_os_error(libc::EBUSY));
+                    }
+                    let fd = libc::open(f.path.as_ptr(), libc::O_RDONLY);
+                    if fd < 0 || libc::dup2(fd, f.fd) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    if fd != f.fd {
+                        libc::close(fd);
+                    }
+                }
                 set_limit(libc::RLIMIT_AS, limits.mem_bytes);
                 if cpu_cap {
                     set_limit(libc::RLIMIT_CPU, limits.cpu_secs);
@@ -253,6 +388,13 @@ impl Sandbox {
                 // itself, so a server isn't held to systemd's default 1024.
                 lower_limit(libc::RLIMIT_NPROC, MAX_PROCS);
                 file_limit(max_files);
+                // Without bubblewrap, the job installs the filter itself, last.
+                if let Some(f) = &filter
+                    && !bwrap
+                    && !crate::seccomp::install(&f.bytes)
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
                 Ok(())
             });
         }
@@ -477,7 +619,25 @@ mod tests {
             },
             allow_unsandboxed_custom: false,
             weak_reason: None,
+            filter: test_filter(),
+            filter_off: None,
         }
+    }
+
+    /// One filter for the whole test run. The program lives in memory; the
+    /// file only matters to bubblewrap, which these tests don't run, so it
+    /// isn't left behind.
+    fn test_filter() -> Option<Arc<Filter>> {
+        static F: OnceLock<Option<Arc<Filter>>> = OnceLock::new();
+        F.get_or_init(|| {
+            let dir =
+                std::env::temp_dir().join(format!("bifrost-sbx-filter-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let f = Filter::new(&dir).map(Arc::new);
+            let _ = std::fs::remove_dir_all(&dir);
+            f
+        })
+        .clone()
     }
 
     fn sh(script: &str) -> Job<'static> {
@@ -538,6 +698,70 @@ mod tests {
             // Soft and hard are both the cap (or the host's lower hard limit).
             assert_eq!(got.split_whitespace().collect::<Vec<_>>(), [&want, &want]);
         }
+    }
+
+    #[tokio::test]
+    async fn syscall_filter_refuses_namespaces_but_not_ordinary_work() {
+        let sb = limits_only();
+        assert!(sb.filter.is_some(), "this build has a filter");
+        let unshare = find_in_path("unshare");
+        let script = match &unshare {
+            Some(u) => format!("echo ok; {} -U true 2>/dev/null; echo $?", u.display()),
+            None => "echo ok; echo 1".into(),
+        };
+        let out = run(sb.command(&sh(&script)), Duration::from_secs(5))
+            .await
+            .unwrap();
+        let got = String::from_utf8_lossy(&out.stdout);
+        let lines: Vec<&str> = got.lines().collect();
+        assert_eq!(lines.first(), Some(&"ok"), "{got}");
+        assert_ne!(lines.get(1), Some(&"0"), "unshare -U went through: {got}");
+    }
+
+    #[tokio::test]
+    async fn syscall_filter_allows_only_some_socket_families() {
+        let Some(py) = find_in_path("python3") else {
+            return;
+        };
+        let sb = limits_only();
+        let script = r#"
+import socket, ctypes
+def tryfam(f, t=socket.SOCK_STREAM):
+    try:
+        socket.socket(f, t).close(); return "ok"
+    except OSError as e:
+        return e.errno
+libc = ctypes.CDLL(None, use_errno=True)
+print(tryfam(socket.AF_INET), tryfam(socket.AF_UNIX), tryfam(40),
+      libc.personality(0xffffffff) >= 0)
+"#;
+        let job = Job {
+            program: &py,
+            args: vec!["-c".into(), script.into()],
+            cwd: Path::new("/"),
+            env: vec![],
+            read: vec![],
+            write: vec![],
+            network: false,
+        };
+        let out = run(sb.command(&job), Duration::from_secs(10))
+            .await
+            .unwrap();
+        let got = String::from_utf8_lossy(&out.stdout);
+        // IP and Unix sockets work; vsock (40) is refused as unsupported; the
+        // personality query works.
+        assert_eq!(
+            got.trim(),
+            format!("ok ok {} True", libc::EAFNOSUPPORT),
+            "{got}"
+        );
+    }
+
+    #[test]
+    fn filter_program_is_well_formed() {
+        let b = crate::seccomp::bytes().unwrap();
+        assert_eq!(b.len() % 8, 0);
+        assert!(b.len() / 8 < 255, "jumps must fit in a byte");
     }
 
     #[tokio::test]

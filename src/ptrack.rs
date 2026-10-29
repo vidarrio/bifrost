@@ -43,8 +43,7 @@ pub fn pack_version(season: i64, ap_slot: i64) -> u64 {
 /// path (memory-only/emulator packs can't be driven server-side). Returns a
 /// summary on success, else an error message suitable for showing the uploader.
 pub fn validate(zip_bytes: &[u8]) -> Result<poptracker::Summary, String> {
-    let tmp = tempfile_path("validate");
-    std::fs::write(&tmp, zip_bytes).map_err(|e| format!("write temp: {e}"))?;
+    let tmp = write_temp("validate", zip_bytes)?;
     let res = (|| {
         let pack = poptracker::Pack::load(&tmp).map_err(|e| e.to_string())?;
         let session = poptracker::Session::new(&pack).map_err(|e| e.to_string())?;
@@ -67,8 +66,7 @@ pub fn install(season: i64, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), String
     let dir = slot_dir(season, ap_slot);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
-    let tmp = tempfile_path("install");
-    std::fs::write(&tmp, zip_bytes).map_err(|e| format!("write temp: {e}"))?;
+    let tmp = write_temp("install", zip_bytes)?;
     let r = poptracker::extract_zip(&tmp, &dir).map_err(|e| e.to_string());
     let _ = std::fs::remove_file(&tmp);
     r?;
@@ -129,10 +127,24 @@ pub fn read_pack_asset(season: i64, ap_slot: i64, rel: &str) -> Option<Vec<u8>> 
     pack.asset(rel)
 }
 
-fn tempfile_path(tag: &str) -> PathBuf {
-    let n = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    std::env::temp_dir().join(format!("bifrost-pack-{tag}-{n}.zip"))
+/// Write an uploaded pack to a new, unguessable, owner-only file in the temp
+/// dir (created fresh, so nothing another local user prepared is followed).
+fn write_temp(tag: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = std::env::temp_dir().join(format!(
+        "bifrost-pack-{tag}-{}.zip",
+        &crate::auth::new_token()[..32]
+    ));
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .map_err(|e| format!("write temp: {e}"))?;
+    if let Err(e) = f.write_all(bytes) {
+        let _ = std::fs::remove_file(&path);
+        return Err(format!("write temp: {e}"));
+    }
+    Ok(path)
 }

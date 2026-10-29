@@ -246,8 +246,9 @@ podman logs bifrost                  # the first-run /setup link
   filter blocks the namespace calls bubblewrap makes (Podman's allows them),
   and `--security-opt apparmor=unconfined` on hosts that use AppArmor. Those
   turn Docker's own filters off for the whole container, Bifrost included,
-  leaving bubblewrap to isolate the apworld code; Podman needs neither. The
-  console's settings page shows which sandbox tier is active.
+  leaving bubblewrap and Bifrost's own syscall filter to isolate the apworld
+  code; Podman needs neither. The console's settings page shows which sandbox
+  tier is active.
 - `--stop-timeout 30` gives live servers time to save on shutdown.
 - Publish the whole Archipelago port range. Its size caps how many seasons can
   be live at once.
@@ -666,12 +667,16 @@ available, the sandbox gives each helper:
 - no network (the servers excepted; the in-logic tracker reaches its season's
   server through a relayed socket);
 - a read-only system;
-- write access only to the season's own output.
+- write access only to the season's own output;
+- a syscall filter that refuses what Python has no use for and what widens the
+  kernel's attack surface (new namespaces, mounts, kernel keyrings, BPF,
+  `ptrace`, io_uring and the like, and sockets other than Unix, IP and netlink
+  ones).
 
-Without bubblewrap, Bifrost applies resource limits only, and refuses custom
-apworlds unless you explicitly set `allow_unsandboxed_custom_worlds`. The
-settings page shows which tier is active. Resource limits for checks and
-generation are under `[sandbox]`.
+Without bubblewrap, Bifrost applies resource limits and the syscall filter
+only, and refuses custom apworlds unless you explicitly set
+`allow_unsandboxed_custom_worlds`. The settings page shows which tier is
+active. Resource limits for checks and generation are under `[sandbox]`.
 
 Every sandboxed job is also capped in processes and open files. The process
 cap counts all of Bifrost's user's processes, so run Bifrost as a dedicated,

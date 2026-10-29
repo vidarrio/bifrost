@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Everyone signs in once more after upgrading.
 - Switching the sign-in mode (`bifrost auth mode`) ends every session, so old
   sessions don't come back after switching back.
+- Sandboxed jobs run under a syscall filter that refuses new namespaces,
+  mounts, kernel keyrings, BPF, `ptrace`, io_uring and similar calls, and
+  sockets other than Unix, IP and netlink ones, in both sandbox tiers; the
+  settings page shows it. Under Docker with
+  `seccomp=unconfined`, apworld code is still filtered.
+- PopTracker packs are unpacked from unguessable, owner-only temp files.
 
 ## [0.1.2] - 2026-10-29
 
