@@ -290,8 +290,10 @@ Put Bifrost behind a reverse proxy that terminates HTTPS. Session cookies are
 marked `Secure`. Add the proxy's address to `trusted_proxies` so per-client
 rate limiting sees real client addresses. Bifrost listens on every interface
 by default; with the proxy on the same host, set `bind = "127.0.0.1"`
-(`BIFROST_BIND`) so nothing reaches Bifrost around the proxy. The Archipelago
-port range still has to be reachable by players.
+(`BIFROST_BIND`) so nothing reaches Bifrost around the proxy. In the
+container, leave `bind` alone and publish the web port on the host's loopback
+instead (`-p 127.0.0.1:8080:8080`). The Archipelago port range still has to be
+reachable by players.
 
 ### Running on Windows
 

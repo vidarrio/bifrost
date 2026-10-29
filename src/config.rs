@@ -237,6 +237,18 @@ impl Config {
         }
     }
 
+    /// Where to reach this instance's own HTTP listener from the same host:
+    /// the bind address, or loopback when bound to every interface.
+    pub fn local_addr(&self) -> std::net::SocketAddr {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+        let ip = match self.bind {
+            IpAddr::V4(v4) if v4.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
+            IpAddr::V6(v6) if v6.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
+            ip => ip,
+        };
+        std::net::SocketAddr::new(ip, self.port)
+    }
+
     pub fn db_path(&self) -> PathBuf {
         self.data_dir.join("bifrost.db")
     }
@@ -577,11 +589,6 @@ mod tests {
         let c = with(&[]);
         assert_eq!(c.port, 8080);
         assert_eq!(c.bind.to_string(), "0.0.0.0");
-        assert_eq!(
-            with(&[("BIFROST_BIND", "127.0.0.1")]).bind.to_string(),
-            "127.0.0.1"
-        );
-        assert_eq!(with(&[("BIFROST_BIND", "::1")]).bind.to_string(), "::1");
         assert_eq!(c.data_dir, Path::new("/var/lib/bifrost"));
         assert_eq!(c.ap_dir, Path::new("/opt/archipelago"));
         assert_eq!(c.ap_python, Path::new("/opt/archipelago/venv/bin/python"));
@@ -591,6 +598,18 @@ mod tests {
         );
         assert_eq!(c.ap_journal_unit, "archipelago");
         assert_eq!(c.ap_ports, 38281..=38300);
+    }
+
+    #[test]
+    fn bind_address() {
+        let b = |v: &str| with(&[("BIFROST_BIND", v)]);
+        assert_eq!(b(" 127.0.0.1 ").bind.to_string(), "127.0.0.1");
+        assert_eq!(b("::1").bind.to_string(), "::1");
+        // Reaching our own listener: loopback for "every interface".
+        assert_eq!(with(&[]).local_addr().to_string(), "127.0.0.1:8080");
+        assert_eq!(b("::").local_addr().to_string(), "[::1]:8080");
+        assert_eq!(b("192.0.2.5").local_addr().to_string(), "192.0.2.5:8080");
+        assert!(std::panic::catch_unwind(|| with(&[("BIFROST_BIND", "nope")])).is_err());
     }
 
     #[test]
