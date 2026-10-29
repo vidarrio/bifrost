@@ -4,7 +4,8 @@
 //! files and network; this narrows what it can ask of the kernel. It refuses
 //! (`EPERM`) the calls a Python job has no use for and that widen the kernel's
 //! attack surface: new namespaces, mounts, kernel keyrings, BPF, perf,
-//! userfaultfd, io_uring, module loading, `ptrace`, and the like. Bubblewrap
+//! userfaultfd, io_uring, module loading, `ptrace`, and the like, and sockets
+//! other than Unix, IP and netlink ones (`EAFNOSUPPORT`). Bubblewrap
 //! installs it for the job (`--seccomp`); the limits-only tier installs it
 //! itself. Only built for architectures it knows.
 
@@ -18,6 +19,7 @@ const LD_W_ABS: u16 = 0x20; // BPF_LD | BPF_W | BPF_ABS
 const JMP_JEQ_K: u16 = 0x05 | 0x10;
 const JMP_JGE_K: u16 = 0x05 | 0x30;
 const JMP_JSET_K: u16 = 0x05 | 0x40;
+const JMP_JA: u16 = 0x05;
 const RET_K: u16 = 0x06;
 
 // `struct seccomp_data` offsets.
@@ -25,6 +27,14 @@ const OFF_NR: u32 = 0;
 const OFF_ARCH: u32 = 4;
 /// The low 32 bits of the first argument (little-endian).
 const OFF_ARG0_LO: u32 = 16;
+
+/// Socket families a job may open: Unix, IPv4, IPv6, netlink. Everything else
+/// (vsock, AF_ALG, packet, …) reaches past the network namespace or into
+/// rarely used kernel code.
+const ALLOWED_FAMILIES: [u32; 4] = [1, 2, 10, 16];
+
+/// `personality` values allowed: the query, and plain Linux.
+const ALLOWED_PERSONALITIES: [u32; 2] = [0xffff_ffff, 0];
 
 /// `clone` flags that make new namespaces.
 const CLONE_NEW_NAMESPACES: u32 = 0x0002_0000 // NEWNS
@@ -69,6 +79,7 @@ fn refused() -> Vec<libc::c_long> {
         libc::SYS_process_vm_readv,
         libc::SYS_process_vm_writev,
         libc::SYS_kcmp,
+        libc::SYS_pidfd_getfd,
         libc::SYS_init_module,
         libc::SYS_finit_module,
         libc::SYS_delete_module,
@@ -86,7 +97,6 @@ fn refused() -> Vec<libc::c_long> {
         libc::SYS_adjtimex,
         libc::SYS_open_by_handle_at,
         libc::SYS_name_to_handle_at,
-        libc::SYS_personality,
     ];
     #[cfg(target_arch = "x86_64")]
     v.extend([
@@ -116,64 +126,94 @@ const fn stmt(code: u16, k: u32) -> Insn {
     }
 }
 
+/// Where a jump goes: the next instruction, or a label.
+#[derive(Clone, Copy, PartialEq)]
+enum L {
+    Next,
+    Allow,
+    Deny,
+    NoSys,
+    NoFamily,
+    /// The start of the argument check for this call.
+    Check(usize),
+}
+
 /// The filter program, or `None` on an architecture it isn't built for.
 fn program() -> Option<Vec<Insn>> {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
-        // Jumps are filled in once the return instructions' places are known.
-        enum To {
-            Deny,
-            NoSys,
-            Allow,
-            Next,
-        }
-        let mut code: Vec<(Insn, To, To)> = Vec::new();
-        let plain = |i: Insn| (i, To::Next, To::Next);
-        code.push(plain(stmt(LD_W_ABS, OFF_ARCH)));
+        // Assembled with symbolic jumps, resolved once every label's place
+        // is known. (`JA` takes its target in `k`.)
+        let mut code: Vec<(Insn, L, L)> = Vec::new();
+        let mut labels: Vec<(L, usize)> = Vec::new();
+        let op = |i: Insn| (i, L::Next, L::Next);
+        code.push(op(stmt(LD_W_ABS, OFF_ARCH)));
         // Another ABI (e.g. 32-bit calls on x86_64): refuse everything.
-        code.push((stmt(JMP_JEQ_K, AUDIT_ARCH), To::Next, To::Deny));
-        code.push(plain(stmt(LD_W_ABS, OFF_NR)));
+        code.push((stmt(JMP_JEQ_K, AUDIT_ARCH), L::Next, L::Deny));
+        code.push(op(stmt(LD_W_ABS, OFF_NR)));
         #[cfg(target_arch = "x86_64")]
-        code.push((stmt(JMP_JGE_K, 0x4000_0000), To::Deny, To::Next)); // x32 calls
+        code.push((stmt(JMP_JGE_K, 0x4000_0000), L::Deny, L::Next)); // x32 calls
         for nr in refused() {
-            code.push((stmt(JMP_JEQ_K, nr as u32), To::Deny, To::Next));
+            code.push((stmt(JMP_JEQ_K, nr as u32), L::Deny, L::Next));
         }
         // clone3's flags live in memory a filter can't read: refuse it as
         // unknown, and the C library falls back to clone.
-        code.push((
-            stmt(JMP_JEQ_K, libc::SYS_clone3 as u32),
-            To::NoSys,
-            To::Next,
-        ));
-        code.push((stmt(JMP_JEQ_K, libc::SYS_clone as u32), To::Next, To::Allow));
-        code.push(plain(stmt(LD_W_ABS, OFF_ARG0_LO)));
-        code.push((stmt(JMP_JSET_K, CLONE_NEW_NAMESPACES), To::Deny, To::Allow));
-        let allow = code.len();
-        let deny = allow + 1;
-        let nosys = allow + 2;
-        let mut out: Vec<Insn> = code
+        code.push((stmt(JMP_JEQ_K, libc::SYS_clone3 as u32), L::NoSys, L::Next));
+        // Calls allowed only for some first arguments.
+        let checks: [(libc::c_long, &[u32], L); 3] = [
+            (libc::SYS_socket, &ALLOWED_FAMILIES, L::NoFamily),
+            (libc::SYS_socketpair, &ALLOWED_FAMILIES, L::NoFamily),
+            (libc::SYS_personality, &ALLOWED_PERSONALITIES, L::Deny),
+        ];
+        for (n, (nr, _, _)) in checks.iter().enumerate() {
+            code.push((stmt(JMP_JEQ_K, *nr as u32), L::Check(n), L::Next));
+        }
+        // clone: refused if it asks for new namespaces.
+        code.push((stmt(JMP_JEQ_K, libc::SYS_clone as u32), L::Next, L::Allow));
+        code.push(op(stmt(LD_W_ABS, OFF_ARG0_LO)));
+        code.push((stmt(JMP_JSET_K, CLONE_NEW_NAMESPACES), L::Deny, L::Allow));
+        for (n, (_, ok, no)) in checks.iter().enumerate() {
+            labels.push((L::Check(n), code.len()));
+            code.push(op(stmt(LD_W_ABS, OFF_ARG0_LO)));
+            for &v in ok.iter() {
+                code.push((stmt(JMP_JEQ_K, v), L::Allow, L::Next));
+            }
+            code.push((stmt(JMP_JA, 0), *no, L::Next));
+        }
+        labels.push((L::Allow, code.len()));
+        code.push(op(stmt(RET_K, RET_ALLOW)));
+        labels.push((L::Deny, code.len()));
+        code.push(op(stmt(RET_K, RET_ERRNO | libc::EPERM as u32)));
+        labels.push((L::NoSys, code.len()));
+        code.push(op(stmt(RET_K, RET_ERRNO | libc::ENOSYS as u32)));
+        labels.push((L::NoFamily, code.len()));
+        code.push(op(stmt(RET_K, RET_ERRNO | libc::EAFNOSUPPORT as u32)));
+        let at = |l: L| labels.iter().find(|(k, _)| *k == l).map(|(_, i)| *i);
+        let out = code
             .iter()
             .enumerate()
             .map(|(i, (insn, jt, jf))| {
-                let off = |to: &To| -> u8 {
-                    let target = match to {
-                        To::Next => return 0,
-                        To::Allow => allow,
-                        To::Deny => deny,
-                        To::NoSys => nosys,
-                    };
-                    u8::try_from(target - i - 1).expect("filter jump fits")
+                let off = |l: L| -> usize {
+                    match l {
+                        L::Next => 0,
+                        l => at(l).expect("label placed") - i - 1,
+                    }
                 };
-                Insn {
-                    jt: off(jt),
-                    jf: off(jf),
-                    ..*insn
+                if insn.code == JMP_JA {
+                    Insn {
+                        k: off(*jt) as u32,
+                        ..*insn
+                    }
+                } else {
+                    let byte = |l| u8::try_from(off(l)).expect("filter jump fits");
+                    Insn {
+                        jt: byte(*jt),
+                        jf: byte(*jf),
+                        ..*insn
+                    }
                 }
             })
             .collect();
-        out.push(stmt(RET_K, RET_ALLOW));
-        out.push(stmt(RET_K, RET_ERRNO | libc::EPERM as u32));
-        out.push(stmt(RET_K, RET_ERRNO | libc::ENOSYS as u32));
         Some(out)
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]

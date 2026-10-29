@@ -670,7 +670,8 @@ available, the sandbox gives each helper:
 - write access only to the season's own output;
 - a syscall filter that refuses what Python has no use for and what widens the
   kernel's attack surface (new namespaces, mounts, kernel keyrings, BPF,
-  `ptrace`, io_uring and the like).
+  `ptrace`, io_uring and the like, and sockets other than Unix, IP and netlink
+  ones).
 
 Without bubblewrap, Bifrost applies resource limits and the syscall filter
 only, and refuses custom apworlds unless you explicitly set
