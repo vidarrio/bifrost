@@ -403,6 +403,10 @@ struct Eng {
 const FRAME_HANDLERS: &str = "bifrost.frame_handlers";
 const CODE_WATCHES: &str = "bifrost.code_watches";
 
+/// Registry key of the players table (slot → `{name, game}`), filled by
+/// `Session::set_multiworld`.
+const PLAYERS: &str = "bifrost.players";
+
 /// How deep `FindObjectForCode` may nest through custom items'
 /// `CanProvideCodeFunc`s that look up other codes.
 const MAX_LOOKUP_DEPTH: u32 = 16;
@@ -490,6 +494,22 @@ impl Session {
         if let Ok(ap) = self.lua.globals().get::<Table>("Archipelago") {
             let _ = ap.set("PlayerNumber", n);
         }
+    }
+
+    /// Set the multiworld's players, as `(slot, name, game)`, for
+    /// `Archipelago:GetPlayerAlias` / `GetPlayerGame`, and its seed name
+    /// (`Archipelago.Seed`). Call before feeding state.
+    pub fn set_multiworld(&self, seed: Option<&str>, players: &[(i64, &str, &str)]) -> Result<()> {
+        let ap: Table = self.lua.globals().get("Archipelago")?;
+        ap.set("Seed", seed)?;
+        let t: Table = self.lua.named_registry_value(PLAYERS)?;
+        for (slot, name, game) in players {
+            let p = self.lua.create_table()?;
+            p.set("name", *name)?;
+            p.set("game", *game)?;
+            t.set(*slot, p)?;
+        }
+        Ok(())
     }
 
     /// Feed the slot's valid AP location ids (checked ∪ missing). This switches
@@ -1696,15 +1716,33 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     ] {
         ap.set(noop, lua.create_function(|_, _: MultiValue| Ok(()))?)?;
     }
-    // Other players aren't known here: no game, and an empty alias.
-    ap.set(
-        "GetPlayerGame",
-        lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?,
-    )?;
-    ap.set(
-        "GetPlayerAlias",
-        lua.create_function(|_, _: MultiValue| Ok(""))?,
-    )?;
+    // Players by slot, once the host has set them (`Session::set_multiworld`):
+    // an unknown slot has no game and an empty alias.
+    let players = lua.create_table()?;
+    lua.set_named_registry_value(PLAYERS, &players)?;
+    for (method, field, missing) in [
+        ("GetPlayerGame", "game", Value::Nil),
+        (
+            "GetPlayerAlias",
+            "name",
+            Value::String(lua.create_string("")?),
+        ),
+    ] {
+        let players = players.clone();
+        ap.set(
+            method,
+            lua.create_function(move |_, (_t, slot): (Table, Value)| {
+                let p = match slot {
+                    Value::Integer(_) | Value::Number(_) => players.get::<Value>(slot)?,
+                    _ => Value::Nil,
+                };
+                Ok(match p {
+                    Value::Table(p) => p.get::<Value>(field)?,
+                    _ => missing.clone(),
+                })
+            })?,
+        )?;
+    }
     g.set("Archipelago", &ap)?;
 
     // AccessibilityLevel enum

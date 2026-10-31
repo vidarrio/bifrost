@@ -1,0 +1,4 @@
+[
+  { "name": "From slot data", "type": "toggle", "img": "images/x.png", "codes": "from_slot_data" },
+  { "name": "Players known", "type": "toggle", "img": "images/x.png", "codes": "players_known" }
+]

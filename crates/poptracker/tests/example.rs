@@ -469,3 +469,23 @@ fn host_api_covers_require_custom_items_and_callbacks() {
     assert!(acc["Args"], "$has_args|one|two");
     assert!(!acc["WrongArgs"], "$has_args|one");
 }
+
+#[test]
+fn clear_handlers_get_slot_data_and_the_players() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/connect");
+    let s = Session::new(&Pack::load(dir).unwrap()).unwrap();
+    s.set_multiworld(Some("seed1"), &[(1, "Ann", "Game A"), (2, "Bo", "Game B")])
+        .unwrap();
+    s.on_clear(&serde_json::json!({"Data": {"Options": {"Flag": true}}}))
+        .unwrap();
+    let active = |code: &str| {
+        s.state()
+            .items
+            .into_iter()
+            .find(|i| i.codes.iter().any(|c| c == code))
+            .unwrap()
+            .active
+    };
+    assert!(active("from_slot_data"));
+    assert!(active("players_known"));
+}

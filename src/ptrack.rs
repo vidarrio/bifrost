@@ -83,6 +83,15 @@ pub fn remove(season: i64, ap_slot: i64) {
     let _ = std::fs::remove_dir_all(slot_dir(season, ap_slot));
 }
 
+/// What a pack learns on connect, besides the items: the slot's slot data and
+/// the multiworld's seed name and players (`(slot, name, game)`).
+#[derive(Default)]
+pub struct Connect {
+    pub slot_data: serde_json::Value,
+    pub seed: Option<String>,
+    pub players: Vec<(i64, String, String)>,
+}
+
 /// Compute the tracker state for a slot from its installed pack + received
 /// items (`(item_id, item_name)`), with the slot's AP player number.
 /// Synchronous (holds a Lua VM) — call via `spawn_blocking`.
@@ -93,20 +102,32 @@ pub fn compute(
     checked: &[i64],
     valid_locations: &[i64],
     player: i64,
+    connect: &Connect,
 ) -> Result<poptracker::TrackerState, String> {
     let root = poptracker::pack_root(&slot_dir(season, ap_slot)).map_err(|e| e.to_string())?;
     let pack = poptracker::Pack::load(&root).map_err(|e| e.to_string())?;
     let session = poptracker::Session::new(&pack).map_err(|e| e.to_string())?;
     session.set_player(player);
+    let players: Vec<(i64, &str, &str)> = connect
+        .players
+        .iter()
+        .map(|(slot, name, game)| (*slot, name.as_str(), game.as_str()))
+        .collect();
+    session
+        .set_multiworld(connect.seed.as_deref(), &players)
+        .map_err(|e| e.to_string())?;
     // Feed the slot's valid location ids before onClear so `visibility_rules`
     // can hide markers for checks this slot's options never generated. Empty =>
     // left disabled (every marker shows), so a missing/old meta can't blank maps.
     if !valid_locations.is_empty() {
         session.set_valid_locations(valid_locations);
     }
-    session
-        .on_clear(&serde_json::json!({}))
-        .map_err(|e| e.to_string())?;
+    // The slot data, as AP sends it on connect (an object; `{}` if unknown).
+    let slot_data = match &connect.slot_data {
+        serde_json::Value::Object(_) => connect.slot_data.clone(),
+        _ => serde_json::json!({}),
+    };
+    session.on_clear(&slot_data).map_err(|e| e.to_string())?;
     for (i, (id, name)) in items.iter().enumerate() {
         session
             .on_item(i as i64, *id, name, player)

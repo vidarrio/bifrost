@@ -142,6 +142,21 @@ pub(crate) async fn pt_state(
         .and_then(|m| m.totals(ap_slot))
         .map(|s| s.all_locations.clone())
         .unwrap_or_default();
+    // What AP tells the slot's clients on connect: its slot data and the
+    // multiworld's players.
+    let connect = meta
+        .as_ref()
+        .map(|m| ptrack::Connect {
+            slot_data: m
+                .totals(ap_slot)
+                .map(|s| s.slot_data.clone())
+                .unwrap_or_default(),
+            seed: m.seed.clone(),
+            players: (m.slots.iter())
+                .map(|(slot, s)| (*slot, s.name.clone(), s.game.clone()))
+                .collect(),
+        })
+        .unwrap_or_default();
     let version = ptrack::pack_version(season, ap_slot);
     let season2 = season;
     let state = tokio::task::spawn_blocking(move || {
@@ -152,6 +167,7 @@ pub(crate) async fn pt_state(
             &checked,
             &valid_locations,
             ap_slot,
+            &connect,
         )
     })
     .await;
