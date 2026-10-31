@@ -1,0 +1,27 @@
+[
+  { "name": "Stages", "type": "progressive", "allow_disabled": false, "initial_stage_idx": 1,
+    "stages": [
+      { "img": "s0.png", "codes": "s0" },
+      { "img": "s1.png", "codes": "s1" },
+      { "img": "s2.png", "codes": "s2", "inherit_codes": false }
+    ] },
+  { "name": "Old Key", "type": "progressive", "initial_stage_index": 1, "stages": [ { "codes": "wrongkey0" }, { "codes": "wrongkey1" } ] },
+  { "name": "Off Until Active", "type": "progressive_toggle", "stages": [ { "codes": "ptoff" }, { "codes": "ptoff2" } ] },
+  { "name": "Starts On", "type": "toggle", "codes": "starts", "initial_active_state": true },
+  { "name": "Always", "type": "static", "codes": "always" },
+  { "name": "Coins", "type": "consumable", "codes": "coins", "max_quantity": 5, "min_quantity": 1, "initial_quantity": 99 },
+  { "name": "Unlimited", "type": "consumable", "codes": "unlimited" },
+  { "name": "Shared A", "type": "consumable", "codes": "shared,a_only", "max_quantity": 9, "initial_quantity": 2 },
+  { "name": "Shared B", "type": "consumable", "codes": "shared", "max_quantity": 9, "initial_quantity": 3 },
+  { "name": "Left", "type": "toggle", "codes": "left" },
+  { "name": "Right", "type": "toggle", "codes": "right" },
+  { "name": "Pair", "type": "composite_toggle", "codes": "pair", "item_left": "left", "item_right": "right",
+    "images": [
+      { "left": false, "right": false, "img": "none.png" },
+      { "left": true, "right": false, "img": "l.png" },
+      { "left": false, "right": true, "img": "r.png" },
+      { "left": true, "right": true, "img": "lr.png" }
+    ] },
+  { "name": "Badged", "type": "toggle_badged", "codes": "badged", "base_item": "left" },
+  { "name": "MiXeD", "type": "toggle", "codes": "MiXeD,Spaced Code" }
+]

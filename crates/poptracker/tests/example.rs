@@ -785,3 +785,55 @@ fn rule_alternatives_are_capped() {
         st.pack_errors
     );
 }
+
+#[test]
+fn items_behave_as_in_poptracker() {
+    // The fixture's init.lua and clear handler assert the item model, worked out
+    // from PopTracker's `JsonItem`; here, what shows from outside.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/items");
+    let s = Session::new(&Pack::load(dir).unwrap()).unwrap();
+    s.on_clear(&serde_json::json!({})).unwrap();
+    let st = s.state();
+    assert_eq!(st.pack_error_count, 0, "{:?}", st.pack_errors);
+    let item = |code: &str| {
+        st.items
+            .iter()
+            .find(|i| i.codes.iter().any(|c| c == code))
+            .unwrap_or_else(|| panic!("no item {code}"))
+    };
+    assert_eq!(
+        item("s0").img.as_deref(),
+        Some("s0.png"),
+        "the stage's image"
+    );
+    assert_eq!(
+        item("pair").img.as_deref(),
+        Some("r.png"),
+        "the handler left only the right part on"
+    );
+    assert_eq!(
+        item("coins").img.as_deref(),
+        Some("custom.png"),
+        "the pack's icon"
+    );
+    assert_eq!(
+        item("coins").overlay.as_deref(),
+        Some("3"),
+        "the count, over text"
+    );
+    assert!(item("always").active && item("starts").active);
+    let section = |loc: &str| {
+        &st.locations
+            .iter()
+            .find(|l| l.name == loc)
+            .unwrap()
+            .sections[0]
+    };
+    assert_eq!(section("Both").level, "reachable", "shared codes add up");
+    assert_eq!(section("AnyCase").level, "none");
+    assert!(
+        !section("Boss").checked,
+        "a hosted section isn't done until its item is held"
+    );
+    assert_eq!(section("Boss").item_count, 0);
+}

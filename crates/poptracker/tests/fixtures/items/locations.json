@@ -1,0 +1,6 @@
+[
+  { "name": "Boss", "sections": [ { "name": "Reward", "hosted_item": "left" } ] },
+  { "name": "Gate", "access_rules": ["pair:2"], "sections": [ { "name": "S" } ] },
+  { "name": "AnyCase", "access_rules": ["MIXED"], "sections": [ { "name": "S" } ] },
+  { "name": "Both", "access_rules": ["shared:5"], "sections": [ { "name": "S" } ] }
+]

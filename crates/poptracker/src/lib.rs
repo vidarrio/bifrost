@@ -13,7 +13,8 @@
 //!   (and the scripts it `LoadScript`s or `require`s, e.g. `autotracking.lua`;
 //!   `require` only finds modules inside the pack).
 //! - Implements the `Tracker` / `ScriptHost` / `Archipelago` host globals a pack
-//!   touches, plus the toggle / consumable / progressive_toggle item model.
+//!   touches, plus PopTracker's item model for every item type, which packs
+//!   read and write through their objects.
 //! - Drives the pack via the AP handlers (`on_clear` / `on_item` / `on_location`
 //!   / `on_retrieved`) exactly as the live server would.
 //! - Evaluates access rules as PopTracker's `resolveRules` does: item codes,
@@ -27,8 +28,7 @@
 //!   of `os` or Lua's own `require`), plus a memory cap.
 //!
 //! ## Not done yet (the long tail — tracked for the real build-out)
-//! - Custom items' clicks, icons and `ProvidesCodeFunc` (they don't count
-//!   toward access rules), and watches on single codes.
+//! - Custom items' clicks and icons, and watches on single codes.
 //! - The reactive recompute loop and renderer data
 //!   (maps/coordinates/item layout) for the visual tab.
 //! - Memory-autotracking packs (SNES/N64) are inherently unsupported server-side.
@@ -474,6 +474,8 @@ struct MapLoc {
 struct SectionDef {
     name: String,
     item_count: i64,
+    /// `hosted_item`: the codes of items this section stands for.
+    hosted: Vec<String>,
     /// `ref`: this section is that one (`location/section`), shown elsewhere.
     reference: Option<String>,
     rules: Rules, // effective access_rules: the location's joined to its own
@@ -490,6 +492,395 @@ struct LocNode {
     scoutable_glitched: bool,
     map_locations: Vec<MapLoc>,
     sections: Vec<SectionDef>,
+}
+
+/// One stage of a JSON item.
+#[derive(Clone, Default)]
+struct ItemStage {
+    codes: Vec<String>,
+    img: String,
+    inherit_codes: bool,
+}
+
+/// A JSON item, as PopTracker's `JsonItem` holds it. `active` and `stage` are its
+/// `_stage1` and `_stage2`. Packs read and write it through its object's metatable
+/// (see `item_get`, `item_set`).
+#[derive(Clone, Default)]
+struct JsonItem {
+    kind: String,
+    name: String,
+    codes: Vec<String>,
+    stages: Vec<ItemStage>,
+    img: String,
+    allow_disabled: bool,
+    active: bool,
+    stage: i64,
+    count: i64,
+    min: i64,
+    max: i64,
+    increment: i64,
+    decrement: i64,
+    overlay: String,
+    overlay_color: String,
+    icon: Option<String>,
+    ignore_user_input: bool,
+    /// For a composite toggle: the codes of its left and right parts.
+    parts: [String; 2],
+}
+
+impl JsonItem {
+    /// Every code it may provide, lowercase. A composite's stages are made up, so
+    /// its parts' codes don't count.
+    fn all_codes(&self) -> Vec<String> {
+        let mut all = self.codes.clone();
+        if self.kind != "composite_toggle" {
+            for st in &self.stages {
+                all.extend(st.codes.iter().cloned());
+            }
+        }
+        all
+    }
+
+    /// PopTracker's `providesCodeImpl`, for a code it can provide.
+    fn provides(&self, code: &str) -> i64 {
+        if self.kind == "composite_toggle" {
+            if !self.codes.iter().any(|c| c == code) {
+                return 0;
+            }
+            return (self.stage & 1) + ((self.stage >> 1) & 1);
+        }
+        if (self.stages.len() as i64) > self.stage {
+            if self.allow_disabled && !self.active {
+                return 0;
+            }
+            for st in self.stages[..=self.stage as usize].iter().rev() {
+                if st.codes.iter().any(|c| c == code) {
+                    return 1;
+                }
+                if !st.inherit_codes {
+                    break;
+                }
+            }
+            return 0;
+        }
+        if self.count != 0 {
+            return self.count;
+        }
+        self.active as i64
+    }
+
+    /// Its image now: a pack's override, or the current stage's, or its own.
+    fn image(&self) -> Option<String> {
+        if let Some(icon) = &self.icon {
+            return (!icon.is_empty()).then(|| img_path(icon));
+        }
+        let stage = self
+            .stages
+            .get(self.stage.max(0) as usize)
+            .map(|s| s.img.as_str());
+        stage
+            .filter(|s| !s.is_empty())
+            .or_else(|| Some(self.img.as_str()).filter(|s| !s.is_empty()))
+            .or_else(|| {
+                self.stages
+                    .iter()
+                    .map(|s| s.img.as_str())
+                    .find(|s| !s.is_empty())
+            })
+            .map(img_path)
+    }
+}
+
+fn split_codes(v: &serde_json::Value) -> Vec<String> {
+    v.as_str()
+        .unwrap_or("")
+        .split(',')
+        .map(|c| c.trim_matches(' ').to_lowercase())
+        .filter(|c| !c.is_empty())
+        .collect()
+}
+
+fn read_stage(v: &serde_json::Value) -> ItemStage {
+    ItemStage {
+        codes: split_codes(v.get("codes").unwrap_or(&serde_json::Value::Null)),
+        img: v
+            .get("img")
+            .and_then(|i| i.as_str())
+            .unwrap_or("")
+            .to_string(),
+        inherit_codes: v
+            .get("inherit_codes")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(true),
+    }
+}
+
+/// PopTracker's `JsonItem::FromJSON`.
+fn read_item(v: &serde_json::Value) -> JsonItem {
+    let int = |k: &str, d: i64| v.get(k).and_then(num).map_or(d, |n| n as i64);
+    let flag = |k: &str, d: bool| v.get(k).and_then(|b| b.as_bool()).unwrap_or(d);
+    let text = |k: &str| v.get(k).and_then(|t| t.as_str()).unwrap_or("").to_string();
+    let kind = text("type");
+    let min = int("min_quantity", 0);
+    let increment = int("increment", 1);
+    let mut item = JsonItem {
+        name: text("name"),
+        img: text("img"),
+        allow_disabled: flag("allow_disabled", true),
+        codes: split_codes(v.get("codes").unwrap_or(&serde_json::Value::Null)),
+        min,
+        max: int("max_quantity", (-1).min(min - 1)),
+        increment,
+        decrement: int("decrement", increment),
+        ..Default::default()
+    };
+    match kind.as_str() {
+        "toggle" | "toggle_badged" | "progressive_toggle" => item.allow_disabled = true,
+        "static" => {
+            item.allow_disabled = false;
+            item.active = true;
+        }
+        _ => {}
+    }
+    if let Some(stages) = v.get("stages").and_then(|s| s.as_array()) {
+        item.stages = stages.iter().map(read_stage).collect();
+    }
+    if kind == "composite_toggle"
+        && let Some(images) = v.get("images").and_then(|i| i.as_array())
+    {
+        let side =
+            |im: &serde_json::Value, k: &str| im.get(k).and_then(|b| b.as_bool()).unwrap_or(false);
+        for n in 0..4u8 {
+            if let Some(im) = images
+                .iter()
+                .find(|im| side(im, "left") == (n & 1 != 0) && side(im, "right") == (n & 2 != 0))
+            {
+                let mut stage = read_stage(im);
+                stage.codes = Vec::new();
+                stage.inherit_codes = false;
+                item.stages.push(stage);
+            }
+        }
+        item.active = true;
+        item.parts = [
+            text("item_left").to_lowercase(),
+            text("item_right").to_lowercase(),
+        ];
+    }
+    if matches!(
+        kind.as_str(),
+        "toggle" | "toggle_badged" | "progressive_toggle"
+    ) && flag("initial_active_state", false)
+    {
+        item.active = true;
+    }
+    item.stage = int("initial_stage_idx", 0)
+        .min(item.stages.len() as i64 - 1)
+        .max(0);
+    item.count = int("initial_quantity", 0).max(item.min);
+    if item.max >= item.min && item.count > item.max {
+        item.count = item.max;
+    }
+    if kind == "consumable" && item.count > 0 {
+        item.active = true;
+    }
+    item.kind = kind;
+    item
+}
+
+/// An item changed: rules must be looked at again, and a composite follows its
+/// parts and they it (PopTracker's links, without its events).
+fn item_changed(eng: &E, index: usize) {
+    let mut e = eng.borrow_mut();
+    e.accessibility_stale = true;
+    e.visibility_stale = true;
+    e.provider_cache.clear();
+    if e.items[index].kind == "composite_toggle" {
+        let stage = e.items[index].stage;
+        let parts = e.items[index].parts.clone();
+        for (bit, code) in parts.iter().enumerate() {
+            let part = e.code_items.get(code).and_then(|l| l.first()).copied();
+            if let Some(part) = part.filter(|p| !is_linked_kind(&e.items[*p].kind)) {
+                e.items[part].active = stage & (1 << bit) != 0;
+            }
+        }
+        return;
+    }
+    for c in e.composites.clone() {
+        for bit in 0..2 {
+            let code = e.items[c].parts[bit].clone();
+            if e.code_items.get(&code).and_then(|l| l.first()) == Some(&index) {
+                let on = e.items[index].active;
+                let item = &mut e.items[c];
+                item.stage = if on {
+                    item.stage | (1 << bit)
+                } else {
+                    item.stage & !(1 << bit)
+                };
+            }
+        }
+    }
+}
+
+/// Kinds a composite ignores as its parts.
+fn is_linked_kind(kind: &str) -> bool {
+    kind == "composite_toggle" || kind == "toggle_badged"
+}
+
+/// A number from a pack, as `luaL_checknumber` takes one.
+fn lua_number(lua: &Lua, v: Value) -> mlua::Result<i64> {
+    match lua.coerce_number(v)? {
+        Some(n) => Ok(n as i64),
+        None => Err(mlua::Error::runtime("number expected")),
+    }
+}
+
+/// `item.field`, from PopTracker's `JsonItem::Lua_Index`.
+fn item_get(lua: &Lua, eng: &E, index: usize, key: &str) -> mlua::Result<Value> {
+    let e = eng.borrow();
+    let Some(it) = e.items.get(index) else {
+        return Ok(Value::Nil);
+    };
+    let text = |s: &str| lua.create_string(s).map(Value::String);
+    Ok(match key {
+        "AcquiredCount" => Value::Integer(it.count),
+        "Active" => Value::Boolean(it.active),
+        "CurrentStage" => Value::Integer(if it.kind == "progressive" && it.allow_disabled {
+            if it.active { it.stage + 1 } else { 0 }
+        } else {
+            it.stage
+        }),
+        "MinCount" => Value::Integer(it.min),
+        "MaxCount" => Value::Integer(it.max),
+        "Increment" => Value::Integer(it.increment),
+        "Decrement" => Value::Integer(it.decrement),
+        "Type" => text(&it.kind)?,
+        "Name" => text(&it.name)?,
+        "Owner" => Value::Table(lua.create_table()?),
+        "Icon" => match &it.icon {
+            Some(icon) => text(icon)?,
+            None => text(&it.image().unwrap_or_default())?,
+        },
+        "IgnoreUserInput" => Value::Boolean(it.ignore_user_input),
+        "BadgeText" => text(&it.overlay)?,
+        "BadgeTextColor" => text(&it.overlay_color)?,
+        _ => Value::Nil,
+    })
+}
+
+/// `item.field = value`, from PopTracker's `JsonItem::Lua_NewIndex`; false if the
+/// field isn't one of its own.
+fn item_set(lua: &Lua, eng: &E, index: usize, key: &str, v: Value) -> mlua::Result<bool> {
+    if eng.borrow().items.get(index).is_none() {
+        return Ok(false);
+    }
+    let truthy = |v: &Value| match v {
+        Value::Integer(i) => *i > 0,
+        Value::Nil | Value::Boolean(false) => false,
+        _ => true,
+    };
+    let text = |v: Value| -> String {
+        v.as_string()
+            .and_then(|s| s.to_str().ok().map(|s| s.to_string()))
+            .or_else(|| {
+                lua.coerce_string(v)
+                    .ok()
+                    .flatten()
+                    .and_then(|s| s.to_str().ok().map(|s| s.to_string()))
+            })
+            .unwrap_or_default()
+    };
+    let mut changed = false;
+    match key {
+        "AcquiredCount" => {
+            let n = lua_number(lua, v)?;
+            let mut e = eng.borrow_mut();
+            let it = &mut e.items[index];
+            let mut val = n;
+            if it.max >= it.min && val > it.max {
+                val = it.max;
+            }
+            val = val.max(it.min);
+            if val != it.count {
+                it.count = val;
+                if it.kind == "consumable" {
+                    it.active = val > 0;
+                }
+                changed = true;
+            }
+        }
+        "Active" => {
+            let mut val = truthy(&v);
+            let mut e = eng.borrow_mut();
+            let it = &mut e.items[index];
+            if it.kind == "progressive" && it.allow_disabled && !val {
+                it.stage = 0;
+            } else if !it.allow_disabled {
+                val = true;
+            }
+            if it.active != val {
+                it.active = val;
+                it.icon = None;
+                changed = true;
+            }
+        }
+        "CurrentStage" => {
+            let mut val = lua_number(lua, v)?.max(0);
+            let mut e = eng.borrow_mut();
+            let it = &mut e.items[index];
+            let mut en = it.active;
+            if it.kind == "progressive" && it.allow_disabled {
+                if val == 0 {
+                    en = false;
+                } else {
+                    en = true;
+                    val -= 1;
+                }
+            }
+            if !it.stages.is_empty() {
+                val = val.min(it.stages.len() as i64 - 1);
+            }
+            if it.stage != val || it.active != en {
+                it.active = en;
+                it.stage = val;
+                it.icon = None;
+                changed = true;
+            }
+        }
+        "MinCount" => {
+            let n = lua_number(lua, v)?;
+            let mut e = eng.borrow_mut();
+            let it = &mut e.items[index];
+            it.min = n;
+            if it.min > it.count {
+                it.count = it.min;
+                changed = true;
+            }
+        }
+        "MaxCount" => {
+            let n = lua_number(lua, v)?;
+            let mut e = eng.borrow_mut();
+            let it = &mut e.items[index];
+            it.max = n;
+            if it.max >= it.min && it.count > it.max {
+                it.count = it.max;
+                changed = true;
+            }
+        }
+        "Increment" => eng.borrow_mut().items[index].increment = lua_number(lua, v)?,
+        "Decrement" => eng.borrow_mut().items[index].decrement = lua_number(lua, v)?,
+        "Icon" => {
+            eng.borrow_mut().items[index].icon = Some(text(v));
+        }
+        "IgnoreUserInput" => eng.borrow_mut().items[index].ignore_user_input = truthy(&v),
+        "BadgeText" => eng.borrow_mut().items[index].overlay = text(v),
+        "BadgeTextColor" => eng.borrow_mut().items[index].overlay_color = text(v),
+        _ => return Ok(false),
+    }
+    if changed {
+        item_changed(eng, index);
+    }
+    Ok(true)
 }
 
 impl LocNode {
@@ -512,18 +903,14 @@ struct Eng {
     pack_errors: Vec<String>,
     pack_error_count: usize,
     dir: PathBuf,
-    code_to_key: HashMap<String, String>,
-    kind: HashMap<String, String>,
-    /// For a staged item: the codes at each stage (index = stage). A code is
-    /// "provided" once the current stage reaches the first stage it appears in,
-    /// so a stage-N code isn't granted while the item sits below stage N.
-    stage_codes: HashMap<String, Vec<Vec<String>>>,
-    /// key -> display name.
-    names: HashMap<String, String>,
-    /// key -> all codes (for item-grid cell lookup).
-    item_codes: HashMap<String, Vec<String>>,
-    /// key -> images: stage images for staged items, else a single base image.
-    imgs: HashMap<String, Vec<String>>,
+    /// The pack's JSON items, in the order they were added.
+    items: Vec<JsonItem>,
+    /// Lowercase code -> the items that can provide it, in order.
+    code_items: HashMap<String, Vec<usize>>,
+    /// Which of them are composite toggles.
+    composites: Vec<usize>,
+    /// How deep custom items' `ProvidesCodeFunc`s have nested.
+    provider_depth: u32,
     maps: Vec<MapDef>,
     nodes: Rc<Vec<LocNode>>,
     /// What's settled of the rules (see `settle_accessibility`), by location or
@@ -574,6 +961,11 @@ const LOCATION_METHODS: &str = "bifrost.location_methods";
 
 /// Registry key of the metatable JSON items share for their methods.
 const ITEM_METHODS: &str = "bifrost.item_methods";
+
+/// Registry key of the JSON items' objects, by index + 1, and the raw field in
+/// each that says which item it is.
+const ITEM_OBJECTS: &str = "bifrost.item_objects";
+const ITEM_INDEX: &str = "__item";
 
 /// How deep `FindObjectForCode` may nest through custom items'
 /// `CanProvideCodeFunc`s that look up other codes.
@@ -634,7 +1026,6 @@ impl Session {
             budget: budget.clone(),
             ..Default::default()
         }));
-        lua.load("__ITEMS = {}").exec()?;
         lua.load("__LOCOBJS = {}").exec()?;
         lua.load("__LUAITEMS = {}").exec()?;
         install_host(&lua, &eng)?;
@@ -791,60 +1182,23 @@ impl Session {
         }
         self.charge();
         let mut out = TrackerState::default();
-        let items: Table = match self.lua.globals().get("__ITEMS") {
-            Ok(t) => t,
-            Err(_) => return out,
-        };
-        let keys: Vec<(String, String)> = self
-            .eng
-            .borrow()
-            .kind
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        for (key, kind) in keys {
-            if let Ok(t) = items.get::<Table>(key.as_str()) {
-                let active = t.get::<bool>("Active").unwrap_or(false);
-                let count = lua_int(&t, "AcquiredCount").unwrap_or(0);
-                let stage = lua_int(&t, "CurrentStage").unwrap_or(0);
-                let e = self.eng.borrow();
-                let staged =
-                    kind == "progressive" || kind == "progressive_toggle" || kind == "static";
-                let img = e.imgs.get(&key).and_then(|v| {
-                    let pick = if staged {
-                        let i = (stage.max(0) as usize).min(v.len().saturating_sub(1));
-                        v.get(i)
-                    } else {
-                        v.first()
-                    }
-                    .filter(|s| !s.is_empty());
-                    // Fall back to the first non-empty image (e.g. a progressive
-                    // item whose stage-0 image is blank) so the cell isn't empty.
-                    pick.or_else(|| v.iter().find(|s| !s.is_empty())).cloned()
-                });
-                // A consumable shows its count; an item is "lit" if active or held.
-                // As PopTracker draws it: a consumable's count first, then the
-                // pack's own text. Not through metatables, with the engine borrowed.
-                let text = |field| {
-                    t.raw_get::<Option<String>>(field)
-                        .unwrap_or(None)
-                        .filter(|s| !s.is_empty())
-                };
-                let overlay = (kind == "consumable" && count > 0)
-                    .then(|| count.to_string())
-                    .or_else(|| text("BadgeText"));
-                out.items.push(ItemState {
-                    key: key.clone(),
-                    kind,
-                    active: active || count > 0,
-                    count,
-                    stage,
-                    codes: e.item_codes.get(&key).cloned().unwrap_or_default(),
-                    name: e.names.get(&key).cloned().unwrap_or_default(),
-                    img,
-                    overlay,
-                });
-            }
+        for (index, it) in self.eng.borrow().items.iter().enumerate() {
+            // A consumable shows its count, first; an item is "lit" if active or
+            // held.
+            let overlay = (it.kind == "consumable" && it.count > 0)
+                .then(|| it.count.to_string())
+                .or_else(|| (!it.overlay.is_empty()).then(|| it.overlay.clone()));
+            out.items.push(ItemState {
+                key: format!("__item{index}"),
+                kind: it.kind.clone(),
+                active: it.active || it.count > 0,
+                count: it.count,
+                stage: it.stage,
+                codes: it.all_codes(),
+                name: it.name.clone(),
+                img: it.image(),
+                overlay,
+            });
         }
         out.items.sort_by(|a, b| a.key.cmp(&b.key));
 
@@ -941,7 +1295,9 @@ impl Session {
                         cleared: avail.map_or(0, |a| (item_count - a).max(0)),
                         accessible: lvl >= LEVEL_NORMAL,
                         level: level_name(lvl).to_string(),
-                        checked: avail.is_some_and(|a| a <= 0),
+                        // Nothing left to collect, its hosted items included.
+                        checked: avail.map_or(item_count <= 0, |a| a <= 0)
+                            && hosted_collected(&self.lua, &self.eng, &key),
                     }
                 })
                 .collect();
@@ -1006,7 +1362,7 @@ impl Session {
     pub fn summary(&self) -> Summary {
         let e = self.eng.borrow();
         Summary {
-            items: e.kind.len(),
+            items: e.items.len(),
             locations: e.nodes.iter().filter(|n| n.drawn()).count(),
             maps: e.maps.len(),
             variant: e.variant.clone(),
@@ -1036,43 +1392,45 @@ fn read_pack_file(eng: &E, rel: &str) -> Result<String> {
 // ---- access-rule evaluation --------------------------------------------------
 
 fn provider_count(lua: &Lua, eng: &E, code: &str) -> i64 {
-    let code = code.trim().to_lowercase(); // codes are case-insensitive
-    let (key, kind, stages) = {
+    let code = code.to_lowercase(); // codes are case-insensitive
+    let mut total: i64 = {
         let e = eng.borrow();
-        match e.code_to_key.get(&code) {
-            Some(k) => (
-                k.clone(),
-                e.kind.get(k).cloned().unwrap_or_default(),
-                e.stage_codes.get(k).cloned().unwrap_or_default(),
-            ),
-            None => return 0,
-        }
+        e.code_items.get(&code).map_or(0, |list| {
+            list.iter().map(|i| e.items[*i].provides(&code)).sum()
+        })
     };
-    let items: Table = match lua.globals().get("__ITEMS") {
-        Ok(t) => t,
-        Err(_) => return 0,
+    // Custom items count too, as their own functions say. They may ask in turn.
+    let Ok(custom) = lua.globals().get::<Table>("__LUAITEMS") else {
+        return total;
     };
-    let it: Table = match items.get(key.as_str()) {
-        Ok(t) => t,
-        Err(_) => return 0,
-    };
-    match kind.as_str() {
-        "toggle" => it.get::<bool>("Active").unwrap_or(false) as i64,
-        "consumable" => lua_int(&it, "AcquiredCount").unwrap_or(0),
-        "progressive_toggle" | "progressive" => {
-            let active = it.get::<bool>("Active").unwrap_or(false);
-            let stage = lua_int(&it, "CurrentStage").unwrap_or(0);
-            // The earliest stage this code appears at; a base (non-stage) code
-            // not listed in any stage is treated as stage 0 (always provided
-            // while active).
-            let idx = stages
-                .iter()
-                .position(|cs| cs.iter().any(|c| c == &code))
-                .unwrap_or(0) as i64;
-            (active && stage >= idx) as i64
-        }
-        _ => 0,
+    if custom.raw_len() == 0 || eng.borrow().provider_depth >= MAX_LOOKUP_DEPTH {
+        return total;
     }
+    eng.borrow_mut().provider_depth += 1;
+    for item in custom.sequence_values::<Table>().flatten() {
+        let Ok(Value::Function(can)) = item.raw_get::<Value>("CanProvideCodeFunc") else {
+            continue;
+        };
+        let Ok(Value::Function(gives)) = item.raw_get::<Value>("ProvidesCodeFunc") else {
+            continue;
+        };
+        if can
+            .call::<Value>((&item, code.as_str()))
+            .is_ok_and(|v| !matches!(v, Value::Nil | Value::Boolean(false)))
+            && let Ok(n) = gives.call::<Value>((&item, code.as_str()))
+        {
+            total += match n {
+                Value::Boolean(b) => b as i64,
+                other => lua
+                    .coerce_number(other)
+                    .ok()
+                    .flatten()
+                    .map_or(0, |n| n as i64),
+            };
+        }
+    }
+    eng.borrow_mut().provider_depth -= 1;
+    total
 }
 
 /// A bare numeric code in a rule (chiefly `visibility_rules`) is an AP location
@@ -1210,6 +1568,21 @@ fn find_location_cached(eng: &E, id: &str) -> Option<usize> {
     let hit = find_location(&nodes, id);
     eng.borrow_mut().location_lookup.insert(id.to_string(), hit);
     hit
+}
+
+/// Are the items a section (by its exact id) hosts all held?
+fn hosted_collected(lua: &Lua, eng: &E, id: &str) -> bool {
+    let hosted = {
+        let e = eng.borrow();
+        id.rsplit_once('/').and_then(|(loc, sec)| {
+            let n = e.nodes.iter().find(|n| n.name == loc)?;
+            Some(n.sections.iter().find(|s| s.name == sec)?.hosted.clone())
+        })
+    };
+    hosted
+        .unwrap_or_default()
+        .iter()
+        .all(|code| provider_count(lua, eng, code) >= 1)
 }
 
 /// The object `Tracker:FindObjectForCode("@…")` means: its id, and a chest count
@@ -1714,14 +2087,18 @@ fn flatten_locations(
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
-                    // A `ref` holds no chests of its own.
-                    item_count: s
-                        .get("item_count")
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(if s.get("ref").is_some() { 0 } else { 1 }),
+                    // A `ref` or a hosted item holds no chests of its own.
+                    item_count: s.get("item_count").and_then(|v| v.as_i64()).unwrap_or(
+                        if s.get("ref").is_some() || s.get("hosted_item").is_some() {
+                            0
+                        } else {
+                            1
+                        },
+                    ),
                     rules: parse_rules(eng, s, "access_rules", &rules),
                     vis: parse_rules(eng, s, "visibility_rules", &vis),
                     reference: s.get("ref").and_then(|v| v.as_str()).map(String::from),
+                    hosted: split_codes(s.get("hosted_item").unwrap_or(&serde_json::Value::Null)),
                     scoutable_glitched: s
                         .get("inspectable_sequence_break")
                         .and_then(|v| v.as_bool())
@@ -1864,96 +2241,47 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                 let Ok(json) = parse_pack_json(&txt) else {
                     return Ok(false);
                 };
-                let items: Table = lua.globals().get("__ITEMS")?;
-                for item in json.as_array().cloned().unwrap_or_default() {
-                    let kind = item
-                        .get("type")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("toggle")
-                        .to_string();
-                    let mut all_codes: Vec<String> = Vec::new();
-                    let mut stage_codes: Vec<Vec<String>> = Vec::new();
-                    let mut imgs: Vec<String> = Vec::new();
-                    // Codes are matched case-insensitively in PopTracker (grids
-                    // and logic may reference a differently-cased code than the
-                    // item declares), so normalise to lowercase everywhere.
-                    if let Some(c) = item.get("codes").and_then(|v| v.as_str()) {
-                        all_codes.extend(c.split(',').map(|s| s.trim().to_lowercase()));
-                    }
-                    if let Some(stages) = item.get("stages").and_then(|v| v.as_array()) {
-                        for st in stages {
-                            if let Some(c) = st.get("codes").and_then(|v| v.as_str()) {
-                                let scodes: Vec<String> =
-                                    c.split(',').map(|s| s.trim().to_lowercase()).collect();
-                                all_codes.extend(scodes.iter().cloned());
-                                stage_codes.push(scodes);
-                            } else {
-                                // keep stage indices aligned even for an imageless/codeless stage
-                                stage_codes.push(Vec::new());
+                let objects: Table = lua.named_registry_value(ITEM_OBJECTS)?;
+                let methods: Table = lua.named_registry_value(ITEM_METHODS)?;
+                for item in json.as_array().map(Vec::as_slice).unwrap_or_default() {
+                    let item = read_item(item);
+                    let index = {
+                        let mut e = eng2.borrow_mut();
+                        let index = e.items.len();
+                        for code in item.all_codes() {
+                            let list = e.code_items.entry(code).or_default();
+                            if list.last() != Some(&index) {
+                                list.push(index);
                             }
-                            // one image per stage (index-aligned), "" if none
-                            imgs.push(
-                                st.get("img")
-                                    .and_then(|v| v.as_str())
-                                    .map(img_path)
-                                    .unwrap_or_default(),
-                            );
                         }
-                    }
-                    if imgs.is_empty()
-                        && let Some(im) = item.get("img").and_then(|v| v.as_str())
+                        if item.kind == "composite_toggle" {
+                            e.composites.push(index);
+                        }
+                        e.items.push(item);
+                        e.accessibility_stale = true;
+                        e.visibility_stale = true;
+                        e.provider_cache.clear();
+                        index
+                    };
+                    // A composite starts from its parts.
                     {
-                        imgs.push(img_path(im));
+                        let mut e = eng2.borrow_mut();
+                        let parts = e.items[index].parts.clone();
+                        let mut stage = e.items[index].stage;
+                        for (bit, code) in parts.iter().enumerate() {
+                            if let Some(part) = e.code_items.get(code).and_then(|l| l.first())
+                                && *part != index
+                                && e.items[*part].active
+                            {
+                                stage |= 1 << bit;
+                            }
+                        }
+                        e.items[index].stage = stage;
                     }
-                    // Unique per item: PopTracker items can share a leading code
-                    // (e.g. all "Traveling Merchant" days share "tm"), so keying
-                    // by first code would collapse distinct items into one. Use a
-                    // monotonic id and map every code to it.
-                    let key = format!("__item{}", eng2.borrow().kind.len());
-                    // Build the item object the way PopTracker exposes it to Lua:
-                    // the mutable state fields plus the declared properties packs
-                    // read (Increment/MinCount/MaxCount for consumables, etc.).
-                    let geti = |k: &str, d: i64| item.get(k).and_then(|v| v.as_i64()).unwrap_or(d);
                     let t = lua.create_table()?;
-                    t.set(
-                        "Active",
-                        item.get("initial_active_state")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false),
-                    )?;
-                    t.set("AcquiredCount", geti("initial_quantity", 0))?;
-                    t.set("CurrentStage", geti("initial_stage_index", 0))?;
-                    t.set("Increment", geti("increment", 1))?;
-                    t.set("MinCount", geti("min_quantity", 0))?;
-                    t.set("MaxCount", geti("max_quantity", 0))?;
-                    t.set("Type", kind.as_str())?;
-                    t.set(
-                        "Name",
-                        item.get("name").and_then(|v| v.as_str()).unwrap_or(""),
-                    )?;
-                    t.set_metatable(Some(lua.named_registry_value(ITEM_METHODS)?))?;
-                    items.set(key.as_str(), &t)?;
-                    let name = item
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let mut e = eng2.borrow_mut();
-                    for c in &all_codes {
-                        e.code_to_key.insert(c.clone(), key.clone());
-                    }
-                    e.names.insert(key.clone(), name);
-                    e.accessibility_stale = true;
-                    e.visibility_stale = true;
-                    e.provider_cache.clear();
-                    e.item_codes.insert(key.clone(), all_codes.clone());
-                    if !imgs.is_empty() {
-                        e.imgs.insert(key.clone(), imgs);
-                    }
-                    e.kind.insert(key.clone(), kind);
-                    if !stage_codes.is_empty() {
-                        e.stage_codes.insert(key, stage_codes);
-                    }
+                    t.raw_set(ITEM_INDEX, index as i64)?;
+                    t.set_metatable(Some(methods.clone()))?;
+                    objects.raw_set(index as i64 + 1, t)?;
                 }
                 Ok(true)
             })?,
@@ -2045,10 +2373,12 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                     objs.raw_set(id.as_str(), &t)?;
                     return Ok(Value::Table(t));
                 }
-                let key = eng2.borrow().code_to_key.get(&code.to_lowercase()).cloned();
-                if let Some(k) = key {
-                    let items: Table = lua.globals().get("__ITEMS")?;
-                    return items.get::<Value>(k.as_str());
+                let first = (eng2.borrow().code_items.get(&code.to_lowercase()))
+                    .and_then(|l| l.first())
+                    .copied();
+                if let Some(index) = first {
+                    let objects: Table = lua.named_registry_value(ITEM_OBJECTS)?;
+                    return objects.raw_get(index as i64 + 1);
                 }
                 // A custom item (`ScriptHost:CreateLuaItem`) answers for the codes
                 // its `CanProvideCodeFunc` accepts (a failing one accepts none).
@@ -2280,9 +2610,11 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                 }
                 let id: String = t.raw_get("FullID")?;
                 mark_indirect(&eng2);
-                // A collected section reads as cleared, as in PopTracker.
+                // A collected section reads as cleared, as in PopTracker, once it has
+                // its hosted items too.
                 if t.raw_get::<Option<i64>>("AvailableChestCount")?
                     .is_some_and(|left| left <= 0)
+                    && hosted_collected(lua, &eng2, &id)
                 {
                     return Ok(Value::Integer(LEVEL_CLEARED));
                 }
@@ -2296,23 +2628,61 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     // Custom items: a table the pack fills in, which `FindObjectForCode` can
     // find again. `:Set`/`:Get` keep values in its `ItemState`; overlays,
     // clicks and icons aren't drawn here.
-    // What JSON items share: the overlay text shows, the rest isn't drawn here.
-    lua.load(
-        r##"
-        local function noop() end
-        return { __index = {
-          SetOverlay = function(self, text) rawset(self, "BadgeText", text) end,
-          SetOverlayBackground = noop,
-          SetOverlayColor = noop,
-          SetOverlayFontSize = noop,
-          SetOverlayAlign = noop,
-        } }
-        "##,
-    )
-    .set_name("host")
-    .set_mode(mlua::chunk::ChunkMode::Text)
-    .eval::<Table>()
-    .and_then(|m| lua.set_named_registry_value(ITEM_METHODS, m))?;
+    // JSON items' objects: fields go to the item, and methods are shared. The
+    // overlay text shows; its styling isn't drawn here.
+    {
+        let methods = lua.create_table()?;
+        for noop in [
+            "SetOverlayBackground",
+            "SetOverlayColor",
+            "SetOverlayFontSize",
+            "SetOverlayAlign",
+        ] {
+            methods.set(noop, lua.create_function(|_, _: MultiValue| Ok(()))?)?;
+        }
+        let meta = lua.create_table()?;
+        let index_of = |t: &Table| t.raw_get::<i64>(ITEM_INDEX).map(|i| i as usize);
+        let eng2 = eng.clone();
+        methods.set(
+            "SetOverlay",
+            lua.create_function(move |lua, (t, text): (Table, Value)| {
+                item_set(lua, &eng2, index_of(&t)?, "BadgeText", text).map(|_| ())
+            })?,
+        )?;
+        let eng2 = eng.clone();
+        meta.set(
+            "__index",
+            lua.create_function(move |lua, (t, key): (Table, Value)| {
+                let Some(name) = key
+                    .as_string()
+                    .and_then(|k| k.to_str().ok().map(|k| k.to_string()))
+                else {
+                    return Ok(Value::Nil);
+                };
+                let method: Value = methods.raw_get(name.as_str())?;
+                if !method.is_nil() {
+                    return Ok(method);
+                }
+                item_get(lua, &eng2, index_of(&t)?, &name)
+            })?,
+        )?;
+        let eng2 = eng.clone();
+        meta.set(
+            "__newindex",
+            lua.create_function(move |lua, (t, key, value): (Table, Value, Value)| {
+                if let Some(name) = key
+                    .as_string()
+                    .and_then(|k| k.to_str().ok().map(|k| k.to_string()))
+                    && item_set(lua, &eng2, index_of(&t)?, &name, value.clone())?
+                {
+                    return Ok(());
+                }
+                t.raw_set(key, value)
+            })?,
+        )?;
+        lua.set_named_registry_value(ITEM_METHODS, meta)?;
+        lua.set_named_registry_value(ITEM_OBJECTS, lua.create_table()?)?;
+    }
     lua.load(
         r##"
         local items = __LUAITEMS
