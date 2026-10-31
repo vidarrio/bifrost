@@ -315,9 +315,8 @@ fn visibility_rules_hide_locations_the_slot_lacks() {
 
 #[test]
 fn bracket_rules_yield_glitch_and_inspect_levels() {
-    // `[b]` is a glitch requirement, `{b}` an inspect requirement. With `a` held
-    // but `b` missing, the normal part is met so each rule only downgrades:
-    // GlitchB -> sequence-break (yellow), InspectB -> viewable (blue).
+    // `[b]` is optional: without it, a sequence break (yellow). `{b}` is needed to
+    // look at all: without it nothing, with it viewable (blue) but no more.
     let s = Session::new(&fixture()).unwrap();
     s.on_clear(&serde_json::json!({})).unwrap();
     s.on_retrieved("a", &serde_json::json!(1)).unwrap();
@@ -339,8 +338,8 @@ fn bracket_rules_yield_glitch_and_inspect_levels() {
     );
     assert_eq!(
         sec("Tests/InspectB").level,
-        "inspect",
-        "missing {{b}} -> viewable only"
+        "none",
+        "missing {{b}} -> nothing to look at"
     );
     assert_eq!(
         sec("Tests/NeedsA").level,
@@ -351,7 +350,7 @@ fn bracket_rules_yield_glitch_and_inspect_levels() {
     assert!(sec("Tests/NeedsA").accessible);
     assert!(!sec("Tests/GlitchB").accessible && !sec("Tests/InspectB").accessible);
 
-    // Holding `b` promotes both to fully reachable.
+    // Holding `b` makes the first fully reachable, the second viewable.
     s.on_retrieved("b", &serde_json::json!(1)).unwrap();
     let st2 = s.state();
     let lvl2 = |name: &str| {
@@ -370,8 +369,8 @@ fn bracket_rules_yield_glitch_and_inspect_levels() {
     );
     assert_eq!(
         lvl2("Tests/InspectB"),
-        "reachable",
-        "{{b}} now held -> reachable"
+        "inspect",
+        "{{b}} now held -> viewable, no more"
     );
 }
 
@@ -610,4 +609,179 @@ fn stopped_for_good_in_a_frame_handler_shows_as_an_error() {
     assert!(err.to_string().contains("instruction limit"), "{err}");
     // Four from loading, one each from the two handlers, and this one.
     assert_eq!(s.state().pack_error_count, 7);
+}
+
+#[test]
+fn rules_resolve_as_poptracker_does() {
+    // The expected levels follow PopTracker's `Tracker::resolveRules`.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rules");
+    let s = Session::new(&Pack::load(dir).unwrap()).unwrap();
+    s.on_clear(&serde_json::json!({})).unwrap();
+    let st = s.state();
+    assert_eq!(
+        st.pack_errors
+            .iter()
+            .filter(|e| !e.contains("in a rule"))
+            .count(),
+        0,
+        "{:?}",
+        st.pack_errors
+    );
+    assert!(
+        st.items
+            .iter()
+            .any(|i| i.active && i.codes.iter().any(|c| c == "level_seen")),
+        "the clear handler got to the end"
+    );
+    let level = |loc: &str, sec: &str| {
+        st.locations
+            .iter()
+            .find(|l| l.name == loc)
+            .unwrap_or_else(|| panic!("no location {loc}"))
+            .sections
+            .iter()
+            .find(|s| s.name == sec)
+            .unwrap_or_else(|| panic!("no section {loc}/{sec}"))
+            .level
+            .clone()
+    };
+    for (loc, want) in [
+        ("Empty", "reachable"),
+        ("Have", "reachable"),
+        ("Miss", "none"),
+        ("AndFails", "none"),
+        ("OrPasses", "reachable"),
+        ("Count3", "reachable"),
+        ("Count4", "none"),
+        ("OptionalMet", "reachable"),
+        ("OptionalMissing", "glitch"),
+        ("InspectEmptyAlt", "inspect"),
+        ("InspectMet", "inspect"),
+        ("InspectMissing", "none"),
+        ("InspectTwoCodes", "inspect"),
+        ("InspectOneMissing", "none"),
+        ("InspectOrNormal", "reachable"),
+        ("GlitchAndInspect", "inspect"),
+        ("NestedArray", "none"),
+        ("NestedArrayMet", "reachable"),
+        ("FnTrue", "reachable"),
+        ("FnFalse", "none"),
+        ("FnMissing", "none"),
+        ("FnError", "none"),
+        ("FnArgs", "reachable"),
+        ("FnLevelIsACount", "reachable"),
+        ("FnCountMet", "reachable"),
+        ("FnCountMissed", "none"),
+        ("FnArgCount", "reachable"),
+        ("FnString", "reachable"),
+        ("LevelNormal", "reachable"),
+        ("LevelBreak", "glitch"),
+        ("LevelInspect", "inspect"),
+        ("LevelNone", "none"),
+        ("LevelOptionalNone", "glitch"),
+        ("LevelBad", "none"),
+        ("RefSection", "reachable"),
+        ("RefClosedSection", "none"),
+        ("RefSectionless", "reachable"),
+        ("RefSectionlessClosed", "none"),
+        ("RefMissingIgnored", "reachable"),
+        ("RefOptional", "glitch"),
+        ("RefInspectNeedsBraces", "reachable"),
+        ("RefInspectInBraces", "inspect"),
+        ("RefByName", "reachable"),
+        ("RefSuffix", "reachable"),
+        ("RefSuffixNoPartialName", "reachable"),
+        ("CycleA", "none"),
+        ("CycleB", "none"),
+        ("CycleOut", "reachable"),
+        ("CycleOutB", "reachable"),
+        ("FnReadsLevel", "reachable"),
+        // Each alternative is joined to each of the parent's: only have + three:3.
+        ("Parent/ChildJoins", "reachable"),
+        ("Parent/ChildBlocked", "none"),
+        ("Scout", "glitch"),
+    ] {
+        assert_eq!(level(loc, "S"), want, "{loc}");
+    }
+    assert_eq!(level("Parent/ChildSection", "Own"), "none");
+    assert_eq!(level("Parent/ChildSection", "Plain"), "reachable");
+    // Same id: each keeps its own level, under its own name, and `id[1]` finds it.
+    let dups: Vec<_> = st.locations.iter().filter(|l| l.name == "Dup").collect();
+    assert_eq!(dups.len(), 2);
+    assert_eq!(dups[0].sections[0].level, "none");
+    assert_eq!(dups[1].sections[0].level, "reachable");
+    assert_eq!(level("RefDup", "S"), "reachable");
+    // An id that's already taken is skipped: three locations, three levels.
+    let taken: Vec<_> = st.locations.iter().filter(|l| l.name == "Taken").collect();
+    assert_eq!(taken[0].sections[0].level, "none");
+    assert_eq!(taken[1].sections[0].level, "reachable");
+    // A `ref` is the section it points to, in level and count, and to rules too.
+    assert_eq!(level("ShopSeenHere", "Sold"), "none");
+    assert_eq!(level("RefToRef", "S"), "none");
+    assert_eq!(level("RefNowhere", "S"), "none");
+    let shown = &st
+        .locations
+        .iter()
+        .find(|l| l.name == "ShopSeenHere")
+        .unwrap()
+        .sections[0];
+    assert_eq!((shown.item_count, shown.cleared), (3, 2));
+    // One string is one code, not split.
+    assert_eq!(level("StringRule", "S"), "none");
+    // Rules present but unusable are no rules, not the parent's.
+    assert_eq!(level("UnusableInParent/C", "S"), "reachable");
+    // A sectionless helper is kept for rules, not drawn.
+    assert!(!st.locations.iter().any(|l| l.name == "Container"));
+}
+
+#[test]
+fn visibility_rules_settle_whatever_the_order() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rules");
+    let s = Session::new(&Pack::load(dir).unwrap()).unwrap();
+    s.set_valid_locations(&[1]);
+    s.on_clear(&serde_json::json!({})).unwrap();
+    let st = s.state();
+    let shown = |name: &str| st.locations.iter().any(|l| l.name == name);
+    assert!(!shown("VisLater"));
+    assert!(
+        !shown("VisForward"),
+        "its target, defined later, isn't visible"
+    );
+    assert!(
+        shown("VisPlainTarget"),
+        "a target with no visibility rules is"
+    );
+    assert!(shown("VisShown"));
+    assert!(shown("RefNowhere"), "a ref to nothing has no rules to fail");
+}
+
+#[test]
+fn rule_alternatives_are_capped() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(tmp.path().join("scripts")).unwrap();
+    std::fs::write(
+        tmp.path().join("scripts/init.lua"),
+        "Tracker:AddLocations('l.json')\nArchipelago:AddClearHandler('c', function() end)",
+    )
+    .unwrap();
+    let rules: Vec<String> = (0..40).map(|i| format!("c{i}")).collect();
+    let mut node =
+        serde_json::json!({"name": "L", "access_rules": rules, "sections": [{"name": "S"}]});
+    for _ in 0..6 {
+        node = serde_json::json!({"name": "P", "access_rules": rules, "children": [node]});
+    }
+    std::fs::write(
+        tmp.path().join("l.json"),
+        serde_json::json!([node]).to_string(),
+    )
+    .unwrap();
+    let s = Session::new(&Pack::load(tmp.path()).unwrap()).unwrap();
+    let st = s.state();
+    assert!(
+        st.pack_errors
+            .iter()
+            .any(|e| e.contains("too many alternatives")),
+        "{:?}",
+        st.pack_errors
+    );
 }

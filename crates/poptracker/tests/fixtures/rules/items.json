@@ -1,0 +1,27 @@
+[
+ {
+  "name": "Have",
+  "type": "toggle",
+  "img": "x.png",
+  "codes": "have"
+ },
+ {
+  "name": "Three",
+  "type": "consumable",
+  "img": "x.png",
+  "codes": "three",
+  "max_quantity": 9
+ },
+ {
+  "name": "Miss",
+  "type": "toggle",
+  "img": "x.png",
+  "codes": "miss"
+ },
+ {
+  "name": "LevelSeen",
+  "type": "toggle",
+  "img": "x.png",
+  "codes": "level_seen"
+ }
+]

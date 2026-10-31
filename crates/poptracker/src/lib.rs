@@ -16,8 +16,9 @@
 //!   touches, plus the toggle / consumable / progressive_toggle item model.
 //! - Drives the pack via the AP handlers (`on_clear` / `on_item` / `on_location`
 //!   / `on_retrieved`) exactly as the live server would.
-//! - Evaluates access rules: item codes, `code:count`, OR-of-ANDs, `@location`
-//!   references, and the `$luaFunction|arg|…` escape hatch.
+//! - Evaluates access rules as PopTracker's `resolveRules` does: item codes,
+//!   `code:count`, `[optional]`, `{inspect}`, `@location/section` references,
+//!   `$function|arg|…` and `^$function` levels, settled over repeated passes.
 //! - Custom items (`ScriptHost:CreateLuaItem`), as state `FindObjectForCode`
 //!   can find again; frame handlers (run after init, after each clear and
 //!   before each state) and "*" code watches (run before each state).
@@ -28,8 +29,6 @@
 //! ## Not done yet (the long tail — tracked for the real build-out)
 //! - Custom items' clicks, icons and `ProvidesCodeFunc` (they don't count
 //!   toward access rules), and watches on single codes.
-//! - Richer rule DSL: `[optional]` groups, `^`/glitched levels, the full
-//!   Inspect/SequenceBreak accessibility ladder (only Reachable/None today).
 //! - The reactive recompute loop and renderer data
 //!   (maps/coordinates/item layout) for the visual tab.
 //! - Memory-autotracking packs (SNES/N64) are inherently unsupported server-side.
@@ -75,6 +74,9 @@ pub struct Pack {
     dir: PathBuf,
     /// The variant in use (see [`pick_variant`]); empty if the pack has none.
     variant: String,
+    /// Whether a location that's both glitched and inspectable reads as glitched
+    /// unless it says otherwise: the old default, for packs that target it.
+    scoutable_glitched: bool,
     _tmp: Option<tempfile::TempDir>,
 }
 impl Pack {
@@ -102,10 +104,13 @@ impl Pack {
         if !dir.join("scripts/init.lua").is_file() {
             return Err(Error::Pack("missing scripts/init.lua".into()));
         }
-        let variant = pick_variant(&dir);
+        let manifest = read_manifest(&dir);
+        let variant = pick_variant(&dir, &manifest);
+        let scoutable_glitched = targets_old_scoutable_default(&manifest);
         Ok(Pack {
             dir,
             variant,
+            scoutable_glitched,
             _tmp: tmp,
         })
     }
@@ -168,18 +173,36 @@ pub fn read_asset(dir: &Path, variant: &str, rel: &str) -> Option<Vec<u8>> {
 /// can overflow the stack: that's why only a worker may call [`Pack::load`].
 const MAX_MANIFEST: u64 = 1 << 20;
 
-/// Which of a pack's variants to run: there's no one here to choose, so an
-/// Archipelago one with a map rather than items only, `standard` if that fits,
-/// else the first by name. Empty if the manifest names none.
-fn pick_variant(dir: &Path) -> String {
+/// The pack's manifest, if it has one that parses.
+fn read_manifest(dir: &Path) -> serde_json::Value {
     let path = dir.join("manifest.json");
     let txt = match std::fs::metadata(&path) {
         Ok(m) if m.len() <= MAX_MANIFEST => std::fs::read_to_string(&path).unwrap_or_default(),
         _ => String::new(),
     };
-    let Ok(manifest) = parse_pack_json(txt.trim_start_matches('\u{feff}')) else {
-        return String::new();
-    };
+    parse_pack_json(txt.trim_start_matches('\u{feff}')).unwrap_or_default()
+}
+
+/// PopTracker's default for `inspectable_sequence_break`: on for a pack that
+/// targets 0.31.0 or older.
+fn targets_old_scoutable_default(manifest: &serde_json::Value) -> bool {
+    let version: Vec<u64> = manifest
+        .get("target_poptracker_version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .split('.')
+        .map(|p| leading_int(p).max(0) as u64)
+        .chain([0, 0, 0])
+        .take(3)
+        .collect();
+    let version = (version[0], version[1], version[2]);
+    version > (0, 0, 0) && version <= (0, 31, 0)
+}
+
+/// Which of a pack's variants to run: there's no one here to choose, so an
+/// Archipelago one with a map rather than items only, `standard` if that fits,
+/// else the first by name. Empty if the manifest names none.
+fn pick_variant(dir: &Path, manifest: &serde_json::Value) -> String {
     let Some(variants) = manifest.get("variants").and_then(|v| v.as_object()) else {
         return String::new();
     };
@@ -375,7 +398,7 @@ pub struct MapInfo {
 #[derive(Debug, Serialize)]
 pub struct LocationState {
     pub name: String,
-    /// Reachable right now (today: reachable/none; richer levels are TODO).
+    /// Reachable right now, at the normal level.
     pub accessible: bool,
     /// Every section's checks have been collected (all sections `checked`), so
     /// PopTracker would render this location as "Done" (grey).
@@ -451,21 +474,40 @@ struct MapLoc {
 struct SectionDef {
     name: String,
     item_count: i64,
-    rules: Vec<String>, // section-level access_rules (own OR-group)
-    vis: Vec<String>,   // section-level visibility_rules (own OR-group); empty = always visible
+    /// `ref`: this section is that one (`location/section`), shown elsewhere.
+    reference: Option<String>,
+    rules: Rules, // effective access_rules: the location's joined to its own
+    vis: Rules,   // effective visibility_rules; empty = always visible
+    scoutable_glitched: bool,
 }
 #[derive(Clone)]
 struct LocNode {
-    name: String,                 // full path, e.g. "Area/Sub/Spot"
-    groups: Vec<Vec<String>>, // effective location-level access: parent chain + own; ALL groups must pass
-    vis_groups: Vec<Vec<String>>, // effective `visibility_rules`: parent chain + own; ALL must pass for the marker to show
+    name: String,         // its id: the full path, e.g. "Area/Sub/Spot"
+    display_name: String, // the same, without what makes a duplicate's id unique
+    short_name: String,   // its last part
+    rules: Rules,         // effective access_rules: the parent chain's joined to its own
+    vis: Rules,           // effective visibility_rules, likewise; empty = always visible
+    scoutable_glitched: bool,
     map_locations: Vec<MapLoc>,
     sections: Vec<SectionDef>,
+}
+
+impl LocNode {
+    /// A real, drawable/checkable location: it has sections or a map placement.
+    fn drawn(&self) -> bool {
+        !self.sections.is_empty() || !self.map_locations.is_empty()
+    }
 }
 
 #[derive(Default)]
 struct Eng {
     variant: String,
+    scoutable_default: bool,
+    /// The instruction budget left (see `Session::charge`): settling stops at 0.
+    budget: Rc<std::cell::Cell<u64>>,
+    /// The next number for a location id seen before (see `flatten_locations`).
+    duplicate_ids: HashMap<String, u64>,
+    taken_ids: HashSet<String>,
     /// The first few errors from the pack's handlers, and how many in all.
     pack_errors: Vec<String>,
     pack_error_count: usize,
@@ -483,13 +525,20 @@ struct Eng {
     /// key -> images: stage images for staged items, else a single base image.
     imgs: HashMap<String, Vec<String>>,
     maps: Vec<MapDef>,
-    nodes: Vec<LocNode>,
-    /// `@`-location path (without the leading `@`) -> total chest count, for
-    /// resolving `Tracker:FindObjectForCode("@Area/Sub/Section")` to a section
-    /// object the pack's `onLocation` can decrement. Keyed as
-    /// `"<node full path>/<section name>"` (section name may be empty → trailing
-    /// slash), matching how packs' `LOCATION_MAPPING` address sections.
-    loc_counts: HashMap<String, i64>,
+    nodes: Rc<Vec<LocNode>>,
+    /// What's settled of the rules (see `settle_accessibility`), by location or
+    /// `location/section` id, and whether a change has made it stale.
+    accessibility: HashMap<String, Level>,
+    visibility: HashMap<String, bool>,
+    accessibility_stale: bool,
+    visibility_stale: bool,
+    updating_cache: bool,
+    /// `provider_count_cached`'s results, the `$` codes it's running, and those
+    /// that looked at a location and so aren't kept.
+    provider_cache: HashMap<String, i64>,
+    lua_codes: Vec<String>,
+    indirect_codes: HashSet<String>,
+    location_lookup: HashMap<String, Option<usize>>,
     /// Named layout widgets (`layouts/*.json`), e.g. `tracker_default`.
     layouts: HashMap<String, serde_json::Value>,
     /// The slot's valid AP location ids (checked ∪ missing). `None` until the
@@ -518,6 +567,10 @@ const CODE_WATCHES: &str = "bifrost.code_watches";
 /// Registry key of the players table (slot → `{name, game}`), filled by
 /// `Session::set_multiworld`.
 const PLAYERS: &str = "bifrost.players";
+
+/// Registry key of the metatable location and section objects share, for the
+/// level they read on demand.
+const LOCATION_METHODS: &str = "bifrost.location_methods";
 
 /// Registry key of the metatable JSON items share for their methods.
 const ITEM_METHODS: &str = "bifrost.item_methods";
@@ -577,6 +630,8 @@ impl Session {
         let eng: E = Rc::new(RefCell::new(Eng {
             dir: pack.dir.clone(),
             variant: pack.variant.clone(),
+            scoutable_default: pack.scoutable_glitched,
+            budget: budget.clone(),
             ..Default::default()
         }));
         lua.load("__ITEMS = {}").exec()?;
@@ -627,6 +682,9 @@ impl Session {
     /// public method that runs pack Lua.
     fn charge(&self) {
         self.budget.set(MAX_TICKS);
+        let mut e = self.eng.borrow_mut();
+        e.accessibility_stale = true;
+        e.visibility_stale = true;
     }
 
     /// Set the slot's AP player number (`Archipelago.PlayerNumber`), which some
@@ -802,61 +860,87 @@ impl Session {
         }
 
         // locations + markers (from the node model)
-        let nodes = self.eng.borrow().nodes.clone();
         // Only enforce `visibility_rules` once the slot's valid-location set is
         // known; otherwise every marker shows (fail-safe, old behavior).
         let enforce_vis = self.eng.borrow().valid_locations.is_some();
-        for n in nodes {
+        // Handlers may have changed anything, so settle here, once.
+        self.charge();
+        settle_accessibility(&self.lua, &self.eng);
+        if enforce_vis {
+            settle_visibility(&self.lua, &self.eng);
+        }
+        if self.budget.get() == 0 {
+            note_error(
+                &self.eng,
+                "the pack's rules ran out of instruction budget, so some may read as unmet",
+            );
+        }
+        // After settling: a rule function may have added locations.
+        let nodes = self.eng.borrow().nodes.clone();
+        let level_of = |id: &str| {
+            let e = self.eng.borrow();
+            e.accessibility.get(id).copied().unwrap_or(LEVEL_NONE)
+        };
+        let visible = |id: &str, rules: &Rules| {
+            !enforce_vis
+                || rules.is_empty()
+                || self
+                    .eng
+                    .borrow()
+                    .visibility
+                    .get(id)
+                    .copied()
+                    .unwrap_or(false)
+        };
+        for (index, n) in nodes.iter().enumerate().filter(|(_, n)| n.drawn()) {
             // Hide a location whose visibility rules fail (e.g. options the slot
             // didn't generate) — dropped from both markers and the locations list,
             // just as native PopTracker omits them.
-            if enforce_vis
-                && !n.vis_groups.is_empty()
-                && !eval_groups(&self.lua, &self.eng, &n.vis_groups, 0)
-            {
+            if !visible(&n.name, &n.vis) {
                 continue;
             }
-            let loc_access = eval_groups(&self.lua, &self.eng, &n.groups, 0);
+            let loc_access = level_of(&n.name) >= LEVEL_NORMAL;
             let locobjs: Option<Table> = self.lua.globals().get("__LOCOBJS").ok();
-            let single = n.sections.len() == 1;
             // The chests still available in a section's chest object (if the pack
-            // touched it via `onLocation`). Look under both the `full/section`
-            // and bare `full` address forms. `None` => the pack never tracked it.
-            let section_avail = |secname: &str| -> Option<i64> {
+            // touched it via `onLocation`). `None` => the pack never tracked it.
+            let section_avail = |key: &str| -> Option<i64> {
                 let objs = locobjs.as_ref()?;
-                let mut keys = vec![format!("{}/{}", n.name, secname)];
-                if single || secname.is_empty() {
-                    keys.push(n.name.clone());
-                }
-                keys.iter().find_map(|k| {
-                    objs.get::<Table>(k.as_str())
-                        .ok()
-                        .and_then(|t| lua_int(&t, "AvailableChestCount"))
-                })
+                objs.raw_get::<Table>(key)
+                    .ok()
+                    .and_then(|t| lua_int(&t, "AvailableChestCount"))
             };
             let sections: Vec<SectionState> = n
                 .sections
                 .iter()
+                .enumerate()
                 // A section can carry its own `visibility_rules` (Stardew uses them
                 // at section level, e.g. per Desert Festival stall); drop the ones
                 // the slot didn't generate, same as the node-level filter above.
-                .filter(|s| {
-                    !enforce_vis || s.vis.is_empty() || eval_rules(&self.lua, &self.eng, &s.vis, 0)
-                })
-                .map(|s| {
-                    // section accessible = location groups AND the section's own rules
-                    let mut g = n.groups.clone();
-                    if !s.rules.is_empty() {
-                        g.push(s.rules.clone());
+                .filter(|(j, _)| match real_section(&self.eng, index, *j) {
+                    Some((a, b)) => {
+                        let target = &nodes[a].sections[b];
+                        visible(&format!("{}/{}", nodes[a].name, target.name), &target.vis)
                     }
-                    let avail = section_avail(&s.name);
-                    let lvl = eval_groups_level(&self.lua, &self.eng, &g, 0);
+                    // A `ref` to nothing is a blank section, with no rules to fail.
+                    None => true,
+                })
+                .map(|(j, s)| {
+                    // A `ref` shows the section it points to, count and level.
+                    let (key, item_count) = match real_section(&self.eng, index, j) {
+                        Some((a, b)) => (
+                            format!("{}/{}", nodes[a].name, nodes[a].sections[b].name),
+                            nodes[a].sections[b].item_count,
+                        ),
+                        None => (String::new(), s.item_count),
+                    };
+                    let avail = section_avail(&key);
+                    let lvl = level_of(&key);
                     SectionState {
                         name: s.name.clone(),
-                        item_count: s.item_count,
-                        cleared: avail.map_or(0, |a| (s.item_count - a).max(0)),
-                        accessible: lvl == Level::Reachable,
-                        level: lvl.as_str().to_string(),
+                        item_count,
+                        cleared: avail.map_or(0, |a| (item_count - a).max(0)),
+                        accessible: lvl >= LEVEL_NORMAL,
+                        level: level_name(lvl).to_string(),
                         checked: avail.is_some_and(|a| a <= 0),
                     }
                 })
@@ -875,14 +959,14 @@ impl Session {
                     y: ml.y,
                     size: ml.size,
                     shape: ml.shape.clone(),
-                    location: n.name.clone(),
+                    location: n.display_name.clone(),
                     accessible: loc_access,
                     checked: loc_checked,
                     sections: sections.clone(),
                 });
             }
             out.locations.push(LocationState {
-                name: n.name,
+                name: n.display_name.clone(),
                 accessible: loc_access,
                 checked: loc_checked,
                 sections,
@@ -923,7 +1007,7 @@ impl Session {
         let e = self.eng.borrow();
         Summary {
             items: e.kind.len(),
-            locations: e.nodes.len(),
+            locations: e.nodes.iter().filter(|n| n.drawn()).count(),
             maps: e.maps.len(),
             variant: e.variant.clone(),
             archipelago_autotracking: !(e.clear_h.is_empty()
@@ -991,58 +1075,6 @@ fn provider_count(lua: &Lua, eng: &E, code: &str) -> i64 {
     }
 }
 
-fn eval_token(lua: &Lua, eng: &E, tok: &str, depth: u32) -> bool {
-    let tok = tok.trim();
-    if tok.is_empty() {
-        return true;
-    }
-    if let Some(f) = tok.strip_prefix('$') {
-        // `$name|arg|…`: the function gets the arguments as strings.
-        let mut parts = f.split('|');
-        let name = parts.next().unwrap_or(f);
-        let name = name.split(':').next().unwrap_or(name);
-        let args: Vec<&str> = parts.collect();
-        if let Ok(func) = lua.globals().get::<Function>(name)
-            && let Ok(v) = func.call::<Value>(MultiValue::from_iter(
-                args.iter()
-                    .filter_map(|a| lua.create_string(a).ok().map(Value::String)),
-            ))
-        {
-            return match v {
-                Value::Integer(i) => i >= 1,
-                Value::Number(n) => n >= 1.0,
-                Value::Boolean(b) => b,
-                _ => false,
-            };
-        }
-        return false;
-    }
-    if let Some(at) = tok.strip_prefix('@') {
-        if depth > 32 {
-            return false; // crude cycle guard
-        }
-        // @Location reference: accessible iff that location's groups all pass.
-        // Strip a trailing "/Section" if present; we key on the location node.
-        let groups = eng
-            .borrow()
-            .nodes
-            .iter()
-            .find(|n| n.name == at || n.name.ends_with(at))
-            .map(|n| n.groups.clone());
-        return match groups {
-            Some(g) => eval_groups(lua, eng, &g, depth + 1),
-            None => false,
-        };
-    }
-    if let Some((code, cnt)) = tok.split_once(':') {
-        let need: i64 = cnt.trim().parse().unwrap_or(1);
-        let code = code.trim();
-        provider_count(lua, eng, code) >= need || location_present(eng, code)
-    } else {
-        provider_count(lua, eng, tok) >= 1 || location_present(eng, tok)
-    }
-}
-
 /// A bare numeric code in a rule (chiefly `visibility_rules`) is an AP location
 /// id: the pack treats it as "present" exactly when that location exists for the
 /// slot (its `onClear` sets a toggle of that code from `MissingLocations ∪
@@ -1057,123 +1089,454 @@ fn location_present(eng: &E, code: &str) -> bool {
     code.parse::<i64>().is_ok_and(|id| valid.contains(&id))
 }
 
-fn eval_rule(lua: &Lua, eng: &E, rule: &str, depth: u32) -> bool {
-    rule.split(',').all(|t| eval_token(lua, eng, t, depth))
-}
+/// PopTracker's accessibility levels, with the numbers packs see as
+/// `AccessibilityLevel`: a `^$` rule's function returns one.
+type Level = i64;
+const LEVEL_NONE: Level = 0;
+const LEVEL_PARTIAL: Level = 1;
+const LEVEL_INSPECT: Level = 3;
+const LEVEL_SEQUENCE_BREAK: Level = 5;
+const LEVEL_NORMAL: Level = 6;
+const LEVEL_CLEARED: Level = 7;
 
-/// An access rule list is an OR of rule strings (empty => always true).
-fn eval_rules(lua: &Lua, eng: &E, rules: &[String], depth: u32) -> bool {
-    if rules.is_empty() {
-        return true;
+fn level_name(l: Level) -> &'static str {
+    match l {
+        LEVEL_NONE => "none",
+        LEVEL_INSPECT => "inspect",
+        LEVEL_SEQUENCE_BREAK => "glitch",
+        _ => "reachable",
     }
-    rules.iter().any(|r| eval_rule(lua, eng, r, depth))
 }
 
-/// Effective accessibility = every OR-group passes (parent chain + own + section).
-fn eval_groups(lua: &Lua, eng: &E, groups: &[Vec<String>], depth: u32) -> bool {
-    groups.iter().all(|g| eval_rules(lua, eng, g, depth))
+/// How many times the rules are gone through for references between locations
+/// to settle. PopTracker goes on until they do; a pack can make them flip forever.
+const MAX_RULE_PASSES: usize = 256;
+
+/// How many alternatives one location's rules may join up to with its parents':
+/// the count multiplies at each level, and memory for it is outside Lua's cap.
+const MAX_ALTERNATIVES: usize = 8192;
+
+/// A rule list: any of its alternatives (OR), each all of its codes (AND).
+type Rules = Vec<Vec<String>>;
+
+/// `atoi`: the leading number, or 0.
+fn leading_int(s: &str) -> i64 {
+    let s = s.trim_start();
+    let (sign, digits) = match s.strip_prefix('-') {
+        Some(rest) => (-1, rest),
+        None => (1, s.strip_prefix('+').unwrap_or(s)),
+    };
+    let end = digits
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(digits.len());
+    digits[..end].parse::<i64>().map_or(0, |n| sign * n)
 }
 
-/// PopTracker accessibility levels, worst→best. A rule can downgrade from
-/// `Reachable` via two bracket forms: `[token]` is a glitch/sequence-break
-/// requirement (missing it → `Glitch`), `{token}` is an inspect requirement
-/// (missing it → `Inspect`, i.e. you can see the check but not reach it).
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Level {
-    None,
-    Inspect,
-    Glitch,
-    Reachable,
+/// Run a rule's `$name|arg|…` function, as PopTracker reads its result: a number
+/// (or a string that is one) truncated, `true` as 1, anything else or an error 0.
+fn run_rule_function(lua: &Lua, eng: &E, code: &str) -> i64 {
+    let mut parts = code.strip_prefix('$').unwrap_or(code).split('|');
+    let name = parts.next().unwrap_or("");
+    let Ok(func) = lua.globals().get::<Function>(name) else {
+        return 0;
+    };
+    let args =
+        MultiValue::from_iter(parts.filter_map(|a| lua.create_string(a).ok().map(Value::String)));
+    match func.call::<Value>(args) {
+        Ok(Value::Boolean(b)) => b as i64,
+        Ok(v) => lua.coerce_number(v).ok().flatten().map_or(0, |n| n as i64),
+        // Out of memory, the pack can't go on: stop settling, and say so.
+        Err(e) if is_memory_error(&e) => {
+            note_error(eng, &e.to_string());
+            eng.borrow().budget.set(0);
+            0
+        }
+        Err(_) => 0,
+    }
 }
-impl Level {
-    fn as_str(self) -> &'static str {
-        match self {
-            Level::None => "none",
-            Level::Inspect => "inspect",
-            Level::Glitch => "glitch",
-            Level::Reachable => "reachable",
+
+/// PopTracker's `ProviderCountForCode`: `$` codes run Lua, others count items.
+/// While settling, results are kept, except a function's that looked at a
+/// location, which may change as the rules settle. Otherwise a pack may have
+/// just changed what it's asking about.
+fn provider_count_cached(lua: &Lua, eng: &E, code: &str) -> i64 {
+    let settling = eng.borrow().updating_cache;
+    if settling && let Some(n) = eng.borrow().provider_cache.get(code) {
+        return *n;
+    }
+    let n = if code.starts_with('$') {
+        eng.borrow_mut().lua_codes.push(code.to_string());
+        let n = run_rule_function(lua, eng, code);
+        eng.borrow_mut().lua_codes.pop();
+        n
+    } else {
+        provider_count(lua, eng, code)
+    };
+    let mut e = eng.borrow_mut();
+    if settling && !e.indirect_codes.contains(code) {
+        e.provider_cache.insert(code.to_string(), n);
+    }
+    n
+}
+
+/// A function running for a rule looked at a location (see `provider_count_cached`).
+fn mark_indirect(eng: &E) {
+    let mut e = eng.borrow_mut();
+    if e.updating_cache {
+        let codes = e.lua_codes.clone();
+        e.indirect_codes.extend(codes);
+    }
+}
+
+/// PopTracker's `getLocation`: by id, else by name, or by the end of an id.
+fn find_location(nodes: &[LocNode], id: &str) -> Option<usize> {
+    if let Some(i) = nodes.iter().position(|n| n.name == id) {
+        return Some(i);
+    }
+    if !id.contains('/') {
+        return nodes.iter().position(|n| n.short_name == id);
+    }
+    let search = format!("/{id}");
+    nodes.iter().position(|n| n.name.ends_with(&search))
+}
+
+/// Find a location for a reference, remembering the answer: packs refer to the
+/// same ones over and over, and each search goes through every location.
+fn find_location_cached(eng: &E, id: &str) -> Option<usize> {
+    if let Some(hit) = eng.borrow().location_lookup.get(id) {
+        return *hit;
+    }
+    let nodes = eng.borrow().nodes.clone();
+    let hit = find_location(&nodes, id);
+    eng.borrow_mut().location_lookup.insert(id.to_string(), hit);
+    hit
+}
+
+/// The object `Tracker:FindObjectForCode("@…")` means: its id, and a chest count
+/// if it's a section.
+fn location_object(eng: &E, path: &str) -> Option<(String, Option<i64>)> {
+    if let Some((loc, section)) = path.rsplit_once('/')
+        && let Some(i) = find_location_cached(eng, loc)
+    {
+        let e = eng.borrow();
+        let n = &e.nodes[i];
+        if let Some(s) = n.sections.iter().find(|s| s.name == section) {
+            return Some((format!("{}/{}", n.name, s.name), Some(s.item_count)));
         }
     }
+    let i = find_location_cached(eng, path)?;
+    let e = eng.borrow();
+    let n = &e.nodes[i];
+    Some(match n.sections.as_slice() {
+        [s] => (format!("{}/{}", n.name, s.name), Some(s.item_count)),
+        _ => (n.name.clone(), None),
+    })
 }
 
-/// Split a rule on top-level commas, keeping commas inside `[..]`/`{..}` groups
-/// attached to their token.
-fn split_rule_tokens(rule: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut depth = 0i32;
-    let mut cur = String::new();
-    for c in rule.chars() {
-        match c {
-            '[' | '{' => {
-                depth += 1;
-                cur.push(c);
+/// Which section a section's `ref` means, as `location/section`: rules and the
+/// tracker see the section it points to.
+fn real_section(eng: &E, loc: usize, section: usize) -> Option<(usize, usize)> {
+    let reference = {
+        let e = eng.borrow();
+        let s = e.nodes.get(loc)?.sections.get(section)?;
+        match &s.reference {
+            Some(r) => r.clone(),
+            None => return Some((loc, section)),
+        }
+    };
+    let (target_loc, target_section) = reference.rsplit_once('/')?;
+    let i = find_location_cached(eng, target_loc)?;
+    let e = eng.borrow();
+    let j = e.nodes[i]
+        .sections
+        .iter()
+        .position(|s| s.name == target_section)?;
+    Some((i, j))
+}
+
+/// A reference's level, from what's settled so far. As in PopTracker, a target with
+/// no visibility rules is visible, and one not settled yet isn't.
+fn reference_level(eng: &E, id: &str, visibility: bool) -> Option<Level> {
+    let read = |key: &str, vis_empty: bool| -> Level {
+        let e = eng.borrow();
+        if visibility {
+            let seen = vis_empty || e.visibility.get(key).copied().unwrap_or(false);
+            if seen { LEVEL_NORMAL } else { LEVEL_NONE }
+        } else {
+            e.accessibility.get(key).copied().unwrap_or(LEVEL_NONE)
+        }
+    };
+    if let Some(i) = find_location_cached(eng, id) {
+        let (key, vis_empty) = {
+            let e = eng.borrow();
+            (e.nodes[i].name.clone(), e.nodes[i].vis.is_empty())
+        };
+        return Some(read(&key, vis_empty));
+    }
+    let (loc, section) = id.rsplit_once('/')?;
+    let i = find_location_cached(eng, loc)?;
+    let j = eng.borrow().nodes[i]
+        .sections
+        .iter()
+        .position(|s| s.name == section)?;
+    let Some((i, j)) = real_section(eng, i, j) else {
+        // A `ref` to nothing is a blank section: never reachable, always visible.
+        return Some(if visibility { LEVEL_NORMAL } else { LEVEL_NONE });
+    };
+    let (key, vis_empty) = {
+        let e = eng.borrow();
+        let n = &e.nodes[i];
+        (
+            format!("{}/{}", n.name, n.sections[j].name),
+            n.sections[j].vis.is_empty(),
+        )
+    };
+    Some(read(&key, vis_empty))
+}
+
+/// PopTracker's `resolveRules`, kept line for line in its logic: packs are written
+/// against its behaviour, quirks included.
+fn resolve_rules(
+    lua: &Lua,
+    eng: &E,
+    rules: &Rules,
+    visibility: bool,
+    scoutable_glitched: bool,
+) -> Level {
+    let (mut glitched, mut inspectable) = (false, false);
+    if rules.is_empty() {
+        return LEVEL_NORMAL;
+    }
+    for ruleset in rules {
+        if ruleset.is_empty() {
+            return LEVEL_NORMAL;
+        }
+        let mut reachable = LEVEL_NORMAL;
+        let mut inspect_only = false;
+        for rule in ruleset {
+            if rule.is_empty() {
+                continue;
             }
-            ']' | '}' => {
-                depth -= 1;
-                cur.push(c);
+            let mut s = rule.as_str();
+            // `{…}` needs this to look, not to get.
+            if let Some(rest) = s.strip_prefix('{') {
+                inspect_only = true;
+                s = rest;
             }
-            ',' if depth == 0 => {
-                if !cur.trim().is_empty() {
-                    out.push(cur.trim().to_string());
+            if inspect_only && let Some(rest) = s.strip_suffix('}') {
+                s = rest;
+            }
+            // `[…]` is optional: without it, a sequence break.
+            let mut optional = false;
+            if s.len() > 1 && s.starts_with('[') && s.ends_with(']') {
+                optional = true;
+                s = &s[1..s.len() - 1];
+            }
+            if inspect_only && s.is_empty() {
+                continue;
+            }
+            // `^$f` gives a level; `@…` refers to a location; `code:n` wants n.
+            let is_level = s.starts_with('^');
+            let is_reference = s.starts_with('@');
+            let mut count = 1;
+            if !is_level
+                && !is_reference
+                && let Some((code, n)) = s.split_once(':')
+            {
+                count = leading_int(n);
+                s = code;
+            }
+            if is_level {
+                if s.len() < 3 || !s[1..].starts_with('$') {
+                    reachable = LEVEL_NONE;
+                    break;
                 }
-                cur.clear();
+                s = &s[1..];
             }
-            _ => cur.push(c),
+            if let Some(id) = s.strip_prefix('@') {
+                if let Some(mut sub) = reference_level(eng, id, visibility) {
+                    if !inspect_only && sub == LEVEL_INSPECT {
+                        sub = LEVEL_NONE;
+                    } else if optional && sub == LEVEL_NONE {
+                        sub = LEVEL_SEQUENCE_BREAK;
+                    } else if sub == LEVEL_NONE {
+                        reachable = LEVEL_NONE;
+                    }
+                    if sub == LEVEL_SEQUENCE_BREAK && reachable != LEVEL_NONE {
+                        reachable = LEVEL_SEQUENCE_BREAK;
+                    }
+                }
+                if reachable == LEVEL_NONE {
+                    break;
+                }
+            } else {
+                let n = provider_count_cached(lua, eng, s);
+                if is_level {
+                    let mut sub = n;
+                    if !inspect_only && sub == LEVEL_INSPECT {
+                        inspect_only = true;
+                    } else if optional && sub == LEVEL_NONE {
+                        sub = LEVEL_SEQUENCE_BREAK;
+                    } else if sub == LEVEL_NONE {
+                        reachable = LEVEL_NONE;
+                    }
+                    if sub == LEVEL_SEQUENCE_BREAK && reachable != LEVEL_NONE {
+                        reachable = LEVEL_SEQUENCE_BREAK;
+                    }
+                    if reachable == LEVEL_NONE {
+                        break;
+                    }
+                    continue;
+                }
+                if n >= count || location_present(eng, s) {
+                    continue;
+                }
+                if optional {
+                    reachable = LEVEL_SEQUENCE_BREAK;
+                } else {
+                    reachable = LEVEL_NONE;
+                    break;
+                }
+            }
+        }
+        if reachable == LEVEL_NORMAL && !inspect_only {
+            return LEVEL_NORMAL;
+        }
+        if reachable != LEVEL_NONE && inspect_only {
+            inspectable = true;
+        }
+        if reachable == LEVEL_SEQUENCE_BREAK {
+            glitched = true;
         }
     }
-    if !cur.trim().is_empty() {
-        out.push(cur.trim().to_string());
+    if glitched && inspectable && !scoutable_glitched {
+        LEVEL_INSPECT
+    } else if glitched {
+        LEVEL_SEQUENCE_BREAK
+    } else if inspectable {
+        LEVEL_INSPECT
+    } else {
+        LEVEL_NONE
     }
-    out
 }
 
-/// Accessibility level of one AND-rule: normal tokens are hard requirements
-/// (any failure → `None`); `[..]`/`{..}` tokens downgrade a met rule.
-fn eval_rule_level(lua: &Lua, eng: &E, rule: &str, depth: u32) -> Level {
-    let (mut normal, mut glitch, mut inspect) = (true, true, true);
-    for t in split_rule_tokens(rule) {
-        if let Some(inner) = t.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-            if !eval_token(lua, eng, inner, depth) {
-                glitch = false;
+/// Settle every location's and section's level, unless that's been done since the
+/// last change. While settling, a look at a level gets what's known so far.
+fn settle_accessibility(lua: &Lua, eng: &E) {
+    {
+        let mut e = eng.borrow_mut();
+        if !e.accessibility_stale || e.updating_cache {
+            return;
+        }
+        e.accessibility_stale = false;
+        e.updating_cache = true;
+        e.accessibility.clear();
+        e.provider_cache.clear();
+    }
+    let nodes = eng.borrow().nodes.clone();
+    let budget = eng.borrow().budget.clone();
+    let mut settled = false;
+    for _ in 0..MAX_RULE_PASSES {
+        let mut changed = false;
+        let mut update = |id: &str, rules: &Rules, glitched: bool| {
+            let known = eng.borrow().accessibility.get(id).copied();
+            if known == Some(LEVEL_NORMAL) {
+                return;
             }
-        } else if let Some(inner) = t.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
-            if !eval_token(lua, eng, inner, depth) {
-                inspect = false;
+            let level = resolve_rules(lua, eng, rules, false, glitched);
+            if known != Some(level) {
+                eng.borrow_mut().accessibility.insert(id.to_string(), level);
+                changed = true;
             }
-        } else if !eval_token(lua, eng, &t, depth) {
-            normal = false;
+        };
+        for n in nodes.iter() {
+            if budget.get() == 0 {
+                break;
+            }
+            update(&n.name, &n.rules, n.scoutable_glitched);
+            for s in &n.sections {
+                update(
+                    &format!("{}/{}", n.name, s.name),
+                    &s.rules,
+                    s.scoutable_glitched,
+                );
+            }
+        }
+        if !changed {
+            settled = true;
+            break;
+        }
+        if budget.get() == 0 {
+            break;
         }
     }
-    if !normal {
-        return Level::None;
+    finish_settling(eng, settled, budget.get());
+}
+
+fn finish_settling(eng: &E, settled: bool, budget: u64) {
+    {
+        let mut e = eng.borrow_mut();
+        e.updating_cache = false;
+        e.indirect_codes.clear();
     }
-    match (glitch, inspect) {
-        (true, true) => Level::Reachable,
-        (false, _) => Level::Glitch, // missing a glitch req → sequence-break only
-        (true, false) => Level::Inspect, // missing an inspect req → viewable only
+    if !settled && budget > 0 {
+        note_error(
+            eng,
+            "the pack's rules never settled, so some may read wrong",
+        );
     }
 }
 
-/// A rule list is an OR: the best level any alternative achieves (empty => Reachable).
-fn eval_rules_level(lua: &Lua, eng: &E, rules: &[String], depth: u32) -> Level {
-    if rules.is_empty() {
-        return Level::Reachable;
+/// As [`settle_accessibility`], for visibility. Empty rules mean visible, and
+/// aren't kept.
+fn settle_visibility(lua: &Lua, eng: &E) {
+    {
+        let mut e = eng.borrow_mut();
+        if !e.visibility_stale || e.updating_cache {
+            return;
+        }
+        e.visibility_stale = false;
+        e.updating_cache = true;
+        e.visibility.clear();
+        e.provider_cache.clear();
     }
-    rules
-        .iter()
-        .map(|r| eval_rule_level(lua, eng, r, depth))
-        .max()
-        .unwrap_or(Level::None)
-}
-
-/// Effective level across every AND-group (parent chain + own + section): the
-/// weakest group caps the result.
-fn eval_groups_level(lua: &Lua, eng: &E, groups: &[Vec<String>], depth: u32) -> Level {
-    groups
-        .iter()
-        .map(|g| eval_rules_level(lua, eng, g, depth))
-        .min()
-        .unwrap_or(Level::Reachable)
+    let nodes = eng.borrow().nodes.clone();
+    let budget = eng.borrow().budget.clone();
+    let mut settled = false;
+    for _ in 0..MAX_RULE_PASSES {
+        let mut changed = false;
+        let mut update = |id: &str, rules: &Rules| {
+            if rules.is_empty() {
+                return;
+            }
+            let known = eng.borrow().visibility.get(id).copied();
+            if known == Some(true) {
+                return;
+            }
+            let visible = resolve_rules(lua, eng, rules, true, false) != LEVEL_NONE;
+            if known != Some(visible) {
+                eng.borrow_mut().visibility.insert(id.to_string(), visible);
+                changed = true;
+            }
+        };
+        for n in nodes.iter() {
+            if budget.get() == 0 {
+                break;
+            }
+            update(&n.name, &n.vis);
+            for s in &n.sections {
+                update(&format!("{}/{}", n.name, s.name), &s.vis);
+            }
+        }
+        if !changed {
+            settled = true;
+            break;
+        }
+        if budget.get() == 0 {
+            break;
+        }
+    }
+    finish_settling(eng, settled, budget.get());
 }
 
 /// Resolve a layout node for the UI: inline `{type:"layout", key:K}` references
@@ -1238,19 +1601,58 @@ fn num(v: &serde_json::Value) -> Option<f64> {
         .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
 }
 
-/// Read a rules field (`access_rules`/`visibility_rules`). PopTracker allows it
-/// as either a single string (one OR-alternative) or an array of strings, so we
-/// accept both — a bare string was being dropped, which silently removed gates
-/// like a parent's `"access_rules": "bus"`.
-fn str_rules(node: &serde_json::Value, field: &str) -> Vec<String> {
-    match node.get(field) {
-        Some(serde_json::Value::String(s)) => vec![s.clone()],
-        Some(serde_json::Value::Array(a)) => a
-            .iter()
-            .filter_map(|x| x.as_str().map(String::from))
-            .collect(),
-        _ => Vec::new(),
+/// A location's or section's rule list, each alternative joined to each of its
+/// parent's (PopTracker's way of inheriting). A rule is a comma-separated string or
+/// an array of codes; a whole list may also be one string, which is one code.
+fn parse_rules(eng: &E, node: &serde_json::Value, field: &str, parent: &Rules) -> Rules {
+    let split = |v: &str| -> Vec<String> {
+        v.split(',')
+            .map(|c| c.trim_matches(' ').to_string())
+            .collect()
+    };
+    let own: Rules = match node.get(field) {
+        Some(serde_json::Value::String(s)) if !s.is_empty() => vec![vec![s.clone()]],
+        Some(serde_json::Value::Array(a)) if !a.is_empty() => {
+            let own: Rules = a
+                .iter()
+                .filter_map(|v| match v {
+                    serde_json::Value::String(s) => Some(split(s)),
+                    serde_json::Value::Array(parts) => Some(
+                        parts
+                            .iter()
+                            .filter_map(|p| p.as_str().map(String::from))
+                            .collect(),
+                    ),
+                    _ => None,
+                })
+                .collect();
+            // Present but with nothing usable: no rules at all, not the parent's.
+            if own.is_empty() {
+                return own;
+            }
+            own
+        }
+        _ => return parent.clone(),
+    };
+    if parent.is_empty() {
+        return own;
     }
+    let mut out = Vec::with_capacity((own.len() * parent.len()).min(MAX_ALTERNATIVES));
+    'join: for old in parent {
+        for new in &own {
+            if out.len() == MAX_ALTERNATIVES {
+                note_error(
+                    eng,
+                    "a location's rules have too many alternatives, so some are ignored",
+                );
+                break 'join;
+            }
+            let mut rule = old.clone();
+            rule.extend(new.iter().cloned());
+            out.push(rule);
+        }
+    }
+    out
 }
 
 /// Flatten the location tree into [`LocNode`]s, accumulating the parent chain's
@@ -1259,12 +1661,13 @@ fn flatten_locations(
     eng: &E,
     node: &serde_json::Value,
     prefix: &str,
-    parent_groups: &[Vec<String>],
-    parent_vis: &[Vec<String>],
+    parent_rules: &Rules,
+    parent_vis: &Rules,
+    parent_glitched: bool,
 ) {
     if let Some(arr) = node.as_array() {
         for n in arr {
-            flatten_locations(eng, n, prefix, parent_groups, parent_vis);
+            flatten_locations(eng, n, prefix, parent_rules, parent_vis, parent_glitched);
         }
         return;
     }
@@ -1275,18 +1678,12 @@ fn flatten_locations(
         format!("{prefix}/{name}")
     };
 
-    // This node's effective groups = parent chain + its own access_rules.
-    let mut groups = parent_groups.to_vec();
-    let own = str_rules(node, "access_rules");
-    if !own.is_empty() {
-        groups.push(own);
-    }
-    // Visibility inherits the same way (a hidden parent hides its children).
-    let mut vis_groups = parent_vis.to_vec();
-    let own_vis = str_rules(node, "visibility_rules");
-    if !own_vis.is_empty() {
-        vis_groups.push(own_vis);
-    }
+    let rules = parse_rules(eng, node, "access_rules", parent_rules);
+    let vis = parse_rules(eng, node, "visibility_rules", parent_vis);
+    let scoutable_glitched = node
+        .get("inspectable_sequence_break")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(parent_glitched);
 
     let map_locations: Vec<MapLoc> = node
         .get("map_locations")
@@ -1317,41 +1714,53 @@ fn flatten_locations(
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
-                    item_count: s.get("item_count").and_then(|v| v.as_i64()).unwrap_or(1),
-                    rules: str_rules(s, "access_rules"),
-                    vis: str_rules(s, "visibility_rules"),
+                    // A `ref` holds no chests of its own.
+                    item_count: s
+                        .get("item_count")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(if s.get("ref").is_some() { 0 } else { 1 }),
+                    rules: parse_rules(eng, s, "access_rules", &rules),
+                    vis: parse_rules(eng, s, "visibility_rules", &vis),
+                    reference: s.get("ref").and_then(|v| v.as_str()).map(String::from),
+                    scoutable_glitched: s
+                        .get("inspectable_sequence_break")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(scoutable_glitched),
                 })
                 .collect()
         })
         .unwrap_or_default();
 
-    // Register each section's chest count under its `@`-path(s), so a checked
-    // location can resolve to a decrementable object (see `loc_counts`).
+    // Every location is kept, as rules may refer to one that isn't drawn.
     {
         let mut e = eng.borrow_mut();
-        for s in &sections {
-            e.loc_counts
-                .insert(format!("{full}/{}", s.name), s.item_count);
-            // A single-section (or unnamed-section) location is also addressable
-            // by the bare location path.
-            if sections.len() == 1 || s.name.is_empty() {
-                e.loc_counts.insert(full.clone(), s.item_count);
-            }
+        // A second location with an id gets `id[1]` and so on, as in PopTracker, to
+        // keep its own level; it still shows under its name.
+        let mut number = e.duplicate_ids.get(&full).copied().unwrap_or(0);
+        let mut id = full.clone();
+        while e.taken_ids.contains(&id) {
+            number += 1;
+            id = format!("{full}[{number}]");
         }
-    }
-
-    // A node is a real, drawable/checkable location if it has sections or a map placement.
-    if !sections.is_empty() || !map_locations.is_empty() {
-        eng.borrow_mut().nodes.push(LocNode {
-            name: full.clone(),
-            groups: groups.clone(),
-            vis_groups: vis_groups.clone(),
+        e.duplicate_ids.insert(full.clone(), number);
+        e.taken_ids.insert(id.clone());
+        let nodes = Rc::make_mut(&mut e.nodes);
+        nodes.push(LocNode {
+            name: id,
+            display_name: full.clone(),
+            short_name: name.to_string(),
+            rules: rules.clone(),
+            vis: vis.clone(),
+            scoutable_glitched,
             map_locations,
             sections,
         });
+        e.location_lookup.clear();
+        e.accessibility_stale = true;
+        e.visibility_stale = true;
     }
     if let Some(children) = node.get("children") {
-        flatten_locations(eng, children, &full, &groups, &vis_groups);
+        flatten_locations(eng, children, &full, &rules, &vis, scoutable_glitched);
     }
 }
 
@@ -1534,6 +1943,9 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                         e.code_to_key.insert(c.clone(), key.clone());
                     }
                     e.names.insert(key.clone(), name);
+                    e.accessibility_stale = true;
+                    e.visibility_stale = true;
+                    e.provider_cache.clear();
                     e.item_codes.insert(key.clone(), all_codes.clone());
                     if !imgs.is_empty() {
                         e.imgs.insert(key.clone(), imgs);
@@ -1558,7 +1970,8 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                 let Ok(json) = parse_pack_json(&txt) else {
                     return Ok(false);
                 };
-                flatten_locations(&eng2, &json, "", &[], &[]);
+                let scoutable = eng2.borrow().scoutable_default;
+                flatten_locations(&eng2, &json, "", &Vec::new(), &Vec::new(), scoutable);
                 Ok(true)
             })?,
         )?;
@@ -1606,29 +2019,31 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                 let Some(code) = code else {
                     return Ok(Value::Nil);
                 };
-                // `@`-codes address a location section; return (creating on first
-                // use) a small object with a mutable `AvailableChestCount` that
-                // the pack's `onLocation` decrements, so checked locations become
-                // observable server-side. Path is case-sensitive (unlike items).
+                // `@`-codes address a section or location, found as in rules. A
+                // section's object (made on first use) has the mutable
+                // `AvailableChestCount` a pack's `onLocation` decrements, which is
+                // how checks show here. A location with one section means that
+                // section; ids are case-sensitive, unlike item codes.
                 if let Some(path) = code.strip_prefix('@') {
+                    mark_indirect(&eng2);
+                    let Some((id, count)) = location_object(&eng2, path) else {
+                        return Ok(Value::Nil);
+                    };
                     let objs: Table = lua.globals().get("__LOCOBJS")?;
-                    if let Ok(t) = objs.get::<Table>(path) {
+                    if let Ok(t) = objs.raw_get::<Table>(id.as_str()) {
                         return Ok(Value::Table(t));
                     }
-                    let count = eng2.borrow().loc_counts.get(path).copied();
-                    return match count {
-                        Some(c) => {
-                            let t = lua.create_table()?;
-                            t.set("AvailableChestCount", c)?;
-                            t.set("ChestCount", c)?;
-                            t.set("Active", false)?;
-                            t.set("FullID", path)?;
-                            t.set("Owner", lua.create_table()?)?;
-                            objs.set(path, &t)?;
-                            Ok(Value::Table(t))
-                        }
-                        None => Ok(Value::Nil),
-                    };
+                    let t = lua.create_table()?;
+                    if let Some(c) = count {
+                        t.set("AvailableChestCount", c)?;
+                        t.set("ChestCount", c)?;
+                    }
+                    t.set("Active", false)?;
+                    t.set("FullID", id.as_str())?;
+                    t.set("Owner", lua.create_table()?)?;
+                    t.set_metatable(Some(lua.named_registry_value(LOCATION_METHODS)?))?;
+                    objs.raw_set(id.as_str(), &t)?;
+                    return Ok(Value::Table(t));
                 }
                 let key = eng2.borrow().code_to_key.get(&code.to_lowercase()).cloned();
                 if let Some(k) = key {
@@ -1664,7 +2079,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         tracker.set(
             "ProviderCountForCode",
             lua.create_function(move |lua, (_t, code): (Table, Option<String>)| {
-                Ok(code.map_or(0, |c| provider_count(lua, &eng2, &c)))
+                Ok(code.map_or(0, |c| provider_count_cached(lua, &eng2, &c)))
             })?,
         )?;
     }
@@ -1848,6 +2263,36 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     g.set("NotificationType", kinds)?;
     g.set("ScriptHost", &sh)?;
 
+    // A location or section object's `AccessibilityLevel`, read from the rules.
+    {
+        let eng2 = eng.clone();
+        let methods = lua.create_table()?;
+        methods.set(
+            "__index",
+            lua.create_function(move |lua, (t, key): (Table, Value)| {
+                if key
+                    .as_string()
+                    .and_then(|k| k.to_str().ok().map(|k| k.to_string()))
+                    .as_deref()
+                    != Some("AccessibilityLevel")
+                {
+                    return Ok(Value::Nil);
+                }
+                let id: String = t.raw_get("FullID")?;
+                mark_indirect(&eng2);
+                // A collected section reads as cleared, as in PopTracker.
+                if t.raw_get::<Option<i64>>("AvailableChestCount")?
+                    .is_some_and(|left| left <= 0)
+                {
+                    return Ok(Value::Integer(LEVEL_CLEARED));
+                }
+                settle_accessibility(lua, &eng2);
+                let level = eng2.borrow().accessibility.get(&id).copied();
+                Ok(Value::Integer(level.unwrap_or(LEVEL_NONE)))
+            })?,
+        )?;
+        lua.set_named_registry_value(LOCATION_METHODS, methods)?;
+    }
     // Custom items: a table the pack fills in, which `FindObjectForCode` can
     // find again. `:Set`/`:Get` keep values in its `ItemState`; overlays,
     // clicks and icons aren't drawn here.
@@ -2056,11 +2501,12 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     // AccessibilityLevel enum
     let al = lua.create_table()?;
     for (k, v) in [
-        ("None", 0),
-        ("Inspect", 1),
-        ("SequenceBreak", 2),
-        ("Reachable", 3),
-        ("Cleared", 4),
+        ("None", LEVEL_NONE),
+        ("Partial", LEVEL_PARTIAL),
+        ("Inspect", LEVEL_INSPECT),
+        ("SequenceBreak", LEVEL_SEQUENCE_BREAK),
+        ("Normal", LEVEL_NORMAL),
+        ("Cleared", LEVEL_CLEARED),
     ] {
         al.set(k, v)?;
     }
