@@ -20,9 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - PopTracker access rules work as they do in PopTracker: `{}` inspect rules,
   `^$` levels, `[optional]` references, `@location/section` references including
-  locations that aren't drawn, nested rules, and how a location's rules join its
-  parent's. Many locations change colour, and large logic packs that never
-  finished computing now do.
+  locations that aren't drawn, section `ref`, locations with the same name, nested
+  rules, and how a location's rules join its parent's. Many locations change
+  colour, and large logic packs that never finished computing now do.
 - Many more PopTracker packs load. Bifrost picks the pack's Archipelago map
   variant and finds files in its folder, and supplies more of what packs call,
   such as overlays and `os.time`. An error in one of a pack's handlers no longer

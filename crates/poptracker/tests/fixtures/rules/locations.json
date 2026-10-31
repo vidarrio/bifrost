@@ -877,5 +877,35 @@
     "item_count": 1
    }
   ]
+ },
+ {
+  "name": "Taken[1]",
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "Taken",
+  "access_rules": [
+   "miss"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "Taken",
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
  }
 ]

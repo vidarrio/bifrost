@@ -45,5 +45,8 @@ Archipelago:AddClearHandler("objects", function()
   clearing.AvailableChestCount = 0
   assert(clearing.AccessibilityLevel == AccessibilityLevel.Cleared, "cleared")
   Tracker:FindObjectForCode("@Shop/Sold").AvailableChestCount = 1
+  -- A ref holds no chests of its own, so reads as cleared.
+  local here = Tracker:FindObjectForCode("@ShopSeenHere/Sold")
+  assert(here.ChestCount == 0 and here.AccessibilityLevel == AccessibilityLevel.Cleared, "ref object")
   Tracker:FindObjectForCode("level_seen").Active = true
 end)

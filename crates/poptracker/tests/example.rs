@@ -711,6 +711,10 @@ fn rules_resolve_as_poptracker_does() {
     assert_eq!(dups[0].sections[0].level, "none");
     assert_eq!(dups[1].sections[0].level, "reachable");
     assert_eq!(level("RefDup", "S"), "reachable");
+    // An id that's already taken is skipped: three locations, three levels.
+    let taken: Vec<_> = st.locations.iter().filter(|l| l.name == "Taken").collect();
+    assert_eq!(taken[0].sections[0].level, "none");
+    assert_eq!(taken[1].sections[0].level, "reachable");
     // A `ref` is the section it points to, in level and count, and to rules too.
     assert_eq!(level("ShopSeenHere", "Sold"), "none");
     assert_eq!(level("RefToRef", "S"), "none");
@@ -748,6 +752,7 @@ fn visibility_rules_settle_whatever_the_order() {
         "a target with no visibility rules is"
     );
     assert!(shown("VisShown"));
+    assert!(shown("RefNowhere"), "a ref to nothing has no rules to fail");
 }
 
 #[test]

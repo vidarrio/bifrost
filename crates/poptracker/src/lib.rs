@@ -507,6 +507,7 @@ struct Eng {
     budget: Rc<std::cell::Cell<u64>>,
     /// The next number for a location id seen before (see `flatten_locations`).
     duplicate_ids: HashMap<String, u64>,
+    taken_ids: HashSet<String>,
     /// The first few errors from the pack's handlers, and how many in all.
     pack_errors: Vec<String>,
     pack_error_count: usize,
@@ -859,7 +860,6 @@ impl Session {
         }
 
         // locations + markers (from the node model)
-        let nodes = self.eng.borrow().nodes.clone();
         // Only enforce `visibility_rules` once the slot's valid-location set is
         // known; otherwise every marker shows (fail-safe, old behavior).
         let enforce_vis = self.eng.borrow().valid_locations.is_some();
@@ -875,6 +875,8 @@ impl Session {
                 "the pack's rules ran out of instruction budget, so some may read as unmet",
             );
         }
+        // After settling: a rule function may have added locations.
+        let nodes = self.eng.borrow().nodes.clone();
         let level_of = |id: &str| {
             let e = self.eng.borrow();
             e.accessibility.get(id).copied().unwrap_or(LEVEL_NONE)
@@ -914,15 +916,13 @@ impl Session {
                 // A section can carry its own `visibility_rules` (Stardew uses them
                 // at section level, e.g. per Desert Festival stall); drop the ones
                 // the slot didn't generate, same as the node-level filter above.
-                .filter(|(j, s)| {
-                    let (id, rules) = match real_section(&self.eng, index, *j) {
-                        Some((a, b)) => (
-                            format!("{}/{}", nodes[a].name, nodes[a].sections[b].name),
-                            &nodes[a].sections[b].vis,
-                        ),
-                        None => (format!("{}/{}", n.name, s.name), &s.vis),
-                    };
-                    visible(&id, rules)
+                .filter(|(j, _)| match real_section(&self.eng, index, *j) {
+                    Some((a, b)) => {
+                        let target = &nodes[a].sections[b];
+                        visible(&format!("{}/{}", nodes[a].name, target.name), &target.vis)
+                    }
+                    // A `ref` to nothing is a blank section, with no rules to fail.
+                    None => true,
                 })
                 .map(|(j, s)| {
                     // A `ref` shows the section it points to, count and level.
@@ -1280,7 +1280,8 @@ fn reference_level(eng: &E, id: &str, visibility: bool) -> Option<Level> {
         .iter()
         .position(|s| s.name == section)?;
     let Some((i, j)) = real_section(eng, i, j) else {
-        return Some(LEVEL_NONE);
+        // A `ref` to nothing is a blank section: never reachable, always visible.
+        return Some(if visibility { LEVEL_NORMAL } else { LEVEL_NONE });
     };
     let (key, vis_empty) = {
         let e = eng.borrow();
@@ -1713,7 +1714,11 @@ fn flatten_locations(
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
-                    item_count: s.get("item_count").and_then(|v| v.as_i64()).unwrap_or(1),
+                    // A `ref` holds no chests of its own.
+                    item_count: s
+                        .get("item_count")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(if s.get("ref").is_some() { 0 } else { 1 }),
                     rules: parse_rules(eng, s, "access_rules", &rules),
                     vis: parse_rules(eng, s, "visibility_rules", &vis),
                     reference: s.get("ref").and_then(|v| v.as_str()).map(String::from),
@@ -1731,13 +1736,14 @@ fn flatten_locations(
         let mut e = eng.borrow_mut();
         // A second location with an id gets `id[1]` and so on, as in PopTracker, to
         // keep its own level; it still shows under its name.
-        let number = e.duplicate_ids.entry(full.clone()).or_insert(0);
-        let id = if *number == 0 {
-            full.clone()
-        } else {
-            format!("{full}[{number}]")
-        };
-        *number += 1;
+        let mut number = e.duplicate_ids.get(&full).copied().unwrap_or(0);
+        let mut id = full.clone();
+        while e.taken_ids.contains(&id) {
+            number += 1;
+            id = format!("{full}[{number}]");
+        }
+        e.duplicate_ids.insert(full.clone(), number);
+        e.taken_ids.insert(id.clone());
         let nodes = Rc::make_mut(&mut e.nodes);
         nodes.push(LocNode {
             name: id,
@@ -2281,8 +2287,8 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                     return Ok(Value::Integer(LEVEL_CLEARED));
                 }
                 settle_accessibility(lua, &eng2);
-                let level = reference_level(&eng2, &id, false).unwrap_or(LEVEL_NONE);
-                Ok(Value::Integer(level))
+                let level = eng2.borrow().accessibility.get(&id).copied();
+                Ok(Value::Integer(level.unwrap_or(LEVEL_NONE)))
             })?,
         )?;
         lua.set_named_registry_value(LOCATION_METHODS, methods)?;
