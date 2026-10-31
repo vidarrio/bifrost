@@ -1,0 +1,4 @@
+[
+  { "name": "Key", "type": "toggle", "img": "images/x.png", "codes": "key" },
+  { "name": "Watched", "type": "consumable", "img": "images/x.png", "codes": "watched", "max_quantity": 99 }
+]

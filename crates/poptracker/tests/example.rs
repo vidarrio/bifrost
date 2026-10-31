@@ -440,3 +440,24 @@ fn handlers_may_register_handlers() {
         "items loaded by a handler"
     );
 }
+
+#[test]
+fn host_api_covers_require_custom_items_and_callbacks() {
+    // The fixture's init.lua asserts most of it (require, custom items,
+    // player lookups); here, what has to be seen from outside.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/host-api");
+    let s = Session::new(&Pack::load(dir).unwrap()).unwrap();
+    let item = |s: &Session, code: &str| {
+        s.state()
+            .items
+            .into_iter()
+            .find(|i| i.codes.iter().any(|c| c == code))
+            .unwrap()
+    };
+    // The clear handler saw one frame (after init) and the self-removing
+    // handler's work; each state runs the "*" watch once.
+    s.on_clear(&serde_json::json!({})).unwrap();
+    assert!(item(&s, "key").active, "one frame before the clear");
+    assert_eq!(item(&s, "watched").count, 2);
+    assert_eq!(item(&s, "watched").count, 3);
+}

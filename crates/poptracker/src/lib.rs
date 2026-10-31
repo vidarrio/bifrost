@@ -10,21 +10,26 @@
 //!
 //! ## What works today
 //! - Loads a pack's declarative item defs + locations and runs its `init.lua`
-//!   (and the scripts it `LoadScript`s, e.g. `autotracking.lua`).
+//!   (and the scripts it `LoadScript`s or `require`s, e.g. `autotracking.lua`;
+//!   `require` only finds modules inside the pack).
 //! - Implements the `Tracker` / `ScriptHost` / `Archipelago` host globals a pack
 //!   touches, plus the toggle / consumable / progressive_toggle item model.
 //! - Drives the pack via the AP handlers (`on_clear` / `on_item` / `on_location`
 //!   / `on_retrieved`) exactly as the live server would.
 //! - Evaluates access rules: item codes, `code:count`, OR-of-ANDs, `@location`
 //!   references, and the `$luaFunction` escape hatch.
+//! - Custom items (`ScriptHost:CreateLuaItem`), as state `FindObjectForCode`
+//!   can find again; frame handlers (run once after init and after each clear)
+//!   and "*" code watches (run before each state).
 //! - Sandbox: only `string`/`table`/`math`/`coroutine` stdlib is loaded (no
-//!   `os`/`io`/`package`/`require`/`debug`), plus a memory cap.
+//!   `os`/`io`/`package`/`debug`, and Lua's own `require`), plus a memory cap.
 //!
 //! ## Not done yet (the long tail — tracked for the real build-out)
-//! - Custom item classes (`ScriptHost:CreateLuaItem`) — currently a no-op.
+//! - Custom items' clicks, icons and `ProvidesCodeFunc` (they don't count
+//!   toward access rules), and watches on single codes.
 //! - Richer rule DSL: `[optional]` groups, `^`/glitched levels, the full
 //!   Inspect/SequenceBreak accessibility ladder (only Reachable/None today).
-//! - The reactive recompute loop (`AddWatchForCode`) and renderer data
+//! - The reactive recompute loop and renderer data
 //!   (maps/coordinates/item layout) for the visual tab.
 //! - Memory-autotracking packs (SNES/N64) are inherently unsupported server-side.
 
@@ -124,6 +129,17 @@ fn pack_join(dir: &Path, rel: &str) -> Option<PathBuf> {
         return None;
     }
     Some(dir.join(rel))
+}
+
+/// A `require` module name as a pack-relative path without the extension
+/// ("logic.base" or "logic/base" → "logic/base"). Names with empty parts, or
+/// anything `pack_join` would refuse, aren't modules.
+fn module_path(name: &str) -> Option<String> {
+    let rel = name.replace('.', "/");
+    if rel.split('/').any(|p| p.is_empty()) {
+        return None;
+    }
+    pack_join(Path::new(""), &rel).map(|_| rel)
 }
 
 /// Cap on total bytes written when extracting a pack, so a small "zip bomb"
@@ -362,6 +378,13 @@ struct Eng {
     loc_h: Vec<Function>,
     retr_h: Vec<Function>,
     setr_h: Vec<Function>,
+    /// `ScriptHost:AddOnFrameHandler` callbacks by name. There are no frames
+    /// here: they run once after `init.lua` and once after each clear.
+    frame_h: Vec<(String, Function)>,
+    /// `ScriptHost:AddWatchForCode` callbacks by name, with their code. Those
+    /// watching every code ("*") run before each `state`, since anything may
+    /// have changed by then.
+    watch_h: Vec<(String, String, Function)>,
 }
 type E = Rc<RefCell<Eng>>;
 
@@ -414,13 +437,26 @@ impl Session {
         }));
         lua.load("__ITEMS = {}").exec()?;
         lua.load("__LOCOBJS = {}").exec()?;
+        lua.load("__LUAITEMS = {}").exec()?;
         install_host(&lua, &eng)?;
 
         budget.set(MAX_TICKS);
         let init = read_pack_file(&eng, "scripts/init.lua")?;
         run_pack_source(&lua, &init, "init.lua")?;
 
-        Ok(Session { lua, eng, budget })
+        let s = Session { lua, eng, budget };
+        s.run_frame_handlers()?;
+        Ok(s)
+    }
+
+    /// Run the frame handlers once (see `Eng::frame_h`), with no time elapsed.
+    /// A handler may remove itself or add others; those added run next time.
+    fn run_frame_handlers(&self) -> Result<()> {
+        let handlers = self.eng.borrow().frame_h.clone();
+        for (_, h) in handlers {
+            h.call::<()>(0.0)?;
+        }
+        Ok(())
     }
 
     /// Reset the per-operation instruction budget. Call at the start of each
@@ -465,7 +501,7 @@ impl Session {
         for h in handlers {
             h.call::<()>(sd.clone())?;
         }
-        Ok(())
+        self.run_frame_handlers()
     }
 
     /// Fire the pack's Item handlers for one received item.
@@ -504,6 +540,14 @@ impl Session {
 
     /// Snapshot the current tracker state (items + location accessibility).
     pub fn state(&self) -> TrackerState {
+        self.charge();
+        let watches: Vec<Function> = (self.eng.borrow().watch_h.iter())
+            .filter(|(_, code, _)| code == "*")
+            .map(|(_, _, f)| f.clone())
+            .collect();
+        for w in watches {
+            let _ = w.call::<()>("*");
+        }
         self.charge();
         let mut out = TrackerState::default();
         let items: Table = match self.lua.globals().get("__ITEMS") {
@@ -1174,6 +1218,15 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     }
     g.set("Highlight", &hl)?;
 
+    // ImageReference: images are only drawn from item and location JSON here,
+    // so a reference is just its pack path.
+    let img = lua.create_table()?;
+    img.set(
+        "FromPackRelativePath",
+        lua.create_function(|_, (_t, path): (Table, String)| Ok(path))?,
+    )?;
+    g.set("ImageReference", &img)?;
+
     // Tracker
     let tracker = lua.create_table()?;
     {
@@ -1358,13 +1411,26 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                     };
                 }
                 let key = eng2.borrow().code_to_key.get(&code.to_lowercase()).cloned();
-                match key {
-                    Some(k) => {
-                        let items: Table = lua.globals().get("__ITEMS")?;
-                        items.get::<Value>(k.as_str())
-                    }
-                    None => Ok(Value::Nil),
+                if let Some(k) = key {
+                    let items: Table = lua.globals().get("__ITEMS")?;
+                    return items.get::<Value>(k.as_str());
                 }
+                // A custom item (`ScriptHost:CreateLuaItem`) answers for the codes
+                // its `CanProvideCodeFunc` accepts, or else for its name.
+                let custom: Table = lua.globals().get("__LUAITEMS")?;
+                for item in custom.sequence_values::<Table>() {
+                    let item = item?;
+                    let hit = match item.get::<Value>("CanProvideCodeFunc")? {
+                        Value::Function(f) => {
+                            f.call::<Value>((&item, code.as_str()))?.as_boolean() == Some(true)
+                        }
+                        _ => item.get::<Option<String>>("Name")?.as_deref() == Some(code.as_str()),
+                    };
+                    if hit {
+                        return Ok(Value::Table(item));
+                    }
+                }
+                Ok(Value::Nil)
             })?,
         )?;
     }
@@ -1420,16 +1486,113 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         "RemoveMemoryWatch",
         "AddVariableWatch",
         "RemoveVariableWatch",
-        "AddWatchForCode",
-        "RemoveWatchForCode",
-        "AddOnFrameHandler",
         "AddOnLocationSectionChangedHandler",
         "RemoveOnLocationSectionChangedHandler",
-        "CreateLuaItem",
+        "RemoveOnLocationSectionHandler",
     ] {
         sh.set(noop, lua.create_function(|_, _: MultiValue| Ok(()))?)?;
     }
+    {
+        let eng2 = eng.clone();
+        sh.set(
+            "AddOnFrameHandler",
+            lua.create_function(move |_, (_t, name, cb): (Table, String, Function)| {
+                let mut e = eng2.borrow_mut();
+                e.frame_h.retain(|(n, _)| *n != name);
+                e.frame_h.push((name.clone(), cb));
+                Ok(name)
+            })?,
+        )?;
+        let eng2 = eng.clone();
+        sh.set(
+            "RemoveOnFrameHandler",
+            lua.create_function(move |_, (_t, name): (Table, String)| {
+                let mut e = eng2.borrow_mut();
+                let had = e.frame_h.len();
+                e.frame_h.retain(|(n, _)| *n != name);
+                Ok(e.frame_h.len() != had)
+            })?,
+        )?;
+        let eng2 = eng.clone();
+        sh.set(
+            "AddWatchForCode",
+            lua.create_function(
+                move |_, (_t, name, code, cb): (Table, String, String, Function)| {
+                    let mut e = eng2.borrow_mut();
+                    e.watch_h.retain(|(n, _, _)| *n != name);
+                    e.watch_h.push((name.clone(), code, cb));
+                    Ok(name)
+                },
+            )?,
+        )?;
+        let eng2 = eng.clone();
+        sh.set(
+            "RemoveWatchForCode",
+            lua.create_function(move |_, (_t, name): (Table, String)| {
+                let mut e = eng2.borrow_mut();
+                let had = e.watch_h.len();
+                e.watch_h.retain(|(n, _, _)| *n != name);
+                Ok(e.watch_h.len() != had)
+            })?,
+        )?;
+    }
+    // Custom items: a plain table the pack fills in, which `FindObjectForCode`
+    // can find again. Their clicks and icons aren't used here.
+    sh.set(
+        "CreateLuaItem",
+        lua.create_function(|lua, _: MultiValue| {
+            let item = lua.create_table()?;
+            item.set("Type", "custom")?;
+            item.set("ItemState", lua.create_table()?)?;
+            let custom: Table = lua.globals().get("__LUAITEMS")?;
+            custom.push(&item)?;
+            Ok(item)
+        })?,
+    )?;
     g.set("ScriptHost", &sh)?;
+
+    // `require`, as PopTracker has it (0.25.6+): modules come only from the pack.
+    // "foo.baz" tries scripts/foo/baz.lua, scripts/foo/baz/init.lua, foo/baz.lua
+    // and foo/baz/init.lua; each file runs once, with the module name as `...`,
+    // and its result is cached.
+    {
+        let eng2 = eng.clone();
+        let loaded = lua.create_table()?;
+        g.set(
+            "require",
+            lua.create_function(move |lua, name: String| {
+                let rel = module_path(&name).ok_or_else(|| {
+                    mlua::Error::runtime(format!("require: bad module name '{name}'"))
+                })?;
+                let dir = eng2.borrow().dir.clone();
+                let file = [
+                    format!("scripts/{rel}.lua"),
+                    format!("scripts/{rel}/init.lua"),
+                    format!("{rel}.lua"),
+                    format!("{rel}/init.lua"),
+                ]
+                .into_iter()
+                .find(|f| pack_join(&dir, f).is_some_and(|p| p.is_file()))
+                .ok_or_else(|| {
+                    mlua::Error::runtime(format!("require: module '{name}' not found in pack"))
+                })?;
+                // Cached by file, so "a.b" and "a/b" are one module.
+                let cached: Value = loaded.get(file.as_str())?;
+                if !cached.is_nil() {
+                    return Ok(cached);
+                }
+                let txt = read_pack_file(&eng2, &file).map_err(to_lua)?;
+                let v: Value = lua
+                    .load(txt)
+                    .set_name(file.as_str())
+                    .set_mode(mlua::chunk::ChunkMode::Text)
+                    .call(name.as_str())?;
+                let v = if v.is_nil() { Value::Boolean(true) } else { v };
+                loaded.set(file.as_str(), &v)?;
+                Ok(v)
+            })?,
+        )?;
+    }
 
     // Archipelago
     let ap = lua.create_table()?;
@@ -1467,6 +1630,15 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     ] {
         ap.set(noop, lua.create_function(|_, _: MultiValue| Ok(()))?)?;
     }
+    // Other players aren't known here: no game, and an empty alias.
+    ap.set(
+        "GetPlayerGame",
+        lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?,
+    )?;
+    ap.set(
+        "GetPlayerAlias",
+        lua.create_function(|_, _: MultiValue| Ok(""))?,
+    )?;
     g.set("Archipelago", &ap)?;
 
     // AccessibilityLevel enum
