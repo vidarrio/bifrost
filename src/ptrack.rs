@@ -10,13 +10,14 @@
 //! A pack's Lua is untrusted, so it only ever runs in a worker process of its
 //! own ([`run_worker`]): sandboxed, and killed if it runs too long.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::time::Duration;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, SemaphorePermit};
 
 use crate::sandbox::{self, Job};
 use crate::{ap_adapter, config};
@@ -49,24 +50,33 @@ pub fn pack_version(season: i64, ap_slot: i64) -> u64 {
 /// Validate uploaded zip bytes: must load and expose an Archipelago autotracking
 /// path (memory-only/emulator packs can't be driven server-side). Returns a
 /// summary on success, else an error message suitable for showing the uploader.
-pub async fn validate(zip_bytes: Vec<u8>) -> Result<poptracker::Summary, String> {
-    let scratch = Scratch::new()?;
-    let dir = scratch.0.clone();
+pub async fn validate(zip_bytes: Arc<Vec<u8>>) -> Result<poptracker::Summary, String> {
+    let permit = Arc::new(worker_permit().await?);
+    let scratch = Arc::new(Scratch::new()?);
     // Unpacking is the host's own code; only running the pack's Lua is isolated.
-    let root = tokio::task::spawn_blocking(move || {
-        let zip = dir.join("pack.zip");
-        std::fs::write(&zip, &zip_bytes).map_err(|e| format!("write temp: {e}"))?;
-        let unpacked = dir.join("pack");
-        poptracker::extract_zip(&zip, &unpacked).map_err(|e| e.to_string())?;
-        poptracker::pack_root(&unpacked).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|_| "validate failed".to_string())??;
+    // The task owns what it uses: it runs on if this request goes away, and the
+    // scratch dir and the permit last until it's done.
+    let root = {
+        let (scratch, permit) = (scratch.clone(), permit.clone());
+        tokio::task::spawn_blocking(move || {
+            let _keep = (&scratch, permit);
+            let zip = scratch.0.join("pack.zip");
+            std::fs::write(&zip, zip_bytes.as_slice()).map_err(|e| format!("write temp: {e}"))?;
+            let unpacked = scratch.0.join("pack");
+            poptracker::extract_zip(&zip, &unpacked).map_err(|e| e.to_string())?;
+            let _ = std::fs::remove_file(&zip);
+            poptracker::pack_root(&unpacked).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|_| "validate failed".to_string())??
+    };
     let request = Request {
         pack: root.clone(),
         feed: None,
     };
-    let reply = run_worker(&scratch, &root, &request).await?;
+    let reply = run_worker(&scratch, &root, &request)
+        .await
+        .map_err(Failure::message)?;
     let sum: poptracker::Summary = serde_json::from_value(reply).map_err(|e| e.to_string())?;
     if !sum.archipelago_autotracking {
         return Err(
@@ -80,6 +90,7 @@ pub async fn validate(zip_bytes: Vec<u8>) -> Result<poptracker::Summary, String>
 
 /// Install (extract) an uploaded pack zip for a slot, replacing any existing one.
 pub fn install(season: i64, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), String> {
+    HELD_BACK.lock().unwrap().remove(&(season, ap_slot));
     let dir = slot_dir(season, ap_slot);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
@@ -133,43 +144,109 @@ pub struct Feed<'a> {
 }
 
 /// Compute the tracker state for a slot from its installed pack + what's fed
-/// to it, as JSON ([`poptracker::TrackerState`]).
+/// to it, as JSON ([`poptracker::TrackerState`]). A pack that hit a limit isn't
+/// run again for a while: viewers' polls would restart it without end.
 pub async fn compute(
     season: i64,
     ap_slot: i64,
+    version: u64,
     feed: Feed<'_>,
 ) -> Result<serde_json::Value, String> {
+    let key = (season, ap_slot);
+    if let Some(f) = HELD_BACK.lock().unwrap().get(&key)
+        && f.version == version
+        && f.at.elapsed() < HOLD_BACK
+    {
+        return Err(f.message.clone());
+    }
     let root = poptracker::pack_root(&slot_dir(season, ap_slot)).map_err(|e| e.to_string())?;
+    let _permit = worker_permit().await?;
     let scratch = Scratch::new()?;
     let request = Request {
         pack: root.clone(),
         feed: Some(feed),
     };
-    run_worker(&scratch, &root, &request).await
-}
-
-/// One slot's computes at a time, so viewers of a slot can't pile up workers.
-/// `None` when one is already running; dropping the claim ends it.
-pub fn claim_compute(season: i64, ap_slot: i64) -> Option<ComputeClaim> {
-    COMPUTING
-        .lock()
-        .unwrap()
-        .insert((season, ap_slot))
-        .then_some(ComputeClaim(season, ap_slot))
-}
-
-static COMPUTING: Mutex<BTreeSet<(i64, i64)>> = Mutex::new(BTreeSet::new());
-
-pub struct ComputeClaim(i64, i64);
-
-impl Drop for ComputeClaim {
-    fn drop(&mut self) {
-        COMPUTING.lock().unwrap().remove(&(self.0, self.1));
+    match run_worker(&scratch, &root, &request).await {
+        Err(Failure::Limit(message)) => {
+            let held = Held {
+                version,
+                at: Instant::now(),
+                message: message.clone(),
+            };
+            HELD_BACK.lock().unwrap().insert(key, held);
+            Err(message)
+        }
+        r => r.map_err(Failure::message),
     }
 }
 
-/// Pack workers running at once, across all slots and uploads.
+/// A pack that hit a limit, and when, for this long.
+const HOLD_BACK: Duration = Duration::from_secs(5 * 60);
+
+struct Held {
+    version: u64,
+    at: Instant,
+    message: String,
+}
+
+static HELD_BACK: Mutex<BTreeMap<(i64, i64), Held>> = Mutex::new(BTreeMap::new());
+
+/// One compute per slot at a time, so viewers of a slot can't pile up workers.
+/// `None` when one is already running; dropping the claim ends it.
+pub fn claim_compute(season: i64, ap_slot: i64) -> Option<Claim> {
+    Claim::take(&COMPUTING, (season, ap_slot))
+}
+
+/// One pack upload per account at a time.
+pub fn claim_upload(account: i64) -> Option<Claim> {
+    Claim::take(&UPLOADING, (account, 0))
+}
+
+type Claims = Mutex<BTreeSet<(i64, i64)>>;
+static COMPUTING: Claims = Mutex::new(BTreeSet::new());
+static UPLOADING: Claims = Mutex::new(BTreeSet::new());
+
+pub struct Claim(&'static Claims, (i64, i64));
+
+impl Claim {
+    fn take(set: &'static Claims, key: (i64, i64)) -> Option<Claim> {
+        // Not `then_some`: it would build a claim even when refused, whose drop
+        // would give up the holder's claim, and with the lock still held.
+        let free = set.lock().unwrap().insert(key);
+        free.then(|| Claim(set, key))
+    }
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().remove(&self.1);
+    }
+}
+
+/// Pack workers running at once, across all slots and uploads, and how many
+/// may wait for one. Past that, or after a while in line, the answer is "busy".
 static WORKERS: Semaphore = Semaphore::const_new(4);
+static WAITING: AtomicUsize = AtomicUsize::new(0);
+const MAX_WAITING: usize = 16;
+
+async fn worker_permit() -> Result<SemaphorePermit<'static>, String> {
+    const BUSY: &str = "the server is busy running other packs; try again shortly";
+    struct Waiting;
+    impl Drop for Waiting {
+        fn drop(&mut self) {
+            WAITING.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+    let waiting = WAITING.fetch_add(1, Ordering::Relaxed);
+    let _waiting = Waiting;
+    if waiting >= MAX_WAITING {
+        return Err(BUSY.into());
+    }
+    match tokio::time::timeout(worker_timeout(), WORKERS.acquire()).await {
+        Ok(Ok(permit)) => Ok(permit),
+        _ => Err(BUSY.into()),
+    }
+}
 
 /// How long one pack worker may run. Pack Lua is untrusted, and not everything
 /// it can do is seen by the engine's instruction cap, so this is the real limit.
@@ -180,8 +257,12 @@ fn worker_timeout() -> Duration {
     Duration::from_secs(secs)
 }
 
-/// The most a worker may send back.
-const MAX_REPLY: usize = 64 << 20;
+/// The most a worker may send back, and the longest error it may report.
+const MAX_REPLY: usize = 16 << 20;
+const MAX_ERROR: usize = 2000;
+
+/// The worker's exit code for a state over `MAX_REPLY`.
+const EXIT_TOO_BIG: i32 = 3;
 
 /// What a worker is asked: load the pack, and either summarise it or, given a
 /// feed, compute its state.
@@ -221,19 +302,54 @@ enum Reply {
     Error(String),
 }
 
+/// Why a worker gave no answer.
+enum Failure {
+    /// The pack reported an error.
+    Pack(String),
+    /// The pack hit a limit: too long, too large, or it brought the worker down.
+    Limit(String),
+    /// The worker couldn't be run; not the pack's doing.
+    Host(String),
+}
+
+impl Failure {
+    fn message(self) -> String {
+        match self {
+            Failure::Pack(m) | Failure::Limit(m) => m,
+            Failure::Host(m) => {
+                tracing::warn!("pack worker: {m}");
+                "Bifrost couldn't run the pack; the server's log says why".into()
+            }
+        }
+    }
+}
+
+/// The running program's file. After an update replaced it, the kernel's name
+/// for it ends in " (deleted)"; the file at that path is then the new version,
+/// which speaks the same request format.
+fn own_exe() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("own path: {e}"))?;
+    let name = exe.as_os_str().to_string_lossy();
+    Ok(match name.strip_suffix(" (deleted)") {
+        Some(path) => PathBuf::from(path),
+        None => exe,
+    })
+}
+
 /// Run a pack worker: this same program, in the sandbox, seeing only the pack
-/// and the request, and killed if it runs too long.
+/// and the request, and killed if it runs too long or says too much. The caller
+/// holds a permit.
 async fn run_worker(
     scratch: &Scratch,
     pack: &Path,
     request: &Request<'_>,
-) -> Result<serde_json::Value, String> {
-    let exe = std::env::current_exe().map_err(|e| format!("own path: {e}"))?;
+) -> Result<serde_json::Value, Failure> {
+    let exe = own_exe().map_err(Failure::Host)?;
     let file = scratch.0.join("request.json");
-    let json = serde_json::to_vec(request).map_err(|e| e.to_string())?;
+    let json = serde_json::to_vec(request).map_err(|e| Failure::Host(e.to_string()))?;
     tokio::fs::write(&file, json)
         .await
-        .map_err(|e| format!("write temp: {e}"))?;
+        .map_err(|e| Failure::Host(format!("write temp: {e}")))?;
     let job = Job {
         program: &exe,
         args: vec![WORKER_COMMAND.into(), file.clone().into_os_string()],
@@ -243,20 +359,51 @@ async fn run_worker(
         write: Vec::new(),
         network: false,
     };
-    let cmd = sandbox::get().command(&job);
-    let _permit = WORKERS.acquire().await.map_err(|e| e.to_string())?;
+    let cmd = sandbox::get().pack_worker(&job);
     let timeout = worker_timeout();
-    let out = sandbox::run(cmd, timeout)
-        .await
-        .map_err(|e| format!("the pack didn't finish: {e}"))?;
+    let out = match sandbox::run_capped(cmd, timeout, MAX_REPLY).await {
+        Ok(out) => out,
+        Err(sandbox::CappedError::TimedOut) => {
+            return Err(Failure::Limit(format!(
+                "the pack didn't finish within {} seconds",
+                timeout.as_secs()
+            )));
+        }
+        Err(sandbox::CappedError::TooMuch) => {
+            return Err(Failure::Limit("the pack's state is too large".into()));
+        }
+        Err(sandbox::CappedError::Run(e)) => return Err(Failure::Host(e)),
+    };
+    if out.status.code() == Some(EXIT_TOO_BIG) {
+        return Err(Failure::Limit("the pack's state is too large".into()));
+    }
     if !out.status.success() {
-        return Err(format!("the pack's code crashed ({})", out.status));
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        tracing::warn!("pack worker: {}: {}", out.status, capped(&stderr));
+        return Err(Failure::Limit(
+            "the pack's code stopped the worker: it may have run out of memory".into(),
+        ));
     }
     match serde_json::from_slice(&out.stdout) {
         Ok(Reply::Ok(v)) => Ok(v),
-        Ok(Reply::Error(e)) => Err(e),
-        Err(e) => Err(format!("the pack's worker answered badly: {e}")),
+        Ok(Reply::Error(e)) => Err(Failure::Pack(capped(&e))),
+        Err(e) => Err(Failure::Limit(format!(
+            "the pack's worker answered badly: {e}"
+        ))),
     }
+}
+
+/// At most `MAX_ERROR` bytes of an error, which a pack can make as long as it
+/// likes.
+fn capped(e: &str) -> String {
+    if e.len() <= MAX_ERROR {
+        return e.to_string();
+    }
+    let mut end = MAX_ERROR;
+    while !e.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &e[..end])
 }
 
 /// The hidden command that runs a pack worker (see [`run_worker`]).
@@ -278,21 +425,18 @@ pub fn worker_main(request: &Path) -> i32 {
         std::fs::File::from_raw_fd(out)
     };
     let reply = match worker_reply(request) {
-        Ok(v) => match serde_json::to_vec(&Reply::Ok(v)) {
-            Ok(j) if j.len() <= MAX_REPLY => j,
-            _ => too_big(),
-        },
-        Err(e) => serde_json::to_vec(&Reply::Error(e)).unwrap_or_else(|_| too_big()),
+        Ok(v) => Reply::Ok(v),
+        Err(e) => Reply::Error(capped(&e)),
+    };
+    let reply = match serde_json::to_vec(&reply) {
+        Ok(j) if j.len() <= MAX_REPLY => j,
+        _ => return EXIT_TOO_BIG,
     };
     let mut out = out;
     if out.write_all(&reply).is_err() {
         return 2;
     }
     0
-}
-
-fn too_big() -> Vec<u8> {
-    br#"{"error":"the pack's state is too large"}"#.to_vec()
 }
 
 fn worker_reply(request: &Path) -> Result<serde_json::Value, String> {
@@ -343,15 +487,22 @@ fn clear_data(slot_data: Option<&serde_json::Value>) -> serde_json::Value {
     }
 }
 
-/// A new, unguessable, owner-only temp dir, removed when dropped.
+/// Where scratch dirs go: in the data dir's `tmp` (which backups skip), not the
+/// system's temp dir, which is often in memory.
+fn scratch_root() -> PathBuf {
+    config::get().data_dir.join("tmp").join("packs")
+}
+
+/// A new, unguessable, owner-only dir for one worker, removed when dropped (off
+/// the async runtime when on it, as a pack can hold many files).
 struct Scratch(PathBuf);
 
 impl Scratch {
     fn new() -> Result<Scratch, String> {
         use std::os::unix::fs::DirBuilderExt;
-        let dir =
-            std::env::temp_dir().join(format!("bifrost-pack-{}", &crate::auth::new_token()[..32]));
+        let dir = scratch_root().join(&crate::auth::new_token()[..32]);
         std::fs::DirBuilder::new()
+            .recursive(true)
             .mode(0o700)
             .create(&dir)
             .map_err(|e| format!("temp dir: {e}"))?;
@@ -361,8 +512,21 @@ impl Scratch {
 
 impl Drop for Scratch {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        let dir = std::mem::take(&mut self.0);
+        match tokio::runtime::Handle::try_current() {
+            Ok(rt) => {
+                rt.spawn_blocking(move || std::fs::remove_dir_all(dir));
+            }
+            Err(_) => {
+                let _ = std::fs::remove_dir_all(dir);
+            }
+        }
     }
+}
+
+/// Remove scratch dirs a previous run left behind. At startup.
+pub fn sweep_scratch() {
+    let _ = std::fs::remove_dir_all(scratch_root());
 }
 
 /// Read a pack asset (e.g. a map image) for serving to the browser.
@@ -400,6 +564,19 @@ mod tests {
 
     fn meta(json: serde_json::Value) -> crate::meta::Meta {
         serde_json::from_value(json).unwrap()
+    }
+
+    #[test]
+    fn a_claim_is_held_until_dropped() {
+        let first = claim_compute(-1, -1).expect("free");
+        assert!(claim_compute(-1, -1).is_none(), "taken");
+        assert!(
+            claim_compute(-1, -1).is_none(),
+            "still taken after a refusal"
+        );
+        assert!(claim_upload(-1).is_some(), "uploads are a separate set");
+        drop(first);
+        assert!(claim_compute(-1, -1).is_some(), "free again");
     }
 
     #[test]

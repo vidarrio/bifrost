@@ -192,10 +192,6 @@ def fixture(name):
         return f.read()
 
 
-if __name__ == "__main__":
-    sys.exit("library only")
-
-
 def tiny_pack():
     """A minimal PopTracker pack (.zip): one item, set when Archipelago connects."""
     buf = io.BytesIO()
@@ -208,3 +204,7 @@ Archipelago:AddClearHandler("clear", function()
 end)
 """)
     return buf.getvalue()
+
+
+if __name__ == "__main__":
+    sys.exit("library only")

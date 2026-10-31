@@ -330,10 +330,11 @@ pub(super) const PT_JS: &str = r#"<script>
    else if(ov){ ov.remove(); }
   });
  }
+ var retry=0;
  function draw(d){
   if(!d||!d.pack){ host.textContent='No pack.'; return; }
-  if(d.busy){ setTimeout(load,2000); return; }
-  if(d.error){ host.textContent='Tracker error: '+d.error; return; }
+  if(d.busy){ if(!retry) retry=setTimeout(function(){ retry=0; if(panel&&!panel.hidden) load(); },2000); return; }
+  if(d.error){ host.textContent='Tracker error: '+d.error; delete host.dataset.built; return; }
   ver=(d.version!=null?(''+d.version):''); st=d.state||{}; buildIndex();
   if(host.dataset.built){ update(); return; }
   host.innerHTML='';

@@ -56,8 +56,11 @@ pub(crate) async fn pt_upload(
     }
     // Validation runs the pack's Lua, in a worker; a pack that fails it, or runs
     // too long, is never installed.
+    let Some(_claim) = ptrack::claim_upload(my_id) else {
+        return render::notice("You're already uploading a pack.", false, &back).into_response();
+    };
     let bytes = std::sync::Arc::new(bytes);
-    if let Err(e) = ptrack::validate(bytes.to_vec()).await {
+    if let Err(e) = ptrack::validate(bytes.clone()).await {
         return render::notice(&format!("Pack rejected: {e}"), false, &back).into_response();
     }
     let season2 = season;
@@ -161,7 +164,7 @@ pub(crate) async fn pt_state(
         player: ap_slot,
         connect,
     };
-    match ptrack::compute(season, ap_slot, feed).await {
+    match ptrack::compute(season, ap_slot, version, feed).await {
         Ok(state) => Json(serde_json::json!({
             "pack": true,
             "version": version,
