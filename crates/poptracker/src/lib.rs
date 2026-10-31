@@ -563,7 +563,7 @@ impl Session {
         self.charge();
         self.run_frame_handlers();
         for w in registered(&self.lua, CODE_WATCHES, |e| {
-            e.get::<mlua::String>("code")
+            e.get::<mlua::LuaString>("code")
                 .is_ok_and(|c| c.as_bytes().as_ref() == b"*")
         }) {
             let _ = w.call::<()>("*");
