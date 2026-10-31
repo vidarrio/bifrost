@@ -5,7 +5,9 @@ the network protocol doesn't carry:
 
   - per AP slot: world_size (items placed in their world), items_for (items
     destined for them anywhere), items_for_elsewhere (those outside their world);
-  - item/location id -> name maps for each game in play (for the feed + hints).
+  - item/location id -> name maps for each game in play (for the feed + hints);
+  - per AP slot: its slot data, as AP sends it to the slot's clients on connect
+    (for the slot's PopTracker pack).
 
 Run under the AP venv; the season's custom worlds resolve via bifrost_ap.
 
@@ -18,6 +20,7 @@ import zipfile
 try:
     import bifrost_ap  # noqa: F401  (pins AP paths; must precede AP imports)
     from Utils import restricted_loads
+    from NetUtils import encode
     from worlds import AutoWorldRegister
 except Exception as e:  # pragma: no cover
     print(json.dumps({"error": "meta init failed: %s" % e}))
@@ -34,6 +37,7 @@ def main() -> None:
     slot_info = decoded["slot_info"]                # {slot: NetworkSlot}
     locations = decoded["locations"]                # {slot: {loc_id: (item, recv, flags)}}
     precollected = decoded.get("precollected_items", {})  # {slot: [item_id, ...]} starting inventory
+    slot_data = decoded.get("slot_data", {})        # {slot: {...}} sent to the slot's clients on connect
 
     world_size = {s: len(locs) for s, locs in locations.items()}
     items_for = {}
@@ -86,6 +90,16 @@ def main() -> None:
         "location_names": location_names,
         "loc_flags": loc_flags,
     }
+    def slot_json(s):
+        # One slot's slot data as AP encodes it for the network. Data AP can't
+        # send (or JSON can't hold, like NaN) costs only that slot: its pack
+        # gets {}, as if the world sent none.
+        try:
+            return json.loads(json.dumps(json.loads(encode(slot_data.get(s, {}))), allow_nan=False))
+        except Exception as e:
+            print("slot %s: slot data not kept: %s" % (s, e), file=sys.stderr)
+            return {}
+
     for s, si in slot_info.items():
         out["slots"][str(s)] = {
             "name": si.name,
@@ -105,6 +119,9 @@ def main() -> None:
             # them, but they're absent from the savefile's received_items — feed
             # them to the engine too, or season gates (e.g. "summer") read false.
             "precollected": [int(i) for i in precollected.get(s, [])],
+            # The slot's slot data, encoded as AP encodes it for the network, so
+            # the slot's PopTracker pack gets on connect what it would from AP.
+            "slot_data": slot_json(s),
         }
     print(json.dumps(out))
 

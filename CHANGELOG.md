@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   example the Satisfactory pack). `require` only loads files from the pack.
 - PopTracker access rules that pass arguments to one of the pack's functions
   (`$name|arg`) give it those arguments.
+- PopTracker packs get the slot's slot data, the seed name and the other
+  players' names and games, as they would from Archipelago on connect. Packs
+  that read the seed's options there now track them, such as Satisfactory's
+  starting recipes.
 
 ## [0.2.0] - 2026-10-29
 

@@ -57,6 +57,11 @@ pub struct SlotMeta {
     /// precollected gates (e.g. a starting season) evaluate false. Static.
     #[serde(default)]
     pub precollected: Vec<i64>,
+    /// The slot's slot data, as AP sends it to the slot's clients on connect.
+    /// Passed to the slot's PopTracker pack, which may read the seed's options
+    /// from it (e.g. starting recipes that aren't starting items). Static.
+    #[serde(default)]
+    pub slot_data: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]

@@ -83,6 +83,38 @@ pub fn remove(season: i64, ap_slot: i64) {
     let _ = std::fs::remove_dir_all(slot_dir(season, ap_slot));
 }
 
+/// What a pack learns on connect, besides the items: the slot's slot data and
+/// the multiworld's seed name and players (`(slot, name, game)`).
+#[derive(Default)]
+pub struct Connect<'a> {
+    pub slot_data: Option<&'a serde_json::Value>,
+    pub seed: Option<&'a str>,
+    pub players: Vec<(i64, &'a str, &'a str)>,
+}
+
+impl<'a> Connect<'a> {
+    /// The connect data for `ap_slot` from the season's metadata.
+    pub fn from_meta(meta: &'a crate::meta::Meta, ap_slot: i64) -> Self {
+        Connect {
+            slot_data: meta.totals(ap_slot).map(|s| &s.slot_data),
+            seed: meta.seed.as_deref(),
+            players: (meta.slots.iter())
+                .map(|(slot, s)| (*slot, s.name.as_str(), s.game.as_str()))
+                .collect(),
+        }
+    }
+
+    /// The slot data to pass to `onClear`: AP always sends an object, so
+    /// anything else (unknown, or metadata from before slot data was kept)
+    /// becomes `{}`.
+    fn slot_data(&self) -> serde_json::Value {
+        match self.slot_data {
+            Some(v @ serde_json::Value::Object(_)) => v.clone(),
+            _ => serde_json::json!({}),
+        }
+    }
+}
+
 /// Compute the tracker state for a slot from its installed pack + received
 /// items (`(item_id, item_name)`), with the slot's AP player number.
 /// Synchronous (holds a Lua VM) — call via `spawn_blocking`.
@@ -93,20 +125,23 @@ pub fn compute(
     checked: &[i64],
     valid_locations: &[i64],
     player: i64,
+    connect: &Connect<'_>,
 ) -> Result<poptracker::TrackerState, String> {
     let root = poptracker::pack_root(&slot_dir(season, ap_slot)).map_err(|e| e.to_string())?;
     let pack = poptracker::Pack::load(&root).map_err(|e| e.to_string())?;
     let session = poptracker::Session::new(&pack).map_err(|e| e.to_string())?;
     session.set_player(player);
+    session
+        .set_multiworld(connect.seed, &connect.players)
+        .map_err(|e| e.to_string())?;
     // Feed the slot's valid location ids before onClear so `visibility_rules`
     // can hide markers for checks this slot's options never generated. Empty =>
     // left disabled (every marker shows), so a missing/old meta can't blank maps.
     if !valid_locations.is_empty() {
         session.set_valid_locations(valid_locations);
     }
-    session
-        .on_clear(&serde_json::json!({}))
-        .map_err(|e| e.to_string())?;
+    let slot_data = connect.slot_data();
+    session.on_clear(&slot_data).map_err(|e| e.to_string())?;
     for (i, (id, name)) in items.iter().enumerate() {
         session
             .on_item(i as i64, *id, name, player)
@@ -147,4 +182,37 @@ fn write_temp(tag: &str, bytes: &[u8]) -> Result<PathBuf, String> {
         return Err(format!("write temp: {e}"));
     }
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn meta(json: serde_json::Value) -> crate::meta::Meta {
+        serde_json::from_value(json).unwrap()
+    }
+
+    #[test]
+    fn connect_passes_the_slot_data_or_an_empty_object() {
+        let m = meta(serde_json::json!({
+            "seed": "s1",
+            "slots": {
+                "1": {"name": "Ann", "game": "A", "slot_data": {"k": 1}},
+                "2": {"name": "Bo", "game": "B"},
+                "3": {"name": "Cy", "game": "C", "slot_data": [1, 2]}
+            }
+        }));
+        let c = Connect::from_meta(&m, 1);
+        assert_eq!(c.slot_data(), serde_json::json!({"k": 1}));
+        assert_eq!(c.seed, Some("s1"));
+        assert_eq!(c.players, [(1, "Ann", "A"), (2, "Bo", "B"), (3, "Cy", "C")]);
+        // Metadata from before slot data was kept, a non-object, an unknown slot.
+        for slot in [2, 3, 9] {
+            assert_eq!(
+                Connect::from_meta(&m, slot).slot_data(),
+                serde_json::json!({})
+            );
+        }
+        assert_eq!(Connect::default().slot_data(), serde_json::json!({}));
+    }
 }
