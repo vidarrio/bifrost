@@ -7,4 +7,7 @@ Archipelago:AddClearHandler("clear", function(slot_data)
     and Archipelago:GetPlayerAlias(2) == "Bo"
     and Archipelago:GetPlayerGame(3) == nil
     and Archipelago:GetPlayerAlias(3) == ""
+    and Archipelago.GetPlayerGame() == nil
+    and Archipelago.GetPlayerAlias() == ""
+    and Archipelago.GetPlayerGame(2) == "Game B"
 end)

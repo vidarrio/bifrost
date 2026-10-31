@@ -90,6 +90,16 @@ def main() -> None:
         "location_names": location_names,
         "loc_flags": loc_flags,
     }
+    def slot_json(s):
+        # One slot's slot data as AP encodes it for the network. Data AP can't
+        # send (or JSON can't hold, like NaN) costs only that slot: its pack
+        # gets {}, as if the world sent none.
+        try:
+            return json.loads(json.dumps(json.loads(encode(slot_data.get(s, {}))), allow_nan=False))
+        except Exception as e:
+            print("slot %s: slot data not kept: %s" % (s, e), file=sys.stderr)
+            return {}
+
     for s, si in slot_info.items():
         out["slots"][str(s)] = {
             "name": si.name,
@@ -111,7 +121,7 @@ def main() -> None:
             "precollected": [int(i) for i in precollected.get(s, [])],
             # The slot's slot data, encoded as AP encodes it for the network, so
             # the slot's PopTracker pack gets on connect what it would from AP.
-            "slot_data": json.loads(encode(slot_data.get(s, {}))),
+            "slot_data": slot_json(s),
         }
     print(json.dumps(out))
 

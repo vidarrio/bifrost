@@ -1731,9 +1731,13 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         let players = players.clone();
         ap.set(
             method,
-            lua.create_function(move |_, (_t, slot): (Table, Value)| {
-                let p = match slot {
-                    Value::Integer(_) | Value::Number(_) => players.get::<Value>(slot)?,
+            // `Archipelago:GetPlayerGame(slot)`; a dot-call or a missing slot
+            // finds nobody rather than failing.
+            lua.create_function(move |_, args: MultiValue| {
+                let p = match args.into_iter().last() {
+                    Some(slot @ (Value::Integer(_) | Value::Number(_))) => {
+                        players.get::<Value>(slot)?
+                    }
                     _ => Value::Nil,
                 };
                 Ok(match p {
