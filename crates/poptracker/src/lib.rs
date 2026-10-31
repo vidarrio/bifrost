@@ -115,6 +115,11 @@ impl Pack {
         &self.dir
     }
 
+    /// The variant in use; empty if the pack has none.
+    pub fn variant(&self) -> &str {
+        &self.variant
+    }
+
     /// Read a file from inside the pack (pack-relative), e.g. a map image.
     /// Guards against path traversal.
     pub fn asset(&self, rel: &str) -> Option<Vec<u8>> {
@@ -152,9 +157,32 @@ fn find_in_pack(dir: &Path, variant: &str, rel: &str) -> Option<PathBuf> {
     pack_join(dir, rel)
 }
 
-/// The most of a manifest that's read. Packs load in the server too, to serve
-/// their images, so this stays cheap whatever a pack ships.
+/// Read a file of an unpacked pack without loading it, given its variant. Serving
+/// images takes this path: it parses nothing a pack wrote, so it's safe in the
+/// server's own process, unlike [`Pack::load`], which belongs in a worker.
+pub fn read_asset(dir: &Path, variant: &str, rel: &str) -> Option<Vec<u8>> {
+    std::fs::read(find_in_pack(dir, variant, rel)?).ok()
+}
+
+/// The most of a manifest that's read, and how deeply it may nest: the parser
+/// recurses, and a pack shouldn't be able to run it out of stack.
 const MAX_MANIFEST: u64 = 1 << 20;
+const MAX_MANIFEST_DEPTH: usize = 64;
+
+fn nests_too_deep(txt: &str) -> bool {
+    let (mut depth, mut deepest) = (0usize, 0usize);
+    for b in txt.bytes() {
+        match b {
+            b'[' | b'{' => {
+                depth += 1;
+                deepest = deepest.max(depth);
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    deepest > MAX_MANIFEST_DEPTH
+}
 
 /// Which of a pack's variants to run: there's no one here to choose, so an
 /// Archipelago one with a map rather than items only, `standard` if that fits,
@@ -165,6 +193,9 @@ fn pick_variant(dir: &Path) -> String {
         Ok(m) if m.len() <= MAX_MANIFEST => std::fs::read_to_string(&path).unwrap_or_default(),
         _ => String::new(),
     };
+    if nests_too_deep(&txt) {
+        return String::new();
+    }
     let Ok(manifest) = parse_pack_json(txt.trim_start_matches('\u{feff}')) else {
         return String::new();
     };
@@ -415,6 +446,9 @@ pub struct Summary {
     /// it can be driven from AP server state. Packs that only autotrack from
     /// emulator memory register none and are unusable server-side.
     pub archipelago_autotracking: bool,
+    /// The variant in use; empty if the pack has none.
+    #[serde(default)]
+    pub variant: String,
 }
 
 #[derive(Clone)]
@@ -574,7 +608,7 @@ impl Session {
         run_pack_source(&lua, &init, "init.lua")?;
 
         let s = Session { lua, eng, budget };
-        s.run_frame_handlers();
+        s.run_frame_handlers()?;
         Ok(s)
     }
 
@@ -583,29 +617,29 @@ impl Session {
     /// running out of budget or memory ends the operation: a pack can't go on.
     fn guard(&self, r: mlua::Result<()>) -> Result<()> {
         let Err(e) = r else { return Ok(()) };
-        let text = e.to_string();
-        if self.budget.get() == 0 || text.contains("not enough memory") {
+        if self.budget.get() == 0 || is_memory_error(&e) {
             return Err(e.into());
         }
-        let mut eng = self.eng.borrow_mut();
-        eng.pack_error_count += 1;
-        if eng.pack_errors.len() < MAX_PACK_ERRORS {
-            let end = (0..=text.len().min(MAX_PACK_ERROR_LEN))
-                .rev()
-                .find(|i| text.is_char_boundary(*i))
-                .unwrap_or(0);
-            eng.pack_errors.push(text[..end].to_string());
-        }
+        note_error(&self.eng, &e.to_string());
         Ok(())
+    }
+
+    /// `guard` where nothing can be returned: a pack stopped for good here shows
+    /// as one more error.
+    fn guard_noting(&self, r: mlua::Result<()>) {
+        if let Err(e) = self.guard(r) {
+            note_error(&self.eng, &e.to_string());
+        }
     }
 
     /// Run the frame handlers once (see `FRAME_HANDLERS`), with no time
     /// elapsed. A handler may remove itself or add others; those added run next
     /// time. As in PopTracker, a handler's error doesn't stop the tracker.
-    fn run_frame_handlers(&self) {
+    fn run_frame_handlers(&self) -> Result<()> {
         for f in registered(&self.lua, FRAME_HANDLERS, |_| true) {
-            let _ = self.guard(f.call::<()>(0.0));
+            self.guard(f.call::<()>(0.0))?;
         }
+        Ok(())
     }
 
     /// Reset the per-operation instruction budget. Call at the start of each
@@ -666,8 +700,7 @@ impl Session {
         for h in handlers {
             self.guard(h.call::<()>(sd.clone()))?;
         }
-        self.run_frame_handlers();
-        Ok(())
+        self.run_frame_handlers()
     }
 
     /// Fire the pack's Item handlers for one received item.
@@ -707,12 +740,15 @@ impl Session {
     /// Snapshot the current tracker state (items + location accessibility).
     pub fn state(&self) -> TrackerState {
         self.charge();
-        self.run_frame_handlers();
+        if let Err(e) = self.run_frame_handlers() {
+            note_error(&self.eng, &e.to_string());
+            self.charge();
+        }
         for w in registered(&self.lua, CODE_WATCHES, |e| {
             e.get::<mlua::LuaString>("code")
                 .is_ok_and(|c| c.as_bytes().as_ref() == b"*")
         }) {
-            let _ = self.guard(w.call::<()>("*"));
+            self.guard_noting(w.call::<()>("*"));
         }
         self.charge();
         let mut out = TrackerState::default();
@@ -748,10 +784,17 @@ impl Session {
                     pick.or_else(|| v.iter().find(|s| !s.is_empty())).cloned()
                 });
                 // A consumable shows its count; an item is "lit" if active or held.
-                let overlay = t
-                    .get::<Option<String>>("__overlay")
-                    .unwrap_or(None)
-                    .or_else(|| (kind == "consumable" && count > 0).then(|| count.to_string()));
+                // As PopTracker draws it: a consumable's count first, then the
+                // pack's own text. Not through metatables, with the engine borrowed.
+                let text = |field| {
+                    t.raw_get::<Option<String>>(field)
+                        .unwrap_or(None)
+                        .filter(|s| !s.is_empty())
+                };
+                let overlay = (kind == "consumable" && count > 0)
+                    .then(|| count.to_string())
+                    .or_else(|| text("__overlay"))
+                    .or_else(|| text("BadgeText"));
                 out.items.push(ItemState {
                     key: key.clone(),
                     kind,
@@ -901,6 +944,7 @@ impl Session {
             items: e.kind.len(),
             locations: e.nodes.len(),
             maps: e.maps.len(),
+            variant: e.variant.clone(),
             archipelago_autotracking: !(e.clear_h.is_empty()
                 && e.item_h.is_empty()
                 && e.loc_h.is_empty()
@@ -919,7 +963,7 @@ fn read_pack_file(eng: &E, rel: &str) -> Result<String> {
         .ok_or_else(|| Error::Pack(format!("unsafe pack path refused: {rel}")))?;
     // Bytes that aren't UTF-8 (a comment in another encoding) don't stop PopTracker
     // either. Bytecode gets no further: Lua refuses it in text mode.
-    let bytes = std::fs::read(&p).map_err(|e| Error::Io(format!("{}: {e}", p.display())))?;
+    let bytes = std::fs::read(&p).map_err(|e| Error::Io(format!("{rel}: {}", e.kind())))?;
     let text = String::from_utf8_lossy(&bytes);
     Ok(text.trim_start_matches('\u{feff}').to_string())
 }
@@ -1679,8 +1723,19 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
             // Some packs load a script they can only name once connected.
             lua.create_function(move |lua, (_t, file): (Table, Option<String>)| {
                 let Some(file) = file else { return Ok(false) };
-                let txt = read_pack_file(&eng2, &file).map_err(to_lua)?;
-                run_pack_source(lua, &txt, &file).map(|()| true)
+                // As in PopTracker, a script that won't load is logged and the
+                // caller carries on.
+                let ran = read_pack_file(&eng2, &file)
+                    .map_err(to_lua)
+                    .and_then(|txt| run_pack_source(lua, &txt, &file));
+                match ran {
+                    Ok(()) => Ok(true),
+                    Err(e) if is_memory_error(&e) => Err(e),
+                    Err(e) => {
+                        note_error(&eng2, &e.to_string());
+                        Ok(false)
+                    }
+                }
             })?,
         )?;
     }
@@ -1739,19 +1794,34 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     // are no threads and no one to notify.
     {
         let eng2 = eng.clone();
-        let finish = |lua: &Lua, src: String, name: String, arg: Value, done: Option<Function>| {
-            let chunk = lua
-                .load(src)
-                .set_name(name)
-                .set_mode(mlua::chunk::ChunkMode::Text);
-            lua.globals().set("arg", arg)?;
-            let result = chunk.eval::<Value>();
-            lua.globals().set("arg", Value::Nil)?;
-            if let (Ok(v), Some(done)) = (result, done) {
-                done.call::<()>(v)?;
-            }
-            Ok(Value::Nil)
-        };
+        // `arg` is the script's while it runs; a failure is logged, as in
+        // PopTracker, and no callback is told. A callback's own error is too.
+        let notes = eng.clone();
+        let finish =
+            move |lua: &Lua, src: String, name: String, arg: Value, done: Option<Function>| {
+                let chunk = lua
+                    .load(src)
+                    .set_name(name)
+                    .set_mode(mlua::chunk::ChunkMode::Text);
+                let outer: Value = lua.globals().get("arg")?;
+                lua.globals().set("arg", arg)?;
+                let result = chunk.eval::<Value>();
+                lua.globals().set("arg", outer)?;
+                let finished = match (result, done) {
+                    (Ok(v), Some(done)) => done.call::<()>(v),
+                    (Ok(_), None) => Ok(()),
+                    (Err(e), _) => Err(e),
+                };
+                match finished {
+                    Err(e) if is_memory_error(&e) => Err(e),
+                    Err(e) => {
+                        note_error(&notes, &e.to_string());
+                        Ok(Value::Nil)
+                    }
+                    Ok(()) => Ok(Value::Nil),
+                }
+            };
+        let finish2 = finish.clone();
         sh.set(
             "RunScriptAsync",
             lua.create_function(
@@ -1772,7 +1842,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
             "RunStringAsync",
             lua.create_function(
                 move |lua, (_t, src, arg, done, _p): (Table, String, Value, Option<Function>, Value)| {
-                    finish(lua, src, "script".to_string(), arg, done)
+                    finish2(lua, src, "script".to_string(), arg, done)
                 },
             )?,
         )?;
@@ -2001,6 +2071,28 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     g.set("AccessibilityLevel", &al)?;
 
     Ok(())
+}
+
+/// Keep a pack handler's error for the tracker to report (see `MAX_PACK_ERRORS`).
+fn note_error(eng: &E, text: &str) {
+    let mut e = eng.borrow_mut();
+    e.pack_error_count += 1;
+    if e.pack_errors.len() < MAX_PACK_ERRORS {
+        let end = (0..=text.len().min(MAX_PACK_ERROR_LEN))
+            .rev()
+            .find(|i| text.is_char_boundary(*i))
+            .unwrap_or(0);
+        e.pack_errors.push(text[..end].to_string());
+    }
+}
+
+/// Is this Lua running out of memory, however many callbacks it came through?
+fn is_memory_error(e: &mlua::Error) -> bool {
+    match e {
+        mlua::Error::MemoryError(_) => true,
+        mlua::Error::CallbackError { cause, .. } => is_memory_error(cause),
+        _ => false,
+    }
 }
 
 fn to_lua(e: Error) -> mlua::Error {

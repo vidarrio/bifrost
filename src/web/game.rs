@@ -60,10 +60,13 @@ pub(crate) async fn pt_upload(
         return render::notice("You're already uploading a pack.", false, &back).into_response();
     };
     let bytes = std::sync::Arc::new(bytes);
-    if let Err(e) = ptrack::validate(bytes.clone()).await {
-        return render::notice(&format!("Pack rejected: {e}"), false, &back).into_response();
-    }
-    match ptrack::install_pack(season, ap_slot, bytes).await {
+    let summary = match ptrack::validate(bytes.clone()).await {
+        Ok(summary) => summary,
+        Err(e) => {
+            return render::notice(&format!("Pack rejected: {e}"), false, &back).into_response();
+        }
+    };
+    match ptrack::install_pack(season, ap_slot, bytes, summary.variant).await {
         Ok(()) => Redirect::to(&back).into_response(),
         Err(e) => render::notice(&format!("Pack rejected: {e}"), false, &back).into_response(),
     }

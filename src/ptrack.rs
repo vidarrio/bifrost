@@ -108,11 +108,17 @@ fn install(season: i64, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), String> {
 }
 
 /// [`install`] as a worker's equal: it can take a while, and holds a permit for it.
-pub async fn install_pack(season: i64, ap_slot: i64, bytes: Arc<Vec<u8>>) -> Result<(), String> {
+pub async fn install_pack(
+    season: i64,
+    ap_slot: i64,
+    bytes: Arc<Vec<u8>>,
+    variant: String,
+) -> Result<(), String> {
     let permit = worker_permit().await.map_err(|Busy| BUSY.to_string())?;
     let installed = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        install(season, ap_slot, &bytes)
+        install(season, ap_slot, &bytes)?;
+        std::fs::write(variant_file(season, ap_slot), variant).map_err(|e| format!("write: {e}"))
     })
     .await
     .map_err(|_| "Upload failed.".to_string())?;
@@ -125,6 +131,7 @@ pub async fn install_pack(season: i64, ap_slot: i64, bytes: Arc<Vec<u8>>) -> Res
 pub fn remove(season: i64, ap_slot: i64) {
     SLOTS.lock().unwrap().remove(&(season, ap_slot));
     let _ = std::fs::remove_dir_all(slot_dir(season, ap_slot));
+    let _ = std::fs::remove_file(variant_file(season, ap_slot));
 }
 
 /// What a pack learns on connect, besides the items: the slot's slot data and
@@ -717,8 +724,15 @@ pub fn sweep_scratch() {
 /// Read a pack asset (e.g. a map image) for serving to the browser.
 pub fn read_pack_asset(season: i64, ap_slot: i64, rel: &str) -> Option<Vec<u8>> {
     let root = poptracker::pack_root(&slot_dir(season, ap_slot)).ok()?;
-    let pack = poptracker::Pack::load(&root).ok()?;
-    pack.asset(rel)
+    let variant = std::fs::read_to_string(variant_file(season, ap_slot)).unwrap_or_default();
+    poptracker::read_asset(&root, &variant, rel)
+}
+
+/// Where a slot's pack's variant is kept, next to its folder: a worker chose it
+/// on upload, and this process doesn't parse what a pack wrote to find out.
+/// A pack installed before this was kept has none, and serves from its root.
+fn variant_file(season: i64, ap_slot: i64) -> PathBuf {
+    slot_dir(season, ap_slot).with_extension("variant")
 }
 
 /// Write an uploaded pack to a new, unguessable, owner-only file in the temp

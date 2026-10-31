@@ -334,7 +334,7 @@ pub(super) const PT_JS: &str = r#"<script>
  function draw(d){
   if(!d||!d.pack){ host.textContent='No pack.'; return; }
   if(d.busy){ if(!retry) retry=setTimeout(function(){ retry=0; if(panel&&!panel.hidden) load(); },2000); return; }
-  if(d.error){ host.textContent='Tracker error: '+d.error; delete host.dataset.built; return; }
+  if(d.error){ host.textContent='Tracker error: '+d.error; delete host.dataset.built; var old=document.getElementById('ptnote'); if(old) old.remove(); return; }
   ver=(d.version!=null?(''+d.version):''); st=d.state||{}; buildIndex();
   var note=document.getElementById('ptnote');
   if(st.pack_error_count){ if(!note){ note=document.createElement('p'); note.id='ptnote'; note.className='muted'; host.parentNode.insertBefore(note,host); }
