@@ -89,10 +89,7 @@ pub(crate) async fn pt_remove(
 
 /// Computed tracker state (maps + markers + items) for the slot's pack, as JSON
 /// for the PopTracker tab + its poller. `{pack:false}` when no pack is installed.
-pub(crate) async fn pt_state(
-    Path(ap_slot): Path<i64>,
-    ctx: scope::SeasonCtx,
-) -> Json<serde_json::Value> {
+pub(crate) async fn pt_state(Path(ap_slot): Path<i64>, ctx: scope::SeasonCtx) -> Response {
     let season = ctx.id;
     let Some((game, received, checked, meta)) = ctx.rt.with_board(|b| {
         let (game, received, checked) = b
@@ -108,10 +105,10 @@ pub(crate) async fn pt_state(
             .unwrap_or_default();
         (game, received, checked, b.meta.clone())
     }) else {
-        return Json(serde_json::json!({"pack": false}));
+        return Json(serde_json::json!({"pack": false})).into_response();
     };
     if !ctx.state().is_live() || !ptrack::has_pack(season, ap_slot) {
-        return Json(serde_json::json!({"pack": false}));
+        return Json(serde_json::json!({"pack": false})).into_response();
     }
     let name_of = |item: i64| {
         meta.as_ref()
@@ -145,10 +142,6 @@ pub(crate) async fn pt_state(
         .map(|s| s.all_locations.clone())
         .unwrap_or_default();
     let version = ptrack::pack_version(season, ap_slot);
-    // One compute per slot at a time: the page polls again shortly.
-    let Some(_claim) = ptrack::claim_compute(season, ap_slot) else {
-        return Json(serde_json::json!({"pack": true, "busy": true}));
-    };
     // What AP tells the slot's clients on connect: its slot data and the
     // multiworld's players.
     let connect = (meta.as_deref())
@@ -162,13 +155,18 @@ pub(crate) async fn pt_state(
         connect,
     };
     match ptrack::compute(season, ap_slot, version, feed).await {
-        Ok(state) => Json(serde_json::json!({
-            "pack": true,
-            "version": version,
-            "state": state,
-        })),
-        Err(ptrack::ComputeError::Busy) => Json(serde_json::json!({"pack": true, "busy": true})),
-        Err(ptrack::ComputeError::Failed(e)) => Json(serde_json::json!({"pack": true, "error": e})),
+        // The state is shared text, not worth parsing again for each poll.
+        Ok(state) => (
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            format!(r#"{{"pack":true,"version":{version},"state":{state}}}"#),
+        )
+            .into_response(),
+        Err(ptrack::ComputeError::Busy) => {
+            Json(serde_json::json!({"pack": true, "busy": true})).into_response()
+        }
+        Err(ptrack::ComputeError::Failed(e)) => {
+            Json(serde_json::json!({"pack": true, "error": e})).into_response()
+        }
     }
 }
 

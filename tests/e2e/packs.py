@@ -99,6 +99,9 @@ try:
     check("a good pack uploads", "Pack rejected" not in r.text, r.text[:300])
     d = wait_for(lambda: tracked(root), 60, 2)
     check("it tracks, with the slot data and players, whatever it prints", d, state(root))
+    t = time.time()
+    polls = [state(root) for _ in range(30)]
+    check("polls of an unchanged slot share one result", all("state" in p for p in polls) and time.time() - t < 3, time.time() - t)
 
     for name, code in (("loops past the instruction limit", SPIN), ("hangs in a pattern", BACKTRACK), ("prints without end", NOISE)):
         started = time.time()
@@ -112,7 +115,7 @@ try:
     r = upload(root, 'error(string.rep("\\1", 3000000), 0)')
     check("a long error is cut short", "Pack rejected" in r.text and len(r.text) < 100000, len(r.text))
 
-    # Going away mid-upload or mid-compute costs nothing lasting.
+    # Going away mid-upload costs nothing lasting.
     try:
         root.post(root.base + "/s/1/game/1/poptracker", files={"pack": ("p.zip", pack(LOAD + SPIN))}, timeout=1)
     except requests.RequestException:
@@ -123,13 +126,8 @@ try:
     # One that only misbehaves once it's fed passes the upload's check.
     r = upload(root, HANDLER)
     check("a pack that hangs only when connected uploads", "Pack rejected" not in r.text, r.text[:300])
-    try:
-        state(root, timeout=1)
-    except requests.RequestException:
-        pass
-    check("an abandoned compute's worker stops", wait_for(lambda: not workers(srv), 10, 1))
     results = []
-    first = threading.Thread(target=lambda: results.append(wait_for(lambda: (d := state(root)) and "busy" not in d and d, 20, 1)))
+    first = threading.Thread(target=lambda: results.append(state(root)))
     first.start()
     wait_for(lambda: workers(srv), 5, 0.1)
     t = time.time()
@@ -142,6 +140,17 @@ try:
     t = time.time()
     d = state(root)
     check("it isn't run again on the next poll", "didn't finish" in d.get("error", "") and time.time() - t < 2 and not workers(srv), d)
+
+    # A run belongs to the slot: a viewer going away neither stops nor restarts it.
+    upload(root, HANDLER)
+    try:
+        state(root, timeout=1)
+    except requests.RequestException:
+        pass
+    check("a viewer leaving doesn't stop the run", workers(srv))
+    check("…and others share it", state(root).get("busy"))
+    d = wait_for(lambda: (s := state(root)) and "error" in s and s, 15, 1)
+    check("…and see how it ended", d and "didn't finish" in d["error"], d)
 
     # After an update replaced the binary, until the restart.
     os.remove(exe)

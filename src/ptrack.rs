@@ -12,7 +12,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -74,7 +74,8 @@ pub async fn validate(zip_bytes: Arc<Vec<u8>>) -> Result<poptracker::Summary, St
         pack: root.clone(),
         feed: None,
     };
-    let reply = run_worker(&scratch, &root, &request)
+    let request = serde_json::to_vec(&request).map_err(|e| e.to_string())?;
+    let reply = run_worker(&scratch, &root, request)
         .await
         .map_err(Failure::message)?;
     let sum: poptracker::Summary = serde_json::from_value(reply).map_err(|e| e.to_string())?;
@@ -90,8 +91,7 @@ pub async fn validate(zip_bytes: Arc<Vec<u8>>) -> Result<poptracker::Summary, St
 
 /// Install (extract) an uploaded pack zip for a slot, replacing any existing one.
 fn install(season: i64, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), String> {
-    HELD_BACK.lock().unwrap().remove(&(season, ap_slot));
-    PACE.lock().unwrap().remove(&(season, ap_slot));
+    SLOTS.lock().unwrap().remove(&(season, ap_slot));
     let dir = slot_dir(season, ap_slot);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
@@ -120,6 +120,7 @@ pub async fn install_pack(season: i64, ap_slot: i64, bytes: Arc<Vec<u8>>) -> Res
 
 /// Remove a slot's installed pack.
 pub fn remove(season: i64, ap_slot: i64) {
+    SLOTS.lock().unwrap().remove(&(season, ap_slot));
     let _ = std::fs::remove_dir_all(slot_dir(season, ap_slot));
 }
 
@@ -155,62 +156,134 @@ pub struct Feed<'a> {
     pub connect: Connect<'a>,
 }
 
-/// Compute the tracker state for a slot from its installed pack + what's fed
-/// to it, as JSON ([`poptracker::TrackerState`]). Viewers' polls would restart a
-/// pack without end, so one that hit a limit is held back, and any is paced by
-/// how long it took last time.
+/// The tracker state for a slot from its installed pack + what's fed to it, as
+/// JSON text ([`poptracker::TrackerState`]). Viewers share it: a slot runs its
+/// pack once per change, in a task no request can cancel, and polls in between
+/// are answered from the last result. Runs are paced by how long the last took,
+/// and a pack that hit a limit is held back.
 pub async fn compute(
     season: i64,
     ap_slot: i64,
     version: u64,
     feed: Feed<'_>,
-) -> Result<serde_json::Value, ComputeError> {
+) -> Result<Arc<String>, ComputeError> {
+    use sha2::{Digest, Sha256};
     let key = (season, ap_slot);
-    if let Some(h) = HELD_BACK.lock().unwrap().get(&key)
-        && h.version == version
-        && h.at.elapsed() < hold_for(h.strikes)
-    {
-        return Err(ComputeError::Failed(h.message.clone()));
-    }
-    if PACE
-        .lock()
-        .unwrap()
-        .get(&key)
-        .is_some_and(|next| Instant::now() < *next)
-    {
-        return Err(ComputeError::Busy);
-    }
     let root = poptracker::pack_root(&slot_dir(season, ap_slot))
         .map_err(|e| ComputeError::Failed(e.to_string()))?;
-    let _permit = worker_permit().await.map_err(|Busy| ComputeError::Busy)?;
-    let _paced = Paced(key, Instant::now());
-    let scratch = Scratch::new().map_err(ComputeError::Failed)?;
     let request = Request {
         pack: root.clone(),
         feed: Some(feed),
     };
-    match run_worker(&scratch, &root, &request).await {
-        Err(Failure::Limit(message)) => {
-            let mut held = HELD_BACK.lock().unwrap();
-            let strikes = held
-                .get(&key)
-                .filter(|h| h.version == version)
-                .map_or(1, |h| h.strikes + 1);
-            held.insert(
-                key,
-                Held {
-                    version,
-                    at: Instant::now(),
-                    strikes,
-                    message: message.clone(),
-                },
-            );
-            Err(ComputeError::Failed(message))
+    let request = serde_json::to_vec(&request).map_err(|e| ComputeError::Failed(e.to_string()))?;
+    let hash: [u8; 32] = Sha256::digest(&request).into();
+    let (run, done) = {
+        let mut slots = SLOTS.lock().unwrap();
+        let now = Instant::now();
+        slots.retain(|_, s| s.running || now.duration_since(s.polled) < FORGET_AFTER);
+        let slot = slots.entry(key).or_insert_with(|| Slot::new(version, now));
+        if slot.version != version {
+            *slot = Slot::new(version, now);
         }
-        Err(f) => Err(ComputeError::Failed(f.message())),
-        Ok(state) => {
-            HELD_BACK.lock().unwrap().remove(&key);
-            Ok(state)
+        slot.polled = now;
+        if let Some((until, message)) = &slot.held
+            && now < *until
+        {
+            return Err(ComputeError::Failed(message.clone()));
+        }
+        if let Some((h, result)) = &slot.last
+            && *h == hash
+        {
+            return result.clone().map_err(ComputeError::Failed);
+        }
+        if slot.running || now < slot.next_run {
+            return match &slot.last {
+                Some((_, result)) => result.clone().map_err(ComputeError::Failed),
+                None => Err(ComputeError::Busy),
+            };
+        }
+        slot.running = true;
+        slot.run = NEXT_RUN.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        (
+            RunOf {
+                key,
+                id: slot.run,
+                hash,
+                tx,
+            },
+            rx,
+        )
+    };
+    tokio::spawn(async move {
+        let started = Instant::now();
+        let outcome = tokio::spawn(run_compute(root, request))
+            .await
+            .unwrap_or_else(|e| Err(Failure::Host(format!("worker task: {e}"))));
+        let answer = run.finish(outcome, started.elapsed());
+        let _ = run.tx.send(answer);
+    });
+    done.await
+        .unwrap_or_else(|_| Err(ComputeError::Failed("compute failed".into())))
+}
+
+async fn run_compute(root: PathBuf, request: Vec<u8>) -> Result<String, Failure> {
+    let _permit = worker_permit().await.map_err(|Busy| Failure::Busy)?;
+    let scratch = Scratch::new().map_err(Failure::Host)?;
+    let reply = run_worker(&scratch, &root, request).await?;
+    Ok(reply.to_string())
+}
+
+/// One run's place in its slot.
+struct RunOf {
+    key: (i64, i64),
+    id: u64,
+    hash: [u8; 32],
+    tx: tokio::sync::oneshot::Sender<Result<Arc<String>, ComputeError>>,
+}
+
+impl RunOf {
+    /// Record how the run ended, unless the slot has moved on (a new pack), and
+    /// say what to tell the request that started it.
+    fn finish(
+        &self,
+        outcome: Result<String, Failure>,
+        took: Duration,
+    ) -> Result<Arc<String>, ComputeError> {
+        let now = Instant::now();
+        let mut slots = SLOTS.lock().unwrap();
+        let mut slot = slots.get_mut(&self.key).filter(|s| s.run == self.id);
+        if let Some(s) = slot.as_deref_mut() {
+            s.running = false;
+            s.next_run = now + pace_after(took);
+        }
+        match outcome {
+            Ok(state) => {
+                let state = Arc::new(state);
+                if let Some(s) = slot {
+                    s.strikes = 0;
+                    s.held = None;
+                    s.last = Some((self.hash, Ok(state.clone())));
+                }
+                Ok(state)
+            }
+            Err(Failure::Pack(message)) => {
+                if let Some(s) = slot {
+                    s.strikes = 0;
+                    s.held = None;
+                    s.last = Some((self.hash, Err(message.clone())));
+                }
+                Err(ComputeError::Failed(message))
+            }
+            Err(Failure::Limit(message)) => {
+                if let Some(s) = slot {
+                    s.strikes += 1;
+                    s.held = Some((now + hold_for(s.strikes), message.clone()));
+                }
+                Err(ComputeError::Failed(message))
+            }
+            Err(Failure::Busy) => Err(ComputeError::Busy),
+            Err(f @ Failure::Host(_)) => Err(ComputeError::Failed(f.message())),
         }
     }
 }
@@ -222,56 +295,65 @@ pub enum ComputeError {
     Failed(String),
 }
 
+/// A finished run's state, or the pack's error.
+type Outcome = Result<Arc<String>, String>;
+
+/// What's known of one slot's tracker.
+struct Slot {
+    version: u64,
+    polled: Instant,
+    /// The current run, which alone may record its result.
+    run: u64,
+    running: bool,
+    next_run: Instant,
+    /// The last result, and a hash of the request that gave it.
+    last: Option<([u8; 32], Outcome)>,
+    /// Limits hit in a row, and until when it's held back, with why.
+    strikes: u32,
+    held: Option<(Instant, String)>,
+}
+
+impl Slot {
+    fn new(version: u64, now: Instant) -> Slot {
+        Slot {
+            version,
+            polled: now,
+            run: 0,
+            running: false,
+            next_run: now,
+            last: None,
+            strikes: 0,
+            held: None,
+        }
+    }
+}
+
+static SLOTS: Mutex<BTreeMap<(i64, i64), Slot>> = Mutex::new(BTreeMap::new());
+static NEXT_RUN: AtomicU64 = AtomicU64::new(1);
+
+/// A slot nobody has looked at for this long gives up its result.
+const FORGET_AFTER: Duration = Duration::from_secs(10 * 60);
+
 /// How long a pack is held back after hitting a limit `strikes` times in a row:
 /// briefly at first, as a load spike can do it to a good pack.
 fn hold_for(strikes: u32) -> Duration {
     Duration::from_secs(60 << strikes.saturating_sub(1).min(6))
 }
 
-struct Held {
-    version: u64,
-    at: Instant,
-    strikes: u32,
-    message: String,
-}
-
-static HELD_BACK: Mutex<BTreeMap<(i64, i64), Held>> = Mutex::new(BTreeMap::new());
-
-/// How long a slot waits before its next run, after one that took `took`: so
-/// that a pack spends at most a quarter of the time running, however many poll.
+/// How long a slot waits before its next run, after one that took `took`: at
+/// least a moment, and long enough that a pack runs at most a quarter of the
+/// time, however many poll.
 fn pace_after(took: Duration) -> Duration {
-    if took < Duration::from_secs(1) {
-        Duration::ZERO
-    } else {
-        took * 3
-    }
+    (took * 3).max(Duration::from_secs(2))
 }
 
-static PACE: Mutex<BTreeMap<(i64, i64), Instant>> = Mutex::new(BTreeMap::new());
-
-/// Sets the slot's next run when dropped, so an abandoned run counts as well.
-struct Paced((i64, i64), Instant);
-
-impl Drop for Paced {
-    fn drop(&mut self) {
-        let next = Instant::now() + pace_after(self.1.elapsed());
-        PACE.lock().unwrap().insert(self.0, next);
-    }
-}
-
-/// One compute per slot at a time, so viewers of a slot can't pile up workers.
-/// `None` when one is already running; dropping the claim ends it.
-pub fn claim_compute(season: i64, ap_slot: i64) -> Option<Claim> {
-    Claim::take(&COMPUTING, (season, ap_slot))
-}
-
-/// One pack upload per account at a time.
+/// One pack upload per account at a time. `None` when one is already running;
+/// dropping the claim ends it.
 pub fn claim_upload(account: i64) -> Option<Claim> {
     Claim::take(&UPLOADING, (account, 0))
 }
 
 type Claims = Mutex<BTreeSet<(i64, i64)>>;
-static COMPUTING: Claims = Mutex::new(BTreeSet::new());
 static UPLOADING: Claims = Mutex::new(BTreeSet::new());
 
 pub struct Claim(&'static Claims, (i64, i64));
@@ -381,12 +463,15 @@ enum Failure {
     Limit(String),
     /// The worker couldn't be run; not the pack's doing.
     Host(String),
+    /// No worker free.
+    Busy,
 }
 
 impl Failure {
     fn message(self) -> String {
         match self {
             Failure::Pack(m) | Failure::Limit(m) => m,
+            Failure::Busy => BUSY.into(),
             Failure::Host(m) => {
                 tracing::warn!("pack worker: {m}");
                 "Bifrost couldn't run the pack; the server's log says why".into()
@@ -415,12 +500,11 @@ fn own_exe() -> Result<PathBuf, String> {
 async fn run_worker(
     scratch: &Scratch,
     pack: &Path,
-    request: &Request<'_>,
+    request: Vec<u8>,
 ) -> Result<serde_json::Value, Failure> {
     let exe = own_exe().map_err(Failure::Host)?;
     let file = scratch.0.join("request.json");
-    let json = serde_json::to_vec(request).map_err(|e| Failure::Host(e.to_string()))?;
-    tokio::fs::write(&file, json)
+    tokio::fs::write(&file, request)
         .await
         .map_err(|e| Failure::Host(format!("write temp: {e}")))?;
     let job = Job {
@@ -656,7 +740,10 @@ mod tests {
         assert_eq!(hold_for(1), Duration::from_secs(60));
         assert_eq!(hold_for(2), Duration::from_secs(120));
         assert_eq!(hold_for(100), Duration::from_secs(3840));
-        assert_eq!(pace_after(Duration::from_millis(900)), Duration::ZERO);
+        assert_eq!(
+            pace_after(Duration::from_millis(100)),
+            Duration::from_secs(2)
+        );
         assert_eq!(pace_after(Duration::from_secs(10)), Duration::from_secs(30));
     }
 
@@ -675,15 +762,11 @@ mod tests {
 
     #[test]
     fn a_claim_is_held_until_dropped() {
-        let first = claim_compute(-1, -1).expect("free");
-        assert!(claim_compute(-1, -1).is_none(), "taken");
-        assert!(
-            claim_compute(-1, -1).is_none(),
-            "still taken after a refusal"
-        );
-        assert!(claim_upload(-1).is_some(), "uploads are a separate set");
+        let first = claim_upload(-1).expect("free");
+        assert!(claim_upload(-1).is_none(), "taken");
+        assert!(claim_upload(-1).is_none(), "still taken after a refusal");
         drop(first);
-        assert!(claim_compute(-1, -1).is_some(), "free again");
+        assert!(claim_upload(-1).is_some(), "free again");
     }
 
     #[test]

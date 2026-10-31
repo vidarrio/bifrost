@@ -193,7 +193,10 @@ fn extract_zip_capped(zip_path: &Path, dest: &Path, cap: u64) -> Result<()> {
         }
         // The entry itself and every folder it brings: a zip needn't list them.
         for p in rel.ancestors().filter(|p| !p.as_os_str().is_empty()) {
-            if !made.insert(p.to_path_buf()) {
+            // A hash: a pack's long names shouldn't all be kept in memory.
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(p, &mut h);
+            if !made.insert(std::hash::Hasher::finish(&h)) {
                 break;
             }
             if made.len() > MAX_EXTRACT_FILES {
