@@ -460,4 +460,11 @@ fn host_api_covers_require_custom_items_and_callbacks() {
     assert!(item(&s, "key").active, "one frame before the clear");
     assert_eq!(item(&s, "watched").count, 2);
     assert_eq!(item(&s, "watched").count, 3);
+    // Frames: init, the clear, and the three states so far; "once" ran once.
+    // (Each `item` call is a state, which runs the frame handlers first.)
+    assert_eq!(item(&s, "frames").count, 6);
+    assert_eq!(item(&s, "once").count, 1);
+    let acc = accessibility(&s);
+    assert!(acc["Args"], "$has_args|one|two");
+    assert!(!acc["WrongArgs"], "$has_args|one");
 }
