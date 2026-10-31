@@ -464,6 +464,7 @@ fn host_api_covers_require_custom_items_and_callbacks() {
     // (Each `item` call is a state, which runs the frame handlers first.)
     assert_eq!(item(&s, "frames").count, 6);
     assert_eq!(item(&s, "once").count, 1);
+    assert_eq!(item(&s, "ordered").count, 8, "in the order added");
     let acc = accessibility(&s);
     assert!(acc["Args"], "$has_args|one|two");
     assert!(!acc["WrongArgs"], "$has_args|one");

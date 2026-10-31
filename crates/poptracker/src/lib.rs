@@ -142,14 +142,17 @@ fn module_path(name: &str) -> Option<String> {
     pack_join(Path::new(""), &rel).map(|_| rel)
 }
 
-/// The values `pick` accepts from a registry table of callbacks (see
-/// `FRAME_HANDLERS`), copied out first so a callback may change the table.
-fn registered<T>(lua: &Lua, key: &str, pick: impl Fn(Value) -> Option<T>) -> Vec<T> {
-    let Ok(t) = lua.named_registry_value::<Table>(key) else {
+/// The live callbacks in a registry list (see `FRAME_HANDLERS`) that `pick`
+/// accepts, in the order they were added, copied out first so a callback may
+/// change the list.
+fn registered(lua: &Lua, key: &str, pick: impl Fn(&Table) -> bool) -> Vec<Function> {
+    let Ok(list) = lua.named_registry_value::<Table>(key) else {
         return Vec::new();
     };
-    t.pairs::<Value, Value>()
-        .filter_map(|kv| kv.ok().and_then(|(_, v)| pick(v)))
+    list.sequence_values::<Table>()
+        .filter_map(|e| e.ok())
+        .filter(|e| !e.get::<bool>("dead").unwrap_or(true) && pick(e))
+        .filter_map(|e| e.get::<Function>("fn").ok())
         .collect()
 }
 
@@ -470,10 +473,7 @@ impl Session {
     /// elapsed. A handler may remove itself or add others; those added run next
     /// time. As in PopTracker, a handler's error doesn't stop the tracker.
     fn run_frame_handlers(&self) {
-        for f in registered(&self.lua, FRAME_HANDLERS, |v| match v {
-            Value::Function(f) => Some(f),
-            _ => None,
-        }) {
+        for f in registered(&self.lua, FRAME_HANDLERS, |_| true) {
             let _ = f.call::<()>(0.0);
         }
     }
@@ -562,11 +562,9 @@ impl Session {
     pub fn state(&self) -> TrackerState {
         self.charge();
         self.run_frame_handlers();
-        for w in registered(&self.lua, CODE_WATCHES, |v| {
-            let Value::Table(t) = v else { return None };
-            (t.get::<String>("code").ok()? == "*")
-                .then(|| t.get::<Function>("fn").ok())
-                .flatten()
+        for w in registered(&self.lua, CODE_WATCHES, |e| {
+            e.get::<mlua::String>("code")
+                .is_ok_and(|c| c.as_bytes().as_ref() == b"*")
         }) {
             let _ = w.call::<()>("*");
         }
@@ -1531,40 +1529,45 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     ] {
         sh.set(noop, lua.create_function(|_, _: MultiValue| Ok(()))?)?;
     }
-    // Frame handlers and code watches, by name (see `FRAME_HANDLERS`).
+    // Frame handlers and code watches, by name, in the order they were added
+    // (see `FRAME_HANDLERS`). Each list holds `{name, fn, code}` entries; a
+    // removed or replaced one is marked dead, so both stay O(1).
+    let make: Function = lua
+        .load(
+            r##"
+            return function(list)
+              local by_name = {}
+              local function remove(_, name)
+                local e = by_name[name]
+                if not e then return false end
+                e.dead = true
+                by_name[name] = nil
+                return true
+              end
+              local function add(_, name, a, b)
+                remove(nil, name)
+                local e = b == nil and { name = name, fn = a }
+                  or { name = name, code = a, fn = b }
+                by_name[name] = e
+                list[#list + 1] = e
+                return name
+              end
+              return add, remove
+            end
+            "##,
+        )
+        .set_name("host")
+        .set_mode(mlua::chunk::ChunkMode::Text)
+        .eval()?;
     for (key, add, remove) in [
         (FRAME_HANDLERS, "AddOnFrameHandler", "RemoveOnFrameHandler"),
         (CODE_WATCHES, "AddWatchForCode", "RemoveWatchForCode"),
     ] {
-        let t = lua.create_table()?;
-        lua.set_named_registry_value(key, &t)?;
-        let t2 = t.clone();
-        let watch = key == CODE_WATCHES;
-        sh.set(
-            add,
-            lua.create_function(move |lua, (_s, name, args): (Table, String, MultiValue)| {
-                let mut args = args.into_iter();
-                let entry = if watch {
-                    let code = args.next().unwrap_or(Value::Nil);
-                    let w = lua.create_table()?;
-                    w.set("code", code)?;
-                    w.set("fn", args.next().unwrap_or(Value::Nil))?;
-                    Value::Table(w)
-                } else {
-                    args.next().unwrap_or(Value::Nil)
-                };
-                t2.set(name.as_str(), entry)?;
-                Ok(name)
-            })?,
-        )?;
-        sh.set(
-            remove,
-            lua.create_function(move |_, (_s, name): (Table, String)| {
-                let had = !t.get::<Value>(name.as_str())?.is_nil();
-                t.set(name.as_str(), Value::Nil)?;
-                Ok(had)
-            })?,
-        )?;
+        let list = lua.create_table()?;
+        lua.set_named_registry_value(key, &list)?;
+        let (a, r): (Function, Function) = make.call(list)?;
+        sh.set(add, a)?;
+        sh.set(remove, r)?;
     }
     g.set("ScriptHost", &sh)?;
 
@@ -1577,7 +1580,13 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         local function noop() end
         ScriptHost.CreateLuaItem = function()
           local item = { Type = "custom", ItemState = {} }
-          item.Set = function(self, k, v) self.ItemState[k] = v end
+          item.Set = function(self, k, v)
+            local old = self.ItemState[k]
+            self.ItemState[k] = v
+            if old ~= v and type(self.PropertyChangedFunc) == "function" then
+              self:PropertyChangedFunc(k, v, old)
+            end
+          end
           item.Get = function(self, k) return self.ItemState[k] end
           item.SetOverlay = noop
           item.SetOverlayBackground = noop
@@ -1608,10 +1617,15 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                     mlua::Error::runtime(format!("require: bad module name '{name}'"))
                 })?;
                 let dir = eng2.borrow().dir.clone();
+                // PopTracker tries `.LUA` before `.lua` for each.
                 let file = [
+                    format!("scripts/{rel}.LUA"),
                     format!("scripts/{rel}.lua"),
+                    format!("scripts/{rel}/init.LUA"),
                     format!("scripts/{rel}/init.lua"),
+                    format!("{rel}.LUA"),
                     format!("{rel}.lua"),
+                    format!("{rel}/init.LUA"),
                     format!("{rel}/init.lua"),
                 ]
                 .into_iter()

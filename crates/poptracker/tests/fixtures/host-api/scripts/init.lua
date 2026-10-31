@@ -12,6 +12,7 @@ assert(require("logic.sub").sub == true, "folder init.lua")
 assert(require("lib.util").util == true, "pack root fallback")
 assert(require("scripts.logic.helper") ~= nil, "pack-root path to scripts/")
 assert(require("logic.noreturn") == true, "true for a module returning nothing")
+assert(require("logic.upper").upper == true, ".LUA files")
 assert(not pcall(require, "logic.missing"), "missing module")
 assert(not pcall(require, "..logic.helper"), "empty part")
 assert(not pcall(require, "logic/../init"), "traversal")
@@ -28,6 +29,13 @@ assert(Tracker:FindObjectForCode("storage") == custom)
 custom:Set("k", 5)
 assert(custom:Get("k") == 5 and custom.ItemState.k == 5)
 custom:SetOverlay("x")
+local changed
+custom.PropertyChangedFunc = function(self, k, v, old) changed = { k, v, old } end
+custom:Set("k", 6)
+assert(changed[1] == "k" and changed[2] == 6 and changed[3] == 5, "PropertyChangedFunc")
+changed = nil
+custom:Set("k", 6)
+assert(changed == nil, "no change, no call")
 local failing = ScriptHost:CreateLuaItem()
 failing.CanProvideCodeFunc = function() error("broken") end
 local other = ScriptHost:CreateLuaItem()
@@ -52,6 +60,13 @@ local function bump(code)
   i.AcquiredCount = i.AcquiredCount + 1
 end
 ScriptHost:AddOnFrameHandler("count", function() bump("frames") end)
+-- They run in the order they were added, whatever their names.
+local step = 0
+ScriptHost:AddOnFrameHandler("z_first", function() step = 1 end)
+ScriptHost:AddOnFrameHandler("a_second", function()
+  if step == 1 then bump("ordered") end
+  step = 0
+end)
 ScriptHost:AddOnFrameHandler("fails", function() error("frame handler error") end)
 ScriptHost:AddOnFrameHandler("once", function()
   ScriptHost:RemoveOnFrameHandler("once")

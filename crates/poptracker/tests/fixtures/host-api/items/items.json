@@ -25,5 +25,12 @@
     "img": "images/x.png",
     "codes": "once",
     "max_quantity": 99
+  },
+  {
+    "name": "Ordered",
+    "type": "consumable",
+    "img": "images/x.png",
+    "codes": "ordered",
+    "max_quantity": 99
   }
 ]
