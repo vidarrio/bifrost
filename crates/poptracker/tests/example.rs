@@ -518,3 +518,42 @@ fn extraction_caps_depth_and_counts_folders() {
     let fine = zip_of(tmp.path(), (0..2000).map(|i| format!("a/b/c/{i}")));
     poptracker::extract_zip(&fine, &tmp.path().join("c")).unwrap();
 }
+
+#[test]
+fn packs_load_with_variants_and_survive_their_errors() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/survive");
+    let pack = Pack::load(dir).unwrap();
+    // The Archipelago map variant wins, and its files come first.
+    assert_eq!(pack.asset("/images/x.png").unwrap(), b"variant\n");
+    assert_eq!(pack.asset("images/root.png").unwrap(), b"root\n");
+    assert!(pack.asset("../manifest.json").is_none());
+    let s = Session::new(&pack).unwrap();
+    s.on_clear(&serde_json::json!({})).unwrap();
+    s.on_item(1, 100, "Thing", 1).unwrap();
+    let st = s.state();
+    let item = |code: &str| {
+        st.items
+            .iter()
+            .find(|i| i.codes.iter().any(|c| c == code))
+            .unwrap()
+    };
+    assert!(item("after_error").active, "the next handler still ran");
+    assert!(item("got_item").active, "and later events too");
+    assert_eq!(item("after_error").overlay.as_deref(), Some("hello"));
+    assert_eq!(st.pack_error_count, 2);
+    assert!(
+        st.pack_errors[0].contains("broken handler"),
+        "{:?}",
+        st.pack_errors
+    );
+}
+
+#[test]
+fn running_out_of_budget_in_a_handler_still_ends_it() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/survive");
+    let s = Session::new(&Pack::load(dir).unwrap()).unwrap();
+    let err = s
+        .on_location(1, "spin")
+        .expect_err("a handler that never ends must be stopped");
+    assert!(err.to_string().contains("instruction limit"), "{err}");
+}

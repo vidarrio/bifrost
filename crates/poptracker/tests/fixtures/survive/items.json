@@ -1,0 +1,4 @@
+[
+  { "name": "After", "type": "toggle", "img": "x.png", "codes": "after_error" },
+  { "name": "Got", "type": "toggle", "img": "x.png", "codes": "got_item" }
+]

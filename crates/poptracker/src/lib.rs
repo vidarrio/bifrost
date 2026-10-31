@@ -21,8 +21,9 @@
 //! - Custom items (`ScriptHost:CreateLuaItem`), as state `FindObjectForCode`
 //!   can find again; frame handlers (run after init, after each clear and
 //!   before each state) and "*" code watches (run before each state).
-//! - Sandbox: only `string`/`table`/`math`/`coroutine` stdlib is loaded (no
-//!   `os`/`io`/`package`/`debug`, and Lua's own `require`), plus a memory cap.
+//! - Sandbox: only `string`/`table`/`math`/`coroutine`/`utf8` stdlib is loaded,
+//!   plus `os.clock`/`date`/`difftime`/`time` (no `io`/`package`/`debug`, the rest
+//!   of `os` or Lua's own `require`), plus a memory cap.
 //!
 //! ## Not done yet (the long tail — tracked for the real build-out)
 //! - Custom items' clicks, icons and `ProvidesCodeFunc` (they don't count
@@ -72,6 +73,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// (kept alive by `_tmp` for the pack's lifetime).
 pub struct Pack {
     dir: PathBuf,
+    /// The variant in use (see [`pick_variant`]); empty if the pack has none.
+    variant: String,
     _tmp: Option<tempfile::TempDir>,
 }
 impl Pack {
@@ -99,7 +102,12 @@ impl Pack {
         if !dir.join("scripts/init.lua").is_file() {
             return Err(Error::Pack("missing scripts/init.lua".into()));
         }
-        Ok(Pack { dir, _tmp: tmp })
+        let variant = pick_variant(&dir);
+        Ok(Pack {
+            dir,
+            variant,
+            _tmp: tmp,
+        })
     }
 
     /// The pack's root directory on disk.
@@ -110,7 +118,7 @@ impl Pack {
     /// Read a file from inside the pack (pack-relative), e.g. a map image.
     /// Guards against path traversal.
     pub fn asset(&self, rel: &str) -> Option<Vec<u8>> {
-        std::fs::read(pack_join(&self.dir, rel)?).ok()
+        std::fs::read(find_in_pack(&self.dir, &self.variant, rel)?).ok()
     }
 }
 
@@ -129,6 +137,63 @@ fn pack_join(dir: &Path, rel: &str) -> Option<PathBuf> {
         return None;
     }
     Some(dir.join(rel))
+}
+
+/// Find a pack file as PopTracker does: in the variant's folder, then the pack's
+/// root (a path may start with `/`, meaning the same).
+fn find_in_pack(dir: &Path, variant: &str, rel: &str) -> Option<PathBuf> {
+    let rel = rel.trim_start_matches('/');
+    if !variant.is_empty()
+        && let Some(p) = pack_join(dir, &format!("{variant}/{rel}"))
+        && p.is_file()
+    {
+        return Some(p);
+    }
+    pack_join(dir, rel)
+}
+
+/// The most of a manifest that's read. Packs load in the server too, to serve
+/// their images, so this stays cheap whatever a pack ships.
+const MAX_MANIFEST: u64 = 1 << 20;
+
+/// Which of a pack's variants to run: there's no one here to choose, so an
+/// Archipelago one with a map rather than items only, `standard` if that fits,
+/// else the first by name. Empty if the manifest names none.
+fn pick_variant(dir: &Path) -> String {
+    let path = dir.join("manifest.json");
+    let txt = match std::fs::metadata(&path) {
+        Ok(m) if m.len() <= MAX_MANIFEST => std::fs::read_to_string(&path).unwrap_or_default(),
+        _ => String::new(),
+    };
+    let Ok(manifest) = parse_pack_json(txt.trim_start_matches('\u{feff}')) else {
+        return String::new();
+    };
+    let Some(variants) = manifest.get("variants").and_then(|v| v.as_object()) else {
+        return String::new();
+    };
+    let items_only = |uid: &str, v: &serde_json::Value| {
+        let name = v.get("display_name").and_then(|n| n.as_str()).unwrap_or("");
+        let plain = |s: &str| s.to_lowercase().replace([' ', '_', '-'], "");
+        plain(uid).contains("itemsonly") || plain(name).contains("itemsonly")
+    };
+    let ap = |v: &serde_json::Value| {
+        v.get("flags")
+            .and_then(|f| f.as_array())
+            .is_some_and(|f| f.iter().any(|x| x.as_str() == Some("ap")))
+    };
+    let usable = |uid: &&String| pack_join(dir, uid).is_some();
+    let score = |uid: &String, v: &serde_json::Value| {
+        (ap(v), !items_only(uid, v), uid.as_str() == "standard")
+    };
+    let mut best: Option<(&String, (bool, bool, bool))> = None;
+    // Names in order, so an earlier one wins a tie.
+    for (uid, v) in variants.iter().filter(|(uid, _)| usable(uid)) {
+        let sc = score(uid, v);
+        if best.as_ref().is_none_or(|(_, b)| sc > *b) {
+            best = Some((uid, sc));
+        }
+    }
+    best.map(|(uid, _)| uid.clone()).unwrap_or_default()
 }
 
 /// A `require` module name as a pack-relative path without the extension
@@ -265,6 +330,10 @@ pub struct TrackerState {
     /// inlined), so the UI can reproduce the pack's tab hierarchy. `null` if the
     /// pack defines no layout (the UI then just lists the maps).
     pub layout: Option<serde_json::Value>,
+    /// Errors from the pack's handlers: the first few, and how many in all.
+    /// Tracking carried on past them, but may be incomplete.
+    pub pack_errors: Vec<String>,
+    pub pack_error_count: usize,
 }
 #[derive(Debug, Serialize)]
 pub struct ItemState {
@@ -381,6 +450,10 @@ struct LocNode {
 
 #[derive(Default)]
 struct Eng {
+    variant: String,
+    /// The first few errors from the pack's handlers, and how many in all.
+    pack_errors: Vec<String>,
+    pack_error_count: usize,
     dir: PathBuf,
     code_to_key: HashMap<String, String>,
     kind: HashMap<String, String>,
@@ -431,9 +504,16 @@ const CODE_WATCHES: &str = "bifrost.code_watches";
 /// `Session::set_multiworld`.
 const PLAYERS: &str = "bifrost.players";
 
+/// Registry key of the metatable JSON items share for their methods.
+const ITEM_METHODS: &str = "bifrost.item_methods";
+
 /// How deep `FindObjectForCode` may nest through custom items'
 /// `CanProvideCodeFunc`s that look up other codes.
 const MAX_LOOKUP_DEPTH: u32 = 16;
+
+/// How many of a pack's handler errors are kept, and how much of each.
+const MAX_PACK_ERRORS: usize = 5;
+const MAX_PACK_ERROR_LEN: usize = 500;
 type E = Rc<RefCell<Eng>>;
 
 /// A live engine session for one pack + one slot.
@@ -481,6 +561,7 @@ impl Session {
         }
         let eng: E = Rc::new(RefCell::new(Eng {
             dir: pack.dir.clone(),
+            variant: pack.variant.clone(),
             ..Default::default()
         }));
         lua.load("__ITEMS = {}").exec()?;
@@ -497,12 +578,33 @@ impl Session {
         Ok(s)
     }
 
+    /// As in PopTracker, an error in one of the pack's handlers is noted and the
+    /// tracker carries on, as other items and locations can still track. Only
+    /// running out of budget or memory ends the operation: a pack can't go on.
+    fn guard(&self, r: mlua::Result<()>) -> Result<()> {
+        let Err(e) = r else { return Ok(()) };
+        let text = e.to_string();
+        if self.budget.get() == 0 || text.contains("not enough memory") {
+            return Err(e.into());
+        }
+        let mut eng = self.eng.borrow_mut();
+        eng.pack_error_count += 1;
+        if eng.pack_errors.len() < MAX_PACK_ERRORS {
+            let end = (0..=text.len().min(MAX_PACK_ERROR_LEN))
+                .rev()
+                .find(|i| text.is_char_boundary(*i))
+                .unwrap_or(0);
+            eng.pack_errors.push(text[..end].to_string());
+        }
+        Ok(())
+    }
+
     /// Run the frame handlers once (see `FRAME_HANDLERS`), with no time
     /// elapsed. A handler may remove itself or add others; those added run next
     /// time. As in PopTracker, a handler's error doesn't stop the tracker.
     fn run_frame_handlers(&self) {
         for f in registered(&self.lua, FRAME_HANDLERS, |_| true) {
-            let _ = f.call::<()>(0.0);
+            let _ = self.guard(f.call::<()>(0.0));
         }
     }
 
@@ -562,7 +664,7 @@ impl Session {
         // needs the engine borrowed mutably.
         let handlers = self.eng.borrow().clear_h.clone();
         for h in handlers {
-            h.call::<()>(sd.clone())?;
+            self.guard(h.call::<()>(sd.clone()))?;
         }
         self.run_frame_handlers();
         Ok(())
@@ -573,7 +675,7 @@ impl Session {
         self.charge();
         let handlers = self.eng.borrow().item_h.clone();
         for h in handlers {
-            h.call::<()>((index, item_id, item_name, player))?;
+            self.guard(h.call::<()>((index, item_id, item_name, player)))?;
         }
         Ok(())
     }
@@ -583,7 +685,7 @@ impl Session {
         self.charge();
         let handlers = self.eng.borrow().loc_h.clone();
         for h in handlers {
-            h.call::<()>((location_id, location_name))?;
+            self.guard(h.call::<()>((location_id, location_name)))?;
         }
         Ok(())
     }
@@ -597,7 +699,7 @@ impl Session {
             e.retr_h.iter().chain(e.setr_h.iter()).cloned().collect()
         };
         for h in handlers {
-            h.call::<()>((key, v.clone()))?;
+            self.guard(h.call::<()>((key, v.clone())))?;
         }
         Ok(())
     }
@@ -610,7 +712,7 @@ impl Session {
             e.get::<mlua::LuaString>("code")
                 .is_ok_and(|c| c.as_bytes().as_ref() == b"*")
         }) {
-            let _ = w.call::<()>("*");
+            let _ = self.guard(w.call::<()>("*"));
         }
         self.charge();
         let mut out = TrackerState::default();
@@ -646,11 +748,10 @@ impl Session {
                     pick.or_else(|| v.iter().find(|s| !s.is_empty())).cloned()
                 });
                 // A consumable shows its count; an item is "lit" if active or held.
-                let overlay = if kind == "consumable" && count > 0 {
-                    Some(count.to_string())
-                } else {
-                    None
-                };
+                let overlay = t
+                    .get::<Option<String>>("__overlay")
+                    .unwrap_or(None)
+                    .or_else(|| (kind == "consumable" && count > 0).then(|| count.to_string()));
                 out.items.push(ItemState {
                     key: key.clone(),
                     kind,
@@ -665,6 +766,11 @@ impl Session {
             }
         }
         out.items.sort_by(|a, b| a.key.cmp(&b.key));
+        {
+            let e = self.eng.borrow();
+            out.pack_errors = e.pack_errors.clone();
+            out.pack_error_count = e.pack_error_count;
+        }
 
         // maps
         let maps = self.eng.borrow().maps.clone();
@@ -805,10 +911,17 @@ impl Session {
 }
 
 fn read_pack_file(eng: &E, rel: &str) -> Result<String> {
-    let dir = eng.borrow().dir.clone();
-    let p = pack_join(&dir, rel)
+    let (dir, variant) = {
+        let e = eng.borrow();
+        (e.dir.clone(), e.variant.clone())
+    };
+    let p = find_in_pack(&dir, &variant, rel)
         .ok_or_else(|| Error::Pack(format!("unsafe pack path refused: {rel}")))?;
-    std::fs::read_to_string(&p).map_err(|e| Error::Io(format!("{}: {e}", p.display())))
+    // Bytes that aren't UTF-8 (a comment in another encoding) don't stop PopTracker
+    // either. Bytecode gets no further: Lua refuses it in text mode.
+    let bytes = std::fs::read(&p).map_err(|e| Error::Io(format!("{}: {e}", p.display())))?;
+    let text = String::from_utf8_lossy(&bytes);
+    Ok(text.trim_start_matches('\u{feff}').to_string())
 }
 
 // ---- access-rule evaluation --------------------------------------------------
@@ -1384,6 +1497,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                         "Name",
                         item.get("name").and_then(|v| v.as_str()).unwrap_or(""),
                     )?;
+                    t.set_metatable(Some(lua.named_registry_value(ITEM_METHODS)?))?;
                     items.set(key.as_str(), &t)?;
                     let name = item
                         .get("name")
@@ -1463,7 +1577,10 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         let depth = Rc::new(std::cell::Cell::new(0u32));
         tracker.set(
             "FindObjectForCode",
-            lua.create_function(move |lua, (_t, code): (Table, String)| {
+            lua.create_function(move |lua, (_t, code): (Table, Option<String>)| {
+                let Some(code) = code else {
+                    return Ok(Value::Nil);
+                };
                 // `@`-codes address a location section; return (creating on first
                 // use) a small object with a mutable `AvailableChestCount` that
                 // the pack's `onLocation` decrements, so checked locations become
@@ -1480,6 +1597,8 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                             t.set("AvailableChestCount", c)?;
                             t.set("ChestCount", c)?;
                             t.set("Active", false)?;
+                            t.set("FullID", path)?;
+                            t.set("Owner", lua.create_table()?)?;
                             objs.set(path, &t)?;
                             Ok(Value::Table(t))
                         }
@@ -1519,8 +1638,8 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         let eng2 = eng.clone();
         tracker.set(
             "ProviderCountForCode",
-            lua.create_function(move |lua, (_t, code): (Table, String)| {
-                Ok(provider_count(lua, &eng2, &code))
+            lua.create_function(move |lua, (_t, code): (Table, Option<String>)| {
+                Ok(code.map_or(0, |c| provider_count(lua, &eng2, &c)))
             })?,
         )?;
     }
@@ -1548,6 +1667,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     for noop in ["AddClasses", "UiHint", "OpenLink"] {
         tracker.set(noop, lua.create_function(|_, _: MultiValue| Ok(()))?)?;
     }
+    tracker.set("ActiveVariantUID", eng.borrow().variant.as_str())?;
     g.set("Tracker", &tracker)?;
 
     // ScriptHost
@@ -1556,9 +1676,11 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         let eng2 = eng.clone();
         sh.set(
             "LoadScript",
-            lua.create_function(move |lua, (_t, file): (Table, String)| {
+            // Some packs load a script they can only name once connected.
+            lua.create_function(move |lua, (_t, file): (Table, Option<String>)| {
+                let Some(file) = file else { return Ok(false) };
                 let txt = read_pack_file(&eng2, &file).map_err(to_lua)?;
-                run_pack_source(lua, &txt, &file)
+                run_pack_source(lua, &txt, &file).map(|()| true)
             })?,
         )?;
     }
@@ -1613,11 +1735,73 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         sh.set(add, a)?;
         sh.set(remove, r)?;
     }
+    // Scripts "in the background" run here and now, under the same limits; there
+    // are no threads and no one to notify.
+    {
+        let eng2 = eng.clone();
+        let finish = |lua: &Lua, src: String, name: String, arg: Value, done: Option<Function>| {
+            let chunk = lua
+                .load(src)
+                .set_name(name)
+                .set_mode(mlua::chunk::ChunkMode::Text);
+            lua.globals().set("arg", arg)?;
+            let result = chunk.eval::<Value>();
+            lua.globals().set("arg", Value::Nil)?;
+            if let (Ok(v), Some(done)) = (result, done) {
+                done.call::<()>(v)?;
+            }
+            Ok(Value::Nil)
+        };
+        sh.set(
+            "RunScriptAsync",
+            lua.create_function(
+                move |lua,
+                      (_t, file, arg, done, _p): (
+                    Table,
+                    String,
+                    Value,
+                    Option<Function>,
+                    Value,
+                )| {
+                    let txt = read_pack_file(&eng2, &file).map_err(to_lua)?;
+                    finish(lua, txt, file, arg, done)
+                },
+            )?,
+        )?;
+        sh.set(
+            "RunStringAsync",
+            lua.create_function(
+                move |lua, (_t, src, arg, done, _p): (Table, String, Value, Option<Function>, Value)| {
+                    finish(lua, src, "script".to_string(), arg, done)
+                },
+            )?,
+        )?;
+    }
+    for noop in ["AsyncProgress", "PushMarkdownNotification"] {
+        sh.set(noop, lua.create_function(|_, _: MultiValue| Ok(()))?)?;
+    }
     g.set("ScriptHost", &sh)?;
 
     // Custom items: a table the pack fills in, which `FindObjectForCode` can
     // find again. `:Set`/`:Get` keep values in its `ItemState`; overlays,
     // clicks and icons aren't drawn here.
+    // What JSON items share: the overlay text shows, the rest isn't drawn here.
+    lua.load(
+        r##"
+        local function noop() end
+        return { __index = {
+          SetOverlay = function(self, text) rawset(self, "__overlay", text) end,
+          SetOverlayBackground = noop,
+          SetOverlayColor = noop,
+          SetOverlayFontSize = noop,
+          SetOverlayAlign = noop,
+        } }
+        "##,
+    )
+    .set_name("host")
+    .set_mode(mlua::chunk::ChunkMode::Text)
+    .eval::<Table>()
+    .and_then(|m| lua.set_named_registry_value(ITEM_METHODS, m))?;
     lua.load(
         r##"
         local items = __LUAITEMS
@@ -1654,13 +1838,25 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         let eng2 = eng.clone();
         let loaded = lua.create_table()?;
         let loading = lua.create_table()?;
+        let std_libs = lua.create_table()?;
+        for lib in ["os", "string", "table", "math", "coroutine", "utf8"] {
+            std_libs.set(lib, g.get::<Value>(lib)?)?;
+        }
         g.set(
             "require",
             lua.create_function(move |lua, name: String| {
+                // The libraries packs have, as they are here: `os` is the small one.
+                let lib: Value = std_libs.get(name.as_str())?;
+                if !lib.is_nil() {
+                    return Ok(lib);
+                }
                 let rel = module_path(&name).ok_or_else(|| {
                     mlua::Error::runtime(format!("require: bad module name '{name}'"))
                 })?;
-                let dir = eng2.borrow().dir.clone();
+                let (dir, variant) = {
+                    let e = eng2.borrow();
+                    (e.dir.clone(), e.variant.clone())
+                };
                 // PopTracker tries `.LUA` before `.lua` for each.
                 let file = [
                     format!("scripts/{rel}.LUA"),
@@ -1673,7 +1869,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                     format!("{rel}/init.lua"),
                 ]
                 .into_iter()
-                .find(|f| pack_join(&dir, f).is_some_and(|p| p.is_file()))
+                .find(|f| find_in_pack(&dir, &variant, f).is_some_and(|p| p.is_file()))
                 .ok_or_else(|| {
                     mlua::Error::runtime(format!("require: module '{name}' not found in pack"))
                 })?;
@@ -1739,6 +1935,24 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         "AddBouncedHandler",
     ] {
         ap.set(noop, lua.create_function(|_, _: MultiValue| Ok(()))?)?;
+    }
+    let status = lua.create_table()?;
+    for (k, v) in [
+        ("UNKNOWN", 0),
+        ("CONNECTED", 5),
+        ("READY", 10),
+        ("PLAYING", 20),
+        ("GOAL", 30),
+    ] {
+        status.set(k, v)?;
+    }
+    ap.set("ClientStatus", status)?;
+    // Names by id aren't known here yet; AP's answer for an unknown one.
+    for lookup in ["GetItemName", "GetLocationName"] {
+        ap.set(
+            lookup,
+            lua.create_function(|_, _: MultiValue| Ok("Unknown"))?,
+        )?;
     }
     // Players by slot, once the host has set them (`Session::set_multiworld`):
     // an unknown slot has no game and an empty alias.
@@ -1812,8 +2026,7 @@ fn lua_int(t: &Table, key: &str) -> Option<i64> {
 }
 
 /// Run a pack's Lua file, as source only: a chunk that starts with Lua's
-/// bytecode signature is refused (see `sandboxed_lua`). Pack files are read as
-/// UTF-8 first, which already rejects real bytecode; this is the backstop.
+/// bytecode signature is refused (see `sandboxed_lua`).
 fn run_pack_source(lua: &Lua, src: &str, name: &str) -> mlua::Result<()> {
     lua.load(src)
         .set_name(name)
@@ -1821,14 +2034,19 @@ fn run_pack_source(lua: &Lua, src: &str, name: &str) -> mlua::Result<()> {
         .exec()
 }
 
-/// Build the sandboxed Lua VM: only string/table/math/coroutine stdlib (base
-/// functions like `print`/`pairs` are always present), i.e. no `os`/`io`/
-/// `package`/`debug` and not Lua's own `require` (the host adds a pack-only
-/// one), with a memory cap. Pack Lua runs here, so this
+/// Build the sandboxed Lua VM: only string/table/math/coroutine/utf8 stdlib (base
+/// functions like `print`/`pairs` are always present) and PopTracker's four
+/// harmless `os` functions, i.e. no `io`/`package`/`debug`, the rest of `os` or
+/// Lua's own `require` (the host adds a pack-only one), with a memory cap. Pack Lua runs here, so this
 /// is the boundary that keeps an uploaded pack from touching the host.
 fn sandboxed_lua() -> Result<Lua> {
     let lua = Lua::new_with(
-        StdLib::STRING | StdLib::TABLE | StdLib::MATH | StdLib::COROUTINE,
+        StdLib::STRING
+            | StdLib::TABLE
+            | StdLib::MATH
+            | StdLib::COROUTINE
+            | StdLib::OS
+            | StdLib::UTF8,
         LuaOptions::default(),
     )?;
     lua.set_memory_limit(LUA_MEMORY_LIMIT)?;
@@ -1855,6 +2073,10 @@ fn sandboxed_lua() -> Result<Lua> {
           return load(chunk, name, "t")
         end
         string.dump = nil
+        -- Only what can't touch the host: the rest of `os` runs programs and
+        -- removes files, and is out of reach once this table replaces it.
+        local os = os
+        _G.os = { clock = os.clock, date = os.date, difftime = os.difftime, time = os.time }
         "##,
     )
     .set_name("sandbox")
@@ -1917,7 +2139,7 @@ mod tests {
         let err = Session::new(&pack)
             .err()
             .expect("a precompiled init.lua must be refused");
-        assert!(err.to_string().contains("UTF-8"), "{err}");
+        assert!(err.to_string().contains("binary"), "{err}");
     }
 
     #[test]
@@ -2009,14 +2231,19 @@ mod tests {
     fn sandbox_excludes_dangerous_stdlib() {
         let lua = sandboxed_lua().unwrap();
         let g = lua.globals();
-        for banned in [
-            "os", "io", "package", "require", "dofile", "loadfile", "debug",
-        ] {
+        for banned in ["io", "package", "require", "dofile", "loadfile", "debug"] {
             assert!(
                 matches!(g.get::<Value>(banned).unwrap(), Value::Nil),
                 "{banned} must be unavailable to pack Lua"
             );
         }
+        let os: Table = g.get("os").unwrap();
+        let mut names: Vec<String> = os
+            .pairs::<String, Value>()
+            .map(|kv| kv.unwrap().0)
+            .collect();
+        names.sort();
+        assert_eq!(names, ["clock", "date", "difftime", "time"]);
         for allowed in ["string", "table", "math", "print", "pairs", "type"] {
             assert!(
                 !matches!(g.get::<Value>(allowed).unwrap(), Value::Nil),
