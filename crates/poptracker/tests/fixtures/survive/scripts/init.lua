@@ -1,6 +1,6 @@
 assert(Tracker.ActiveVariantUID == "map")
 ScriptHost:LoadScript("scripts/encoded.lua")
-assert(FROM_ROOT)
+assert(FROM_ROOT == "encoded", "LoadScript passes the module name")
 require("only_here")
 assert(FROM_VARIANT, "require searches the variant")
 Tracker:AddItems("items.json")

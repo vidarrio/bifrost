@@ -164,25 +164,9 @@ pub fn read_asset(dir: &Path, variant: &str, rel: &str) -> Option<Vec<u8>> {
     std::fs::read(find_in_pack(dir, variant, rel)?).ok()
 }
 
-/// The most of a manifest that's read, and how deeply it may nest: the parser
-/// recurses, and a pack shouldn't be able to run it out of stack.
+/// The most of a manifest that's read. Parsing one recurses, so a hostile pack
+/// can overflow the stack: that's why only a worker may call [`Pack::load`].
 const MAX_MANIFEST: u64 = 1 << 20;
-const MAX_MANIFEST_DEPTH: usize = 64;
-
-fn nests_too_deep(txt: &str) -> bool {
-    let (mut depth, mut deepest) = (0usize, 0usize);
-    for b in txt.bytes() {
-        match b {
-            b'[' | b'{' => {
-                depth += 1;
-                deepest = deepest.max(depth);
-            }
-            b']' | b'}' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-    }
-    deepest > MAX_MANIFEST_DEPTH
-}
 
 /// Which of a pack's variants to run: there's no one here to choose, so an
 /// Archipelago one with a map rather than items only, `standard` if that fits,
@@ -193,9 +177,6 @@ fn pick_variant(dir: &Path) -> String {
         Ok(m) if m.len() <= MAX_MANIFEST => std::fs::read_to_string(&path).unwrap_or_default(),
         _ => String::new(),
     };
-    if nests_too_deep(&txt) {
-        return String::new();
-    }
     let Ok(manifest) = parse_pack_json(txt.trim_start_matches('\u{feff}')) else {
         return String::new();
     };
@@ -793,7 +774,6 @@ impl Session {
                 };
                 let overlay = (kind == "consumable" && count > 0)
                     .then(|| count.to_string())
-                    .or_else(|| text("__overlay"))
                     .or_else(|| text("BadgeText"));
                 out.items.push(ItemState {
                     key: key.clone(),
@@ -809,11 +789,6 @@ impl Session {
             }
         }
         out.items.sort_by(|a, b| a.key.cmp(&b.key));
-        {
-            let e = self.eng.borrow();
-            out.pack_errors = e.pack_errors.clone();
-            out.pack_error_count = e.pack_error_count;
-        }
 
         // maps
         let maps = self.eng.borrow().maps.clone();
@@ -921,6 +896,12 @@ impl Session {
                 out.layout = Some(resolve_layout(&layouts, n, 0));
                 break;
             }
+        }
+        // Last: evaluating the rules above runs pack code too.
+        {
+            let e = self.eng.borrow();
+            out.pack_errors = e.pack_errors.clone();
+            out.pack_error_count = e.pack_error_count;
         }
         out
     }
@@ -1727,7 +1708,12 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                 // caller carries on.
                 let ran = read_pack_file(&eng2, &file)
                     .map_err(to_lua)
-                    .and_then(|txt| run_pack_source(lua, &txt, &file));
+                    .and_then(|txt| {
+                        lua.load(txt)
+                            .set_name(file.as_str())
+                            .set_mode(mlua::chunk::ChunkMode::Text)
+                            .call::<()>(load_script_module(&file))
+                    });
                 match ran {
                     Ok(()) => Ok(true),
                     Err(e) if is_memory_error(&e) => Err(e),
@@ -1850,6 +1836,16 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     for noop in ["AsyncProgress", "PushMarkdownNotification"] {
         sh.set(noop, lua.create_function(|_, _: MultiValue| Ok(()))?)?;
     }
+    // What a pack passes to `PushMarkdownNotification`, an EmoTracker call some
+    // still make: PopTracker lacks both, but they cost nothing here.
+    let kinds = lua.create_table()?;
+    for (i, k) in ["Message", "Warning", "Error", "Celebration"]
+        .iter()
+        .enumerate()
+    {
+        kinds.set(*k, i)?;
+    }
+    g.set("NotificationType", kinds)?;
     g.set("ScriptHost", &sh)?;
 
     // Custom items: a table the pack fills in, which `FindObjectForCode` can
@@ -1860,7 +1856,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         r##"
         local function noop() end
         return { __index = {
-          SetOverlay = function(self, text) rawset(self, "__overlay", text) end,
+          SetOverlay = function(self, text) rawset(self, "BadgeText", text) end,
           SetOverlayBackground = noop,
           SetOverlayColor = noop,
           SetOverlayFontSize = noop,
@@ -2071,6 +2067,17 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     g.set("AccessibilityLevel", &al)?;
 
     Ok(())
+}
+
+/// The module name `ScriptHost:LoadScript` passes a script as `...`:
+/// `scripts/a/b.lua` is `a.b`.
+fn load_script_module(file: &str) -> String {
+    let name = file.strip_prefix("scripts/").unwrap_or(file);
+    let name = name
+        .strip_suffix(".lua")
+        .or_else(|| name.strip_suffix(".LUA"))
+        .unwrap_or(name);
+    name.replace('/', ".")
 }
 
 /// Keep a pack handler's error for the tracker to report (see `MAX_PACK_ERRORS`).

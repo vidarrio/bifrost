@@ -115,6 +115,20 @@ try:
     r = upload(root, 'error(string.rep("\\1", 3000000), 0)')
     check("a long error is cut short", "Pack rejected" in r.text and len(r.text) < 100000, len(r.text))
 
+    # A manifest that overflows the parser's stack is the worker's problem alone.
+    for depth in (5000, 20000):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("scripts/init.lua", GOOD)
+            z.writestr("items.json", ITEMS)
+            z.writestr("locations.json", LOCATIONS)
+            z.writestr("x.png", "image")
+            z.writestr("manifest.json", '{"variants":' + "[" * depth + "]" * depth + "}")
+        post(root, "/s/1/game/1/poptracker", files={"pack": ("p.zip", buf.getvalue())})
+        r = get(root, "/s/1/game/1/poptracker/asset", params={"file": "x.png"})
+        check(f"a manifest {depth} levels deep can't bring the server down", srv.proc.poll() is None and r.status_code in (200, 404), r.status_code)
+    upload(root, GOOD)
+
     # Going away mid-upload costs nothing lasting.
     try:
         root.post(root.base + "/s/1/game/1/poptracker", files={"pack": ("p.zip", pack(LOAD + SPIN))}, timeout=1)
