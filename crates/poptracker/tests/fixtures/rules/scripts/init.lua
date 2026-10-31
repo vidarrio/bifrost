@@ -35,5 +35,15 @@ Archipelago:AddClearHandler("objects", function()
   assert(byName.FullID == "Outer/Inner")
   assert(single == Tracker:FindObjectForCode("@Have/S"), "one section means that section")
   assert(Tracker:FindObjectForCode("@Nowhere") == nil)
+  -- Counts are live, and a collected section reads as cleared.
+  local miss = Tracker:FindObjectForCode("miss")
+  miss.Active = true
+  assert(Tracker:ProviderCountForCode("miss") == 1, "sees its own change")
+  miss.Active = false
+  assert(Tracker:ProviderCountForCode("miss") == 0)
+  local clearing = Tracker:FindObjectForCode("@ToClear/S")
+  clearing.AvailableChestCount = 0
+  assert(clearing.AccessibilityLevel == AccessibilityLevel.Cleared, "cleared")
+  Tracker:FindObjectForCode("@Shop/Sold").AvailableChestCount = 1
   Tracker:FindObjectForCode("level_seen").Active = true
 end)

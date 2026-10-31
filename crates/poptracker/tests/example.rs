@@ -705,6 +705,78 @@ fn rules_resolve_as_poptracker_does() {
     }
     assert_eq!(level("Parent/ChildSection", "Own"), "none");
     assert_eq!(level("Parent/ChildSection", "Plain"), "reachable");
+    // Same id: each keeps its own level, under its own name, and `id[1]` finds it.
+    let dups: Vec<_> = st.locations.iter().filter(|l| l.name == "Dup").collect();
+    assert_eq!(dups.len(), 2);
+    assert_eq!(dups[0].sections[0].level, "none");
+    assert_eq!(dups[1].sections[0].level, "reachable");
+    assert_eq!(level("RefDup", "S"), "reachable");
+    // A `ref` is the section it points to, in level and count, and to rules too.
+    assert_eq!(level("ShopSeenHere", "Sold"), "none");
+    assert_eq!(level("RefToRef", "S"), "none");
+    assert_eq!(level("RefNowhere", "S"), "none");
+    let shown = &st
+        .locations
+        .iter()
+        .find(|l| l.name == "ShopSeenHere")
+        .unwrap()
+        .sections[0];
+    assert_eq!((shown.item_count, shown.cleared), (3, 2));
+    // One string is one code, not split.
+    assert_eq!(level("StringRule", "S"), "none");
+    // Rules present but unusable are no rules, not the parent's.
+    assert_eq!(level("UnusableInParent/C", "S"), "reachable");
     // A sectionless helper is kept for rules, not drawn.
     assert!(!st.locations.iter().any(|l| l.name == "Container"));
+}
+
+#[test]
+fn visibility_rules_settle_whatever_the_order() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rules");
+    let s = Session::new(&Pack::load(dir).unwrap()).unwrap();
+    s.set_valid_locations(&[1]);
+    s.on_clear(&serde_json::json!({})).unwrap();
+    let st = s.state();
+    let shown = |name: &str| st.locations.iter().any(|l| l.name == name);
+    assert!(!shown("VisLater"));
+    assert!(
+        !shown("VisForward"),
+        "its target, defined later, isn't visible"
+    );
+    assert!(
+        shown("VisPlainTarget"),
+        "a target with no visibility rules is"
+    );
+    assert!(shown("VisShown"));
+}
+
+#[test]
+fn rule_alternatives_are_capped() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(tmp.path().join("scripts")).unwrap();
+    std::fs::write(
+        tmp.path().join("scripts/init.lua"),
+        "Tracker:AddLocations('l.json')\nArchipelago:AddClearHandler('c', function() end)",
+    )
+    .unwrap();
+    let rules: Vec<String> = (0..40).map(|i| format!("c{i}")).collect();
+    let mut node =
+        serde_json::json!({"name": "L", "access_rules": rules, "sections": [{"name": "S"}]});
+    for _ in 0..6 {
+        node = serde_json::json!({"name": "P", "access_rules": rules, "children": [node]});
+    }
+    std::fs::write(
+        tmp.path().join("l.json"),
+        serde_json::json!([node]).to_string(),
+    )
+    .unwrap();
+    let s = Session::new(&Pack::load(tmp.path()).unwrap()).unwrap();
+    let st = s.state();
+    assert!(
+        st.pack_errors
+            .iter()
+            .any(|e| e.contains("too many alternatives")),
+        "{:?}",
+        st.pack_errors
+    );
 }
