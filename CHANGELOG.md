@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- PopTracker packs that load their scripts with `require`, or use custom
+  items, frame handlers or change watches, can be uploaded and track (for
+  example the Satisfactory pack). `require` only loads files from the pack.
+- PopTracker access rules that pass arguments to one of the pack's functions
+  (`$name|arg`) give it those arguments.
+
 ## [0.2.0] - 2026-10-29
 
 Upgrading from 0.1.x:

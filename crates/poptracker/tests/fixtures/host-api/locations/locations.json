@@ -1,0 +1,4 @@
+[
+  { "name": "Args", "access_rules": ["$has_args|one|two"], "sections": [{ "name": "S", "item_count": 1 }] },
+  { "name": "WrongArgs", "access_rules": ["$has_args|one"], "sections": [{ "name": "S", "item_count": 1 }] }
+]

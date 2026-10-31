@@ -1,0 +1,1 @@
+NORETURN = true
