@@ -1,0 +1,719 @@
+[
+ {
+  "name": "Empty",
+  "access_rules": [],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "Have",
+  "access_rules": [
+   "have"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "Miss",
+  "access_rules": [
+   "miss"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "AndFails",
+  "access_rules": [
+   "have,miss"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "OrPasses",
+  "access_rules": [
+   "miss",
+   "have"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "Count3",
+  "access_rules": [
+   "three:3"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "Count4",
+  "access_rules": [
+   "three:4"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "OptionalMet",
+  "access_rules": [
+   "have,[have]"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "OptionalMissing",
+  "access_rules": [
+   "have,[miss]"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "InspectEmptyAlt",
+  "access_rules": [
+   "miss",
+   "{}"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "InspectMet",
+  "access_rules": [
+   "{have}"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "InspectMissing",
+  "access_rules": [
+   "{miss}"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "InspectTwoCodes",
+  "access_rules": [
+   "{have,have}"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "InspectOneMissing",
+  "access_rules": [
+   "{have,miss}"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "InspectOrNormal",
+  "access_rules": [
+   "{have}",
+   "have"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "GlitchAndInspect",
+  "access_rules": [
+   "[miss]",
+   "{have}"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "NestedArray",
+  "access_rules": [
+   [
+    "miss"
+   ]
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "NestedArrayMet",
+  "access_rules": [
+   [
+    "have",
+    "have"
+   ]
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "FnTrue",
+  "access_rules": [
+   "$yes"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "FnFalse",
+  "access_rules": [
+   "$no"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "FnMissing",
+  "access_rules": [
+   "$nothing_here"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "FnError",
+  "access_rules": [
+   "$fails"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "FnArgs",
+  "access_rules": [
+   "$args_two|one|two"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "FnLevelIsACount",
+  "access_rules": [
+   "$normal"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "FnCountMet",
+  "access_rules": [
+   "$three_fn:3"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "FnCountMissed",
+  "access_rules": [
+   "$three_fn:5"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "FnArgCount",
+  "access_rules": [
+   "$echo_num|4:4"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "FnString",
+  "access_rules": [
+   "$num_string"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "LevelNormal",
+  "access_rules": [
+   "^$normal"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "LevelBreak",
+  "access_rules": [
+   "^$sequence"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "LevelInspect",
+  "access_rules": [
+   "^$inspect"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "LevelNone",
+  "access_rules": [
+   "^$none"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "LevelOptionalNone",
+  "access_rules": [
+   "[^$none]"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "LevelBad",
+  "access_rules": [
+   "^nope"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "RefSection",
+  "access_rules": [
+   "@Helper/Open"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "RefClosedSection",
+  "access_rules": [
+   "@Helper/Shut"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "RefSectionless",
+  "access_rules": [
+   "@Container"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "RefSectionlessClosed",
+  "access_rules": [
+   "@Blocked"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "RefMissingIgnored",
+  "access_rules": [
+   "@No Such Place"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "RefOptional",
+  "access_rules": [
+   "[@Blocked]"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "RefInspectNeedsBraces",
+  "access_rules": [
+   "@LooksOnly"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "RefInspectInBraces",
+  "access_rules": [
+   "{@LooksOnly}"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "RefByName",
+  "access_rules": [
+   "@Inner"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "RefSuffix",
+  "access_rules": [
+   "@Outer/Inner"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "RefSuffixNoPartialName",
+  "access_rules": [
+   "@ter/Inner"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "CycleA",
+  "access_rules": [
+   "@CycleB"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "CycleB",
+  "access_rules": [
+   "@CycleA"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "CycleOut",
+  "access_rules": [
+   "@CycleOutB",
+   "have"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "CycleOutB",
+  "access_rules": [
+   "@CycleOut"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "FnReadsLevel",
+  "access_rules": [
+   "$helper_open"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "Helper",
+  "sections": [
+   {
+    "name": "Open",
+    "item_count": 1
+   },
+   {
+    "name": "Shut",
+    "access_rules": [
+     "miss"
+    ],
+    "item_count": 1
+   }
+  ]
+ },
+ {
+  "name": "Container",
+  "access_rules": [
+   "have"
+  ]
+ },
+ {
+  "name": "Blocked",
+  "access_rules": [
+   "miss"
+  ]
+ },
+ {
+  "name": "LooksOnly",
+  "access_rules": [
+   "{have}"
+  ]
+ },
+ {
+  "name": "Outer",
+  "children": [
+   {
+    "name": "Inner",
+    "access_rules": [
+     "have"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "Parent",
+  "access_rules": [
+   "have",
+   "miss"
+  ],
+  "children": [
+   {
+    "name": "ChildJoins",
+    "access_rules": [
+     "three:3",
+     "three:9"
+    ],
+    "sections": [
+     {
+      "name": "S",
+      "item_count": 1
+     }
+    ]
+   },
+   {
+    "name": "ChildBlocked",
+    "access_rules": [
+     "miss"
+    ],
+    "sections": [
+     {
+      "name": "S",
+      "item_count": 1
+     }
+    ]
+   },
+   {
+    "name": "ChildSection",
+    "sections": [
+     {
+      "name": "Own",
+      "access_rules": [
+       "miss"
+      ],
+      "item_count": 1
+     },
+     {
+      "name": "Plain",
+      "item_count": 1
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "Scout",
+  "inspectable_sequence_break": true,
+  "access_rules": [
+   "[miss]",
+   "{have}"
+  ],
+  "sections": [
+   {
+    "name": "S",
+    "item_count": 1
+   }
+  ]
+ }
+]
