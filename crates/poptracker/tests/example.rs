@@ -554,7 +554,7 @@ fn packs_load_with_variants_and_survive_their_errors() {
         st.pack_errors
     );
     assert!(
-        st.pack_errors[0].contains("broken handler"),
+        st.pack_errors[0].contains("missing.lua"),
         "{:?}",
         st.pack_errors
     );

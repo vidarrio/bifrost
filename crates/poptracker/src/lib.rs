@@ -2126,10 +2126,11 @@ fn run_pack_source(lua: &Lua, src: &str, name: &str) -> mlua::Result<()> {
         .exec()
 }
 
-/// Build the sandboxed Lua VM: only string/table/math/coroutine/utf8 stdlib (base
-/// functions like `print`/`pairs` are always present) and PopTracker's four
-/// harmless `os` functions, i.e. no `io`/`package`/`debug`, the rest of `os` or
-/// Lua's own `require` (the host adds a pack-only one), with a memory cap. Pack Lua runs here, so this
+/// Build the sandboxed Lua VM: only string/table/math/coroutine/utf8 stdlib
+/// (base functions like `print`/`pairs` are always present) and PopTracker's
+/// four harmless `os` functions, i.e. no `io`/`package`/`debug`, the rest of
+/// `os` or Lua's own `require` (the host adds a pack-only one), with a memory
+/// cap. Pack Lua runs here, so this
 /// is the boundary that keeps an uploaded pack from touching the host.
 fn sandboxed_lua() -> Result<Lua> {
     let lua = Lua::new_with(
