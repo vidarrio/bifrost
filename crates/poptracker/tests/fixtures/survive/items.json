@@ -1,0 +1,6 @@
+[
+  { "name": "After", "type": "toggle", "img": "x.png", "codes": "after_error" },
+  { "name": "Badged", "type": "toggle", "img": "x.png", "codes": "badged" },
+  { "name": "Counted", "type": "consumable", "img": "x.png", "codes": "counted", "max_quantity": 9 },
+  { "name": "Got", "type": "toggle", "img": "x.png", "codes": "got_item" }
+]

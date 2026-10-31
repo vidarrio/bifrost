@@ -332,10 +332,15 @@ pub(super) const PT_JS: &str = r#"<script>
  }
  var retry=0;
  function draw(d){
+  if(!d||!d.pack||d.error){ var old=document.getElementById('ptnote'); if(old) old.remove(); }
   if(!d||!d.pack){ host.textContent='No pack.'; return; }
   if(d.busy){ if(!retry) retry=setTimeout(function(){ retry=0; if(panel&&!panel.hidden) load(); },2000); return; }
   if(d.error){ host.textContent='Tracker error: '+d.error; delete host.dataset.built; return; }
   ver=(d.version!=null?(''+d.version):''); st=d.state||{}; buildIndex();
+  var note=document.getElementById('ptnote');
+  if(st.pack_error_count){ if(!note){ note=document.createElement('p'); note.id='ptnote'; note.className='muted'; host.parentNode.insertBefore(note,host); }
+   note.textContent='This pack reported '+st.pack_error_count+' error(s), so some of its tracking may be missing.'; note.title=(st.pack_errors||[]).join('\n'); }
+  else if(note){ note.remove(); }
   if(host.dataset.built){ update(); return; }
   host.innerHTML='';
   if(st.layout){ host.appendChild(render(st.layout)); }

@@ -518,3 +518,96 @@ fn extraction_caps_depth_and_counts_folders() {
     let fine = zip_of(tmp.path(), (0..2000).map(|i| format!("a/b/c/{i}")));
     poptracker::extract_zip(&fine, &tmp.path().join("c")).unwrap();
 }
+
+#[test]
+fn packs_load_with_variants_and_survive_their_errors() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/survive");
+    let pack = Pack::load(dir).unwrap();
+    // The Archipelago map variant wins, and its files come first.
+    assert_eq!(pack.asset("/images/x.png").unwrap(), b"variant\n");
+    assert_eq!(pack.asset("images/root.png").unwrap(), b"root\n");
+    assert!(pack.asset("../manifest.json").is_none());
+    let s = Session::new(&pack).unwrap();
+    s.on_clear(&serde_json::json!({})).unwrap();
+    s.on_item(1, 100, "Thing", 1).unwrap();
+    let st = s.state();
+    let item = |code: &str| {
+        st.items
+            .iter()
+            .find(|i| i.codes.iter().any(|c| c == code))
+            .unwrap()
+    };
+    assert!(item("after_error").active, "the next handler still ran");
+    assert!(item("got_item").active, "and later events too");
+    assert_eq!(item("after_error").overlay.as_deref(), Some("hello"));
+    assert_eq!(item("badged").overlay.as_deref(), Some("b"));
+    assert_eq!(
+        item("counted").overlay.as_deref(),
+        Some("3"),
+        "a count comes first"
+    );
+    // Two scripts that wouldn't load, a failed script, a callback, two handlers.
+    assert_eq!(st.pack_error_count, 6);
+    assert!(
+        !st.pack_errors
+            .iter()
+            .any(|e| e.contains(env!("CARGO_MANIFEST_DIR"))),
+        "no host paths: {:?}",
+        st.pack_errors
+    );
+    assert!(
+        st.pack_errors[0].contains("missing.lua"),
+        "{:?}",
+        st.pack_errors
+    );
+}
+
+#[test]
+fn running_out_of_budget_in_a_handler_still_ends_it() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/survive");
+    let s = Session::new(&Pack::load(dir).unwrap()).unwrap();
+    let err = s
+        .on_location(1, "spin")
+        .expect_err("a handler that never ends must be stopped");
+    assert!(err.to_string().contains("instruction limit"), "{err}");
+}
+
+#[test]
+fn serving_images_doesnt_read_the_manifest() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let dir = tmp.path().to_path_buf();
+    std::fs::create_dir(dir.join("scripts")).unwrap();
+    std::fs::write(dir.join("scripts/init.lua"), "").unwrap();
+    std::fs::write(dir.join("x.png"), "image").unwrap();
+    for depth in [100, 3000, 5000, 7000, 30000] {
+        let (open, close) = ("[".repeat(depth), "]".repeat(depth));
+        std::fs::write(
+            dir.join("manifest.json"),
+            format!("{{\"variants\":{open}{close}}}"),
+        )
+        .unwrap();
+        let d = dir.clone();
+        // The stack a blocking task has in the server, which serves images this
+        // way: a hostile manifest is never read. (`Pack::load` is for workers.)
+        std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(move || {
+                assert_eq!(poptracker::read_asset(&d, "", "x.png").unwrap(), b"image");
+                assert!(poptracker::pack_root(&d).is_ok());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}
+
+#[test]
+fn stopped_for_good_in_a_frame_handler_shows_as_an_error() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/survive");
+    let s = Session::new(&Pack::load(dir).unwrap()).unwrap();
+    s.on_item(1, 200, "spin frames", 1).unwrap();
+    let err = s.on_clear(&serde_json::json!({})).expect_err("budget");
+    assert!(err.to_string().contains("instruction limit"), "{err}");
+    // Four from loading, one each from the two handlers, and this one.
+    assert_eq!(s.state().pack_error_count, 7);
+}

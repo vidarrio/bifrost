@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Many more PopTracker packs load. Bifrost picks the pack's Archipelago map
+  variant and finds files in its folder, and supplies more of what packs call,
+  such as overlays and `os.time`. An error in one of a pack's handlers no longer
+  blanks its tracker: it carries on, and the tab says tracking may be incomplete.
 - PopTracker packs that load their scripts with `require`, or use custom
   items, frame handlers or change watches, can be uploaded and track (for
   example the Satisfactory pack). `require` only loads files from the pack.

@@ -1,0 +1,9 @@
+{
+  // Comments, as packs have them.
+  "variants": {
+    "a_items": { "display_name": "Items Only", "flags": ["ap"] },
+    "b_noap": { "display_name": "Emulator" },
+    "map": { "display_name": "Map Tracker", "flags": ["ap"] },
+    "../up": { "display_name": "Sneaky", "flags": ["ap"] }
+  }
+}
