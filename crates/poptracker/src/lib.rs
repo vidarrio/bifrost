@@ -1600,10 +1600,6 @@ fn num(v: &serde_json::Value) -> Option<f64> {
         .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
 }
 
-/// Read a rules field (`access_rules`/`visibility_rules`). PopTracker allows it
-/// as either a single string (one OR-alternative) or an array of strings, so we
-/// accept both — a bare string was being dropped, which silently removed gates
-/// like a parent's `"access_rules": "bus"`.
 /// A location's or section's rule list, each alternative joined to each of its
 /// parent's (PopTracker's way of inheriting). A rule is a comma-separated string or
 /// an array of codes; a whole list may also be one string, which is one code.
