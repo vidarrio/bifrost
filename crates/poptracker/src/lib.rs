@@ -160,6 +160,11 @@ fn registered(lua: &Lua, key: &str, pick: impl Fn(&Table) -> bool) -> Vec<Functi
 /// can't fill the host's disk. Real packs are a few MB; this is generous.
 const MAX_EXTRACT_BYTES: u64 = 512 * 1024 * 1024;
 
+/// Caps on a pack's files and directories together, and on how deep they go, for
+/// the same reason (they also bound how long extracting can take).
+const MAX_EXTRACT_FILES: usize = 100_000;
+const MAX_EXTRACT_DEPTH: usize = 32;
+
 /// Extract a pack zip into `dest` (with a zip-slip guard). Used both for the
 /// temp-dir load path and to install an uploaded pack to permanent storage.
 pub fn extract_zip(zip_path: &Path, dest: &Path) -> Result<()> {
@@ -170,7 +175,11 @@ fn extract_zip_capped(zip_path: &Path, dest: &Path, cap: u64) -> Result<()> {
     use std::io::Read;
     let file = std::fs::File::open(zip_path).map_err(|e| Error::Io(e.to_string()))?;
     let mut zip = zip::ZipArchive::new(file).map_err(|e| Error::Pack(format!("zip: {e}")))?;
+    if zip.len() > MAX_EXTRACT_FILES {
+        return Err(Error::Pack("pack has too many files".into()));
+    }
     let mut budget = cap;
+    let mut made = HashSet::new();
     for i in 0..zip.len() {
         let mut f = zip
             .by_index(i)
@@ -179,6 +188,21 @@ fn extract_zip_capped(zip_path: &Path, dest: &Path, cap: u64) -> Result<()> {
         let Some(rel) = f.enclosed_name() else {
             continue;
         };
+        if rel.components().count() > MAX_EXTRACT_DEPTH {
+            return Err(Error::Pack("pack's folders are too deep".into()));
+        }
+        // The entry itself and every folder it brings: a zip needn't list them.
+        for p in rel.ancestors().filter(|p| !p.as_os_str().is_empty()) {
+            // A hash: a pack's long names shouldn't all be kept in memory.
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(p, &mut h);
+            if !made.insert(std::hash::Hasher::finish(&h)) {
+                break;
+            }
+            if made.len() > MAX_EXTRACT_FILES {
+                return Err(Error::Pack("pack has too many files".into()));
+            }
+        }
         let out = dest.join(rel);
         if f.is_dir() {
             std::fs::create_dir_all(&out).map_err(|e| Error::Io(e.to_string()))?;
@@ -313,7 +337,7 @@ pub struct Marker {
 }
 
 /// A quick summary for validating an uploaded pack before accepting it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, serde::Deserialize)]
 pub struct Summary {
     pub items: usize,
     pub locations: usize,

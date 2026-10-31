@@ -54,16 +54,18 @@ pub(crate) async fn pt_upload(
         return render::notice("That doesn't look like a .zip pack file.", false, &back)
             .into_response();
     }
-    // validate + install off the async runtime (runs pack Lua + filesystem).
-    let season2 = season;
-    let res = tokio::task::spawn_blocking(move || {
-        ptrack::validate(&bytes).and_then(|_sum| ptrack::install(season2, ap_slot, &bytes))
-    })
-    .await;
-    match res {
-        Ok(Ok(())) => Redirect::to(&back).into_response(),
-        Ok(Err(e)) => render::notice(&format!("Pack rejected: {e}"), false, &back).into_response(),
-        Err(_) => render::notice("Upload failed.", false, &back).into_response(),
+    // Validation runs the pack's Lua, in a worker; a pack that fails it, or runs
+    // too long, is never installed.
+    let Some(_claim) = ptrack::claim_upload(my_id) else {
+        return render::notice("You're already uploading a pack.", false, &back).into_response();
+    };
+    let bytes = std::sync::Arc::new(bytes);
+    if let Err(e) = ptrack::validate(bytes.clone()).await {
+        return render::notice(&format!("Pack rejected: {e}"), false, &back).into_response();
+    }
+    match ptrack::install_pack(season, ap_slot, bytes).await {
+        Ok(()) => Redirect::to(&back).into_response(),
+        Err(e) => render::notice(&format!("Pack rejected: {e}"), false, &back).into_response(),
     }
 }
 
@@ -85,12 +87,17 @@ pub(crate) async fn pt_remove(
     Redirect::to(&back).into_response()
 }
 
+struct SharedText(std::sync::Arc<String>);
+
+impl AsRef<[u8]> for SharedText {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
+
 /// Computed tracker state (maps + markers + items) for the slot's pack, as JSON
 /// for the PopTracker tab + its poller. `{pack:false}` when no pack is installed.
-pub(crate) async fn pt_state(
-    Path(ap_slot): Path<i64>,
-    ctx: scope::SeasonCtx,
-) -> Json<serde_json::Value> {
+pub(crate) async fn pt_state(Path(ap_slot): Path<i64>, ctx: scope::SeasonCtx) -> Response {
     let season = ctx.id;
     let Some((game, received, checked, meta)) = ctx.rt.with_board(|b| {
         let (game, received, checked) = b
@@ -106,10 +113,10 @@ pub(crate) async fn pt_state(
             .unwrap_or_default();
         (game, received, checked, b.meta.clone())
     }) else {
-        return Json(serde_json::json!({"pack": false}));
+        return Json(serde_json::json!({"pack": false})).into_response();
     };
     if !ctx.state().is_live() || !ptrack::has_pack(season, ap_slot) {
-        return Json(serde_json::json!({"pack": false}));
+        return Json(serde_json::json!({"pack": false})).into_response();
     }
     let name_of = |item: i64| {
         meta.as_ref()
@@ -143,32 +150,40 @@ pub(crate) async fn pt_state(
         .map(|s| s.all_locations.clone())
         .unwrap_or_default();
     let version = ptrack::pack_version(season, ap_slot);
-    let season2 = season;
-    let state = tokio::task::spawn_blocking(move || {
-        // What AP tells the slot's clients on connect: its slot data and the
-        // multiworld's players.
-        let connect = (meta.as_deref())
-            .map(|m| ptrack::Connect::from_meta(m, ap_slot))
-            .unwrap_or_default();
-        ptrack::compute(
-            season2,
-            ap_slot,
-            &items,
-            &checked,
-            &valid_locations,
-            ap_slot,
-            &connect,
-        )
-    })
-    .await;
-    match state {
-        Ok(Ok(ts)) => Json(serde_json::json!({
-            "pack": true,
-            "version": version,
-            "state": serde_json::to_value(&ts).unwrap_or_default(),
-        })),
-        Ok(Err(e)) => Json(serde_json::json!({"pack": true, "error": e})),
-        Err(_) => Json(serde_json::json!({"pack": true, "error": "compute failed"})),
+    // What AP tells the slot's clients on connect: its slot data and the
+    // multiworld's players.
+    let connect = (meta.as_deref())
+        .map(|m| ptrack::Connect::from_meta(m, ap_slot))
+        .unwrap_or_default();
+    let feed = ptrack::Feed {
+        items: &items,
+        checked: &checked,
+        valid_locations: &valid_locations,
+        player: ap_slot,
+        connect,
+    };
+    match ptrack::compute(season, ap_slot, version, feed).await {
+        // The state is shared by every response, not copied into each: a client
+        // that doesn't read its response shouldn't hold memory of its own.
+        Ok(state) => {
+            let parts = [
+                axum::body::Bytes::from(format!(r#"{{"pack":true,"version":{version},"state":"#)),
+                axum::body::Bytes::from_owner(SharedText(state)),
+                axum::body::Bytes::from_static(b"}"),
+            ];
+            let chunks = futures_util::stream::iter(parts.map(Ok::<_, std::convert::Infallible>));
+            (
+                [(axum::http::header::CONTENT_TYPE, "application/json")],
+                axum::body::Body::from_stream(chunks),
+            )
+                .into_response()
+        }
+        Err(ptrack::ComputeError::Busy) => {
+            Json(serde_json::json!({"pack": true, "busy": true})).into_response()
+        }
+        Err(ptrack::ComputeError::Failed(e)) => {
+            Json(serde_json::json!({"pack": true, "error": e})).into_response()
+        }
     }
 }
 

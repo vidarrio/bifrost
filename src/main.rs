@@ -118,6 +118,7 @@ async fn main() {
         Err(e) => tracing::error!("recovering interrupted generations: {e}"),
     }
 
+    ptrack::sweep_scratch();
     // How AP helpers (which run apworld code) are contained on this host.
     let sb = sandbox::init(sandbox::Sandbox::detect(&cfg.ap_python).await);
     if sb.strong() {

@@ -44,6 +44,9 @@ pub fn run_early(args: &[String]) -> Option<i32> {
             print!("{}", crate::config::EXAMPLE);
             Some(0)
         }
+        [crate::ptrack::WORKER_COMMAND, request] => {
+            Some(crate::ptrack::worker_main(std::path::Path::new(request)))
+        }
         _ => None,
     }
 }

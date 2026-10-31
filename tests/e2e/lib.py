@@ -8,6 +8,8 @@ Paths (environment):
                       $BIFROST_E2E_WORK/archipelago-bifrost; setup-ap.sh makes it)
   BIFROST_E2E_BIN     the Bifrost binary (default target/debug/bifrost)
 """
+import io
+import zipfile
 import html
 import os
 import re
@@ -188,6 +190,20 @@ def wait_for(fn, timeout=120, every=1.0):
 def fixture(name):
     with open(os.path.join(FIX, name), "rb") as f:
         return f.read()
+
+
+def tiny_pack():
+    """A minimal PopTracker pack (.zip): one item, set when Archipelago connects."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("items.json", '[{"name":"Key","type":"toggle","img":"x.png","codes":"key"}]')
+        z.writestr("scripts/init.lua", """
+Tracker:AddItems("items.json")
+Archipelago:AddClearHandler("clear", function()
+  Tracker:FindObjectForCode("key").Active = true
+end)
+""")
+    return buf.getvalue()
 
 
 if __name__ == "__main__":

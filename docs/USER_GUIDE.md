@@ -108,7 +108,9 @@ Click your slot on the live board to open its game page. It has four tabs:
 - **Universal Tracker.** Which of your locations are in logic right now,
   recomputed a few seconds after your items or checks change.
 - **PopTracker.** Upload a PopTracker pack (`.zip`) for your game to get its
-  map and auto-tracking in the browser.
+  map and auto-tracking in the browser. A pack's code runs sandboxed and is
+  stopped after 30 seconds (`pack_timeout_secs`); a pack that runs longer is
+  refused, or shows an error on its tab.
 - **Log.** This game's activity: items sent and received, hints, goal.
 
 #### Your game files
@@ -669,9 +671,10 @@ URL slips past the rule. Bifrost itself only accepts plain digits.
 
 ### Isolation
 
-Anything that runs apworld code runs sandboxed. That covers YAML checks,
-generation, seed decoding and the Archipelago servers. With bubblewrap
-available, the sandbox gives each helper:
+Anything that runs apworld code or an uploaded PopTracker pack's Lua runs
+sandboxed. That covers YAML checks, generation, seed decoding, the Archipelago
+servers and PopTracker packs. With bubblewrap available, the sandbox gives each
+helper:
 
 - no network (the servers excepted; the in-logic tracker reaches its season's
   server through a relayed socket);
@@ -686,6 +689,12 @@ Without bubblewrap, Bifrost applies resource limits and the syscall filter
 only, and refuses custom apworlds unless you explicitly set
 `allow_unsandboxed_custom_worlds`. The settings page shows which tier is
 active. Resource limits for checks and generation are under `[sandbox]`.
+PopTracker packs are allowed on either tier, since their Lua has no file or
+network access of its own; each runs under a 1 GiB memory limit and
+`pack_timeout_secs`. A pack that hits a limit isn't run again for a minute, then
+longer each time up to about an hour, or until it's replaced. Viewers of a slot
+share one run, which repeats only when something changed, and a slow pack's
+tracker updates less often, so that it runs at most a quarter of the time.
 
 Every sandboxed job is also capped in processes and open files. The process
 cap counts all of Bifrost's user's processes, so run Bifrost as a dedicated,

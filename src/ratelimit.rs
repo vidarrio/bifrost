@@ -52,6 +52,8 @@ pub fn rule_for(method: &Method, path: &str) -> Option<Rule> {
         "/setup" => r("link", 10, 10, true),
         "/hint" => r("hint", 30, 10, false),
         "/minesweeper/new" => r("minesweeper", 60, 10, false),
+        // Each upload unpacks a pack and runs its Lua in a worker.
+        p if p.starts_with("/game/") && p.ends_with("/poptracker") => r("pack", 20, 60, false),
         p if p.starts_with("/invite/") || p.starts_with("/reset/") => r("link", 10, 10, true),
         _ => None,
     }
@@ -258,6 +260,7 @@ mod tests {
             "/reset/abc",
             "/hint",
             "/minesweeper/new",
+            "/game/1/poptracker",
         ] {
             assert!(rule_for(&post, p).is_some(), "{p}");
         }

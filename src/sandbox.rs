@@ -307,6 +307,17 @@ impl Sandbox {
         self.build(job, true, self.limits, MAX_FILES)
     }
 
+    /// Like [`command`](Self::command) for a PopTracker pack's worker: untrusted
+    /// Lua needs little memory (its VM has its own, lower cap), and writes no files.
+    pub fn pack_worker(&self, job: &Job) -> Command {
+        let limits = Limits {
+            mem_bytes: self.limits.mem_bytes.min(1 << 30),
+            cpu_secs: self.limits.cpu_secs.min(300),
+            fsize_bytes: 1 << 20,
+        };
+        self.build(job, true, limits, MAX_FILES)
+    }
+
     /// Like [`command`](Self::command) with generation's ceilings
     /// (`BIFROST_GENERATE_MEM_MB` / `_CPU_SECS`).
     pub fn generation(&self, job: &Job) -> Command {
@@ -494,6 +505,66 @@ pub async fn run(mut cmd: Command, timeout: Duration) -> Result<Output, String> 
     }
 }
 
+/// Why [`run_capped`] gave no output.
+pub enum CappedError {
+    TimedOut,
+    TooMuch,
+    Run(String),
+}
+
+/// Like [`run`], for a job whose output isn't trusted: it may write at most
+/// `max` bytes to stdout (and a little to stderr) or it's killed, so it can't
+/// fill this process's memory.
+pub async fn run_capped(
+    mut cmd: Command,
+    timeout: Duration,
+    max: usize,
+) -> Result<Output, CappedError> {
+    use tokio::io::AsyncReadExt;
+    const MAX_STDERR: u64 = 64 << 10;
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| CappedError::Run(format!("spawn: {e}")))?;
+    let pid = child.id();
+    let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        return Err(CappedError::Run("no pipes".into()));
+    };
+    let finished = async {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let mut stdout = stdout.take(max as u64 + 1);
+        let mut stderr = stderr.take(MAX_STDERR);
+        let (a, b) = tokio::join!(stdout.read_to_end(&mut out), stderr.read_to_end(&mut err));
+        a.and(b)
+            .map_err(|e| CappedError::Run(format!("read: {e}")))?;
+        if out.len() > max {
+            return Err(CappedError::TooMuch);
+        }
+        let status = child
+            .wait()
+            .await
+            .map_err(|e| CappedError::Run(format!("wait: {e}")))?;
+        Ok(Output {
+            status,
+            stdout: out,
+            stderr: err,
+        })
+    };
+    let result = match tokio::time::timeout(timeout, finished).await {
+        Ok(r) => r,
+        Err(_) => Err(CappedError::TimedOut),
+    };
+    if result.is_err()
+        && let Some(pid) = pid
+    {
+        // SAFETY: signalling a process group we created via setsid.
+        unsafe {
+            libc::killpg(pid as libc::pid_t, libc::SIGKILL);
+        }
+    }
+    result
+}
+
 /// bubblewrap arguments for `job` (everything before `--`).
 fn bwrap_args(job: &Job) -> Vec<OsString> {
     let mut a: Vec<OsString> = Vec::new();
@@ -544,9 +615,12 @@ fn bwrap_args(job: &Job) -> Vec<OsString> {
         "--tmpfs".as_ref(),
         "/tmp".as_ref(),
     ]);
-    // The interpreter's own tree (a venv may live outside /usr).
-    for p in interpreter_roots(job.program) {
-        push(&["--ro-bind-try".as_ref(), p.as_os_str(), p.as_os_str()]);
+    // The interpreter's own tree (a venv may live outside /usr), unless the
+    // job names the program itself as all it needs of it.
+    if !job.read.iter().any(|p| p == job.program) {
+        for p in interpreter_roots(job.program) {
+            push(&["--ro-bind-try".as_ref(), p.as_os_str(), p.as_os_str()]);
+        }
     }
     for p in &job.read {
         push(&["--ro-bind-try".as_ref(), p.as_os_str(), p.as_os_str()]);
