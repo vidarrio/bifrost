@@ -87,6 +87,14 @@ pub(crate) async fn pt_remove(
     Redirect::to(&back).into_response()
 }
 
+struct SharedText(std::sync::Arc<String>);
+
+impl AsRef<[u8]> for SharedText {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
+
 /// Computed tracker state (maps + markers + items) for the slot's pack, as JSON
 /// for the PopTracker tab + its poller. `{pack:false}` when no pack is installed.
 pub(crate) async fn pt_state(Path(ap_slot): Path<i64>, ctx: scope::SeasonCtx) -> Response {
@@ -155,12 +163,21 @@ pub(crate) async fn pt_state(Path(ap_slot): Path<i64>, ctx: scope::SeasonCtx) ->
         connect,
     };
     match ptrack::compute(season, ap_slot, version, feed).await {
-        // The state is shared text, not worth parsing again for each poll.
-        Ok(state) => (
-            [(axum::http::header::CONTENT_TYPE, "application/json")],
-            format!(r#"{{"pack":true,"version":{version},"state":{state}}}"#),
-        )
-            .into_response(),
+        // The state is shared by every response, not copied into each: a client
+        // that doesn't read its response shouldn't hold memory of its own.
+        Ok(state) => {
+            let parts = [
+                axum::body::Bytes::from(format!(r#"{{"pack":true,"version":{version},"state":"#)),
+                axum::body::Bytes::from_owner(SharedText(state)),
+                axum::body::Bytes::from_static(b"}"),
+            ];
+            let chunks = futures_util::stream::iter(parts.map(Ok::<_, std::convert::Infallible>));
+            (
+                [(axum::http::header::CONTENT_TYPE, "application/json")],
+                axum::body::Body::from_stream(chunks),
+            )
+                .into_response()
+        }
         Err(ptrack::ComputeError::Busy) => {
             Json(serde_json::json!({"pack": true, "busy": true})).into_response()
         }

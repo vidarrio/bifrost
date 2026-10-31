@@ -110,12 +110,15 @@ fn install(season: i64, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), String> {
 /// [`install`] as a worker's equal: it can take a while, and holds a permit for it.
 pub async fn install_pack(season: i64, ap_slot: i64, bytes: Arc<Vec<u8>>) -> Result<(), String> {
     let permit = worker_permit().await.map_err(|Busy| BUSY.to_string())?;
-    tokio::task::spawn_blocking(move || {
+    let installed = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         install(season, ap_slot, &bytes)
     })
     .await
-    .map_err(|_| "Upload failed.".to_string())?
+    .map_err(|_| "Upload failed.".to_string())?;
+    // A poll during the install may have seen it half unpacked.
+    SLOTS.lock().unwrap().remove(&(season, ap_slot));
+    installed
 }
 
 /// Remove a slot's installed pack.
@@ -216,22 +219,35 @@ pub async fn compute(
         )
     };
     tokio::spawn(async move {
-        let started = Instant::now();
-        let outcome = tokio::spawn(run_compute(root, request))
+        let (outcome, took) = tokio::spawn(run_compute(root, request))
             .await
-            .unwrap_or_else(|e| Err(Failure::Host(format!("worker task: {e}"))));
-        let answer = run.finish(outcome, started.elapsed());
+            .unwrap_or_else(|e| {
+                (
+                    Err(Failure::Host(format!("worker task: {e}"))),
+                    Duration::ZERO,
+                )
+            });
+        let answer = run.finish(outcome, took);
         let _ = run.tx.send(answer);
     });
     done.await
         .unwrap_or_else(|_| Err(ComputeError::Failed("compute failed".into())))
 }
 
-async fn run_compute(root: PathBuf, request: Vec<u8>) -> Result<String, Failure> {
-    let _permit = worker_permit().await.map_err(|Busy| Failure::Busy)?;
-    let scratch = Scratch::new().map_err(Failure::Host)?;
-    let reply = run_worker(&scratch, &root, request).await?;
-    Ok(reply.to_string())
+/// One run, and how long it took once it had a worker: waiting for one isn't
+/// the pack's doing, so doesn't pace it.
+async fn run_compute(root: PathBuf, request: Vec<u8>) -> (Result<String, Failure>, Duration) {
+    let Ok(_permit) = worker_permit().await else {
+        return (Err(Failure::Busy), Duration::ZERO);
+    };
+    let started = Instant::now();
+    let outcome = async {
+        let scratch = Scratch::new().map_err(Failure::Host)?;
+        let reply = run_worker(&scratch, &root, request).await?;
+        Ok(reply.to_string())
+    }
+    .await;
+    (outcome, started.elapsed())
 }
 
 /// One run's place in its slot.
