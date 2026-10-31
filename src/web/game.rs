@@ -63,12 +63,9 @@ pub(crate) async fn pt_upload(
     if let Err(e) = ptrack::validate(bytes.clone()).await {
         return render::notice(&format!("Pack rejected: {e}"), false, &back).into_response();
     }
-    let season2 = season;
-    let res = tokio::task::spawn_blocking(move || ptrack::install(season2, ap_slot, &bytes)).await;
-    match res {
-        Ok(Ok(())) => Redirect::to(&back).into_response(),
-        Ok(Err(e)) => render::notice(&format!("Pack rejected: {e}"), false, &back).into_response(),
-        Err(_) => render::notice("Upload failed.", false, &back).into_response(),
+    match ptrack::install_pack(season, ap_slot, bytes).await {
+        Ok(()) => Redirect::to(&back).into_response(),
+        Err(e) => render::notice(&format!("Pack rejected: {e}"), false, &back).into_response(),
     }
 }
 
@@ -170,7 +167,8 @@ pub(crate) async fn pt_state(
             "version": version,
             "state": state,
         })),
-        Err(e) => Json(serde_json::json!({"pack": true, "error": e})),
+        Err(ptrack::ComputeError::Busy) => Json(serde_json::json!({"pack": true, "busy": true})),
+        Err(ptrack::ComputeError::Failed(e)) => Json(serde_json::json!({"pack": true, "error": e})),
     }
 }
 

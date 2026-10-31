@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PopTracker packs' Lua runs in a sandboxed process of its own, stopped after
   30 seconds (`pack_timeout_secs`), so a pack can't tie up the server. Each
   slot computes its tracker once at a time, at most four run at once, and
-  uploads are rate-limited. A pack that hits a limit isn't run again for five
-  minutes or until it's replaced.
+  uploads are rate-limited. A pack that hits a limit isn't run again for a
+  minute, then longer each time, or until it's replaced; a slow pack's tracker
+  updates less often.
 
 ### Fixed
 

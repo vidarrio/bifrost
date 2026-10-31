@@ -489,3 +489,32 @@ fn clear_handlers_get_slot_data_and_the_players() {
     assert!(active("from_slot_data"));
     assert!(active("players_known"));
 }
+
+fn zip_of(dir: &Path, names: impl Iterator<Item = String>) -> std::path::PathBuf {
+    let path = dir.join("p.zip");
+    let mut z = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+    for n in names {
+        z.start_file(&n, zip::write::SimpleFileOptions::default())
+            .unwrap();
+    }
+    z.finish().unwrap();
+    path
+}
+
+#[test]
+fn extraction_caps_depth_and_counts_folders() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let deep = zip_of(tmp.path(), std::iter::once(format!("{}f", "d/".repeat(40))));
+    let err = poptracker::extract_zip(&deep, &tmp.path().join("a")).expect_err("too deep");
+    assert!(err.to_string().contains("too deep"), "{err}");
+    // Few entries, each bringing many folders of its own.
+    let many = zip_of(
+        tmp.path(),
+        (0..4000).map(|i| format!("{}f", format!("{i}x/").repeat(30))),
+    );
+    let err = poptracker::extract_zip(&many, &tmp.path().join("b")).expect_err("too many");
+    assert!(err.to_string().contains("too many"), "{err}");
+    // Shared folders count once.
+    let fine = zip_of(tmp.path(), (0..2000).map(|i| format!("a/b/c/{i}")));
+    poptracker::extract_zip(&fine, &tmp.path().join("c")).unwrap();
+}

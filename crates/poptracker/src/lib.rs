@@ -160,8 +160,10 @@ fn registered(lua: &Lua, key: &str, pick: impl Fn(&Table) -> bool) -> Vec<Functi
 /// can't fill the host's disk. Real packs are a few MB; this is generous.
 const MAX_EXTRACT_BYTES: u64 = 512 * 1024 * 1024;
 
-/// Cap on files in a pack, for the same reason.
+/// Caps on a pack's files and directories together, and on how deep they go, for
+/// the same reason (they also bound how long extracting can take).
 const MAX_EXTRACT_FILES: usize = 100_000;
+const MAX_EXTRACT_DEPTH: usize = 32;
 
 /// Extract a pack zip into `dest` (with a zip-slip guard). Used both for the
 /// temp-dir load path and to install an uploaded pack to permanent storage.
@@ -177,6 +179,7 @@ fn extract_zip_capped(zip_path: &Path, dest: &Path, cap: u64) -> Result<()> {
         return Err(Error::Pack("pack has too many files".into()));
     }
     let mut budget = cap;
+    let mut made = HashSet::new();
     for i in 0..zip.len() {
         let mut f = zip
             .by_index(i)
@@ -185,6 +188,18 @@ fn extract_zip_capped(zip_path: &Path, dest: &Path, cap: u64) -> Result<()> {
         let Some(rel) = f.enclosed_name() else {
             continue;
         };
+        if rel.components().count() > MAX_EXTRACT_DEPTH {
+            return Err(Error::Pack("pack's folders are too deep".into()));
+        }
+        // The entry itself and every folder it brings: a zip needn't list them.
+        for p in rel.ancestors().filter(|p| !p.as_os_str().is_empty()) {
+            if !made.insert(p.to_path_buf()) {
+                break;
+            }
+            if made.len() > MAX_EXTRACT_FILES {
+                return Err(Error::Pack("pack has too many files".into()));
+            }
+        }
         let out = dest.join(rel);
         if f.is_dir() {
             std::fs::create_dir_all(&out).map_err(|e| Error::Io(e.to_string()))?;

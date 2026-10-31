@@ -691,8 +691,9 @@ only, and refuses custom apworlds unless you explicitly set
 active. Resource limits for checks and generation are under `[sandbox]`.
 PopTracker packs are allowed on either tier, since their Lua has no file or
 network access of its own; each runs under a 1 GiB memory limit and
-`pack_timeout_secs`, and a pack that hits a limit isn't run again for five
-minutes or until it's replaced.
+`pack_timeout_secs`. A pack that hits a limit isn't run again for a minute, then
+longer each time up to about an hour, or until it's replaced. A slow pack's
+tracker updates less often, so that it runs at most a quarter of the time.
 
 Every sandboxed job is also capped in processes and open files. The process
 cap counts all of Bifrost's user's processes, so run Bifrost as a dedicated,

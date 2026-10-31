@@ -129,7 +129,7 @@ try:
         pass
     check("an abandoned compute's worker stops", wait_for(lambda: not workers(srv), 10, 1))
     results = []
-    first = threading.Thread(target=lambda: results.append(state(root)))
+    first = threading.Thread(target=lambda: results.append(wait_for(lambda: (d := state(root)) and "busy" not in d and d, 20, 1)))
     first.start()
     wait_for(lambda: workers(srv), 5, 0.1)
     t = time.time()

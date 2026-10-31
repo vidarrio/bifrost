@@ -51,7 +51,7 @@ pub fn pack_version(season: i64, ap_slot: i64) -> u64 {
 /// path (memory-only/emulator packs can't be driven server-side). Returns a
 /// summary on success, else an error message suitable for showing the uploader.
 pub async fn validate(zip_bytes: Arc<Vec<u8>>) -> Result<poptracker::Summary, String> {
-    let permit = Arc::new(worker_permit().await?);
+    let permit = Arc::new(worker_permit().await.map_err(|Busy| BUSY.to_string())?);
     let scratch = Arc::new(Scratch::new()?);
     // Unpacking is the host's own code; only running the pack's Lua is isolated.
     // The task owns what it uses: it runs on if this request goes away, and the
@@ -89,8 +89,9 @@ pub async fn validate(zip_bytes: Arc<Vec<u8>>) -> Result<poptracker::Summary, St
 }
 
 /// Install (extract) an uploaded pack zip for a slot, replacing any existing one.
-pub fn install(season: i64, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), String> {
+fn install(season: i64, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), String> {
     HELD_BACK.lock().unwrap().remove(&(season, ap_slot));
+    PACE.lock().unwrap().remove(&(season, ap_slot));
     let dir = slot_dir(season, ap_slot);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
@@ -104,6 +105,17 @@ pub fn install(season: i64, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), String
     // (Called from `spawn_blocking`, where blocking on the runtime is fine.)
     tokio::runtime::Handle::current().block_on(ap_adapter::normalize_pngs(&dir));
     Ok(())
+}
+
+/// [`install`] as a worker's equal: it can take a while, and holds a permit for it.
+pub async fn install_pack(season: i64, ap_slot: i64, bytes: Arc<Vec<u8>>) -> Result<(), String> {
+    let permit = worker_permit().await.map_err(|Busy| BUSY.to_string())?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        install(season, ap_slot, &bytes)
+    })
+    .await
+    .map_err(|_| "Upload failed.".to_string())?
 }
 
 /// Remove a slot's installed pack.
@@ -144,52 +156,108 @@ pub struct Feed<'a> {
 }
 
 /// Compute the tracker state for a slot from its installed pack + what's fed
-/// to it, as JSON ([`poptracker::TrackerState`]). A pack that hit a limit isn't
-/// run again for a while: viewers' polls would restart it without end.
+/// to it, as JSON ([`poptracker::TrackerState`]). Viewers' polls would restart a
+/// pack without end, so one that hit a limit is held back, and any is paced by
+/// how long it took last time.
 pub async fn compute(
     season: i64,
     ap_slot: i64,
     version: u64,
     feed: Feed<'_>,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, ComputeError> {
     let key = (season, ap_slot);
-    if let Some(f) = HELD_BACK.lock().unwrap().get(&key)
-        && f.version == version
-        && f.at.elapsed() < HOLD_BACK
+    if let Some(h) = HELD_BACK.lock().unwrap().get(&key)
+        && h.version == version
+        && h.at.elapsed() < hold_for(h.strikes)
     {
-        return Err(f.message.clone());
+        return Err(ComputeError::Failed(h.message.clone()));
     }
-    let root = poptracker::pack_root(&slot_dir(season, ap_slot)).map_err(|e| e.to_string())?;
-    let _permit = worker_permit().await?;
-    let scratch = Scratch::new()?;
+    if PACE
+        .lock()
+        .unwrap()
+        .get(&key)
+        .is_some_and(|next| Instant::now() < *next)
+    {
+        return Err(ComputeError::Busy);
+    }
+    let root = poptracker::pack_root(&slot_dir(season, ap_slot))
+        .map_err(|e| ComputeError::Failed(e.to_string()))?;
+    let _permit = worker_permit().await.map_err(|Busy| ComputeError::Busy)?;
+    let _paced = Paced(key, Instant::now());
+    let scratch = Scratch::new().map_err(ComputeError::Failed)?;
     let request = Request {
         pack: root.clone(),
         feed: Some(feed),
     };
     match run_worker(&scratch, &root, &request).await {
         Err(Failure::Limit(message)) => {
-            let held = Held {
-                version,
-                at: Instant::now(),
-                message: message.clone(),
-            };
-            HELD_BACK.lock().unwrap().insert(key, held);
-            Err(message)
+            let mut held = HELD_BACK.lock().unwrap();
+            let strikes = held
+                .get(&key)
+                .filter(|h| h.version == version)
+                .map_or(1, |h| h.strikes + 1);
+            held.insert(
+                key,
+                Held {
+                    version,
+                    at: Instant::now(),
+                    strikes,
+                    message: message.clone(),
+                },
+            );
+            Err(ComputeError::Failed(message))
         }
-        r => r.map_err(Failure::message),
+        Err(f) => Err(ComputeError::Failed(f.message())),
+        Ok(state) => {
+            HELD_BACK.lock().unwrap().remove(&key);
+            Ok(state)
+        }
     }
 }
 
-/// A pack that hit a limit, and when, for this long.
-const HOLD_BACK: Duration = Duration::from_secs(5 * 60);
+/// Why [`compute`] gave no state.
+pub enum ComputeError {
+    /// Not now; the page asks again shortly.
+    Busy,
+    Failed(String),
+}
+
+/// How long a pack is held back after hitting a limit `strikes` times in a row:
+/// briefly at first, as a load spike can do it to a good pack.
+fn hold_for(strikes: u32) -> Duration {
+    Duration::from_secs(60 << strikes.saturating_sub(1).min(6))
+}
 
 struct Held {
     version: u64,
     at: Instant,
+    strikes: u32,
     message: String,
 }
 
 static HELD_BACK: Mutex<BTreeMap<(i64, i64), Held>> = Mutex::new(BTreeMap::new());
+
+/// How long a slot waits before its next run, after one that took `took`: so
+/// that a pack spends at most a quarter of the time running, however many poll.
+fn pace_after(took: Duration) -> Duration {
+    if took < Duration::from_secs(1) {
+        Duration::ZERO
+    } else {
+        took * 3
+    }
+}
+
+static PACE: Mutex<BTreeMap<(i64, i64), Instant>> = Mutex::new(BTreeMap::new());
+
+/// Sets the slot's next run when dropped, so an abandoned run counts as well.
+struct Paced((i64, i64), Instant);
+
+impl Drop for Paced {
+    fn drop(&mut self) {
+        let next = Instant::now() + pace_after(self.1.elapsed());
+        PACE.lock().unwrap().insert(self.0, next);
+    }
+}
 
 /// One compute per slot at a time, so viewers of a slot can't pile up workers.
 /// `None` when one is already running; dropping the claim ends it.
@@ -229,8 +297,11 @@ static WORKERS: Semaphore = Semaphore::const_new(4);
 static WAITING: AtomicUsize = AtomicUsize::new(0);
 const MAX_WAITING: usize = 16;
 
-async fn worker_permit() -> Result<SemaphorePermit<'static>, String> {
-    const BUSY: &str = "the server is busy running other packs; try again shortly";
+const BUSY: &str = "the server is busy running other packs; try again shortly";
+
+struct Busy;
+
+async fn worker_permit() -> Result<SemaphorePermit<'static>, Busy> {
     struct Waiting;
     impl Drop for Waiting {
         fn drop(&mut self) {
@@ -240,11 +311,11 @@ async fn worker_permit() -> Result<SemaphorePermit<'static>, String> {
     let waiting = WAITING.fetch_add(1, Ordering::Relaxed);
     let _waiting = Waiting;
     if waiting >= MAX_WAITING {
-        return Err(BUSY.into());
+        return Err(Busy);
     }
     match tokio::time::timeout(worker_timeout(), WORKERS.acquire()).await {
         Ok(Ok(permit)) => Ok(permit),
-        _ => Err(BUSY.into()),
+        _ => Err(Busy),
     }
 }
 
@@ -328,12 +399,14 @@ impl Failure {
 /// for it ends in " (deleted)"; the file at that path is then the new version,
 /// which speaks the same request format.
 fn own_exe() -> Result<PathBuf, String> {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
     let exe = std::env::current_exe().map_err(|e| format!("own path: {e}"))?;
-    let name = exe.as_os_str().to_string_lossy();
-    Ok(match name.strip_suffix(" (deleted)") {
-        Some(path) => PathBuf::from(path),
-        None => exe,
-    })
+    Ok(
+        match exe.as_os_str().as_bytes().strip_suffix(b" (deleted)") {
+            Some(path) => std::ffi::OsString::from_vec(path.to_vec()).into(),
+            None => exe,
+        },
+    )
 }
 
 /// Run a pack worker: this same program, in the sandbox, seeing only the pack
@@ -379,7 +452,11 @@ async fn run_worker(
     }
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        tracing::warn!("pack worker: {}: {}", out.status, capped(&stderr));
+        let what = format!("{}: {}", out.status, capped(&stderr));
+        if !brought_down(&out.status) {
+            return Err(Failure::Host(what));
+        }
+        tracing::warn!("pack worker: {what}");
         return Err(Failure::Limit(
             "the pack's code stopped the worker: it may have run out of memory".into(),
         ));
@@ -391,6 +468,14 @@ async fn run_worker(
             "the pack's worker answered badly: {e}"
         ))),
     }
+}
+
+/// Did a worker die running (a signal, or a panic) rather than fail to start?
+/// Bubblewrap passes a signal on as 128 + its number, and exits 1 when it can't
+/// run the program, as a shell's 126 and 127 mean the same.
+fn brought_down(status: &std::process::ExitStatus) -> bool {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal().is_some() || matches!(status.code(), Some(101 | 128..))
 }
 
 /// At most `MAX_ERROR` bytes of an error, which a pack can make as long as it
@@ -564,6 +649,28 @@ mod tests {
 
     fn meta(json: serde_json::Value) -> crate::meta::Meta {
         serde_json::from_value(json).unwrap()
+    }
+
+    #[test]
+    fn holds_grow_with_repeats_and_runs_are_paced() {
+        assert_eq!(hold_for(1), Duration::from_secs(60));
+        assert_eq!(hold_for(2), Duration::from_secs(120));
+        assert_eq!(hold_for(100), Duration::from_secs(3840));
+        assert_eq!(pace_after(Duration::from_millis(900)), Duration::ZERO);
+        assert_eq!(pace_after(Duration::from_secs(10)), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn only_a_running_workers_death_is_the_packs_doing() {
+        use std::os::unix::process::ExitStatusExt;
+        let exit = |code: i32| std::process::ExitStatus::from_raw(code << 8);
+        for code in [1, 2, 126, 127] {
+            assert!(!brought_down(&exit(code)), "{code}");
+        }
+        for code in [101, 134, 137] {
+            assert!(brought_down(&exit(code)), "{code}");
+        }
+        assert!(brought_down(&std::process::ExitStatus::from_raw(9)));
     }
 
     #[test]
