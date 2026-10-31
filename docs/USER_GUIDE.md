@@ -108,7 +108,9 @@ Click your slot on the live board to open its game page. It has four tabs:
 - **Universal Tracker.** Which of your locations are in logic right now,
   recomputed a few seconds after your items or checks change.
 - **PopTracker.** Upload a PopTracker pack (`.zip`) for your game to get its
-  map and auto-tracking in the browser.
+  map and auto-tracking in the browser. A pack's code runs sandboxed and is
+  stopped after 30 seconds (`pack_timeout_secs`); a pack that runs longer is
+  refused, or shows an error on its tab.
 - **Log.** This game's activity: items sent and received, hints, goal.
 
 #### Your game files

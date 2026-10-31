@@ -9,7 +9,7 @@ import time
 
 import requests
 
-from lib import check, summary, wait_for
+from lib import check, summary, wait_for, tiny_pack
 
 IMAGE = os.environ.get("IMAGE", "bifrost:dev")
 TAG = os.environ.get("AP_TAG", "0.6.7-bifrost.2")
@@ -56,6 +56,17 @@ try:
 
     r = sh("podman", "exec", "bfc", "sh", "-c", f"ls /var/lib/bifrost/ap/{TAG}/ | grep -c '^_speedups.*\\.so$'")
     check("installed release built its speedups (compiler in the image)", r.stdout.strip() == "1", r.stdout + r.stderr)
+
+    s.post(BASE + "/admin/seasons", data=dict(name="Packs"))
+    s.post(BASE + "/s/1/admin/signups", data=dict(open="1"))
+    s.post(BASE + "/s/1/signup", files={"yaml": ("y.yaml", b"name: Ann\ngame: ChecksFinder\nChecksFinder: {}\n")})
+    s.post(BASE + "/s/1/admin/generate")
+    wait_for(lambda: "Generated seed" in s.get(BASE + "/s/1/admin").text, 300, 3)
+    wait_for(lambda: "Ann" in s.get(BASE + "/s/1/board").text, 60)
+    r = s.post(BASE + "/s/1/game/1/poptracker", files={"pack": ("p.zip", tiny_pack())})
+    check("a PopTracker pack passes its worker in the container", "Pack rejected" not in r.text, r.text[:300])
+    d = s.get(BASE + "/s/1/game/1/poptracker/state").json()
+    check("…and tracks", d.get("state", {}).get("items", [{}])[0].get("active"), d)
 
     s.post(BASE + "/admin/settings/backups/now")
     page = wait_for(lambda: (p := s.get(BASE + "/admin/settings").text) and "Backing up" not in p and p, 120)

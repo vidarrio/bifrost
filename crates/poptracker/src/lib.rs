@@ -313,7 +313,7 @@ pub struct Marker {
 }
 
 /// A quick summary for validating an uploaded pack before accepting it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, serde::Deserialize)]
 pub struct Summary {
     pub items: usize,
     pub locations: usize,

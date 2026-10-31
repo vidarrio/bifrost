@@ -544,9 +544,12 @@ fn bwrap_args(job: &Job) -> Vec<OsString> {
         "--tmpfs".as_ref(),
         "/tmp".as_ref(),
     ]);
-    // The interpreter's own tree (a venv may live outside /usr).
-    for p in interpreter_roots(job.program) {
-        push(&["--ro-bind-try".as_ref(), p.as_os_str(), p.as_os_str()]);
+    // The interpreter's own tree (a venv may live outside /usr), unless the
+    // job names the program itself as all it needs of it.
+    if !job.read.iter().any(|p| p == job.program) {
+        for p in interpreter_roots(job.program) {
+            push(&["--ro-bind-try".as_ref(), p.as_os_str(), p.as_os_str()]);
+        }
     }
     for p in &job.read {
         push(&["--ro-bind-try".as_ref(), p.as_os_str(), p.as_os_str()]);

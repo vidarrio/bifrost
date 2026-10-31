@@ -393,6 +393,7 @@ const FILE_KEYS: &[(&str, &str, &str)] = &[
     ("sandbox", "bwrap", "BIFROST_BWRAP"),
     ("sandbox", "mem_mb", "BIFROST_SANDBOX_MEM_MB"),
     ("sandbox", "cpu_secs", "BIFROST_SANDBOX_CPU_SECS"),
+    ("sandbox", "pack_timeout_secs", "BIFROST_PACK_TIMEOUT_SECS"),
     ("sandbox", "file_mb", "BIFROST_SANDBOX_FILE_MB"),
     ("sandbox", "generate_mem_mb", "BIFROST_GENERATE_MEM_MB"),
     ("sandbox", "generate_cpu_secs", "BIFROST_GENERATE_CPU_SECS"),
@@ -538,6 +539,7 @@ pub const EXAMPLE: &str = r#"# $BIFROST_DATA/config.toml — every setting here 
 # mode = "auto"                      # BIFROST_SANDBOX: auto | bwrap | none
 # mem_mb = 4096                      # BIFROST_SANDBOX_MEM_MB
 # cpu_secs = 1800                    # BIFROST_SANDBOX_CPU_SECS
+# pack_timeout_secs = 30             # BIFROST_PACK_TIMEOUT_SECS
 # file_mb = 1024                     # BIFROST_SANDBOX_FILE_MB
 # generate_mem_mb = 16384            # BIFROST_GENERATE_MEM_MB (address space, not RSS)
 # generate_cpu_secs = 7200           # BIFROST_GENERATE_CPU_SECS

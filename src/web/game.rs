@@ -54,12 +54,14 @@ pub(crate) async fn pt_upload(
         return render::notice("That doesn't look like a .zip pack file.", false, &back)
             .into_response();
     }
-    // validate + install off the async runtime (runs pack Lua + filesystem).
+    // Validation runs the pack's Lua, in a worker; a pack that fails it, or runs
+    // too long, is never installed.
+    let bytes = std::sync::Arc::new(bytes);
+    if let Err(e) = ptrack::validate(bytes.to_vec()).await {
+        return render::notice(&format!("Pack rejected: {e}"), false, &back).into_response();
+    }
     let season2 = season;
-    let res = tokio::task::spawn_blocking(move || {
-        ptrack::validate(&bytes).and_then(|_sum| ptrack::install(season2, ap_slot, &bytes))
-    })
-    .await;
+    let res = tokio::task::spawn_blocking(move || ptrack::install(season2, ap_slot, &bytes)).await;
     match res {
         Ok(Ok(())) => Redirect::to(&back).into_response(),
         Ok(Err(e)) => render::notice(&format!("Pack rejected: {e}"), false, &back).into_response(),
@@ -143,32 +145,29 @@ pub(crate) async fn pt_state(
         .map(|s| s.all_locations.clone())
         .unwrap_or_default();
     let version = ptrack::pack_version(season, ap_slot);
-    let season2 = season;
-    let state = tokio::task::spawn_blocking(move || {
-        // What AP tells the slot's clients on connect: its slot data and the
-        // multiworld's players.
-        let connect = (meta.as_deref())
-            .map(|m| ptrack::Connect::from_meta(m, ap_slot))
-            .unwrap_or_default();
-        ptrack::compute(
-            season2,
-            ap_slot,
-            &items,
-            &checked,
-            &valid_locations,
-            ap_slot,
-            &connect,
-        )
-    })
-    .await;
-    match state {
-        Ok(Ok(ts)) => Json(serde_json::json!({
+    // One compute per slot at a time: the page polls again shortly.
+    let Some(_claim) = ptrack::claim_compute(season, ap_slot) else {
+        return Json(serde_json::json!({"pack": true, "busy": true}));
+    };
+    // What AP tells the slot's clients on connect: its slot data and the
+    // multiworld's players.
+    let connect = (meta.as_deref())
+        .map(|m| ptrack::Connect::from_meta(m, ap_slot))
+        .unwrap_or_default();
+    let feed = ptrack::Feed {
+        items: &items,
+        checked: &checked,
+        valid_locations: &valid_locations,
+        player: ap_slot,
+        connect,
+    };
+    match ptrack::compute(season, ap_slot, feed).await {
+        Ok(state) => Json(serde_json::json!({
             "pack": true,
             "version": version,
-            "state": serde_json::to_value(&ts).unwrap_or_default(),
+            "state": state,
         })),
-        Ok(Err(e)) => Json(serde_json::json!({"pack": true, "error": e})),
-        Err(_) => Json(serde_json::json!({"pack": true, "error": "compute failed"})),
+        Err(e) => Json(serde_json::json!({"pack": true, "error": e})),
     }
 }
 

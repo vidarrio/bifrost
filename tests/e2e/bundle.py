@@ -16,7 +16,7 @@ import time
 
 import requests
 
-from lib import REPO, Server, check, get, post, summary, wait_for
+from lib import REPO, Server, check, get, post, summary, wait_for, tiny_pack
 
 _built = glob.glob(os.path.join(REPO, "dist", "bifrost-*-x86_64-linux"))
 if not _built:
@@ -51,6 +51,10 @@ try:
     ps = lambda: subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True).stdout
     check("live server on the bundled Python", wait_for(lambda: any(l.startswith(py) and "bifrost_server.py" in l for l in ps().splitlines()), 30))
     check("tracker connects", wait_for(lambda: "Ann" in get(srv.session(), f"/s/{sid}/board").text, 60))
+    r = post(root, f"/s/{sid}/game/1/poptracker", files={"pack": ("p.zip", tiny_pack())})
+    check("a PopTracker pack passes its worker in the bundle", "Pack rejected" not in r.text, r.text[:300])
+    d = get(root, f"/s/{sid}/game/1/poptracker/state").json()
+    check("…and tracks", d.get("state", {}).get("items", [{}])[0].get("active"), d)
 
     srv.stop()
     srv.start()

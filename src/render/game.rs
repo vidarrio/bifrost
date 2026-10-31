@@ -332,6 +332,7 @@ pub(super) const PT_JS: &str = r#"<script>
  }
  function draw(d){
   if(!d||!d.pack){ host.textContent='No pack.'; return; }
+  if(d.busy){ setTimeout(load,2000); return; }
   if(d.error){ host.textContent='Tracker error: '+d.error; return; }
   ver=(d.version!=null?(''+d.version):''); st=d.state||{}; buildIndex();
   if(host.dataset.built){ update(); return; }
