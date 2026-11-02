@@ -252,6 +252,10 @@ pub(crate) async fn admin_archive_season(
         return render::notice("Only a live season can be archived.", false, "admin")
             .into_response();
     }
+    if ctx.rt.with_genstate(|g| g.0).unwrap_or(true) {
+        return render::notice("It's busy: wait for that to finish.", false, "admin")
+            .into_response();
+    }
     let seed = ctx.row.seed.clone().unwrap_or_default();
     // The standings come from the live board: refuse until it has seen this
     // season's room (just after a restart, or while the server is down or
@@ -505,6 +509,9 @@ pub(crate) async fn admin_world_approve(
     let (who, is_admin) = ctx.ident(&me);
     if !is_admin {
         return render::notice("Admins only.", false, "board").into_response();
+    }
+    if !matches!(ctx.state(), db::State::Draft | db::State::Signup) {
+        return render::notice(LOCKED_WORLDS, false, "admin").into_response();
     }
     match worlds::approve(&st.db, ctx.id, &f.name, &who).await {
         Ok(_) => Redirect::to(&ctx.url("/admin")).into_response(),
@@ -872,12 +879,34 @@ fn name_mismatch() -> Response {
     .into_response()
 }
 
-/// Whether generation is under way for this season.
-fn generating(ctx: &scope::SeasonCtx) -> bool {
-    ctx.rt.with_genstate(|g| g.0).unwrap_or(true)
+/// Claim the season against generation, re-rolls and archiving. False if something
+/// else has it.
+fn claim(ctx: &scope::SeasonCtx, doing: &str) -> bool {
+    ctx.rt
+        .with_genstate(|g| {
+            if g.0 {
+                return false;
+            }
+            g.0 = true;
+            g.1 = doing.to_string();
+            true
+        })
+        .unwrap_or(false)
+}
+
+fn release(ctx: &scope::SeasonCtx, msg: &str) {
+    ctx.rt.with_genstate(|g| {
+        g.0 = false;
+        g.1 = msg.to_string();
+    });
+}
+
+fn typed_name_matches(ctx: &scope::SeasonCtx, typed: &str) -> bool {
+    typed.trim() == ctx.row.name.trim()
 }
 
 /// Cancel generation: a live season goes back to signups, as if never generated.
+/// The server stops first, so nothing writes to what's being cleared.
 pub(crate) async fn admin_cancel(
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
@@ -887,31 +916,42 @@ pub(crate) async fn admin_cancel(
     if !ctx.can_manage(&me) {
         return render::notice("Admins only.", false, "board").into_response();
     }
-    if f.name.trim() != ctx.row.name {
+    if !typed_name_matches(&ctx, &f.name) {
         return name_mismatch();
     }
-    if generating(&ctx) {
-        return render::notice("It's generating: wait for that to finish.", false, "admin")
+    if !ctx.state().is_live() {
+        return render::notice("Only a live season can be cancelled.", false, "admin")
             .into_response();
     }
+    if !claim(&ctx, "Cancelling…") {
+        return render::notice(
+            "It's busy generating: wait for that to finish.",
+            false,
+            "admin",
+        )
+        .into_response();
+    }
+    st.seasons.stop(ctx.id).await;
     match st.db.cancel_generation(ctx.id).await {
         Ok(true) => {}
-        Ok(false) => {
-            return render::notice("Only a live season can be cancelled.", false, "admin")
-                .into_response();
-        }
-        Err(e) => {
-            tracing::warn!("cancelling season {}: {e}", ctx.id);
+        outcome => {
+            // Nothing changed, so it's still live: bring it back up.
+            if let Err(e) = outcome {
+                tracing::warn!("cancelling season {}: {e}", ctx.id);
+            }
+            st.seasons.start_live(ctx.id).await;
+            release(&ctx, "Couldn't cancel it.");
             return render::notice("Couldn't cancel it.", false, "admin").into_response();
         }
     }
-    st.seasons.stop(ctx.id).await;
     generate::clear_save(ctx.id).await;
     generate::clear_world(ctx.id).await;
+    generate::clear_logs(ctx.id).await;
     let _ = generate::clear_player_yamls(ctx.id).await;
     ptrack::remove_season(ctx.id);
     apinstall::pin(ctx.id, None);
     export_mc_whitelist(&st).await;
+    release(&ctx, "Cancelled: back to signups.");
     tracing::info!(
         "season {} cancelled back to signups by {}",
         ctx.id,
@@ -928,10 +968,21 @@ pub(crate) async fn admin_delete_season(
     me: auth::Me,
     Form(f): Form<TypedNameForm>,
 ) -> Response {
+    if !ctx.can_manage(&me) {
+        return render::notice("Admins only.", false, "board").into_response();
+    }
     let sysadmin = me.can(auth::Action::ManageInstance);
-    let allowed = match ctx.state() {
-        db::State::Draft | db::State::Signup => ctx.can_manage(&me),
-        db::State::Archived => sysadmin,
+    match ctx.state() {
+        db::State::Draft | db::State::Signup => {}
+        db::State::Archived if sysadmin => {}
+        db::State::Archived => {
+            return render::notice(
+                "Only a sysadmin can delete a finished season.",
+                false,
+                "admin",
+            )
+            .into_response();
+        }
         db::State::Live => {
             return render::notice(
                 "A live season can't be deleted. Use Cancel generation first.",
@@ -944,30 +995,35 @@ pub(crate) async fn admin_delete_season(
             return render::notice("It's generating: wait for that to finish.", false, "admin")
                 .into_response();
         }
-    };
-    if !allowed {
-        return render::notice("Admins only.", false, "board").into_response();
     }
-    if f.name.trim() != ctx.row.name {
+    if !typed_name_matches(&ctx, &f.name) {
         return name_mismatch();
     }
-    if generating(&ctx) {
-        return render::notice("It's generating: wait for that to finish.", false, "admin")
-            .into_response();
+    if !claim(&ctx, "Deleting…") {
+        return render::notice(
+            "It's busy generating: wait for that to finish.",
+            false,
+            "admin",
+        )
+        .into_response();
     }
     match st.db.delete_season(ctx.id, sysadmin).await {
         Ok(true) => {}
-        Ok(false) => {
-            return render::notice("It can't be deleted at this stage.", false, "admin")
-                .into_response();
-        }
-        Err(e) => {
-            tracing::warn!("deleting season {}: {e}", ctx.id);
+        outcome => {
+            if let Err(e) = outcome {
+                tracing::warn!("deleting season {}: {e}", ctx.id);
+            }
+            release(&ctx, "Couldn't delete it.");
             return render::notice("Couldn't delete it.", false, "admin").into_response();
         }
     }
     st.seasons.forget(ctx.id).await;
-    let _ = tokio::fs::remove_dir_all(&ctx.dirs().root).await;
+    if let Err(e) = tokio::fs::remove_dir_all(&ctx.dirs().root).await
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        // The season is gone by now; say what's left for the operator to remove.
+        tracing::warn!("season {} deleted, but not its files: {e}", ctx.id);
+    }
     ptrack::remove_season(ctx.id);
     apinstall::pin(ctx.id, None);
     if let Some(p) = ctx.row.seed.as_deref().and_then(archive::bundle_path) {

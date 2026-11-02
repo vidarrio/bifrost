@@ -115,7 +115,7 @@ pub(super) fn season_load_line(season: &crate::db::SeasonRow) -> String {
 }
 
 /// The admin control centre: generate, open/close signups, manage the deployed
-/// players + apworlds, reset, and run server commands. Assumes the caller has
+/// players + apworlds, and run server commands. Assumes the caller has
 /// already confirmed the viewer is an admin.
 #[allow(clippy::too_many_arguments)]
 pub fn admin_page(
@@ -147,7 +147,7 @@ pub fn admin_page(
         season.state().as_str(),
     ));
     // Tabbed season console; the tab survives form posts via
-    // the URL hash (see <button type="button" class="gtab on" data-tab="tab-overview">Overview</button><button type="button" class="gtab" data-tab="tab-entries">Signups &amp; apworlds</button><button type="button" class="gtab" data-tab="tab-files">Player files</button><button type="button" class="gtab" data-tab="tab-conn">Connection</button><button type="button" class="gtab" data-tab="tab-options">Options</button><button type="button" class="gtab" data-tab="tab-archive">Archive &amp; reset</button>_JS).
+    // the URL hash (see <button type="button" class="gtab on" data-tab="tab-overview">Overview</button><button type="button" class="gtab" data-tab="tab-entries">Signups &amp; apworlds</button><button type="button" class="gtab" data-tab="tab-files">Player files</button><button type="button" class="gtab" data-tab="tab-conn">Connection</button><button type="button" class="gtab" data-tab="tab-options">Options</button><button type="button" class="gtab" data-tab="tab-archive">Archive</button>_JS).
     let conn = if connected { "connected" } else { "waiting" };
     let seed_txt = seed.filter(|s| !s.is_empty()).unwrap_or("—");
     let addr = connect
@@ -158,7 +158,7 @@ pub fn admin_page(
         esc(seed_txt)
     ));
     b.push_str(TABS_CSS);
-    b.push_str(r#"<div class="gtabs"><button type="button" class="gtab on" data-tab="tab-overview">Overview</button><button type="button" class="gtab" data-tab="tab-entries">Signups &amp; apworlds</button><button type="button" class="gtab" data-tab="tab-files">Player files</button><button type="button" class="gtab" data-tab="tab-conn">Connection</button><button type="button" class="gtab" data-tab="tab-options">Options</button><button type="button" class="gtab" data-tab="tab-archive">Archive &amp; reset</button></div>"#);
+    b.push_str(r#"<div class="gtabs"><button type="button" class="gtab on" data-tab="tab-overview">Overview</button><button type="button" class="gtab" data-tab="tab-entries">Signups &amp; apworlds</button><button type="button" class="gtab" data-tab="tab-files">Player files</button><button type="button" class="gtab" data-tab="tab-conn">Connection</button><button type="button" class="gtab" data-tab="tab-options">Options</button><button type="button" class="gtab" data-tab="tab-archive">Archive</button></div>"#);
 
     b.push_str(r#"<div class="gtabpanel" id="tab-overview">"#);
     // Signups
@@ -226,6 +226,10 @@ pub fn admin_page(
 
     b.push_str(r#"<div class="gtabpanel" id="tab-entries" hidden>"#);
     // Signups (the queue for the next season)
+    let pre_gen = matches!(
+        season.state(),
+        crate::db::State::Draft | crate::db::State::Signup
+    );
     b.push_str(r#"<h2>Signups</h2>"#);
     if subs.is_empty() {
         b.push_str(r#"<div class="empty">No signups.</div>"#);
@@ -248,20 +252,20 @@ pub fn admin_page(
                 esc(&s.slot_name),
                 esc(&s.game),
                 esc(&s.username),
-                action_btn(
-                    "admin/delete-player",
-                    &[("id", &s.id.to_string())],
-                    "delete",
-                    true,
-                    &format!("Delete {}'s signup?", s.slot_name)
-                )
+                if pre_gen {
+                    action_btn(
+                        "admin/delete-player",
+                        &[("id", &s.id.to_string())],
+                        "delete",
+                        true,
+                        &format!("Delete {}'s signup?", s.slot_name),
+                    )
+                } else {
+                    String::new()
+                }
             ));
         }
     }
-    let pre_gen = matches!(
-        season.state(),
-        crate::db::State::Draft | crate::db::State::Signup
-    );
     if pre_gen {
         b.push_str(&format!(
             r#"<div class="btnrow">{}</div>"#,
@@ -323,6 +327,7 @@ pub fn admin_page(
                 r#"<div class="hintrow"><span>{} <span class="statline">· {}</span></span><span>{to_catalog} {}</span></div>"#,
                 esc(&w.file),
                 esc(&w.detail),
+                if pre_gen {
                 action_btn(
                     "admin/delete-apworld",
                     &[("name", &w.file)],
@@ -330,6 +335,9 @@ pub fn admin_page(
                     true,
                     &format!("Delete {}?", w.file)
                 )
+                } else {
+                    String::new()
+                }
             ));
         }
     }

@@ -9,13 +9,13 @@ import sys
 from lib import Server, ap_servers, check, first_game, get, new_season, post, summary, wait_for
 
 YAML = b"name: %s\ngame: ChecksFinder\nChecksFinder: {}\n"
-srv = Server("season_actions", port=18192, ap_ports="39208-39210")
+srv = Server("season_actions", port=18185, ap_ports="39208-39210")
 srv.start()
 try:
     root = srv.setup_sysadmin()
-    mod, ann, cat, late = (srv.invite_user(root, n) for n in ("mod", "ann", "cat", "late"))
+    mod, other, ann, cat, late = (srv.invite_user(root, n) for n in ("mod", "other", "ann", "cat", "late"))
     with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
-        db.execute("UPDATE account SET role = 'moderator' WHERE username = 'mod'")
+        db.execute("UPDATE account SET role = 'moderator' WHERE username IN ('mod', 'other')")
     dirs = lambda s: os.path.join(srv.data, "seasons", s)
 
     # Before generation.
@@ -27,6 +27,8 @@ try:
     check("deleting needs the season's name", "type the season" in r.text and get(mod, f"/s/{sid}/admin").status_code == 200, r.text[-200:])
     post(ann, f"/s/{sid}/admin/season/delete", data=dict(name="Draft one"))
     check("a player can't delete it", os.path.isdir(dirs(sid)))
+    r = post(other, f"/s/{sid}/admin/season/delete", data=dict(name="Draft one"))
+    check("nor a moderator of other seasons", os.path.isdir(dirs(sid)) and "Admins only" in r.text, r.text[-200:])
     r = post(mod, f"/s/{sid}/admin/season/delete", data=dict(name="Draft one"))
     check("its moderator can", get(mod, f"/s/{sid}/admin").status_code == 404 and not os.path.exists(dirs(sid)), r.url)
 
@@ -66,6 +68,10 @@ try:
     check("cancelling needs the season's name", "type the season" in r.text and first_game(mod, sid) == game, r.text[-200:])
     post(ann, f"/s/{sid}/admin/cancel", data=dict(name="Live one"))
     check("a player can't cancel", first_game(mod, sid) == game)
+    r = post(other, f"/s/{sid}/admin/cancel", data=dict(name="Live one"))
+    check("nor a moderator of other seasons", first_game(mod, sid) == game and "Admins only" in r.text, r.text[-200:])
+    r = post(other, f"/s/{sid}/admin/season/delete", data=dict(name="wrong"))
+    check("who isn't told its stage either", "Admins only" in r.text and "live" not in r.text.lower().split("<main>")[-1], r.text[-200:])
     post(mod, f"/s/{sid}/admin/cancel", data=dict(name="Live one"))
     page = get(ann, f"/s/{sid}/signup").text
     check("cancelling reopens signups", 'id="addgame"' in page, page[-300:])
@@ -79,6 +85,8 @@ try:
     with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
         row = db.execute("SELECT state, seed, ap_port FROM season WHERE id = ?", (sid,)).fetchone()
     check("…and its claim on a port", row == ("signup", None, None), row)
+    logs = os.path.join(dirs(sid), "logs")
+    check("…and its logs", not os.path.isdir(logs) or not os.listdir(logs), os.listdir(logs) if os.path.isdir(logs) else None)
     check("the server has stopped", wait_for(lambda: not ap_servers(srv), 30, 1), ap_servers(srv))
 
     # It can go round again, then be archived.

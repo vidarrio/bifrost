@@ -258,6 +258,8 @@ The season console has six tabs:
     after generation needs a new invite link. Signups, YAMLs, notes, apworlds and
     partners from before generation stay. A live season can't be deleted until it's
     cancelled.
+    With an external Archipelago server, Bifrost can't stop it, so stop that server
+    yourself.
   - **Archived: delete this season.** Sysadmins only. Removes it, its summary and its
     bundle.
 
