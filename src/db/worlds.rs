@@ -295,8 +295,10 @@ mod tests {
                 "",
                 "/x.yaml",
                 Some("foo.apworld"),
+                0,
             )
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(
             db.held_submissions(season, "foo.apworld").await,
@@ -311,5 +313,47 @@ mod tests {
         assert_eq!(db.take_world_request(season, "foo.apworld").await, Some(r));
         assert!(db.world_requests(season).await.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn the_games_limit_holds_per_player_and_season() {
+        let (db, dir) = db("games-limit").await;
+        let s1 = db.create_season("S1", None, 0).await.unwrap();
+        let s2 = db.create_season("S2", None, 0).await.unwrap();
+        let a = db
+            .create_account("a", "h", crate::auth::Role::User, 0)
+            .await
+            .unwrap();
+        let b = db
+            .create_account("b", "h", crate::auth::Role::User, 0)
+            .await
+            .unwrap();
+        let add = |season, account, name: &'static str, limit| {
+            let db = &db;
+            async move {
+                db.add_submission(season, account, name, "G", false, "", "/y", None, limit)
+                    .await
+                    .unwrap()
+                    .is_some()
+            }
+        };
+        assert!(add(s1, a, "A1", 2).await);
+        assert!(add(s1, a, "A2", 2).await);
+        assert!(!add(s1, a, "A3", 2).await, "past the limit");
+        assert!(add(s1, b, "B1", 2).await, "someone else's count is theirs");
+        assert!(
+            add(s2, a, "A4", 2).await,
+            "another season's count is its own"
+        );
+        assert!(add(s1, a, "A5", 0).await, "0 is no limit");
+        let names: Vec<_> = db
+            .submissions(s1)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.slot_name)
+            .collect();
+        assert_eq!(names, ["A1", "A2", "A5", "B1"]);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

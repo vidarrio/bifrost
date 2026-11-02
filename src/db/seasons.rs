@@ -121,6 +121,9 @@ impl State {
 /// cap).
 pub const MAX_DAILY_HINTS: i64 = 1000;
 
+/// The highest per-player limit on games a moderator can set.
+pub const MAX_GAMES_LIMIT: i64 = 1000;
+
 #[derive(Debug, Clone, FromRow)]
 pub struct SeasonRow {
     pub id: i64,
@@ -138,6 +141,8 @@ pub struct SeasonRow {
     /// Bonus hints a player can earn from minesweeper in any 24 hours; 0 is
     /// no cap.
     pub mine_daily_hints: i64,
+    /// How many games a player may sign up with (0 = no limit).
+    pub max_games: i64,
     pub ap_port: Option<i64>,
     /// The Archipelago version that generated its current seed (it keeps
     /// running on that one; see `apinstall`).
@@ -161,7 +166,7 @@ impl SeasonRow {
 }
 
 const COLS: &str = "id, name, state, created_by, created_at, seed, live_at, archived_at,
-                    minesweeper_enabled, mc_enabled, mine_daily_hints, ap_port, ap_version";
+                    minesweeper_enabled, mc_enabled, mine_daily_hints, max_games, ap_port, ap_version";
 
 /// Why a transition was refused.
 #[derive(Debug, PartialEq)]
@@ -565,6 +570,15 @@ impl Db {
     pub async fn set_minesweeper_enabled(&self, id: i64, on: bool) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE season SET minesweeper_enabled = ? WHERE id = ?")
             .bind(on)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_max_games(&self, id: i64, limit: i64) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE season SET max_games = ? WHERE id = ?")
+            .bind(limit)
             .bind(id)
             .execute(&self.pool)
             .await?;

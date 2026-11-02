@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A player can sign up with several games in a season: once you have one, the
+  signup page offers *Add another game*. A season's moderators can limit it on the
+  Options tab (0, the default, means no limit), and a player can claim more than one
+  slot in a season. Each signup's YAML now has to hold one player; a file with several
+  is refused.
 - PopTracker items draw with their packs' image filters, `disabled_img` and overlay
   images, and maps draw trapezoid, triangle and kite markers with their orientation
   and border, as packs ask.

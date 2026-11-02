@@ -36,7 +36,19 @@ pub(crate) async fn signup_get(
         manual: st.db.approval().await == db::Approval::Manual,
         catalog: st.db.catalog().await,
     };
-    render::signup_page(&subs, &me, is_admin, open, &worlds)
+    render::signup_page(&subs, &me, is_admin, open, ctx.row.max_games, &worlds)
+}
+
+/// Whether this player already has as many games as the season allows. An early
+/// answer, so a refused player installs nothing and spends no check; the insert
+/// in `add_submission` is what holds the limit.
+async fn at_games_limit(st: &AppState, ctx: &scope::SeasonCtx, account: i64) -> Option<String> {
+    let limit = ctx.row.max_games;
+    (limit > 0 && st.db.games_of(ctx.id, account).await >= limit).then(|| limit_message(limit))
+}
+
+fn limit_message(limit: i64) -> String {
+    format!("You've reached this season's limit of {limit} game(s) per player.")
 }
 
 /// Step 1 of signup: put a custom world in the season — a catalog pick
@@ -51,6 +63,9 @@ pub(crate) async fn signup_apworld(
     mut mp: Multipart,
 ) -> Json<serde_json::Value> {
     let fail = |e: &str| Json(serde_json::json!({"ok": false, "error": e}));
+    if let Some(e) = at_games_limit(&st, &ctx, me.id()).await {
+        return fail(&e);
+    }
     // Worlds change only while the season takes signups — never under a
     // season that's being played.
     if !ctx.state().accepts_signups() {
@@ -107,6 +122,7 @@ pub(crate) async fn signup_apworld(
 /// Step 2 of signup: validate a YAML live against the installed worlds (incl. an
 /// apworld just installed in step 1). Returns JSON for the wizard.
 pub(crate) async fn signup_check(
+    State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     mut mp: Multipart,
 ) -> Json<serde_json::Value> {
@@ -129,12 +145,34 @@ pub(crate) async fn signup_check(
                 .first()
                 .map(|p| (p.name.clone(), p.game.clone().unwrap_or_default()))
                 .unwrap_or_default();
-            Json(serde_json::json!({
-                "ok": r.ok, "name": name, "game": game, "errors": r.errors
-            }))
+            let taken = r.ok
+                && st
+                    .db
+                    .submissions(ctx.id)
+                    .await
+                    .is_ok_and(|subs| subs.iter().any(|s| s.slot_name == name));
+            let refusal = if r.ok && r.players.len() > 1 {
+                Some(worlds::ONE_GAME_PER_FILE.to_string())
+            } else {
+                taken.then(|| slot_taken(&name))
+            };
+            match refusal {
+                Some(e) => {
+                    Json(serde_json::json!({"ok": false, "name": name, "game": game, "error": e}))
+                }
+                None => Json(serde_json::json!({
+                    "ok": r.ok, "name": name, "game": game, "errors": r.errors
+                })),
+            }
         }
         Err(e) => Json(serde_json::json!({"ok": false, "error": e})),
     }
+}
+
+fn slot_taken(name: &str) -> String {
+    format!(
+        "The slot name '{name}' is already taken in this season. Each game needs its own: change name: in the YAML and try again. To replace your own signup, remove it first."
+    )
 }
 
 pub(crate) async fn signup_post(
@@ -147,6 +185,9 @@ pub(crate) async fn signup_post(
     let (_me, _) = ctx.ident(&me);
     if !ctx.state().accepts_signups() {
         return render::signup_result("Signups are closed right now.", false);
+    }
+    if let Some(e) = at_games_limit(&st, &ctx, my_id).await {
+        return render::signup_result(&e, false);
     }
     let mut yaml: Option<Vec<u8>> = None;
     let mut is_custom = false;
@@ -181,6 +222,10 @@ pub(crate) async fn signup_post(
         if yaml.len() > checker::MAX_YAML {
             return render::signup_result("That YAML is too large.", false);
         }
+        // A first look, so the player hears now; the check on approval decides.
+        if worlds::yaml_names_several(&yaml_str) {
+            return render::signup_result(worlds::ONE_GAME_PER_FILE, false);
+        }
         match worlds::yaml_name_game(&yaml_str) {
             (Some(name), game) => (name, game.unwrap_or_else(|| "?".into())),
             (None, _) => {
@@ -209,6 +254,10 @@ pub(crate) async fn signup_post(
                 ),
                 false,
             );
+        }
+        // Every document in a file becomes a slot, but a signup counts as one game.
+        if result.players.len() > 1 {
+            return render::signup_result(worlds::ONE_GAME_PER_FILE, false);
         }
         (
             p0.name.clone(),
@@ -261,24 +310,31 @@ pub(crate) async fn signup_post(
             &coop_clean,
             &yaml_path,
             (!held_for.is_empty()).then_some(held_for.as_str()),
+            ctx.row.max_games,
         )
         .await
     {
-        Ok(_) if !held_for.is_empty() => render::signup_result(
+        Ok(None) => {
+            let _ = tokio::fs::remove_file(&yaml_path).await;
+            render::signup_result(&limit_message(ctx.row.max_games), false)
+        }
+        Ok(Some(_)) if !held_for.is_empty() => render::signup_result(
             &format!(
                 "Signed up: {slot_name} — held until a moderator approves {held_for}; your YAML is checked then."
             ),
             true,
         ),
-        Ok(_) => render::signup_result(&format!("Signed up: {slot_name} — {game}."), true),
-        Err(_) => {
+        Ok(Some(_)) => render::signup_result(&format!("Signed up: {slot_name} — {game}."), true),
+        Err(e) => {
             let _ = tokio::fs::remove_file(&yaml_path).await;
-            render::signup_result(
-                &format!(
-                    "'{slot_name}' is already signed up — delete that entry first to resubmit."
-                ),
-                false,
-            )
+            if e.as_database_error()
+                .is_some_and(|d| d.is_unique_violation())
+            {
+                render::signup_result(&slot_taken(&slot_name), false)
+            } else {
+                tracing::warn!("storing a signup in season {}: {e}", ctx.id);
+                render::signup_result("Couldn't store the signup.", false)
+            }
         }
     }
 }

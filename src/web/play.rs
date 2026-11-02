@@ -76,12 +76,6 @@ pub(crate) async fn claim_post(
     }
     match f.op.as_str() {
         "claim" => match st.db.claim_one(season, f.slot_id, my_id).await {
-            Ok(db::ClaimOutcome::AlreadyHave(name)) => render::notice(
-                &format!("You already claim {name} — one slot per player. Unclaim it first if you want to move."),
-                false,
-                &back,
-            )
-            .into_response(),
             Ok(db::ClaimOutcome::SlotTaken) => {
                 render::notice("That slot is already claimed.", false, &back).into_response()
             }
