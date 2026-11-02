@@ -89,7 +89,7 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
         }
         _ => ("No season under way".to_string(), String::new()),
     };
-    let past: Vec<(i64, String, i64)> = seen
+    let past: Vec<(Id, String, i64)> = seen
         .iter()
         .filter(|s| s.state() == db::State::Archived)
         .cloned()
@@ -99,7 +99,7 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
     // Everything operator-specific comes from the instance settings; the AP
     // version from the install Bifrost actually runs.
     let inst = st.db.instance().await;
-    let live: Vec<(i64, String)> = seen
+    let live: Vec<(Id, String)> = seen
         .iter()
         .filter(|s| s.state() == db::State::Live)
         .map(|s| (s.id, s.name.clone()))

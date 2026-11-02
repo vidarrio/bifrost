@@ -1,6 +1,7 @@
 //! The season console: lifecycle, players, worlds, moderators, connection, archive.
 
 use super::*;
+use crate::id::Id;
 
 /// Gather everything the admin page shows and render it.
 pub(crate) async fn render_admin(
@@ -171,7 +172,7 @@ pub(crate) async fn admin_regenerate(
 }
 
 /// Delete the season's signup queue: its `submission` rows and their files.
-pub(crate) async fn clear_signups(st: &AppState, season: i64) {
+pub(crate) async fn clear_signups(st: &AppState, season: Id) {
     if let Ok(files) = st.db.clear_submissions(season).await {
         for f in files {
             let _ = tokio::fs::remove_file(&f).await;
@@ -181,7 +182,7 @@ pub(crate) async fn clear_signups(st: &AppState, season: i64) {
 
 /// Delete the current season's players: every Bifrost slot (claims cascade) and
 /// the staged Players/ YAMLs.
-pub(crate) async fn clear_current_players(st: &AppState, season: i64) {
+pub(crate) async fn clear_current_players(st: &AppState, season: Id) {
     let _ = st.db.clear_all_slots(season).await;
     let _ = st.db.clear_seat_links(season).await;
     let _ = generate::clear_player_yamls(season).await;

@@ -14,7 +14,7 @@ import zipfile
 
 import requests
 
-from lib import AP_DIR as AP, BIN, DEV, REPO, Server, check, descendants, get, post, summary, wait_for
+from lib import AP_DIR as AP, BIN, DEV, REPO, Server, check, descendants, first_game, get, new_season, post, summary, wait_for
 
 YAML = b"name: Ann\ngame: ChecksFinder\nChecksFinder: {}\n"
 ITEMS = """[{"name":"Key","type":"toggle","img":"x.png","codes":"key"},
@@ -58,23 +58,24 @@ def pack(init):
 
 
 def live_season(srv):
+    global sid, gid
     root = srv.setup_sysadmin()
-    post(root, "/admin/seasons", data=dict(name="Packs"))
-    post(root, "/s/1/admin/signups", data=dict(open="1"))
-    post(root, "/s/1/signup", files={"yaml": ("y.yaml", YAML)})
-    post(root, "/s/1/admin/generate")
-    wait_for(lambda: "Generated seed" in get(root, "/s/1/admin").text, 300, 3)
-    wait_for(lambda: "Ann" in get(root, "/s/1/board").text, 60, 2)
-    wait_for(lambda: get(root, "/s/1/game/1").status_code == 200, 60, 2)
+    sid = new_season(root, "Packs")
+    post(root, f"/s/{sid}/admin/signups", data=dict(open="1"))
+    post(root, f"/s/{sid}/signup", files={"yaml": ("y.yaml", YAML)})
+    post(root, f"/s/{sid}/admin/generate")
+    wait_for(lambda: "Generated seed" in get(root, f"/s/{sid}/admin").text, 300, 3)
+    wait_for(lambda: "Ann" in get(root, f"/s/{sid}/board").text, 60, 2)
+    gid = wait_for(lambda: first_game(root, sid), 60, 2)
     return root
 
 
 def upload(root, init):
-    return post(root, "/s/1/game/1/poptracker", files={"pack": ("p.zip", pack(init))})
+    return post(root, f"/s/{sid}/game/{gid}/poptracker", files={"pack": ("p.zip", pack(init))})
 
 
 def state(root, **kw):
-    return get(root, "/s/1/game/1/poptracker/state", **kw).json()
+    return get(root, f"/s/{sid}/game/{gid}/poptracker/state", **kw).json()
 
 
 def tracked(root):
@@ -166,14 +167,14 @@ try:
             z.writestr("locations.json", LOCATIONS)
             z.writestr("x.png", "image")
             z.writestr("manifest.json", '{"variants":' + "[" * depth + "]" * depth + "}")
-        post(root, "/s/1/game/1/poptracker", files={"pack": ("p.zip", buf.getvalue())})
-        r = get(root, "/s/1/game/1/poptracker/asset", params={"file": "x.png"})
+        post(root, f"/s/{sid}/game/{gid}/poptracker", files={"pack": ("p.zip", buf.getvalue())})
+        r = get(root, f"/s/{sid}/game/{gid}/poptracker/asset", params={"file": "x.png"})
         check(f"a manifest {depth} levels deep can't bring the server down", srv.proc.poll() is None and r.status_code in (200, 404), r.status_code)
     upload(root, GOOD)
 
     # Going away mid-upload costs nothing lasting.
     try:
-        root.post(root.base + "/s/1/game/1/poptracker", files={"pack": ("p.zip", pack(LOAD + SPIN))}, timeout=1)
+        root.post(root.base + f"/s/{sid}/game/{gid}/poptracker", files={"pack": ("p.zip", pack(LOAD + SPIN))}, timeout=1)
     except requests.RequestException:
         pass
     check("an abandoned upload's worker stops", wait_for(lambda: not workers(srv), 15, 1))
@@ -187,7 +188,7 @@ try:
     first.start()
     wait_for(lambda: workers(srv), 5, 0.1)
     t = time.time()
-    check("the server answers while one runs", get(root, "/s/1/board").status_code == 200 and time.time() - t < 3)
+    check("the server answers while one runs", get(root, f"/s/{sid}/board").status_code == 200 and time.time() - t < 3)
     check("…with a worker running", workers(srv))
     check("a second viewer gets busy, not a second worker", state(root).get("busy"))
     first.join()

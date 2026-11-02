@@ -147,7 +147,7 @@ pub(super) fn board_inner(
             out.push_str(&format!(
                 r#"<a class="slot cardlink {cls}" href="game/{}"><span class="st">{label}</span><div class="game">{}</div>
 <div class="meta">{} locations · sent {} · recv {} · {} left{avail}</div>"#,
-                g.ap_slot,
+                g.rows[0].game_id,
                 esc(g.game),
                 live.world_size,
                 live.sent,
@@ -308,7 +308,7 @@ document.querySelectorAll('form.hintform').forEach(function(f){
 });
 </script>"#;
 
-pub(super) fn assign_form(id: i64, back: &str) -> String {
+pub(super) fn assign_form(id: Id, back: &str) -> String {
     format!(
         r#"<form method="post" action="claim" style="display:inline;margin-left:6px">
 <input type="hidden" name="slot_id" value="{id}"><input type="hidden" name="op" value="assign">

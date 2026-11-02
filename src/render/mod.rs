@@ -6,6 +6,7 @@ use axum::response::Html;
 
 use crate::ap::BoardSnapshot;
 use crate::db::{SlotRow, SubmissionRow};
+use crate::id::Id;
 
 mod account;
 mod admin;

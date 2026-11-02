@@ -1,12 +1,13 @@
 //! A slot's game page: PopTracker, hints, items, files, finishing.
 
 use super::*;
+use crate::id::Id;
 
 /// Whether the viewer may upload/remove the slot's pack: a claimant of the slot
 /// or an admin.
 pub(crate) async fn pt_can_manage(
     st: &AppState,
-    season: i64,
+    season: Id,
     ap_slot: i64,
     account: i64,
     is_admin: bool,
@@ -24,7 +25,10 @@ pub(crate) async fn pt_can_manage(
 
 /// Claimant (or admin) uploads a PopTracker pack (.zip) for this slot.
 pub(crate) async fn pt_upload(
-    Path(ap_slot): Path<i64>,
+    scope::GameRef {
+        id: game_id,
+        ap_slot,
+    }: scope::GameRef,
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     me: auth::Me,
@@ -34,7 +38,7 @@ pub(crate) async fn pt_upload(
     let (_me, is_admin) = ctx.ident(&me);
     let season = ctx.id;
     // Land back on the PopTracker tab (the pack-management tab), not the default.
-    let back = ctx.url(&format!("/game/{ap_slot}#tab-pt"));
+    let back = ctx.url(&format!("/game/{game_id}#tab-pt"));
     if !ctx.state().is_live() || !pt_can_manage(&st, season, ap_slot, my_id, is_admin).await {
         return render::notice("You can't upload a pack for this game.", false, &back)
             .into_response();
@@ -74,7 +78,10 @@ pub(crate) async fn pt_upload(
 
 /// Claimant (or admin) removes the slot's pack.
 pub(crate) async fn pt_remove(
-    Path(ap_slot): Path<i64>,
+    scope::GameRef {
+        id: game_id,
+        ap_slot,
+    }: scope::GameRef,
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     me: auth::Me,
@@ -82,7 +89,7 @@ pub(crate) async fn pt_remove(
     let my_id = me.id();
     let (_me, is_admin) = ctx.ident(&me);
     let season = ctx.id;
-    let back = ctx.url(&format!("/game/{ap_slot}#tab-pt"));
+    let back = ctx.url(&format!("/game/{game_id}#tab-pt"));
     if ctx.state().is_live() && pt_can_manage(&st, season, ap_slot, my_id, is_admin).await {
         let s2 = season;
         let _ = tokio::task::spawn_blocking(move || ptrack::remove(s2, ap_slot)).await;
@@ -100,7 +107,10 @@ impl AsRef<[u8]> for SharedText {
 
 /// Computed tracker state (maps + markers + items) for the slot's pack, as JSON
 /// for the PopTracker tab + its poller. `{pack:false}` when no pack is installed.
-pub(crate) async fn pt_state(Path(ap_slot): Path<i64>, ctx: scope::SeasonCtx) -> Response {
+pub(crate) async fn pt_state(
+    scope::GameRef { ap_slot, .. }: scope::GameRef,
+    ctx: scope::SeasonCtx,
+) -> Response {
     let season = ctx.id;
     let Some((game, received, checked, meta, hints, stored)) = ctx.rt.with_board(|b| {
         let (game, received, checked, hints) = b
@@ -214,7 +224,7 @@ pub(crate) struct PtAssetQuery {
 
 /// Serve a file (e.g. a map image) from the slot's installed pack.
 pub(crate) async fn pt_asset(
-    Path(ap_slot): Path<i64>,
+    scope::GameRef { ap_slot, .. }: scope::GameRef,
     ctx: scope::SeasonCtx,
     Query(q): Query<PtAssetQuery>,
 ) -> Response {
@@ -260,7 +270,10 @@ pub(crate) fn pt_content_type(f: &str) -> &'static str {
 }
 
 pub(crate) async fn game_view(
-    Path(ap_slot): Path<i64>,
+    scope::GameRef {
+        id: game_id,
+        ap_slot,
+    }: scope::GameRef,
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     me: auth::Me,
@@ -355,7 +368,7 @@ pub(crate) async fn game_view(
 
     let invite = match hosted_live(&st, &ctx, ap_slot, my_id).await {
         Some(name) => render::invite_box(
-            &format!("game/{ap_slot}"),
+            &format!("game/{game_id}"),
             &format!("/s/{}/seat/", ctx.id),
             &st.db.seat_links_of_slot(ctx.id, &name).await,
         ),
@@ -363,6 +376,7 @@ pub(crate) async fn game_view(
     };
     render::game_page(
         ap_slot,
+        game_id,
         &game,
         &snap,
         &slots,
@@ -409,7 +423,10 @@ async fn hosted_live(
 }
 
 pub(crate) async fn game_invite(
-    Path(ap_slot): Path<i64>,
+    scope::GameRef {
+        id: game_id,
+        ap_slot,
+    }: scope::GameRef,
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     me: auth::Me,
@@ -420,7 +437,7 @@ pub(crate) async fn game_invite(
             .add_seat_link(ctx.id, &auth::new_token(), None, Some(&name), me.id())
             .await;
     }
-    Redirect::to(&ctx.url(&format!("/game/{ap_slot}")))
+    Redirect::to(&ctx.url(&format!("/game/{game_id}")))
 }
 
 #[derive(Deserialize)]
@@ -429,7 +446,10 @@ pub(crate) struct RevokeForm {
 }
 
 pub(crate) async fn game_revoke(
-    Path(ap_slot): Path<i64>,
+    scope::GameRef {
+        id: game_id,
+        ap_slot,
+    }: scope::GameRef,
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     me: auth::Me,
@@ -444,7 +464,7 @@ pub(crate) async fn game_revoke(
     {
         let _ = st.db.revoke_seat_link(ctx.id, &f.token).await;
     }
-    Redirect::to(&ctx.url(&format!("/game/{ap_slot}")))
+    Redirect::to(&ctx.url(&format!("/game/{game_id}")))
 }
 
 #[derive(Deserialize)]
@@ -462,7 +482,10 @@ pub(crate) struct LogPageQuery {
 /// participant (sender or receiver) and narrowed by the search term. Public like
 /// the board/log fragments.
 pub(crate) async fn game_log_fragment(
-    Path(ap_slot): Path<i64>,
+    scope::GameRef {
+        id: game_id,
+        ap_slot,
+    }: scope::GameRef,
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     Query(q): Query<LogPageQuery>,
@@ -500,13 +523,16 @@ pub(crate) async fn game_log_fragment(
     } else {
         format!("q={}", pct(term))
     };
-    Html(render::game_log_feed(ap_slot, &rows, page, pages, rpp, &qs))
+    Html(render::game_log_feed(game_id, &rows, page, pages, rpp, &qs))
 }
 
 /// The "Hints in this world" rows for one AP slot, as an HTML fragment — used by
 /// the game page to live-refresh the list after a hint (no full reload).
 pub(crate) async fn game_hints(
-    Path(ap_slot): Path<i64>,
+    scope::GameRef {
+        id: game_id,
+        ap_slot,
+    }: scope::GameRef,
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     me: auth::Me,
@@ -528,7 +554,7 @@ pub(crate) async fn game_hints(
         &views,
         &found_items,
         &prios,
-        &format!("/game/{ap_slot}"),
+        &format!("/game/{game_id}"),
         can_prioritize,
     ))
 }
@@ -536,7 +562,7 @@ pub(crate) async fn game_hints(
 /// The hint-search suggestion list for one slot, as JSON — the game page polls
 /// this after a hint so a name whose last copy was just hinted drops out.
 pub(crate) async fn game_items(
-    Path(ap_slot): Path<i64>,
+    scope::GameRef { ap_slot, .. }: scope::GameRef,
     ctx: scope::SeasonCtx,
 ) -> Json<Vec<String>> {
     let items = ctx
@@ -562,13 +588,16 @@ pub(crate) struct FinishForm {
 /// its items per the server modes), as its game client would have. Separate from
 /// a manual `/release` in the console.
 pub(crate) async fn game_finish(
-    Path(ap_slot): Path<i64>,
+    scope::GameRef {
+        id: game_id,
+        ap_slot,
+    }: scope::GameRef,
     ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<FinishForm>,
 ) -> Response {
     let (_me, is_admin) = ctx.ident(&me);
-    let back = ctx.back(f.back.as_deref(), &format!("/game/{ap_slot}"));
+    let back = ctx.back(f.back.as_deref(), &format!("/game/{game_id}"));
     if !is_admin {
         return render::notice("Admins only.", false, &back).into_response();
     }
@@ -602,7 +631,10 @@ pub(crate) async fn game_output(
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     me: auth::Me,
-    Path(ap_slot): Path<i64>,
+    scope::GameRef {
+        id: game_id,
+        ap_slot,
+    }: scope::GameRef,
     Query(q): Query<OutputQuery>,
 ) -> Response {
     let my_id = me.id();
@@ -612,7 +644,7 @@ pub(crate) async fn game_output(
     let i_claim = slots
         .iter()
         .any(|r| r.ap_slot == ap_slot && r.claimed_by_id == Some(my_id));
-    let back = format!("/game/{ap_slot}");
+    let back = format!("/game/{game_id}");
     if !(i_claim || is_admin) {
         return render::notice(
             "Only this game's players can download its files.",

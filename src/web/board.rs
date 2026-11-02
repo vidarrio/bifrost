@@ -1,6 +1,7 @@
 //! The live board.
 
 use super::*;
+use crate::id::Id;
 
 /// Fetch the season's prioritized hints, first dropping the star from any hint
 /// whose item has since been found (a found hint is non-prioritizable, so a
@@ -8,7 +9,7 @@ use super::*;
 pub(crate) async fn live_priorities(
     st: &AppState,
     snap: &ap::BoardSnapshot,
-    season: i64,
+    season: Id,
 ) -> std::collections::HashSet<(i64, i64, i64)> {
     let mut prios = st.db.priorities(season).await.unwrap_or_default();
     if prios.is_empty() {

@@ -723,7 +723,7 @@ PathRegexp(`^(/s/[^/]*/+|/)(admin|board|log|season|claim|hint|signup|seat|game|p
 ```
 
 Match any season id there, not just digits, so that no spelling of a season
-URL slips past the rule. Bifrost itself only accepts plain digits.
+URL slips past the rule. Bifrost itself only accepts a generated id there.
 
 ### Isolation
 

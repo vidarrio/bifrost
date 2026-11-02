@@ -144,6 +144,18 @@ def post(s, path, **kw):
     return _decoded(s.post(s.base + path, **kw))
 
 
+def new_season(s, name):
+    """Create a season and return its id."""
+    r = post(s, "/admin/seasons", data=dict(name=name))
+    return re.search(r"/s/([0-9a-z]+)/admin", r.url).group(1)
+
+
+def first_game(s, sid):
+    """The id of the first game on a season's live board."""
+    m = re.search(r'href="game/([0-9a-z]+)"', get(s, f"/s/{sid}/board").text)
+    return m and m.group(1)
+
+
 def descendants(pid):
     """Every process below `pid`."""
     out, todo = [], [pid]

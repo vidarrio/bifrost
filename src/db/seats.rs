@@ -4,11 +4,12 @@
 //! its Bifrost slot and claim. Once live, using a link mints them directly.
 
 use super::{Db, SubmissionRow};
+use crate::id::Id;
 
 /// One co-op partner on a game, before generation.
 #[derive(sqlx::FromRow, Debug, Clone)]
 pub struct SeatRow {
-    pub id: i64,
+    pub id: Id,
     pub account_id: i64,
     pub username: String,
     pub name: String,
@@ -17,7 +18,7 @@ pub struct SeatRow {
 /// A link's game: a signup, or (for a live season) a slot by its connect name.
 #[derive(sqlx::FromRow, Debug, Clone)]
 pub struct SeatLink {
-    pub submission_id: Option<i64>,
+    pub submission_id: Option<Id>,
     pub slot_name: Option<String>,
 }
 
@@ -63,13 +64,12 @@ fn now() -> i64 {
 }
 
 impl Db {
-    /// Whether a name is in use in a season: a signup, a seat, an old signup's
-    /// co-op name, or a generated slot (before generation, slots are only
+    /// Whether a name is in use in a season: a signup, a seat or a generated
+    /// slot (before generation, slots are only
     /// what a failed attempt left, which the next one clears).
-    pub async fn slot_name_taken(&self, season: i64, name: &str) -> bool {
+    pub async fn slot_name_taken(&self, season: Id, name: &str) -> bool {
         sqlx::query_scalar::<_, i64>(
-            "SELECT EXISTS(SELECT 1 FROM submission WHERE season = ?1 AND (slot_name = ?2
-                     OR instr(', ' || coop_names || ',', ', ' || ?2 || ',') > 0))
+            "SELECT EXISTS(SELECT 1 FROM submission WHERE season = ?1 AND slot_name = ?2)
                  OR EXISTS(SELECT 1 FROM seat WHERE season = ?1 AND name = ?2)
                  OR ((SELECT state FROM season WHERE id = ?1) NOT IN ('draft', 'signup')
                      AND EXISTS(SELECT 1 FROM bifrost_slot WHERE season = ?1 AND name = ?2))",
@@ -84,9 +84,9 @@ impl Db {
 
     pub async fn add_seat_link(
         &self,
-        season: i64,
+        season: Id,
         token: &str,
-        submission: Option<i64>,
+        submission: Option<Id>,
         slot_name: Option<&str>,
         created_by: i64,
     ) -> Result<(), sqlx::Error> {
@@ -105,7 +105,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn seat_link(&self, season: i64, token: &str) -> Option<SeatLink> {
+    pub async fn seat_link(&self, season: Id, token: &str) -> Option<SeatLink> {
         sqlx::query_as(
             "SELECT submission_id, slot_name FROM seat_link WHERE season = ? AND token = ?",
         )
@@ -118,7 +118,7 @@ impl Db {
     }
 
     /// A signup's unused links.
-    pub async fn seat_links_of_signup(&self, submission: i64) -> Vec<String> {
+    pub async fn seat_links_of_signup(&self, submission: Id) -> Vec<String> {
         sqlx::query_scalar(
             "SELECT token FROM seat_link WHERE submission_id = ? ORDER BY created_at, token",
         )
@@ -130,7 +130,7 @@ impl Db {
 
     /// A live game's unused links, by its connect name: those made on the live
     /// page and any left over from its signup.
-    pub async fn seat_links_of_slot(&self, season: i64, slot_name: &str) -> Vec<String> {
+    pub async fn seat_links_of_slot(&self, season: Id, slot_name: &str) -> Vec<String> {
         sqlx::query_scalar(
             "SELECT l.token FROM seat_link l
              LEFT JOIN submission s ON s.id = l.submission_id
@@ -145,7 +145,7 @@ impl Db {
     }
 
     /// Revoke an unused link, given the links its host may revoke.
-    pub async fn revoke_seat_link(&self, season: i64, token: &str) -> Result<(), sqlx::Error> {
+    pub async fn revoke_seat_link(&self, season: Id, token: &str) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM seat_link WHERE season = ? AND token = ?")
             .bind(season)
             .bind(token)
@@ -154,15 +154,15 @@ impl Db {
         Ok(())
     }
 
-    pub async fn seats_of(&self, submission: i64) -> Vec<SeatRow> {
+    pub async fn seats_of(&self, submission: Id) -> Vec<SeatRow> {
         self.try_seats_of(submission).await.unwrap_or_default()
     }
 
-    pub async fn try_seats_of(&self, submission: i64) -> Result<Vec<SeatRow>, sqlx::Error> {
+    pub async fn try_seats_of(&self, submission: Id) -> Result<Vec<SeatRow>, sqlx::Error> {
         sqlx::query_as(
             "SELECT s.id, s.account_id, a.username, s.name
              FROM seat s JOIN account a ON a.id = s.account_id
-             WHERE s.submission_id = ? ORDER BY s.created_at, s.id",
+             WHERE s.submission_id = ? ORDER BY s.rowid",
         )
         .bind(submission)
         .fetch_all(&self.pool)
@@ -172,7 +172,7 @@ impl Db {
     /// Use a link before generation: it's spent, and the partner has a seat.
     pub async fn join_signup(
         &self,
-        season: i64,
+        season: Id,
         token: &str,
         sub: &SubmissionRow,
         account: i64,
@@ -200,9 +200,10 @@ impl Db {
             return Ok(JoinOutcome::LinkGone);
         }
         let added = sqlx::query(
-            "INSERT INTO seat (season, submission_id, account_id, name, created_at)
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO seat (id, season, submission_id, account_id, name, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
+        .bind(Id::new())
         .bind(season)
         .bind(sub.id)
         .bind(account)
@@ -222,11 +223,13 @@ impl Db {
 
     /// Use a link on a live season: it's spent, and the partner has a slot of
     /// the game, claimed.
+    #[allow(clippy::too_many_arguments)]
     pub async fn join_live(
         &self,
-        season: i64,
+        season: Id,
         token: &str,
         ap_slot: i64,
+        game_id: Id,
         game: &str,
         account: i64,
         name: &str,
@@ -246,22 +249,25 @@ impl Db {
         if spent.rows_affected() == 0 {
             return Ok(JoinOutcome::LinkGone);
         }
+        let slot_id = Id::new();
         let slot = sqlx::query(
-            "INSERT INTO bifrost_slot (season, name, ap_slot, game) VALUES (?, ?, ?, ?)",
+            "INSERT INTO bifrost_slot (id, season, game_id, name, ap_slot, game) VALUES (?, ?, ?, ?, ?, ?)",
         )
+        .bind(slot_id)
         .bind(season)
+        .bind(game_id)
         .bind(name)
         .bind(ap_slot)
         .bind(game)
         .execute(&mut *tx)
         .await;
-        let slot = match slot {
-            Ok(r) => r.last_insert_rowid(),
+        match slot {
+            Ok(_) => {}
             Err(e) if name_clash(&e) => return Ok(JoinOutcome::NameTaken),
             Err(e) => return Err(e),
-        };
+        }
         sqlx::query("INSERT INTO claim (bifrost_slot_id, account_id, claimed_at) VALUES (?, ?, ?)")
-            .bind(slot)
+            .bind(slot_id)
             .bind(account)
             .bind(now())
             .execute(&mut *tx)
@@ -273,8 +279,8 @@ impl Db {
     /// Rename your own seat, before generation.
     pub async fn rename_seat(
         &self,
-        season: i64,
-        seat: i64,
+        season: Id,
+        seat: Id,
         account: i64,
         name: &str,
     ) -> Result<JoinOutcome, sqlx::Error> {
@@ -299,8 +305,8 @@ impl Db {
     /// Leave a game you're a partner on, before generation.
     pub async fn leave_seat(
         &self,
-        season: i64,
-        submission: i64,
+        season: Id,
+        submission: Id,
         account: i64,
     ) -> Result<bool, sqlx::Error> {
         let res = sqlx::query(
@@ -316,12 +322,7 @@ impl Db {
     }
 
     /// Remove a partner from a game, for its host, before generation.
-    pub async fn remove_seat(
-        &self,
-        season: i64,
-        seat: i64,
-        host: i64,
-    ) -> Result<bool, sqlx::Error> {
+    pub async fn remove_seat(&self, season: Id, seat: Id, host: i64) -> Result<bool, sqlx::Error> {
         let res = sqlx::query(
             "DELETE FROM seat WHERE id = ?1 AND season = ?2
                AND submission_id IN (SELECT id FROM submission WHERE season = ?2 AND account_id = ?3)
@@ -337,7 +338,7 @@ impl Db {
 
     /// Drop the unused links of a season's live games, when its players are
     /// deleted. A signup's links stay with the signup.
-    pub async fn clear_seat_links(&self, season: i64) -> Result<(), sqlx::Error> {
+    pub async fn clear_seat_links(&self, season: Id) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM seat_link WHERE season = ? AND submission_id IS NULL")
             .bind(season)
             .execute(&self.pool)
@@ -371,7 +372,7 @@ mod tests {
         let s = db.create_season("S", None, 0).await.unwrap();
         let (host, ann) = (account(&db, "host").await, account(&db, "ann").await);
         let id = db
-            .add_submission(s, host, "Host", "G", false, "", "/y", None, 0)
+            .add_submission(s, host, "Host", "G", false, "/y", None, 0)
             .await
             .unwrap()
             .unwrap();
@@ -418,7 +419,7 @@ mod tests {
             account(&db, "bob").await,
         );
         let id = db
-            .add_submission(s, host, "Host", "G", false, "", "/y", None, 0)
+            .add_submission(s, host, "Host", "G", false, "/y", None, 0)
             .await
             .unwrap()
             .unwrap();
@@ -444,7 +445,7 @@ mod tests {
         assert_eq!(join("t2", bob, "Bob").await, JoinOutcome::Joined);
         // A new signup can't take a seat's name either, and vice versa on rename.
         assert!(
-            db.add_submission(s, ann, "Bob", "G", false, "", "/z", None, 0)
+            db.add_submission(s, ann, "Bob", "G", false, "/z", None, 0)
                 .await
                 .is_err()
         );
@@ -503,7 +504,7 @@ mod tests {
             account(&db, "bob").await,
         );
         let id = db
-            .add_submission(s, host, "Host", "G", false, "", "/y", None, 0)
+            .add_submission(s, host, "Host", "G", false, "/y", None, 0)
             .await
             .unwrap()
             .unwrap();
@@ -539,15 +540,17 @@ mod tests {
         // A signup's unused link still works, for a mid-season join.
         assert_eq!(db.seat_links_of_slot(s, "Host").await, ["t2"]);
         assert_eq!(
-            db.join_live(s, "t2", 1, "G", ann, "Ann2").await.unwrap(),
+            db.join_live(s, "t2", 1, id, "G", ann, "Ann2")
+                .await
+                .unwrap(),
             JoinOutcome::AlreadyIn
         );
         assert_eq!(
-            db.join_live(s, "t2", 1, "G", bob, "Ann").await.unwrap(),
+            db.join_live(s, "t2", 1, id, "G", bob, "Ann").await.unwrap(),
             JoinOutcome::NameTaken
         );
         assert_eq!(
-            db.join_live(s, "t2", 1, "G", bob, "Bob").await.unwrap(),
+            db.join_live(s, "t2", 1, id, "G", bob, "Bob").await.unwrap(),
             JoinOutcome::Joined
         );
         assert!(db.claims_ap_slot(s, bob, 1).await);

@@ -13,6 +13,8 @@ use std::sync::Arc;
 mod account;
 mod activity;
 mod ap;
+pub mod id;
+pub(crate) use id::Id;
 mod ap_adapter;
 mod apinstall;
 mod apserver;

@@ -4,6 +4,7 @@
 //! `current.zip` is what (re)starts the game: today an external watcher on that
 //! file restarts the AP server; Bifrost never needs root.
 
+use crate::id::Id;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -64,7 +65,7 @@ async fn clear_ext(dir: &Path, ext: &str) -> Result<(), String> {
 }
 
 /// Remove previously-generated seed archives (AP_*.zip), leaving current.zip.
-async fn clear_old_seeds(season: i64) {
+async fn clear_old_seeds(season: Id) {
     if let Ok(mut rd) = tokio::fs::read_dir(config::get().season(season).output).await {
         while let Ok(Some(entry)) = rd.next_entry().await {
             let name = entry.file_name();
@@ -77,7 +78,7 @@ async fn clear_old_seeds(season: i64) {
 }
 
 /// The newest AP_*.zip in output/, if any.
-async fn newest_seed(season: i64) -> Option<PathBuf> {
+async fn newest_seed(season: Id) -> Option<PathBuf> {
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
     let mut rd = tokio::fs::read_dir(config::get().season(season).output)
         .await
@@ -126,7 +127,7 @@ pub struct OutputFile {
 /// `unassigned`. Excludes the `.archipelago` multidata (the server file).
 /// Blocking — call from `spawn_blocking`. Empty if no seed has been generated
 /// yet.
-pub fn list_outputs(season: i64) -> Vec<OutputFile> {
+pub fn list_outputs(season: Id) -> Vec<OutputFile> {
     list_zip_outputs(&config::get().season(season).current_zip())
 }
 
@@ -270,7 +271,7 @@ pub fn read_client_asset(which: &str) -> Option<(&'static str, Vec<u8>)> {
 /// Read one member's bytes out of the current seed zip, but only if `member` is
 /// actually a file in it (so a crafted query can't pull anything arbitrary), and
 /// never the `.archipelago` server file. Blocking — call from `spawn_blocking`.
-pub fn read_output(season: i64, member: &str) -> Option<Vec<u8>> {
+pub fn read_output(season: Id, member: &str) -> Option<Vec<u8>> {
     if member.ends_with(".archipelago") {
         return None;
     }
@@ -285,7 +286,7 @@ pub fn read_output(season: i64, member: &str) -> Option<Vec<u8>> {
 // ---- admin maintenance actions (each writes only inside the season dir) ----
 
 /// Remove every installed custom apworld from the season's worlds/.
-pub async fn clear_apworlds(season: i64) -> Result<(), String> {
+pub async fn clear_apworlds(season: Id) -> Result<(), String> {
     let season = config::get().season(season);
     clear_ext(&season.worlds, "apworld").await?;
     ap_adapter::unpin_world(&season, None)
@@ -296,7 +297,7 @@ pub async fn clear_apworlds(season: i64) -> Result<(), String> {
 /// survives a season reset (which clears the custom worlds). Non-fatal: if the
 /// vendored copy is missing, the season still generates — UT in-logic just
 /// won't update.
-async fn stage_tracker_apworld(season: i64) {
+async fn stage_tracker_apworld(season: Id) {
     let cfg = config::get();
     let src = cfg.vendor_file(TRACKER_APWORLD);
     let dirs = cfg.season(season);
@@ -313,23 +314,23 @@ async fn stage_tracker_apworld(season: i64) {
 }
 
 /// Remove every staged player YAML from the season's Players/.
-pub async fn clear_player_yamls(season: i64) -> Result<(), String> {
+pub async fn clear_player_yamls(season: Id) -> Result<(), String> {
     clear_ext(&config::get().season(season).players, "yaml").await
 }
 
 /// Delete the running session's save (a fresh start on the next server load).
-pub async fn clear_save(season: i64) {
+pub async fn clear_save(season: Id) {
     let _ = tokio::fs::remove_file(config::get().season(season).current_save()).await;
 }
 
 /// Delete the deployed world (current.zip) and archived seeds (AP_*.zip).
-pub async fn clear_world(season: i64) {
+pub async fn clear_world(season: Id) {
     let _ = tokio::fs::remove_file(config::get().season(season).current_zip()).await;
     clear_old_seeds(season).await;
 }
 
 /// Remove one installed apworld by file name (no path separators allowed).
-pub async fn delete_apworld(season: i64, name: &str) -> Result<(), String> {
+pub async fn delete_apworld(season: Id, name: &str) -> Result<(), String> {
     if name.is_empty() || name.contains('/') || !name.ends_with(".apworld") {
         return Err("invalid apworld name".into());
     }
@@ -352,7 +353,7 @@ pub struct Apworld {
     pub catalog: bool,
 }
 
-pub async fn list_apworlds(season: i64) -> Vec<Apworld> {
+pub async fn list_apworlds(season: Id) -> Vec<Apworld> {
     let season = config::get().season(season);
     let custom = ap_adapter::custom_worlds(&season);
     let pins = ap_adapter::world_pins(&season);
@@ -422,7 +423,7 @@ async fn read_seed(
 /// Entry point: generate `season` from its signups, moving it through
 /// `generating` to `live` (and starting its workers) — or back to where it was
 /// on failure. Updates `state` as it goes.
-pub async fn run(db: Db, rts: Arc<Runtimes>, season: i64) {
+pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
     let state = rts.get(season).genstate.clone();
     let Some(prev) = db.season(season).await.map(|s| s.state()) else {
         return set(&state, false, "Failed — no such season");
@@ -471,7 +472,7 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: i64) {
 /// worlds/, generate a fresh seed (and fresh save, picking up the current
 /// host.yaml), and remap its slots + claims onto it. Doesn't touch
 /// submissions.
-pub async fn regenerate(db: Db, rts: Arc<Runtimes>, season: i64) {
+pub async fn regenerate(db: Db, rts: Arc<Runtimes>, season: Id) {
     let state = rts.get(season).genstate.clone();
     if let Err(e) = db.transition(season, State::Generating, now()).await {
         return set(&state, false, format!("Failed — {e}"));
@@ -498,7 +499,7 @@ static GENERATION: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1)
 
 /// Generate with the active install; the season's dirs bound to that install
 /// (to read the new seed with). Waits while another season generates.
-async fn roll(state: &GenState, season: i64) -> Result<config::SeasonDirs, String> {
+async fn roll(state: &GenState, season: Id) -> Result<config::SeasonDirs, String> {
     let _turn = match GENERATION.try_acquire() {
         Ok(p) => p,
         Err(_) => {
@@ -525,7 +526,7 @@ async fn roll(state: &GenState, season: i64) -> Result<config::SeasonDirs, Strin
 async fn deploy(
     db: &Db,
     rts: &Runtimes,
-    season: i64,
+    season: Id,
     dirs: &config::SeasonDirs,
     seed_zip: &Path,
 ) -> Result<(), String> {
@@ -565,7 +566,7 @@ async fn regen_inner(
     db: &Db,
     rts: &Runtimes,
     state: &GenState,
-    season: i64,
+    season: Id,
 ) -> Result<String, String> {
     // Must have a staged lineup to re-roll.
     let mut has_yaml = false;
@@ -619,7 +620,7 @@ async fn run_inner(
     db: &Db,
     rts: &Runtimes,
     state: &GenState,
-    season: i64,
+    season: Id,
 ) -> Result<String, String> {
     if !db.stale_holds(season).await.is_empty() {
         set(state, true, "Checking held signups…");

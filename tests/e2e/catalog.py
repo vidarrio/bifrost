@@ -5,7 +5,7 @@ import re
 import sys
 import time
 
-from lib import Server, check, fixture, get, post, summary, wait_for
+from lib import Server, check, first_game, fixture, get, new_season, post, summary, wait_for
 
 srv = Server("catalog").start()
 try:
@@ -13,8 +13,7 @@ try:
     alice = srv.invite_user(root, "alice")
     bob = srv.invite_user(root, "bob")
 
-    r = post(root, "/admin/seasons", data=dict(name="Spring"))
-    sid = int(re.search(r'/s/(\d+)/admin', get(root, "/admin/seasons").text).group(1))
+    sid = new_season(root, "Spring")
     S = f"/s/{sid}"
     post(root, f"{S}/admin/signups", data=dict(open="1"))
 
@@ -61,7 +60,7 @@ try:
     check("…one the first look misses is held", "held until" in r.text, r.text[-300:])
 
     page = get(alice, f"{S}/signup").text
-    game = re.search(r'href="signup/game/(\d+)">Pfoo<', page).group(1)
+    game = re.search(r'href="signup/game/([0-9a-z]+)">Pfoo<', page).group(1)
     check("a held game's page says so", "waiting for foo.apworld" in get(alice, f"{S}/signup/game/{game}").text)
     r = post(alice, f"{S}/signup/game/{game}/yaml", files={"yaml": ("foo.yaml", fixture("foo.yaml"))})
     check("its YAML can't replace itself before the world is in", "didn't pass" in r.text, r.text[-300:])
@@ -83,7 +82,7 @@ try:
     released = wait_for(lambda: "waiting for foo.apworld" not in get(alice, f"{S}/signup").text, 120, 2)
     held = wait_for(lambda: "several players" in (t := get(bob, f"{S}/signup").text) and t, 120, 2)
     check("…and stays held on approval, saying why", held, get(bob, f"{S}/signup").text[-500:])
-    sub_id = re.search(r'name="id" value="(\d+)"><button class="ghost" type="submit">Remove', held or "")
+    sub_id = re.search(r'name="id" value="([0-9a-z]+)"><button class="ghost" type="submit">Remove', held or "")
     if sub_id:
         post(bob, f"{S}/signup/delete", data={"id": sub_id.group(1)})
     page = get(alice, f"{S}/signup").text
@@ -104,7 +103,7 @@ try:
     adm = get(root, f"{S}/admin").text
     check("rejected world isn't installed", "baz.apworld" not in adm.split("Installed apworlds")[1].split("Clear all apworlds")[0])
     # remove bob's dead signup
-    sub_id = re.search(r'name="id" value="(\d+)"><button class="ghost" type="submit">Remove', get(bob, f"{S}/signup").text)
+    sub_id = re.search(r'name="id" value="([0-9a-z]+)"><button class="ghost" type="submit">Remove', get(bob, f"{S}/signup").text)
     if sub_id:
         post(bob, f"{S}/signup/delete", data={"id": sub_id.group(1)})
 
@@ -127,8 +126,7 @@ try:
     check("season world added to the catalog", "foo.apworld" in cat and "Foo Finder" in cat)
 
     # a second season: an upload matching a catalog entry needs no approval
-    post(root, "/admin/seasons", data=dict(name="Summer"))
-    sid2 = max(int(x) for x in re.findall(r'/s/(\d+)/admin', get(root, "/admin/seasons").text))
+    sid2 = new_season(root, "Summer")
     post(root, f"/s/{sid2}/admin/signups", data=dict(open="1"))
     j = post(alice, f"/s/{sid2}/signup/apworld", files={"apworld": ("foo.apworld", fixture("foo.apworld"))}).json()
     check("upload matching the catalog installs in manual mode", j.get("ok") and j.get("pending") is False, j)

@@ -20,58 +20,7 @@ use super::Db;
 /// Steps run with foreign keys off, so rebuilding a table others reference
 /// doesn't cascade into them; the references are checked before the step
 /// commits.
-const STEPS: &[&str] = &[
-    // 2: the cap on bonus hints from seasonal minesweeper (per player, in any
-    // 24 hours; 0 = no cap), and which wins earned one (the cap counts those).
-    "ALTER TABLE season ADD COLUMN mine_daily_hints INTEGER NOT NULL DEFAULT 5;
-     ALTER TABLE mine_result ADD COLUMN earned INTEGER NOT NULL DEFAULT 0",
-    // 3: how many games a player may sign up with in a season (0 = no limit).
-    "ALTER TABLE season ADD COLUMN max_games INTEGER NOT NULL DEFAULT 0",
-    // 4: a game's notes for the season's other players.
-    "ALTER TABLE submission ADD COLUMN notes TEXT NOT NULL DEFAULT ''",
-    // 5: co-op partners join through one-use links from a game's host. A name is
-    // unique across a season's signups and seats.
-    "CREATE TABLE seat (
-         id INTEGER PRIMARY KEY AUTOINCREMENT,
-         season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
-         submission_id INTEGER NOT NULL REFERENCES submission(id) ON DELETE CASCADE,
-         account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-         name TEXT NOT NULL,
-         created_at INTEGER NOT NULL,
-         UNIQUE(season, name),
-         UNIQUE(submission_id, account_id)
-     );
-     CREATE TABLE seat_link (
-         token TEXT PRIMARY KEY,
-         season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
-         submission_id INTEGER REFERENCES submission(id) ON DELETE CASCADE,
-         slot_name TEXT,
-         created_by INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-         created_at INTEGER NOT NULL
-     );
-     CREATE TRIGGER seat_name_insert BEFORE INSERT ON seat
-     WHEN EXISTS (SELECT 1 FROM submission WHERE season = NEW.season AND slot_name = NEW.name)
-     BEGIN SELECT RAISE(ABORT, 'slot name taken'); END;
-     CREATE TRIGGER seat_name_update BEFORE UPDATE OF name ON seat
-     WHEN EXISTS (SELECT 1 FROM submission WHERE season = NEW.season AND slot_name = NEW.name)
-     BEGIN SELECT RAISE(ABORT, 'slot name taken'); END;
-     CREATE TRIGGER submission_name_insert BEFORE INSERT ON submission
-     WHEN EXISTS (SELECT 1 FROM seat WHERE season = NEW.season AND name = NEW.slot_name)
-     BEGIN SELECT RAISE(ABORT, 'slot name taken'); END;
-     CREATE TRIGGER submission_name_update BEFORE UPDATE OF slot_name ON submission
-     WHEN EXISTS (SELECT 1 FROM seat WHERE season = NEW.season AND name = NEW.slot_name)
-     BEGIN SELECT RAISE(ABORT, 'slot name taken'); END",
-    // 6: who can see a season. Existing seasons stay as they were; new ones
-    // start with members-only pages after generation (`create_season`).
-    "ALTER TABLE season ADD COLUMN private_live INTEGER NOT NULL DEFAULT 0;
-     ALTER TABLE season ADD COLUMN private_signup INTEGER NOT NULL DEFAULT 0;
-     ALTER TABLE season ADD COLUMN signup_token TEXT;
-     CREATE TABLE season_invited (
-         season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
-         account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-         PRIMARY KEY (season, account_id)
-     )",
-];
+const STEPS: &[&str] = &[];
 
 /// The schema version this build writes.
 pub const SCHEMA_VERSION: i64 = 1 + STEPS.len() as i64;
@@ -143,6 +92,20 @@ async fn apply(pool: &SqlitePool, steps: &[&str]) -> Result<(), sqlx::Error> {
             "the database is at schema version {at}, newer than this Bifrost knows \
              ({latest}): a newer Bifrost has used it"
         )));
+    }
+    // Before 0.3.0 seasons had numeric ids, and there's no upgrade from that.
+    if at > 0 {
+        let season_id: Option<String> =
+            sqlx::query_scalar("SELECT type FROM pragma_table_info('season') WHERE name = 'id'")
+                .fetch_optional(pool)
+                .await?;
+        if season_id.as_deref() == Some("INTEGER") {
+            return Err(sqlx::Error::Protocol(
+                "this database is from a Bifrost before 0.3.0, which can't be upgraded: \
+                 start with an empty data directory"
+                    .into(),
+            ));
+        }
     }
     if at == 0 {
         super::baseline(pool).await?;

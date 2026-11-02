@@ -10,6 +10,7 @@
 //! A pack's Lua is untrusted, so it only ever runs in a worker process of its
 //! own ([`run_worker`]): sandboxed, and killed if it runs too long.
 
+use crate::id::Id;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -23,7 +24,7 @@ use crate::sandbox::{self, Job};
 use crate::{ap_adapter, config};
 
 /// Per-slot extracted-pack directory: `<data>/packs/<season>/<ap_slot>/`.
-fn slot_dir(season: i64, ap_slot: i64) -> PathBuf {
+fn slot_dir(season: Id, ap_slot: i64) -> PathBuf {
     config::get()
         .packs_dir()
         .join(season.to_string())
@@ -31,14 +32,14 @@ fn slot_dir(season: i64, ap_slot: i64) -> PathBuf {
 }
 
 /// Is a usable pack installed for this slot?
-pub fn has_pack(season: i64, ap_slot: i64) -> bool {
+pub fn has_pack(season: Id, ap_slot: i64) -> bool {
     poptracker::pack_root(&slot_dir(season, ap_slot)).is_ok()
 }
 
 /// A version stamp for the slot's pack (install dir mtime, epoch secs), used to
 /// cache-bust asset URLs when a pack is (re)installed — browsers otherwise keep
 /// showing cached images even across a hard refresh.
-pub fn pack_version(season: i64, ap_slot: i64) -> u64 {
+pub fn pack_version(season: Id, ap_slot: i64) -> u64 {
     std::fs::metadata(slot_dir(season, ap_slot))
         .and_then(|m| m.modified())
         .ok()
@@ -90,7 +91,7 @@ pub async fn validate(zip_bytes: Arc<Vec<u8>>) -> Result<poptracker::Summary, St
 }
 
 /// Install (extract) an uploaded pack zip for a slot, replacing any existing one.
-fn install(season: i64, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), String> {
+fn install(season: Id, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), String> {
     SLOTS.lock().unwrap().remove(&(season, ap_slot));
     let dir = slot_dir(season, ap_slot);
     let _ = std::fs::remove_dir_all(&dir);
@@ -109,7 +110,7 @@ fn install(season: i64, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), String> {
 
 /// [`install`] as a worker's equal: it can take a while, and holds a permit for it.
 pub async fn install_pack(
-    season: i64,
+    season: Id,
     ap_slot: i64,
     bytes: Arc<Vec<u8>>,
     variant: String,
@@ -128,7 +129,7 @@ pub async fn install_pack(
 }
 
 /// Remove a slot's installed pack.
-pub fn remove(season: i64, ap_slot: i64) {
+pub fn remove(season: Id, ap_slot: i64) {
     SLOTS.lock().unwrap().remove(&(season, ap_slot));
     let _ = std::fs::remove_dir_all(slot_dir(season, ap_slot));
     let _ = std::fs::remove_file(variant_file(season, ap_slot));
@@ -176,7 +177,7 @@ pub struct Feed<'a> {
 /// are answered from the last result. Runs are paced by how long the last took,
 /// and a pack that hit a limit is held back.
 pub async fn compute(
-    season: i64,
+    season: Id,
     ap_slot: i64,
     version: u64,
     feed: Feed<'_>,
@@ -263,7 +264,7 @@ async fn run_compute(root: PathBuf, request: Vec<u8>) -> (Result<String, Failure
 
 /// One run's place in its slot.
 struct RunOf {
-    key: (i64, i64),
+    key: (Id, i64),
     id: u64,
     hash: [u8; 32],
     tx: tokio::sync::oneshot::Sender<Result<Arc<String>, ComputeError>>,
@@ -355,7 +356,7 @@ impl Slot {
     }
 }
 
-static SLOTS: Mutex<BTreeMap<(i64, i64), Slot>> = Mutex::new(BTreeMap::new());
+static SLOTS: Mutex<BTreeMap<(Id, i64), Slot>> = Mutex::new(BTreeMap::new());
 static NEXT_RUN: AtomicU64 = AtomicU64::new(1);
 
 /// A slot nobody has looked at for this long gives up its result.
@@ -741,7 +742,7 @@ pub fn sweep_scratch() {
 }
 
 /// Read a pack asset (e.g. a map image) for serving to the browser.
-pub fn read_pack_asset(season: i64, ap_slot: i64, rel: &str) -> Option<Vec<u8>> {
+pub fn read_pack_asset(season: Id, ap_slot: i64, rel: &str) -> Option<Vec<u8>> {
     let root = poptracker::pack_root(&slot_dir(season, ap_slot)).ok()?;
     let variant = std::fs::read_to_string(variant_file(season, ap_slot)).unwrap_or_default();
     poptracker::read_asset(&root, &variant, rel)
@@ -750,7 +751,7 @@ pub fn read_pack_asset(season: i64, ap_slot: i64, rel: &str) -> Option<Vec<u8>> 
 /// Where a slot's pack's variant is kept, next to its folder: a worker chose it
 /// on upload, and this process doesn't parse what a pack wrote to find out.
 /// A pack installed before this was kept has none, and serves from its root.
-fn variant_file(season: i64, ap_slot: i64) -> PathBuf {
+fn variant_file(season: Id, ap_slot: i64) -> PathBuf {
     slot_dir(season, ap_slot).with_extension("variant")
 }
 

@@ -6,7 +6,7 @@ import re
 import subprocess
 import sys
 
-from lib import Server, ap_servers, bundled_ap_version, check, get, post, summary, wait_for
+from lib import Server, ap_servers, bundled_ap_version, check, first_game, get, new_season, post, summary, wait_for
 
 TAG = os.environ.get("AP_TAG", "0.6.7-bifrost.2")  # a release of the fork
 BUNDLED = bundled_ap_version()
@@ -47,8 +47,7 @@ try:
     check("installed version listed", f"{TAG}</td>" in done and os.path.isfile(os.path.join(srv.data, "ap", TAG, ".bifrost-ready")))
 
     def live_season(name, player):
-        post(root, "/admin/seasons", data=dict(name=name))
-        sid = max(int(x) for x in re.findall(r"/s/(\d+)/admin", get(root, "/admin/seasons").text))
+        sid = new_season(root, name)
         post(root, f"/s/{sid}/admin/signups", data=dict(open="1"))
         r = post(root, f"/s/{sid}/signup", files={"yaml": ("p.yaml", yaml(player))})
         assert "Signed up" in r.text, r.text[-300:]

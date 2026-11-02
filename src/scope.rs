@@ -12,6 +12,7 @@
 //! meanwhile. Instance-level paths (`/`, `/login`, `/admin/users`, `/api/…`)
 //! stay absolute. Server-side redirects use [`SeasonCtx::url`].
 
+use crate::id::Id;
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -37,7 +38,7 @@ pub fn link_base() -> String {
 
 /// The season a `/s/{id}/…` URL selected.
 #[derive(Clone, Copy)]
-struct Selected(i64);
+struct Selected(Id);
 
 /// Instance-level pages: not about a season, so not reachable under `/s/{id}/`
 /// (one URL each — a forward-auth proxy gating them by prefix sees them all).
@@ -62,13 +63,13 @@ const INSTANCE_ROUTES: &[&str] = &[
 /// `None` for an instance-level page under `/s/` (it then 404s), and for any
 /// id or tail a forward-auth proxy's path rule might not read the same way
 /// (`+1`, `/s/1//admin`): only plain digits select a season.
-fn split(path: &str) -> Option<(i64, String)> {
+fn split(path: &str) -> Option<(Id, String)> {
     let rest = path.strip_prefix("/s/")?;
     let (id, tail) = rest.split_once('/').unwrap_or((rest, ""));
-    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) || tail.starts_with('/') {
+    if tail.starts_with('/') {
         return None;
     }
-    let id = id.parse::<i64>().ok().filter(|&i| i > 0)?;
+    let id = id.parse::<Id>().ok()?;
     let tail = format!("/{}", if tail.is_empty() { "board" } else { tail });
     let instance = INSTANCE_ROUTES.iter().any(|r| {
         tail.strip_prefix(r)
@@ -99,7 +100,7 @@ fn canonical(path: &str) -> bool {
 fn bare_season(path: &str) -> Option<&str> {
     let id = path.strip_prefix("/s/")?;
     let id = id.strip_suffix('/').unwrap_or(id);
-    (!id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())).then_some(id)
+    id.parse::<Id>().is_ok().then_some(id)
 }
 
 pub async fn rewrite(mut req: Request, next: Next) -> Response {
@@ -131,7 +132,7 @@ pub async fn rewrite(mut req: Request, next: Next) -> Response {
 /// The season a request is about.
 #[derive(Clone)]
 pub struct SeasonCtx {
-    pub id: i64,
+    pub id: Id,
     pub row: SeasonRow,
     pub rt: Arc<SeasonRt>,
     /// Who runs this season besides sysadmins (creator + co-moderators).
@@ -298,6 +299,37 @@ impl FromRequestParts<AppState> for MineScope {
     }
 }
 
+/// A live game in a URL: its id, and the AP slot it's on in the current seed.
+#[derive(Clone, Copy)]
+pub struct GameRef {
+    pub id: Id,
+    pub ap_slot: i64,
+}
+
+impl FromRequestParts<AppState> for GameRef {
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, st: &AppState) -> Result<Self, Response> {
+        let not_found = || {
+            (
+                StatusCode::NOT_FOUND,
+                crate::render::notice("No such game.", false, "board"),
+            )
+                .into_response()
+        };
+        let axum::extract::Path(id) = axum::extract::Path::<Id>::from_request_parts(parts, st)
+            .await
+            .map_err(|_| not_found())?;
+        let ctx = <SeasonCtx as FromRequestParts<AppState>>::from_request_parts(parts, st).await?;
+        let ap_slot = st
+            .db
+            .ap_slot_of_game(ctx.id, id)
+            .await
+            .ok_or_else(not_found)?;
+        Ok(GameRef { id, ap_slot })
+    }
+}
+
 /// `Option<SeasonCtx>`: `None` when no season exists at all (an explicitly
 /// selected unknown season is still a 404).
 impl axum::extract::OptionalFromRequestParts<AppState> for SeasonCtx {
@@ -335,7 +367,13 @@ mod tests {
 
     #[test]
     fn only_canonical_paths_pass() {
-        for ok in ["/", "/board", "/s/3/", "/s/3/game/7", "/admin/seasons"] {
+        for ok in [
+            "/",
+            "/board",
+            "/s/3/",
+            "/s/abcdefghjkmnpqrs/game/7",
+            "/admin/seasons",
+        ] {
             assert!(canonical(ok), "{ok}");
         }
         for bad in [
@@ -361,10 +399,10 @@ mod tests {
             .layer(axum::middleware::from_fn(rewrite));
         for (path, status) in [
             ("/board", 200),
-            ("/s/1/admin", 200),
-            ("/s/1", 303),
-            ("/s/1/", 303),
-            ("/s/01", 303),
+            ("/s/abcdefghjkmnpqrs/admin", 200),
+            ("/s/abcdefghjkmnpqrs", 303),
+            ("/s/abcdefghjkmnpqrs/", 303),
+            ("/s/1", 200),
             ("/s/1/../admin", 400),
             ("/%61dmin", 400),
             ("//", 400),
@@ -380,38 +418,51 @@ mod tests {
 
     #[test]
     fn season_prefix_is_split() {
-        assert_eq!(split("/s/3/board"), Some((3, "/board".into())));
+        const A: &str = "abcdefghjkmnpqrs";
+        let id: Id = A.parse().unwrap();
+        let split_at = |tail: &str| split(&format!("/s/{A}{tail}"));
+        assert_eq!(split_at("/board"), Some((id, "/board".into())));
         assert_eq!(
-            split("/s/3/game/7/poptracker/state"),
-            Some((3, "/game/7/poptracker/state".into()))
+            split_at("/game/7/poptracker/state"),
+            Some((id, "/game/7/poptracker/state".into()))
         );
-        assert_eq!(split("/s/3"), Some((3, "/board".into())));
-        assert_eq!(split("/s/3/"), Some((3, "/board".into())));
-        assert_eq!(split("/s/x/board"), None);
-        assert_eq!(split("/s/0/board"), None);
-        // Only plain digits: a proxy rule like `^/s/[0-9]+/admin` must see
-        // every path that reaches a season page.
-        assert_eq!(split("/s/+1/admin"), None);
-        assert_eq!(split("/s/-1/admin"), None);
-        assert_eq!(split("/s/ 1/admin"), None);
-        assert_eq!(split("/s/1//admin"), None);
-        assert_eq!(split("/s//admin"), None);
-        assert_eq!(split("/s/01/admin"), Some((1, "/admin".into())));
+        assert_eq!(split_at(""), Some((id, "/board".into())));
+        assert_eq!(split_at("/"), Some((id, "/board".into())));
+        // Only a real id: a proxy rule must see every path that reaches a season.
+        for bad in [
+            "x",
+            "0",
+            "1",
+            "+1",
+            "-1",
+            " 1",
+            "01",
+            "",
+            "ABCDEFGHJKMNPQRS",
+            "abcdefghjkmnpqr",
+        ] {
+            assert_eq!(split(&format!("/s/{bad}/admin")), None, "{bad}");
+        }
+        assert_eq!(split_at("//admin"), None);
         assert_eq!(split("/season/3"), None);
         assert_eq!(split("/board"), None);
         // Instance pages have one URL only.
-        assert_eq!(split("/s/1/admin/users"), None);
-        assert_eq!(split("/s/1/admin/settings/ap/install"), None);
-        assert_eq!(split("/s/1/api/me"), None);
-        assert_eq!(split("/s/1/login"), None);
-        assert_eq!(split("/s/1/admin"), Some((1, "/admin".into())));
+        for tail in [
+            "/admin/users",
+            "/admin/settings/ap/install",
+            "/api/me",
+            "/login",
+        ] {
+            assert_eq!(split_at(tail), None, "{tail}");
+        }
+        assert_eq!(split_at("/admin"), Some((id, "/admin".into())));
         assert_eq!(
-            split("/s/1/admin/seasonsx"),
-            Some((1, "/admin/seasonsx".into()))
+            split_at("/admin/seasonsx"),
+            Some((id, "/admin/seasonsx".into()))
         );
         assert_eq!(
-            split("/s/1/admin/worlds/approve"),
-            Some((1, "/admin/worlds/approve".into()))
+            split_at("/admin/worlds/approve"),
+            Some((id, "/admin/worlds/approve".into()))
         );
     }
 }

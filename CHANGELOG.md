@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- Upgrading from 0.2 or earlier. Seasons, games, slots and seats now have generated ids,
+  in URLs and in the database and data directory, so old URLs stop working and older data
+  can't be carried over: start with an empty data directory. This is a one-time break;
+  from 0.3.0 upgrades keep working.
+
 ### Added
 
 - A warning in the README and the user guide that Bifrost is in very early development,

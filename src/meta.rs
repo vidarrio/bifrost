@@ -2,6 +2,7 @@
 //! by the AP adapter — per-slot item totals and id→name maps for items and
 //! locations. Loaded once per season (subprocess) and cached in the board.
 
+use crate::id::Id;
 use std::collections::{BTreeMap, HashMap};
 
 use serde::Deserialize;
@@ -50,7 +51,7 @@ impl SaveState {
 /// Read every slot's true sent/received totals from the season's save
 /// (blocks on a Python subprocess). Returns an empty map before the server has
 /// written a save.
-pub async fn load_counts(season: i64) -> Result<SaveState, String> {
+pub async fn load_counts(season: Id) -> Result<SaveState, String> {
     ap_adapter::load_counts(&config::get().season(season)).await
 }
 
@@ -141,7 +142,7 @@ impl Meta {
 }
 
 /// Decode the current seed's metadata (blocks on a Python subprocess).
-pub async fn load(season: i64) -> Result<Meta, String> {
+pub async fn load(season: Id) -> Result<Meta, String> {
     let dirs = config::get().season(season);
     ap_adapter::decode_meta(&dirs, &dirs.current_zip()).await
 }

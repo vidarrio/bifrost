@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tarfile
 
-from lib import Server, check, get, post, summary, wait_for
+from lib import Server, check, first_game, get, new_season, post, summary, wait_for
 
 YAMLS = [b"name: Ann\ngame: ChecksFinder\nChecksFinder: {}\n", b"name: Bob\ngame: ChecksFinder\nChecksFinder: {}\n"]
 
@@ -16,8 +16,7 @@ a = Server("export", port=18188, ap_ports="39160-39162")
 a.start()
 try:
     root = a.setup_sysadmin()
-    post(root, "/admin/seasons", data=dict(name="Spring Cup"))
-    sid = int(re.search(r"/s/(\d+)/admin", get(root, "/admin/seasons").text).group(1))
+    sid = new_season(root, "Spring Cup")
     post(root, f"/s/{sid}/admin/signups", data=dict(open="1"))
     for y in YAMLS:
         post(root, f"/s/{sid}/signup", files={"yaml": ("y.yaml", y)})
@@ -50,7 +49,7 @@ try:
     root = b.setup_sysadmin()
     check("import form on the seasons console", "/admin/seasons/import" in get(root, "/admin/seasons").text)
     r = post(root, "/admin/seasons/import", files={"bundle": ("spring.tar.gz", bundle)})
-    m = re.search(r"/s/(\d+)/season", r.url)
+    m = re.search(r"/s/([0-9a-z]+)/season", r.url)
     check("web import lands on the season's summary", m and "Spring Cup" in r.text, r.url)
     page = get(root, "/").text
     check("it's on Past Seasons", "Spring Cup" in page)

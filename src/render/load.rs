@@ -6,7 +6,7 @@ use super::*;
 /// `/admin/settings/load`). `names`: season id → name.
 pub fn load_panel(
     load: Option<&crate::load::Load>,
-    names: &std::collections::HashMap<i64, String>,
+    names: &std::collections::HashMap<Id, String>,
 ) -> String {
     const MIB: u64 = 1 << 20;
     let Some(l) = load.filter(|l| l.latest().is_some()) else {

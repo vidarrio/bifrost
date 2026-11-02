@@ -83,7 +83,7 @@ pub struct Config {
 pub struct SeasonDirs {
     pub root: PathBuf,
     /// The season these dirs belong to (`None` for scratch dirs).
-    pub id: Option<i64>,
+    pub id: Option<crate::id::Id>,
     /// Run this AP install rather than the season's own (test runs).
     pub install: Option<crate::apinstall::Install>,
     /// Staged per-player YAMLs (AP default `Players`).
@@ -102,7 +102,7 @@ pub struct SeasonDirs {
 }
 
 impl SeasonDirs {
-    fn new(root: PathBuf, id: Option<i64>) -> Self {
+    fn new(root: PathBuf, id: Option<crate::id::Id>) -> Self {
         Self {
             id,
             install: None,
@@ -279,7 +279,7 @@ impl Config {
     }
 
     /// A season's directories (`seasons/<id>/`).
-    pub fn season(&self, id: i64) -> SeasonDirs {
+    pub fn season(&self, id: crate::id::Id) -> SeasonDirs {
         SeasonDirs::new(self.data_dir.join("seasons").join(id.to_string()), Some(id))
     }
 
@@ -632,7 +632,8 @@ mod tests {
     #[test]
     fn all_state_lives_under_the_data_dir() {
         let c = with(&[("BIFROST_DATA", "/data")]);
-        let s = c.season(7);
+        let id = crate::id::Id::new();
+        let s = c.season(id);
         for p in [
             c.db_path(),
             c.packs_dir(),
@@ -657,7 +658,7 @@ mod tests {
         }
         assert_eq!(
             s.current_zip(),
-            Path::new("/data/seasons/7/output/current.zip")
+            Path::new(&format!("/data/seasons/{id}/output/current.zip"))
         );
     }
 
