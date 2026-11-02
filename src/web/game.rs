@@ -102,8 +102,8 @@ impl AsRef<[u8]> for SharedText {
 /// for the PopTracker tab + its poller. `{pack:false}` when no pack is installed.
 pub(crate) async fn pt_state(Path(ap_slot): Path<i64>, ctx: scope::SeasonCtx) -> Response {
     let season = ctx.id;
-    let Some((game, received, checked, meta)) = ctx.rt.with_board(|b| {
-        let (game, received, checked) = b
+    let Some((game, received, checked, meta, hints, stored)) = ctx.rt.with_board(|b| {
+        let (game, received, checked, hints) = b
             .slots
             .get(&ap_slot)
             .map(|s| {
@@ -111,10 +111,18 @@ pub(crate) async fn pt_state(Path(ap_slot): Path<i64>, ctx: scope::SeasonCtx) ->
                     s.game.clone(),
                     s.received_items.clone(),
                     s.checked_locations.clone(),
+                    s.pack_hints.clone(),
                 )
             })
             .unwrap_or_default();
-        (game, received, checked, b.meta.clone())
+        (
+            game,
+            received,
+            checked,
+            b.meta.clone(),
+            hints,
+            b.stored.clone(),
+        )
     }) else {
         return Json(serde_json::json!({"pack": false})).into_response();
     };
@@ -136,13 +144,14 @@ pub(crate) async fn pt_state(Path(ap_slot): Path<i64>, ctx: scope::SeasonCtx) ->
         .and_then(|m| m.totals(ap_slot))
         .map(|s| s.precollected.clone())
         .unwrap_or_default();
-    let items: Vec<(i64, String)> = precollected
+    // A starting item comes from slot 0, as AP has it.
+    let items: Vec<(i64, String, i64)> = precollected
         .iter()
-        .map(|item| (*item, name_of(*item)))
+        .map(|item| (*item, name_of(*item), 0))
         .chain(
             received
                 .iter()
-                .map(|(item, _loc, _finder)| (*item, name_of(*item))),
+                .map(|(item, _loc, finder)| (*item, name_of(*item), *finder)),
         )
         .collect();
     // The slot's full location set (static per season) drives `visibility_rules`
@@ -164,6 +173,8 @@ pub(crate) async fn pt_state(Path(ap_slot): Path<i64>, ctx: scope::SeasonCtx) ->
         valid_locations: &valid_locations,
         player: ap_slot,
         connect,
+        hints: &hints,
+        stored: &stored,
     };
     match ptrack::compute(season, ap_slot, version, feed).await {
         // The state is shared by every response, not copied into each: a client

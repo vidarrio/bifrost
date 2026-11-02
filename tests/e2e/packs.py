@@ -2,8 +2,10 @@
 tracks, and one that never finishes or prints without end costs a time limit,
 not the server."""
 import io
+import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -12,10 +14,12 @@ import zipfile
 
 import requests
 
-from lib import BIN, Server, check, descendants, get, post, summary, wait_for
+from lib import AP_DIR as AP, BIN, DEV, REPO, Server, check, descendants, get, post, summary, wait_for
 
 YAML = b"name: Ann\ngame: ChecksFinder\nChecksFinder: {}\n"
-ITEMS = '[{"name":"Key","type":"toggle","img":"x.png","codes":"key"}]'
+ITEMS = """[{"name":"Key","type":"toggle","img":"x.png","codes":"key"},
+{"name":"Own hints","type":"toggle","img":"x.png","codes":"own_hints"},
+{"name":"Leak","type":"toggle","img":"x.png","codes":"leak"}]"""
 LOCATIONS = '[{"name":"Door","access_rules":["key"],"sections":[{"name":"S","item_count":1}]}]'
 LOAD = """
 Tracker:AddItems("items.json")
@@ -27,6 +31,15 @@ Archipelago:AddClearHandler("clear", function(data)
   print(string.rep("noise", 1000))
   Tracker:FindObjectForCode("key").Active = data.player_name == "Ann"
     and Archipelago:GetPlayerGame(1) == "ChecksFinder"
+  Archipelago:Get({"_read_hints_0_1", "_read_hints_0_2", "_read_race_mode"})
+end)
+-- Its own hints come back as a list, however empty; the server's other keys as nothing.
+Archipelago:AddRetrievedHandler("hints", function(key, value)
+  if key == "_read_hints_0_1" and type(value) == "table" then
+    Tracker:FindObjectForCode("own_hints").Active = true
+  elseif key ~= "_read_hints_0_1" and value ~= nil then
+    Tracker:FindObjectForCode("leak").Active = true
+  end
 end)
 """
 SPIN = "while true do pcall(function() while true do end end) end"
@@ -87,6 +100,33 @@ def scratch(srv):
         return []
 
 
+def helper_output(save):
+    """Run the save-reading helper on a save made here, under the bundled AP."""
+    d = tempfile.mkdtemp(dir=DEV)
+    script = (
+        "import pickle, sys, zlib; sys.path.insert(0, sys.argv[2]); "
+        "from NetUtils import Hint, HintStatus; "
+        "open(sys.argv[1], 'wb').write(zlib.compress(pickle.dumps(eval(sys.argv[3]))))"
+    )
+    path = os.path.join(d, "save")
+    py = os.path.join(AP, "venv/bin/python")
+    subprocess.run([py, "-c", script, path, AP, save], check=True, cwd=AP, capture_output=True)
+    env = dict(os.environ, BIFROST_AP_DIR=AP, BIFROST_SEASON_DIR=d, PYTHONPATH=os.path.join(REPO, "scripts"))
+    r = subprocess.run([py, "-P", os.path.join(REPO, "scripts/bifrost_counts.py"), path], capture_output=True, text=True, env=env, cwd=d, check=True)
+    shutil.rmtree(d, ignore_errors=True)
+    return r.stdout.strip().splitlines()[-1]
+
+
+hints = "{(0, 1): {Hint(1, 2, l, 6, False, str(l), 1, HintStatus.HINT_PRIORITY) for l in range(40)}}"
+save = "{'location_checks': {(0, 1): {5}}, 'received_items': {}, 'hints': %s, 'stored_data': {'ok': {'a': 1}, '_read_x': 1, 'nan': float('nan'), 'big': 'x' * 300000, 'surrogate': '\\ud800', '\\ud800': 1, 'huge': 10 ** 400}}" % hints
+line = helper_output(save)
+out = json.loads(line)
+check("the helper gives a slot's hints, in the server's form", out["slots"]["1"]["hints"][0]["class"] == "Hint" and out["slots"]["1"]["hints"][0]["status"] == 30, line[:300])
+check("…in a stable order", [h["location"] for h in out["slots"]["1"]["hints"]] == sorted(h["location"] for h in out["slots"]["1"]["hints"]))
+check("stored values are text of their own, without the server's keys or oversized ones", json.loads(out["stored"]["ok"]) == {"a": 1} and "_read_x" not in out["stored"] and "big" not in out["stored"] and "nan" not in out["stored"], sorted(out["stored"]))
+check("a key that can't be encoded is dropped", "\ud800" not in out["stored"])
+line.encode("utf-8")
+
 # A copy of the binary, to replace while it runs, as `bifrost update` does.
 work = tempfile.mkdtemp(prefix="bifrost-e2e-packs-")
 exe = os.path.join(work, "bifrost")
@@ -99,6 +139,8 @@ try:
     check("a good pack uploads", "Pack rejected" not in r.text, r.text[:300])
     d = wait_for(lambda: tracked(root), 60, 2)
     check("it tracks, with the slot data and players, whatever it prints", d, state(root))
+    held = {c for i in (d or {}).get("state", {}).get("items", []) if i["active"] for c in i["codes"]}
+    check("it reads its own hints, and no one else's", "own_hints" in held and "leak" not in held, held)
     t = time.time()
     polls = [state(root) for _ in range(30)]
     check("polls of an unchanged slot share one result", all("state" in p for p in polls) and time.time() - t < 3, time.time() - t)

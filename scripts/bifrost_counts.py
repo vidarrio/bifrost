@@ -12,7 +12,11 @@ undercounts. The server itself keeps the true tallies in the savefile:
             [item, location, finder] so the board can show every found item with
             its source location, same format as hints. received count = len(items).
 
-Output: one JSON line, {"<slot>": {"sent": n, "items": [[item, loc, finder], ...]}, ...}.
+It also holds what a slot's PopTracker pack would read from the server: its hints
+and the data storage. Those are decoded here, as packs only ever replay them.
+
+Output: one JSON line, {"slots": {"<slot>": {"sent": n, "items": [[item, loc,
+finder], ...], "checked": [...], "hints": [...]}, ...}, "stored": {key: "JSON"}}.
 """
 import sys
 import json
@@ -61,12 +65,56 @@ for slot in set(true_buckets) | set(false_buckets):
     bucket = true_buckets.get(slot, false_buckets.get(slot, []))
     items_by_slot[slot] = [[it.item, it.location, it.player] for it in bucket]
 
-out = {
+# Each slot's hints, in the form AP's server gives clients (`_read_hints_*`).
+hints_by_slot = {}
+for key, hints in save.get("hints", {}).items():
+    if isinstance(key, tuple) and len(key) == 2 and key[0] == 0:
+        hints_by_slot[key[1]] = [
+            {
+                "class": "Hint",
+                "receiving_player": int(h.receiving_player),
+                "finding_player": int(h.finding_player),
+                "location": int(h.location),
+                "item": int(h.item),
+                "found": bool(h.found),
+                "entrance": str(h.entrance),
+                "item_flags": int(h.item_flags),
+                "status": int(h.status),
+            }
+            # Sorted: they're a set, whose order changes from run to run.
+            for h in sorted(hints, key=tuple)
+        ]
+
+# The data storage, for packs to read. Bounded: clients can put anything there.
+# `_read_` keys are the server's own and aren't stored here. Each value goes out as
+# JSON text of its own, as a client can store what the reader's JSON parser refuses
+# (a lone surrogate, a huge number): that must cost it that key, not the whole line
+# every slot's state is in.
+MAX_STORED_VALUE = 256 << 10
+MAX_STORED = 4 << 20
+stored = {}
+stored_size = 0
+for key, value in save.get("stored_data", {}).items():
+    if not isinstance(key, str) or key.startswith("_read_"):
+        continue
+    try:
+        key.encode("utf-8")
+        text = json.dumps(value, allow_nan=False)
+    except (TypeError, ValueError):
+        continue
+    size = len(text) + len(key)
+    if size > MAX_STORED_VALUE or stored_size + size > MAX_STORED:
+        continue
+    stored[key] = text
+    stored_size += size
+
+slots = {
     str(slot): {
         "sent": sent.get(slot, 0),
         "items": items_by_slot.get(slot, []),
         "checked": checked_by_slot.get(slot, []),
+        "hints": hints_by_slot.get(slot, []),
     }
-    for slot in set(sent) | set(items_by_slot)
+    for slot in set(sent) | set(items_by_slot) | set(hints_by_slot)
 }
-print(json.dumps(out))
+print(json.dumps({"slots": slots, "stored": stored}))

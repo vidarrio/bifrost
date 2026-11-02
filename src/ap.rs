@@ -56,6 +56,8 @@ pub struct SlotState {
     pub game: String,
     pub status: i64, // ClientStatus: 0 unknown,5 connected,10 ready,20 playing,30 goal
     pub hint_list: Vec<HintRaw>,
+    /// The same hints from the save, as AP gives them to its clients.
+    pub pack_hints: Arc<Vec<Value>>,
     pub sent: u64,
     pub received: u64,
     /// Every item this slot has been granted, as (item, location, finder) —
@@ -69,6 +71,8 @@ pub struct SlotState {
 
 #[derive(Default)]
 pub struct Board {
+    /// The data storage, from the save, for PopTracker packs to read.
+    pub stored: Arc<serde_json::Map<String, Value>>,
     pub connected: bool,
     pub team: i64,
     pub seed: Option<String>,
@@ -400,15 +404,20 @@ pub fn spawn(
         tokio::spawn(async move {
             loop {
                 match crate::meta::load_counts(season).await {
-                    Ok(counts) if !counts.is_empty() => {
+                    Ok(save) if !save.slots.is_empty() => {
                         if let Ok(mut b) = board.write() {
-                            for (slot, c) in counts {
+                            b.stored = Arc::new(save.stored_values());
+                            for (slot, c) in save.slots {
+                                let Ok(slot) = slot.parse::<i64>() else {
+                                    continue;
+                                };
                                 if let Some(s) = b.slots.get_mut(&slot) {
                                     s.sent = c.sent;
                                     s.received = c.items.len() as u64;
                                     s.received_items =
                                         c.items.iter().map(|a| (a[0], a[1], a[2])).collect();
                                     s.checked_locations = c.checked;
+                                    s.pack_hints = Arc::new(c.hints);
                                 }
                             }
                         }
