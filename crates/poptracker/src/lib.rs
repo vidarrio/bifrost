@@ -472,6 +472,10 @@ struct MapLoc {
     y: f64,
     size: Option<f64>,
     shape: Option<String>,
+    /// `restrict_visibility_rules`: on this map, also needs these.
+    restrict: Rules,
+    /// `force_invisibility_rules`: on this map, hidden if these are met.
+    force_hidden: Rules,
 }
 #[derive(Clone)]
 struct SectionDef {
@@ -1004,6 +1008,8 @@ struct Eng {
     provider_depth: u32,
     maps: Vec<MapDef>,
     nodes: Rc<Vec<LocNode>>,
+    /// How many locations there were before the file being added.
+    locations_before: usize,
     /// What's settled of the rules (see `settle_accessibility`), by location or
     /// `location/section` id, and whether a change has made it stale.
     accessibility: HashMap<String, Level>,
@@ -1597,6 +1603,16 @@ impl Session {
             // Location is "Done" (grey) when it has sections and every one is checked.
             let loc_checked = !sections.is_empty() && sections.iter().all(|s| s.checked);
             for ml in &n.map_locations {
+                // A map location's own rules, as PopTracker's `isVisible` has them.
+                if enforce_vis {
+                    let met = |rules: &Rules| {
+                        resolve_rules(&self.lua, &self.eng, rules, true, false) != LEVEL_NONE
+                    };
+                    if (!ml.force_hidden.is_empty() && met(&ml.force_hidden)) || !met(&ml.restrict)
+                    {
+                        continue;
+                    }
+                }
                 out.markers.push(Marker {
                     map: ml.map.clone(),
                     x: ml.x,
@@ -2395,6 +2411,30 @@ fn flatten_locations(
         format!("{prefix}/{name}")
     };
 
+    // `parent` inherits from a location added by an earlier file, in place of the
+    // one this is nested in: by id, else the end of an id, as in PopTracker.
+    let named_parent = node
+        .get("parent")
+        .and_then(|v| v.as_str())
+        .filter(|p| !p.is_empty())
+        .and_then(|p| {
+            let p = p.strip_prefix('@').unwrap_or(p);
+            let e = eng.borrow();
+            let earlier = &e.nodes[..e.locations_before.min(e.nodes.len())];
+            earlier
+                .iter()
+                .find(|n| n.name == p)
+                .or_else(|| {
+                    earlier
+                        .iter()
+                        .find(|n| n.name.len() > p.len() && n.name.ends_with(p))
+                })
+                .map(|n| (n.rules.clone(), n.vis.clone()))
+        });
+    let (parent_rules, parent_vis) = match &named_parent {
+        Some((r, v)) => (r, v),
+        None => (parent_rules, parent_vis),
+    };
     let rules = parse_rules(eng, node, "access_rules", parent_rules);
     let vis = parse_rules(eng, node, "visibility_rules", parent_vis);
     let scoutable_glitched = node
@@ -2414,6 +2454,8 @@ fn flatten_locations(
                         y: num(m.get("y")?)?,
                         size: m.get("size").and_then(num),
                         shape: m.get("shape").and_then(|v| v.as_str().map(String::from)),
+                        restrict: parse_rules(eng, m, "restrict_visibility_rules", &Vec::new()),
+                        force_hidden: parse_rules(eng, m, "force_invisibility_rules", &Vec::new()),
                     })
                 })
                 .collect()
@@ -2662,7 +2704,11 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                 let Ok(json) = parse_pack_json(&txt) else {
                     return Ok(false);
                 };
-                let scoutable = eng2.borrow().scoutable_default;
+                let scoutable = {
+                    let mut e = eng2.borrow_mut();
+                    e.locations_before = e.nodes.len();
+                    e.scoutable_default
+                };
                 flatten_locations(&eng2, &json, "", &Vec::new(), &Vec::new(), scoutable);
                 Ok(true)
             })?,

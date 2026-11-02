@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- PopTracker locations honour `parent`, and map markers their own
+  `restrict_visibility_rules` and `force_invisibility_rules`.
 - PopTracker packs that also read an emulator's memory, such as Super Metroid's,
   no longer lose their received items: only Archipelago reads as connected.
 - PopTracker items behave as in PopTracker: their starting stage, `allow_disabled`,

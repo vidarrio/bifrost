@@ -703,6 +703,30 @@ fn rules_resolve_as_poptracker_does() {
     ] {
         assert_eq!(level(loc, "S"), want, "{loc}");
     }
+    // `parent` inherits from an earlier file's location, not this one's.
+    assert_eq!(level("Adopted", "S"), "none");
+    assert_eq!(level("AdoptedOpen", "S"), "reachable");
+    assert_eq!(
+        level("AdoptedJoin", "S"),
+        "none",
+        "its parent's rule and its own"
+    );
+    assert_eq!(level("AdoptedByEnd", "S"), "none", "have and miss");
+    assert_eq!(
+        level("NotYet", "S"),
+        "reachable",
+        "the same file isn't searched"
+    );
+    assert_eq!(
+        level("Nested/Other", "S"),
+        "none",
+        "in place of the one it's in"
+    );
+    assert_eq!(
+        level("Nested/Unknown", "S"),
+        "reachable",
+        "not found: the one it's in"
+    );
     assert_eq!(level("Parent/ChildSection", "Own"), "none");
     assert_eq!(level("Parent/ChildSection", "Plain"), "reachable");
     // Same id: each keeps its own level, under its own name, and `id[1]` finds it.
@@ -753,6 +777,14 @@ fn visibility_rules_settle_whatever_the_order() {
     );
     assert!(shown("VisShown"));
     assert!(shown("RefNowhere"), "a ref to nothing has no rules to fail");
+    let mut marks: Vec<i64> = st
+        .markers
+        .iter()
+        .filter(|m| m.location == "Marked")
+        .map(|m| m.x as i64)
+        .collect();
+    marks.sort();
+    assert_eq!(marks, [1, 2, 5, 6, 7], "each map location's own rules");
 }
 
 #[test]
