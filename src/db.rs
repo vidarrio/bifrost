@@ -701,7 +701,7 @@ impl Db {
         Ok(files)
     }
 
-    /// Delete a season's Bifrost slots (claims cascade). Used by the admin reset.
+    /// Delete a season's Bifrost slots (claims cascade), before a re-roll rebuilds them.
     pub async fn clear_all_slots(&self, season: Id) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM bifrost_slot WHERE season = ?")
             .bind(season)

@@ -321,8 +321,14 @@ pub async fn clear_player_yamls(season: Id) -> Result<(), String> {
 /// Delete a season's logs, so a cancelled run's don't end up in its bundle.
 pub async fn clear_logs(season: Id) {
     let dirs = config::get().season(season);
-    let _ = tokio::fs::remove_dir_all(&dirs.logs).await;
-    let _ = dirs.ensure();
+    if let Err(e) = tokio::fs::remove_dir_all(&dirs.logs).await
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!("season {season}: clearing its logs: {e}");
+    }
+    if let Err(e) = dirs.ensure() {
+        tracing::warn!("season {season}: its directories: {e}");
+    }
 }
 
 /// Delete the running session's save (a fresh start on the next server load).

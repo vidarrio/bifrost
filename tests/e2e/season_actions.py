@@ -6,6 +6,8 @@ import re
 import sqlite3
 import sys
 
+import requests
+
 from lib import Server, ap_servers, check, first_game, get, new_season, post, summary, wait_for
 
 YAML = b"name: %s\ngame: ChecksFinder\nChecksFinder: {}\n"
@@ -53,6 +55,12 @@ try:
     post(late, f"/s/{sid}/seat/{token}", data=dict(name="Late"))
     check("someone joined mid-season", "Late" in get(mod, f"/s/{sid}/claim").text)
 
+    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+        db.execute("INSERT INTO world_request (season, file, sha256, uploaded_by, uploaded_at) VALUES (?, 'y.apworld', 'x', 'ann', 0)", (sid,))
+    r = post(mod, f"/s/{sid}/admin/worlds/approve", data=dict(name="y.apworld"))
+    check("approving one is locked too", "locked" in r.text and not os.path.exists(apworld.replace("x.apworld", "y.apworld")), r.text[-200:])
+    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+        db.execute("DELETE FROM world_request WHERE season = ?", (sid,))
     open(apworld, "wb").close()
     r = post(mod, f"/s/{sid}/admin/delete-apworld", data=dict(name="x.apworld"))
     check("apworlds are locked once live", os.path.exists(apworld) and "locked" in r.text, r.text[-200:])
@@ -72,7 +80,12 @@ try:
     check("nor a moderator of other seasons", first_game(mod, sid) == game and "Admins only" in r.text, r.text[-200:])
     r = post(other, f"/s/{sid}/admin/season/delete", data=dict(name="wrong"))
     check("who isn't told its stage either", "Admins only" in r.text and "live" not in r.text.lower().split("<main>")[-1], r.text[-200:])
-    post(mod, f"/s/{sid}/admin/cancel", data=dict(name="Live one"))
+    # Hanging up mid-request doesn't leave it half done.
+    try:
+        mod.post(mod.base + f"/s/{sid}/admin/cancel", data=dict(name="Live one"), timeout=0.05)
+    except requests.RequestException:
+        pass
+    check("cancelling finishes even if the client hangs up", wait_for(lambda: "Cancelled" in get(mod, f"/s/{sid}/admin").text, 60, 1))
     page = get(ann, f"/s/{sid}/signup").text
     check("cancelling reopens signups", 'id="addgame"' in page, page[-300:])
     game_page = get(ann, url).text

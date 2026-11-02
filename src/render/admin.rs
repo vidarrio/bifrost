@@ -294,7 +294,11 @@ pub fn admin_page(
                 esc(&r.sha256[..12.min(r.sha256.len())]),
                 esc(&r.uploaded_by),
                 fmt_date(r.uploaded_at),
-                action_btn("admin/worlds/approve", &[("name", &r.file)], "approve", false, ""),
+                if pre_gen {
+                    action_btn("admin/worlds/approve", &[("name", &r.file)], "approve", false, "")
+                } else {
+                    String::new()
+                },
                 action_btn(
                     "admin/worlds/reject",
                     &[("name", &r.file)],
