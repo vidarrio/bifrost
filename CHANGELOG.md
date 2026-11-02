@@ -67,6 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A game's PopTracker pack stays with it through a re-roll. Packs are stored by game id, not by
+  the slot number a re-roll can change.
 - PopTracker locations honour `parent`, and map markers their own
   `restrict_visibility_rules` and `force_invisibility_rules`.
 - PopTracker packs that also read an emulator's memory, such as Super Metroid's,

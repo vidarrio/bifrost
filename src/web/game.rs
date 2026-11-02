@@ -70,7 +70,7 @@ pub(crate) async fn pt_upload(
             return render::notice(&format!("Pack rejected: {e}"), false, &back).into_response();
         }
     };
-    match ptrack::install_pack(season, ap_slot, bytes, summary.variant).await {
+    match ptrack::install_pack(season, game_id, bytes, summary.variant).await {
         Ok(()) => Redirect::to(&back).into_response(),
         Err(e) => render::notice(&format!("Pack rejected: {e}"), false, &back).into_response(),
     }
@@ -92,7 +92,7 @@ pub(crate) async fn pt_remove(
     let back = ctx.url(&format!("/game/{game_id}#tab-pt"));
     if ctx.state().is_live() && pt_can_manage(&st, season, ap_slot, my_id, is_admin).await {
         let s2 = season;
-        let _ = tokio::task::spawn_blocking(move || ptrack::remove(s2, ap_slot)).await;
+        let _ = tokio::task::spawn_blocking(move || ptrack::remove(s2, game_id)).await;
     }
     Redirect::to(&back).into_response()
 }
@@ -108,7 +108,10 @@ impl AsRef<[u8]> for SharedText {
 /// Computed tracker state (maps + markers + items) for the slot's pack, as JSON
 /// for the PopTracker tab + its poller. `{pack:false}` when no pack is installed.
 pub(crate) async fn pt_state(
-    scope::GameRef { ap_slot, .. }: scope::GameRef,
+    scope::GameRef {
+        id: game_id,
+        ap_slot,
+    }: scope::GameRef,
     ctx: scope::SeasonCtx,
 ) -> Response {
     let season = ctx.id;
@@ -136,7 +139,7 @@ pub(crate) async fn pt_state(
     }) else {
         return Json(serde_json::json!({"pack": false})).into_response();
     };
-    if !ctx.state().is_live() || !ptrack::has_pack(season, ap_slot) {
+    if !ctx.state().is_live() || !ptrack::has_pack(season, game_id) {
         return Json(serde_json::json!({"pack": false})).into_response();
     }
     let name_of = |item: i64| {
@@ -171,7 +174,7 @@ pub(crate) async fn pt_state(
         .and_then(|m| m.totals(ap_slot))
         .map(|s| s.all_locations.clone())
         .unwrap_or_default();
-    let version = ptrack::pack_version(season, ap_slot);
+    let version = ptrack::pack_version(season, game_id);
     // What AP tells the slot's clients on connect: its slot data and the
     // multiworld's players.
     let connect = (meta.as_deref())
@@ -186,7 +189,7 @@ pub(crate) async fn pt_state(
         hints: &hints,
         stored: &stored,
     };
-    match ptrack::compute(season, ap_slot, version, feed).await {
+    match ptrack::compute(season, game_id, version, feed).await {
         // The state is shared by every response, not copied into each: a client
         // that doesn't read its response shouldn't hold memory of its own.
         Ok(state) => {
@@ -224,7 +227,7 @@ pub(crate) struct PtAssetQuery {
 
 /// Serve a file (e.g. a map image) from the slot's installed pack.
 pub(crate) async fn pt_asset(
-    scope::GameRef { ap_slot, .. }: scope::GameRef,
+    scope::GameRef { id: game_id, .. }: scope::GameRef,
     ctx: scope::SeasonCtx,
     Query(q): Query<PtAssetQuery>,
 ) -> Response {
@@ -232,7 +235,7 @@ pub(crate) async fn pt_asset(
     let file = q.file.clone();
     let season2 = season;
     let bytes =
-        tokio::task::spawn_blocking(move || ptrack::read_pack_asset(season2, ap_slot, &file))
+        tokio::task::spawn_blocking(move || ptrack::read_pack_asset(season2, game_id, &file))
             .await
             .ok()
             .flatten();
@@ -363,7 +366,7 @@ pub(crate) async fn game_view(
         .await;
 
     // PopTracker: is a pack installed, and may the viewer manage it?
-    let pt_has = ptrack::has_pack(season, ap_slot);
+    let pt_has = ptrack::has_pack(season, game_id);
     let pt_can_manage = i_claim || is_admin;
 
     let invite = match hosted_live(&st, &ctx, ap_slot, my_id).await {

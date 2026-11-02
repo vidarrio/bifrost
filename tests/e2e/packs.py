@@ -4,6 +4,7 @@ not the server."""
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -215,6 +216,15 @@ try:
     r = upload(root, GOOD)
     check("a replaced binary still runs packs, and a new upload clears the hold", "Pack rejected" not in r.text, r.text[:300])
     check("…and tracks", wait_for(lambda: tracked(root), 30, 2), state(root))
+
+    # Kept by the game's id, which a re-roll doesn't change.
+    seed = lambda: re.search(r"(?i)generated seed (\S+)", get(root, f"/s/{sid}/admin").text)
+    before = seed().group(1)
+    check("a pack is stored by its game's id", os.path.isdir(os.path.join(srv.data, "packs", sid, gid)))
+    post(root, f"/s/{sid}/admin/regenerate")
+    check("the season re-rolls", wait_for(lambda: (m := seed()) and m.group(1) != before, 300, 3), before)
+    check("the game keeps its id", wait_for(lambda: first_game(root, sid), 60, 2) == gid)
+    check("…and its pack, which still tracks", wait_for(lambda: tracked(root), 60, 2), state(root))
 finally:
     srv.stop()
     shutil.rmtree(work, ignore_errors=True)
