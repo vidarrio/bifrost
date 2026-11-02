@@ -204,8 +204,14 @@ r = as_root(f"mkdir -p -m 700 /d/ap/x && chown 1000 /d/ap/x; {allow}; echo exit=
 check("as root, won't use a data dir holding another user's folder",
       "another user" in r.stderr and "exit=0" not in r.stdout, r.stdout + r.stderr)
 r = as_root("mkdir -m 700 /real && ln -s /real /l && chown -h 1000 /l; "
+            "BIFROST_ALLOW_ROOT=1 BIFROST_DATA=/l /bifrost auth status; echo exit=$?; ls -A /real | wc -l")
+check("as root, won't follow another user's link to a data dir",
+      "another user" in r.stderr and "exit=0" not in r.stdout and r.stdout.endswith("\n0\n"), r.stdout + r.stderr)
+r = as_root("mkdir -m 700 /real && ln -s /real /l; "
             "BIFROST_ALLOW_ROOT=1 BIFROST_DATA=/l /bifrost auth status; echo exit=$?; ls -A /real/runtime | wc -l")
-check("as root, a link to the data dir is resolved", "exit=0\n1\n" in r.stdout, r.stdout + r.stderr)
+check("as root, its own link to the data dir works", "exit=0\n1\n" in r.stdout, r.stdout + r.stderr)
+r = as_root(f"mkdir -m 700 /d && {allow} >/dev/null 2>&1; {allow}; echo exit=$?")
+check("as root, its own data dir passes on the next start", "exit=0\n" in r.stdout, r.stdout + r.stderr)
 
 # A bare system: no Python, no bubblewrap.
 data = os.path.join(srv.data, "..", "bundle-bare")

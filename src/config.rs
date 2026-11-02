@@ -181,7 +181,9 @@ impl Config {
             unsafe { libc::umask(0o077) };
             let real = root_data_dir(Path::new(&data_dir), me)
                 .unwrap_or_else(|e| panic!("not running as root: {e}"));
-            real.to_string_lossy().into_owned()
+            real.to_str()
+                .unwrap_or_else(|| panic!("not running as root: {} isn't UTF-8", real.display()))
+                .to_owned()
         } else {
             data_dir
         };
@@ -418,6 +420,44 @@ fn check_held(
     Ok(())
 }
 
+/// Nobody but `me` or root can change the way to `path` as written: each folder and
+/// link on it, then where each link leads. A part that doesn't exist yet ends it.
+fn check_way(path: &Path, me: u32, links_left: u32) -> Result<(), String> {
+    use std::path::Component;
+    let show = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
+    let absolute = std::env::current_dir()
+        .map_err(|e| format!("current directory: {e}"))?
+        .join(path);
+    let mut at = PathBuf::from("/");
+    for part in absolute.components() {
+        match part {
+            Component::Normal(name) => at.push(name),
+            Component::ParentDir => {
+                at.pop();
+                continue;
+            }
+            _ => continue,
+        }
+        let meta = match std::fs::symlink_metadata(&at) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(show(&at, e)),
+        };
+        check_held(&at, &meta, me, true)?;
+        if meta.is_symlink() {
+            if links_left == 0 {
+                return Err(format!("too many links at {}", at.display()));
+            }
+            let target = std::fs::read_link(&at).map_err(|e| show(&at, e))?;
+            at.pop();
+            let target = at.join(target);
+            check_way(&target, me, links_left - 1)?;
+            at = target.canonicalize().map_err(|e| show(&target, e))?;
+        }
+    }
+    Ok(())
+}
+
 /// The data dir a process running as root may use, with its links resolved so
 /// nobody can later repoint them: it, all it holds and the folders above it can
 /// only be changed by `me` or root. Everything in it is trusted from here on (the
@@ -425,11 +465,14 @@ fn check_held(
 fn root_data_dir(data_dir: &Path, me: u32) -> Result<PathBuf, String> {
     use std::os::unix::fs::DirBuilderExt;
     let show = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
+    check_way(data_dir, me, 40)?;
     std::fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
         .create(data_dir)
         .map_err(|e| show(data_dir, e))?;
+    // Again: anything new could have been put there just before it was created.
+    check_way(data_dir, me, 40)?;
     let real = data_dir.canonicalize().map_err(|e| show(data_dir, e))?;
     for (i, dir) in real.ancestors().enumerate() {
         let meta = std::fs::symlink_metadata(dir).map_err(|e| show(dir, e))?;
@@ -437,9 +480,19 @@ fn root_data_dir(data_dir: &Path, me: u32) -> Result<PathBuf, String> {
     }
     let mut todo = vec![real.clone()];
     while let Some(dir) = todo.pop() {
-        for entry in std::fs::read_dir(&dir).map_err(|e| show(&dir, e))? {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(show(&dir, e)),
+        };
+        for entry in entries {
             let path = entry.map_err(|e| show(&dir, e))?.path();
-            let meta = std::fs::symlink_metadata(&path).map_err(|e| show(&path, e))?;
+            // A running server's scratch files come and go.
+            let meta = match std::fs::symlink_metadata(&path) {
+                Ok(meta) => meta,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(show(&path, e)),
+            };
             check_held(&path, &meta, me, false)?;
             if meta.is_dir() {
                 todo.push(path);
@@ -896,6 +949,21 @@ trusted_proxies = ["10.0.0.1", "10.0.0.2"]
             set(&tmp, 0o1777);
             check(&data).unwrap();
             set(&tmp, 0o700);
+
+            // A way there others can change counts, wherever it leads.
+            let open = tmp.join("open");
+            std::fs::create_dir(&open).unwrap();
+            std::os::unix::fs::symlink(&data, open.join("link")).unwrap();
+            set(&open, 0o777);
+            assert!(
+                check(&open.join("link"))
+                    .unwrap_err()
+                    .contains("others can write")
+            );
+            set(&open, 0o1777);
+            check(&open.join("link")).unwrap();
+        } else {
+            eprintln!("skipped: the folders above the temp dir are open to others");
         }
         if me != 0 {
             let meta = std::fs::symlink_metadata(&tmp).unwrap();

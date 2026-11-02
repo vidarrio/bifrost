@@ -507,10 +507,12 @@ when a newer release is out (see [Configuration](#configuration)).
 **Running as root.** Bifrost refuses to run as root, including its commands, so use
 `sudo -u bifrost env BIFROST_DATA=/var/lib/bifrost` for those. To run as root anyway,
 set `BIFROST_ALLOW_ROOT=1` in the environment (`config.toml` can't set it). Game code then
-runs as root, contained only by bubblewrap if you have it, so we advise against it. The
+runs as root, so only do this with worlds you trust: bubblewrap, if you have it, limits it,
+but what it writes in the season's folder is then root's, and Bifrost reads from there. The
 data directory is `/var/lib/bifrost` by default, and Bifrost won't start if another user
-could change it, anything in it or a folder above it. That doesn't tell you what's already
-there: don't `chown` a directory another user has had to root and run from it.
+could change it, anything in it, a folder above it or a link on the way to it. That doesn't
+tell you what's already there: don't `chown` a directory another user has had to root and
+run from it.
 
 **Permissions.** Bifrost keeps its data directory to its own user, as it holds password
 hashes, tokens, spoilers and Archipelago passwords. Each start, it tightens the directory
