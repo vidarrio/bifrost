@@ -172,47 +172,6 @@ fn link_inside(link: &Path, target: &Path) -> bool {
     true
 }
 
-/// `path` can't be changed by anyone but `me` or root. Anyone else able to replace
-/// it could have a process running as root write through it, or run what's in it.
-/// A sticky directory lets others add entries but not replace `me`'s, which
-/// is enough for the folders above the data dir, such as `/tmp`.
-fn check_held(path: &Path, me: u32, sticky_ok: bool) -> Result<(), String> {
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    let meta = std::fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    if !meta.is_dir() {
-        return Err(format!("{} isn't a plain directory", path.display()));
-    }
-    if meta.uid() != me && meta.uid() != 0 {
-        return Err(format!("{} belongs to another user", path.display()));
-    }
-    let mode = meta.permissions().mode();
-    if mode & 0o022 != 0 && !(sticky_ok && mode & 0o1000 != 0) {
-        return Err(format!("others can write to {}", path.display()));
-    }
-    Ok(())
-}
-
-/// What a process running as root relies on to unpack and later run the runtime:
-/// the folders down to the data dir, `runtime` in it and this build's folder.
-fn check_for_root(data_dir: &Path, dest: &Path, me: u32) -> Result<(), String> {
-    let existing = data_dir
-        .ancestors()
-        .find(|a| !a.as_os_str().is_empty() && a.exists())
-        .unwrap_or(Path::new("."));
-    let real = existing
-        .canonicalize()
-        .map_err(|e| format!("{}: {e}", existing.display()))?;
-    for (i, dir) in real.ancestors().enumerate() {
-        check_held(dir, me, i > 0 || existing != data_dir)?;
-    }
-    for dir in [data_dir.join("runtime"), dest.to_path_buf()] {
-        if std::fs::symlink_metadata(&dir).is_ok() {
-            check_held(&dir, me, false)?;
-        }
-    }
-    Ok(())
-}
-
 fn extract(
     zip: &mut zip::ZipArchive<std::io::BufReader<Slice>>,
     dest: &Path,
@@ -283,12 +242,6 @@ pub fn prepare(data_dir: &Path) -> Result<Option<Runtime>, String> {
     }
     let base = data_dir.join("runtime");
     let dest = base.join(&id);
-    // SAFETY: geteuid only reads this process's user id.
-    let me = unsafe { libc::geteuid() };
-    let for_root = |why: String| format!("not using it as root: {why}");
-    if me == 0 {
-        check_for_root(data_dir, &dest, me).map_err(for_root)?;
-    }
     if !dest.join(COMPLETE).is_file() {
         tracing::info!(
             "unpacking the bundled runtime {id} into {} (first run of this build)…",
@@ -297,9 +250,6 @@ pub fn prepare(data_dir: &Path) -> Result<Option<Runtime>, String> {
         let partial = base.join(format!(".partial-{id}"));
         let _ = std::fs::remove_dir_all(&partial);
         std::fs::create_dir_all(&base).map_err(|e| format!("{}: {e}", base.display()))?;
-        if me == 0 {
-            check_for_root(data_dir, &dest, me).map_err(for_root)?;
-        }
         // New, so never a link someone left here.
         std::fs::create_dir(&partial).map_err(|e| format!("{}: {e}", partial.display()))?;
         if let Err(e) = extract(&mut zip, &partial) {
@@ -353,62 +303,6 @@ pub fn previous(data_dir: &Path, version: &str) -> Option<(PathBuf, PathBuf)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn root_only_uses_a_runtime_nobody_else_can_change() {
-        use std::os::unix::fs::PermissionsExt;
-        let me = unsafe { libc::geteuid() };
-        let tmp = std::env::temp_dir().join(format!("bifrost-held-{}", std::process::id()));
-        let data = tmp.join("data");
-        let runtime = data.join("runtime");
-        let dest = runtime.join("build");
-        let elsewhere = tmp.join("elsewhere");
-        for d in [&dest, &elsewhere] {
-            std::fs::create_dir_all(d).unwrap();
-        }
-        let set = |p: &Path, mode| {
-            std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap()
-        };
-        for d in [&tmp, &data, &runtime, &dest] {
-            set(d, 0o700);
-        }
-        let check = || check_for_root(&data, &dest, me);
-
-        // The folders above are the test machine's own.
-        if std::env::temp_dir()
-            .ancestors()
-            .all(|a| check_held(a, me, true).is_ok())
-        {
-            check().unwrap();
-            check_for_root(&data.join("not-yet"), &dest, me).unwrap();
-
-            set(&runtime, 0o770);
-            assert!(check().unwrap_err().contains("others can write"));
-            set(&runtime, 0o700);
-            set(&data, 0o1777);
-            assert!(
-                check().is_err(),
-                "sticky isn't enough for the data dir itself"
-            );
-            set(&data, 0o700);
-            set(&dest, 0o777);
-            assert!(check().is_err());
-            set(&dest, 0o700);
-
-            std::fs::remove_dir_all(&runtime).unwrap();
-            std::os::unix::fs::symlink(&elsewhere, &runtime).unwrap();
-            assert!(check().unwrap_err().contains("plain directory"));
-            std::fs::remove_file(&runtime).unwrap();
-        }
-        if me != 0 {
-            assert!(
-                check_held(&tmp, me + 1, false)
-                    .unwrap_err()
-                    .contains("another user")
-            );
-        }
-        std::fs::remove_dir_all(&tmp).unwrap();
-    }
 
     #[test]
     fn symlinks_must_stay_inside() {

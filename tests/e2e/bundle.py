@@ -194,16 +194,22 @@ check("refuses root by default", "refusing to run as root" in r.stderr and "exit
 allow = "BIFROST_ALLOW_ROOT=1 BIFROST_DATA=/d /bifrost auth status"
 r = as_root(f"mkdir -m 700 /d && {allow}; echo exit=$?; ls -A /d/runtime | wc -l")
 check("root can ask for it", "exit=0\n1\n" in r.stdout, r.stdout + r.stderr)
-r = as_root(f"mkdir -m 700 /d /away && ln -s /away /d/runtime; {allow}; echo exit=$?; ls -A /away | wc -l")
+r = as_root(f"mkdir -m 700 /d /away && ln -s /away /d/runtime && chown -h 1000 /d/runtime; {allow}; echo exit=$?; ls -A /away | wc -l")
 check("as root, won't unpack through a planted link",
-      "plain directory" in r.stderr and "exit=0" not in r.stdout and r.stdout.endswith("\n0\n"), r.stdout + r.stderr)
+      "another user" in r.stderr and "exit=0" not in r.stdout and r.stdout.endswith("\n0\n"), r.stdout + r.stderr)
 r = as_root(f"mkdir -m 700 /d && chown 1000 /d; {allow}; echo exit=$?; ls -A /d | wc -l")
 check("as root, won't use a data dir another user holds",
       "another user" in r.stderr and "exit=0" not in r.stdout and r.stdout.endswith("\n0\n"), r.stdout + r.stderr)
+r = as_root(f"mkdir -p -m 700 /d/ap/x && chown 1000 /d/ap/x; {allow}; echo exit=$?")
+check("as root, won't use a data dir holding another user's folder",
+      "another user" in r.stderr and "exit=0" not in r.stdout, r.stdout + r.stderr)
+r = as_root("mkdir -m 700 /real && ln -s /real /l && chown -h 1000 /l; "
+            "BIFROST_ALLOW_ROOT=1 BIFROST_DATA=/l /bifrost auth status; echo exit=$?; ls -A /real/runtime | wc -l")
+check("as root, a link to the data dir is resolved", "exit=0\n1\n" in r.stdout, r.stdout + r.stderr)
 
 # A bare system: no Python, no bubblewrap.
 data = os.path.join(srv.data, "..", "bundle-bare")
-subprocess.run(["rm", "-rf", data])
+subprocess.run(["podman", "unshare", "rm", "-rf", data])  # its uid inside isn't ours
 os.makedirs(data)
 name = "bfbare"
 subprocess.run(["podman", "rm", "-f", name], capture_output=True)

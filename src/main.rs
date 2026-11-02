@@ -94,7 +94,7 @@ async fn main() {
     if config::root_refused(euid, std::env::var_os("BIFROST_ALLOW_ROOT").as_deref()) {
         eprintln!(
             "bifrost: refusing to run as root. Run it as its own user, for example with \
-             `sudo -u bifrost`, or set BIFROST_ALLOW_ROOT=1 to run as root anyway."
+             `sudo -u bifrost env BIFROST_DATA=<its data dir>`, or set BIFROST_ALLOW_ROOT=1 to run as root anyway."
         );
         std::process::exit(1);
     }

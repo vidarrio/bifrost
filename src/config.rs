@@ -170,6 +170,21 @@ impl Config {
                 "/var/lib/bifrost".into()
             }
         });
+        // SAFETY: geteuid only reads this process's user id.
+        let me = unsafe { libc::geteuid() };
+        let data_dir = if me == 0 {
+            tracing::warn!(
+                "running as root (BIFROST_ALLOW_ROOT): game code runs as root, \
+                 and without bubblewrap nothing contains it"
+            );
+            // SAFETY: umask only sets this process's file creation mask.
+            unsafe { libc::umask(0o077) };
+            let real = root_data_dir(Path::new(&data_dir), me)
+                .unwrap_or_else(|e| panic!("not running as root: {e}"));
+            real.to_string_lossy().into_owned()
+        } else {
+            data_dir
+        };
         let file = load_file(&Path::new(&data_dir).join(CONFIG_FILE))
             .unwrap_or_else(|e| panic!("{CONFIG_FILE}: {e}"));
         if FILE_VARS.set(file).is_err() {
@@ -376,9 +391,62 @@ pub const CONFIG_FILE: &str = "config.toml";
 
 /// Bifrost runs game code and keeps data others may be able to write to, so root
 /// has to ask for it. Only the environment can, as the data dir isn't to be trusted
-/// by root until this has passed.
+/// by root until [`root_data_dir`] has passed.
 pub fn root_refused(euid: u32, allow: Option<&std::ffi::OsStr>) -> bool {
     euid == 0 && allow.is_none_or(|v| v != "1")
+}
+
+/// Nobody but `me` or root can change `path`. A sticky directory lets others add
+/// entries but not replace `me`'s, which will do for the folders above the data dir.
+fn check_held(
+    path: &Path,
+    meta: &std::fs::Metadata,
+    me: u32,
+    sticky_ok: bool,
+) -> Result<(), String> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    if meta.uid() != me && meta.uid() != 0 {
+        return Err(format!("{} belongs to another user", path.display()));
+    }
+    let mode = meta.permissions().mode();
+    if !meta.is_symlink()
+        && mode & 0o022 != 0
+        && !(sticky_ok && meta.is_dir() && mode & 0o1000 != 0)
+    {
+        return Err(format!("others can write to {}", path.display()));
+    }
+    Ok(())
+}
+
+/// The data dir a process running as root may use, with its links resolved so
+/// nobody can later repoint them: it, all it holds and the folders above it can
+/// only be changed by `me` or root. Everything in it is trusted from here on (the
+/// settings, the installed Archipelago, the runtime), so this covers all of it.
+fn root_data_dir(data_dir: &Path, me: u32) -> Result<PathBuf, String> {
+    use std::os::unix::fs::DirBuilderExt;
+    let show = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(data_dir)
+        .map_err(|e| show(data_dir, e))?;
+    let real = data_dir.canonicalize().map_err(|e| show(data_dir, e))?;
+    for (i, dir) in real.ancestors().enumerate() {
+        let meta = std::fs::symlink_metadata(dir).map_err(|e| show(dir, e))?;
+        check_held(dir, &meta, me, i > 0)?;
+    }
+    let mut todo = vec![real.clone()];
+    while let Some(dir) = todo.pop() {
+        for entry in std::fs::read_dir(&dir).map_err(|e| show(&dir, e))? {
+            let path = entry.map_err(|e| show(&dir, e))?.path();
+            let meta = std::fs::symlink_metadata(&path).map_err(|e| show(&path, e))?;
+            check_held(&path, &meta, me, false)?;
+            if meta.is_dir() {
+                todo.push(path);
+            }
+        }
+    }
+    Ok(real)
 }
 
 /// Settings from the config file, keyed by their `BIFROST_*` name.
@@ -633,16 +701,6 @@ pub fn get() -> &'static Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn root_has_to_ask() {
-        use std::ffi::OsStr;
-        assert!(root_refused(0, None));
-        assert!(root_refused(0, Some(OsStr::new("0"))));
-        assert!(root_refused(0, Some(OsStr::new(""))));
-        assert!(!root_refused(0, Some(OsStr::new("1"))));
-        assert!(!root_refused(1000, None));
-    }
     use std::collections::HashMap;
     use std::path::Path;
 
@@ -779,5 +837,74 @@ trusted_proxies = ["10.0.0.1", "10.0.0.2"]
     #[test]
     fn bad_port_falls_back() {
         assert_eq!(with(&[("BIFROST_PORT", "nope")]).port, 8080);
+    }
+
+    #[test]
+    fn root_has_to_ask() {
+        use std::ffi::OsStr;
+        assert!(root_refused(0, None));
+        assert!(root_refused(0, Some(OsStr::new("0"))));
+        assert!(root_refused(0, Some(OsStr::new(""))));
+        assert!(!root_refused(0, Some(OsStr::new("1"))));
+        assert!(!root_refused(1000, None));
+    }
+
+    #[test]
+    fn root_only_uses_a_data_dir_nobody_else_can_change() {
+        use std::os::unix::fs::PermissionsExt;
+        let me = unsafe { libc::geteuid() };
+        let tmp = std::env::temp_dir().join(format!("bifrost-held-{}", std::process::id()));
+        let data = tmp.join("data");
+        let deep = data.join("ap/1.0");
+        let file = deep.join("python");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(&file, b"").unwrap();
+        let set = |p: &Path, mode| {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap()
+        };
+        for d in [&tmp, &data, &data.join("ap"), &deep] {
+            set(d, 0o700);
+        }
+        set(&file, 0o700);
+        let check = |p: &Path| root_data_dir(p, me);
+
+        // The folders above are the test machine's own: skip if they'd fail anyway.
+        if check(&data).is_ok() {
+            // Through a link, and it's the real path that's used.
+            let link = tmp.join("link");
+            std::os::unix::fs::symlink(&data, &link).unwrap();
+            assert_eq!(check(&link).unwrap(), data.canonicalize().unwrap());
+            // Created when missing, and private.
+            let fresh = tmp.join("fresh/er");
+            check(&fresh).unwrap();
+            assert_eq!(
+                std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+
+            // Deep inside, a file or a folder.
+            set(&file, 0o720);
+            assert!(check(&data).unwrap_err().contains("others can write"));
+            set(&file, 0o700);
+            set(&deep, 0o777);
+            assert!(check(&data).unwrap_err().contains("others can write"));
+            set(&deep, 0o700);
+            // Sticky will do above the data dir, but not for it.
+            set(&data, 0o1777);
+            assert!(check(&data).is_err());
+            set(&data, 0o700);
+            set(&tmp, 0o1777);
+            check(&data).unwrap();
+            set(&tmp, 0o700);
+        }
+        if me != 0 {
+            let meta = std::fs::symlink_metadata(&tmp).unwrap();
+            assert!(
+                check_held(&tmp, &meta, me + 1, false)
+                    .unwrap_err()
+                    .contains("another user")
+            );
+        }
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 }
