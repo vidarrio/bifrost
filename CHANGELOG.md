@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- PopTracker packs that also read an emulator's memory, such as Super Metroid's,
+  no longer lose their received items: only Archipelago reads as connected.
 - PopTracker items behave as in PopTracker: their starting stage, `allow_disabled`,
   `inherit_codes`, `static` and `composite_toggle` items, several items sharing a
   code, custom items counting toward rules, sections that host an item, and counts

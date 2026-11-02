@@ -2325,7 +2325,15 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     )?;
     at.set(
         "GetConnectionState",
-        lua.create_function(|_, _: MultiValue| Ok(3i64))?,
+        // Only Archipelago is here, connected. A pack told a console is connected
+        // reads its memory, which is all zeroes, over the items it just received.
+        lua.create_function(|_, (_t, backend): (Value, Option<String>)| {
+            Ok(match backend.as_deref() {
+                Some("AP") => 3i64,
+                Some("SNES" | "UAT") => 1,
+                _ => -1,
+            })
+        })?,
     )?;
     at.set("SelectedConnectorType", lua.create_table()?)?;
     g.set("AutoTracker", &at)?;

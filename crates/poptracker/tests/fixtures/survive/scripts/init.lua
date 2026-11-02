@@ -11,6 +11,11 @@ assert(os.execute == nil and os.remove == nil and os.getenv == nil and os.exit =
 assert(require("os") == os and require("string") == string and require("utf8") == utf8)
 assert(not pcall(require, "io") and not pcall(require, "debug") and not pcall(require, "package"))
 
+-- Archipelago is connected, and no console: a pack must not read its memory.
+assert(AutoTracker:GetConnectionState("AP") == 3)
+assert(AutoTracker:GetConnectionState("SNES") == 1 and AutoTracker:GetConnectionState("UAT") == 1)
+assert(AutoTracker:GetConnectionState("other") == -1 and AutoTracker:GetConnectionState() == -1)
+
 -- Lookups of nothing find nothing.
 assert(ScriptHost:LoadScript(nil) == false)
 assert(ScriptHost:LoadScript("scripts/missing.lua") == false, "a script that isn't there")
