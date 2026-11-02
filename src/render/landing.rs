@@ -153,8 +153,9 @@ pub fn landing_signups(subs: &[SubmissionRow]) -> String {
             // Primary player first, then any co-op seats, matching the live roster.
             let mut names = vec![s.slot_name.clone()];
             names.extend(
-                s.coop_names
-                    .split(',')
+                [s.coop_names.as_str(), s.seat_names.as_str()]
+                    .into_iter()
+                    .flat_map(|n| n.split(','))
                     .map(str::trim)
                     .filter(|n| !n.is_empty())
                     .map(str::to_string),

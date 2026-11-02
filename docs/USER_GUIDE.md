@@ -6,7 +6,7 @@ with hints, and an archive of past seasons, all from one web app.
 
 This guide has a part for each role:
 
-- [Players](#players): signing up, claiming a slot, connecting, hints and tracking.
+- [Players](#players): signing up, co-op partners, connecting, hints and tracking.
 - [Moderators](#moderators): creating and running seasons.
 - [Sysadmins](#sysadmins): installing and operating the instance.
 
@@ -14,7 +14,7 @@ This guide has a part for each role:
 
 | Role | Can |
 |---|---|
-| **User** (player) | Sign up for seasons, claim slots, hint, track, play minesweeper. |
+| **User** (player) | Sign up for seasons, invite co-op partners, hint, track, play minesweeper. |
 | **Moderator** | Everything a user can, plus create seasons and run the ones they created or co-moderate. |
 | **Sysadmin** | Everything, on every season, plus users, invites, the apworld catalog, Archipelago versions, backups and instance settings. |
 
@@ -66,14 +66,32 @@ have no game there yet, the signup wizard is on the page too, with three steps:
 2. **Upload your options YAML.** It is checked against the season's installed
    worlds with Archipelago's own code, and has to pass before you can
    continue. Errors are shown as Archipelago reports them.
-3. **Confirm.** If several people share the game (co-op), list the others,
-   comma-separated. They claim their own seat once the season is generated.
+3. **Confirm.** If several people share the game (co-op), tick the box. Your
+   game's page then has an invite link for them.
 
 Each game on the season's page has a card that opens its own page, with notes
 from its host, such as "Limiting myself to no double jump". On your own game's
 page you can edit the notes until the season is generated, and replace the YAML
 while signups are open. A new YAML is checked like a new signup, and is also how
-you change your slot name. You can remove your signup from its card.
+you change your slot name. You can remove your signup from its card until the
+season is generated; that also removes your partners from the game. Replacing
+the YAML keeps them.
+
+### Co-op partners
+
+On your game's page, **Create an invite link** for each partner, as many as you
+need, and send it to them. They need an account here. The link opens a page
+saying who's inviting them to what. They pick a seat name, which has to be
+unique in the season, and claim the seat. Each link works once, and you can
+revoke an unused one.
+
+Before generation you can remove a partner, and partners can rename their seat
+and edit the game's notes with you. Once the season is live, seat names are
+locked and nobody can be removed, so that the logs stay consistent. Someone who
+stops playing keeps their seat while the others finish the game; if everyone on
+a game has gone, a moderator can release it.
+
+You can still invite someone to a live game, from its page on the live board.
 
 You can play several games in a season. Once you have a signup, the page shows
 **Add another game** instead of the form. Each game needs its own YAML, with its own
@@ -88,12 +106,12 @@ stays flagged and you'll need to pick something else.
 The **YAML checker** (`/check`) runs the same check without signing up. It's
 useful when you're tuning options.
 
-### After generation: claiming your slot
+### After generation: your slot
 
-When the season is generated, open the **live board** and **claim** your slot.
-Only the claimant can hint on a slot. If you grab the wrong one, unclaim it.
-Usually your own signups are claimed for you at generation; co-op partners
-claim their own seats.
+When the season is generated, your signup's slot is yours, and your partners'
+seats are theirs. Only a slot's players can hint on it. Slots can't be claimed or
+given up by players. In a season with no signups, such as an imported one, a
+moderator assigns each slot to an account from the **Slots** page.
 
 ### Connecting
 
@@ -669,12 +687,12 @@ Configure it under `[forward_auth]`:
 The proxy must run forward-auth on every signed-in path. That includes the
 season-scoped forms under `/s/<id>/`, not only the plain prefixes. Otherwise a
 client can send its own identity headers through the proxy. The signed-in
-prefixes are `/admin`, `/claim`, `/hint`, `/signup`, `/game`, `/prioritize`,
+prefixes are `/admin`, `/claim`, `/hint`, `/signup`, `/seat`, `/game`, `/prioritize`,
 `/minesweeper`, `/api` and `/mc`. Everything else is public. A Traefik rule
 for the season forms looks like:
 
 ```
-PathRegexp(`^/s/[^/]*/+(admin|claim|hint|signup|game|prioritize|minesweeper|api|mc)`)
+PathRegexp(`^/s/[^/]*/+(admin|claim|hint|signup|seat|game|prioritize|minesweeper|api|mc)`)
 ```
 
 Match any season id there, not just digits, so that no spelling of a season

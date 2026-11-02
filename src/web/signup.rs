@@ -75,9 +75,32 @@ pub(crate) async fn signup_game(
     };
     let is_host = sub.account_id == me.id();
     let state = ctx.state();
-    let edit_notes = is_host && matches!(state, db::State::Draft | db::State::Signup);
+    let pre_gen = matches!(state, db::State::Draft | db::State::Signup);
+    let seats = st.db.seats_of(id).await;
+    let my_seat = seats.iter().find(|s| s.account_id == me.id()).cloned();
     let replace = is_host && state.accepts_signups();
-    render::signup_game_page(&sub, edit_notes, replace, MAX_NOTES).into_response()
+    let invites =
+        (is_host && pre_gen).then(|| (format!("signup/game/{id}"), format!("/s/{}/seat/", ctx.id)));
+    let links = if invites.is_some() {
+        st.db.seat_links_of_signup(id).await
+    } else {
+        Vec::new()
+    };
+    render::signup_game_page(&render::SignupGame {
+        sub: &sub,
+        seats: &seats,
+        my_seat: my_seat.as_ref().filter(|_| pre_gen),
+        is_host,
+        pre_gen,
+        edit_notes: pre_gen && (is_host || my_seat.is_some()),
+        replace,
+        invite: invites
+            .as_ref()
+            .map(|(action, base)| render::invite_box(action, base, &links))
+            .unwrap_or_default(),
+        max_notes: MAX_NOTES,
+    })
+    .into_response()
 }
 
 #[derive(Deserialize)]
@@ -175,12 +198,7 @@ pub(crate) async fn signup_game_yaml(
             return Redirect::to(&ctx.url(&format!("/signup/game/{id}"))).into_response();
         }
         Ok(false) => refuse(closed),
-        Err(e)
-            if e.as_database_error()
-                .is_some_and(|d| d.is_unique_violation()) =>
-        {
-            refuse(&slot_taken(&p0.name))
-        }
+        Err(e) if db::name_clash(&e) => refuse(&slot_taken(&p0.name)),
         Err(e) => {
             tracing::warn!("replacing a signup in season {}: {e}", ctx.id);
             refuse("Couldn't store the signup.")
@@ -296,12 +314,7 @@ pub(crate) async fn signup_check(
                 .first()
                 .map(|p| (p.name.clone(), p.game.clone().unwrap_or_default()))
                 .unwrap_or_default();
-            let taken = r.ok
-                && st
-                    .db
-                    .submissions(ctx.id)
-                    .await
-                    .is_ok_and(|subs| subs.iter().any(|s| s.slot_name == name));
+            let taken = r.ok && st.db.slot_name_taken(ctx.id, &name).await;
             let refusal = if r.ok && r.players.len() > 1 {
                 Some(worlds::ONE_GAME_PER_FILE.to_string())
             } else {
@@ -369,13 +382,13 @@ pub(crate) async fn signup_post(
     }
     let mut yaml: Option<Vec<u8>> = None;
     let mut is_custom = false;
-    let mut coop = String::new();
+    let mut coop = false;
     let mut pending_world = String::new();
     while let Ok(Some(field)) = mp.next_field().await {
         match field.name().unwrap_or("") {
             "yaml" => yaml = field.bytes().await.ok().map(|b| b.to_vec()),
             "is_custom" => is_custom = field.text().await.unwrap_or_default() == "1",
-            "coop" => coop = field.text().await.unwrap_or_default(),
+            "coop" => coop = field.text().await.unwrap_or_default() == "1",
             "pending_world" => pending_world = field.text().await.unwrap_or_default(),
             _ => {
                 let _ = field.bytes().await;
@@ -448,13 +461,6 @@ pub(crate) async fn signup_post(
     let Some(yaml_path) = store_yaml(&ctx, &slot_name, &yaml).await else {
         return render::signup_result("Couldn't store the YAML.", false);
     };
-    let coop_clean: String = coop
-        .split([',', '\n'])
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(", ");
-
     match st
         .db
         .add_submission(
@@ -463,7 +469,7 @@ pub(crate) async fn signup_post(
             &slot_name,
             &game,
             is_custom,
-            &coop_clean,
+            "",
             &yaml_path,
             (!held_for.is_empty()).then_some(held_for.as_str()),
             ctx.row.max_games,
@@ -474,18 +480,27 @@ pub(crate) async fn signup_post(
             let _ = tokio::fs::remove_file(&yaml_path).await;
             render::signup_result(&limit_message(ctx.row.max_games), false)
         }
-        Ok(Some(_)) if !held_for.is_empty() => render::signup_result(
-            &format!(
-                "Signed up: {slot_name} — held until a moderator approves {held_for}; your YAML is checked then."
-            ),
-            true,
-        ),
-        Ok(Some(_)) => render::signup_result(&format!("Signed up: {slot_name} — {game}."), true),
+        Ok(Some(id)) => {
+            let text = if held_for.is_empty() {
+                format!("Signed up: {slot_name} — {game}.")
+            } else {
+                format!(
+                    "Signed up: {slot_name} — held until a moderator approves {held_for}; your YAML is checked then."
+                )
+            };
+            if coop {
+                let _ = st
+                    .db
+                    .add_seat_link(ctx.id, &auth::new_token(), Some(id), None, my_id)
+                    .await;
+                render::signup_coop_result(&text, id)
+            } else {
+                render::signup_result(&text, true)
+            }
+        }
         Err(e) => {
             let _ = tokio::fs::remove_file(&yaml_path).await;
-            if e.as_database_error()
-                .is_some_and(|d| d.is_unique_violation())
-            {
+            if db::name_clash(&e) {
                 render::signup_result(&slot_taken(&slot_name), false)
             } else {
                 tracing::warn!("storing a signup in season {}: {e}", ctx.id);
@@ -508,8 +523,215 @@ pub(crate) async fn signup_delete(
 ) -> Redirect {
     let my_id = me.id();
     let (_me, is_admin) = ctx.ident(&me);
+    // Once generated the game is in the seed; a moderator releases it instead.
+    if !matches!(ctx.state(), db::State::Draft | db::State::Signup) {
+        return Redirect::to(&ctx.url("/signup"));
+    }
     if let Ok(Some(yaml_file)) = st.db.delete_submission(ctx.id, f.id, my_id, is_admin).await {
         let _ = tokio::fs::remove_file(&yaml_file).await;
     }
     Redirect::to(&ctx.url("/signup"))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TokenForm {
+    token: String,
+}
+
+/// The host's game before generation, or a redirect back if it isn't theirs.
+async fn hosted(
+    st: &AppState,
+    ctx: &scope::SeasonCtx,
+    me: &auth::Me,
+    id: i64,
+) -> Option<db::SubmissionRow> {
+    st.db
+        .submission(ctx.id, id)
+        .await
+        .filter(|s| s.account_id == me.id())
+        .filter(|_| matches!(ctx.state(), db::State::Draft | db::State::Signup))
+}
+
+pub(crate) async fn signup_game_invite(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Path(id): Path<i64>,
+) -> Redirect {
+    if hosted(&st, &ctx, &me, id).await.is_some() {
+        let _ = st
+            .db
+            .add_seat_link(ctx.id, &auth::new_token(), Some(id), None, me.id())
+            .await;
+    }
+    Redirect::to(&ctx.url(&format!("/signup/game/{id}")))
+}
+
+pub(crate) async fn signup_game_revoke(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Path(id): Path<i64>,
+    Form(f): Form<TokenForm>,
+) -> Redirect {
+    if hosted(&st, &ctx, &me, id).await.is_some()
+        && st.db.seat_links_of_signup(id).await.contains(&f.token)
+    {
+        let _ = st.db.revoke_seat_link(ctx.id, &f.token).await;
+    }
+    Redirect::to(&ctx.url(&format!("/signup/game/{id}")))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SeatForm {
+    seat: i64,
+    #[serde(default)]
+    name: String,
+}
+
+pub(crate) async fn signup_seat_remove(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Path(id): Path<i64>,
+    Form(f): Form<SeatForm>,
+) -> Redirect {
+    let _ = st.db.remove_seat(ctx.id, f.seat, me.id()).await;
+    Redirect::to(&ctx.url(&format!("/signup/game/{id}")))
+}
+
+pub(crate) async fn signup_seat_rename(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Path(id): Path<i64>,
+    Form(f): Form<SeatForm>,
+) -> Response {
+    let name = f.name.trim();
+    if let Some(e) = db::seat_name_error(name) {
+        return render::signup_result(e, false).into_response();
+    }
+    match st.db.rename_seat(ctx.id, f.seat, me.id(), name).await {
+        Ok(db::JoinOutcome::Joined) => {
+            Redirect::to(&ctx.url(&format!("/signup/game/{id}"))).into_response()
+        }
+        Ok(db::JoinOutcome::NameTaken) => {
+            render::signup_result(&name_taken(name), false).into_response()
+        }
+        _ => render::signup_result("You can't rename that seat now.", false).into_response(),
+    }
+}
+
+fn name_taken(name: &str) -> String {
+    format!("The name '{name}' is already taken in this season. Pick another.")
+}
+
+/// What a seat link joins: its host's name, the game, and on a live season the
+/// AP slot a new seat goes on.
+struct Invite {
+    host: String,
+    game: String,
+    signup: Option<db::SubmissionRow>,
+    live_slot: Option<i64>,
+}
+
+async fn invite_of(st: &AppState, ctx: &scope::SeasonCtx, link: &db::SeatLink) -> Option<Invite> {
+    let signup = match link.submission_id {
+        Some(id) => Some(st.db.submission(ctx.id, id).await?),
+        None => None,
+    };
+    let slot_name = signup
+        .as_ref()
+        .map(|s| s.slot_name.clone())
+        .or_else(|| link.slot_name.clone())?;
+    if ctx.state().is_live() {
+        let slots = st.db.slots(ctx.id).await.ok()?;
+        let row = slots.iter().find(|r| r.name == slot_name)?;
+        return Some(Invite {
+            host: row.claimed_by.clone().unwrap_or(slot_name),
+            game: row.game.clone(),
+            signup: None,
+            live_slot: Some(row.ap_slot),
+        });
+    }
+    let sub = signup?;
+    Some(Invite {
+        host: sub.username.clone(),
+        game: sub.game.clone(),
+        signup: Some(sub),
+        live_slot: None,
+    })
+}
+
+/// A seat link: who's inviting you to what, and a box for your seat's name.
+pub(crate) async fn seat_get(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    _me: auth::Me,
+    Path(token): Path<String>,
+) -> Html<String> {
+    let gone = "This link has been used or revoked, or the season can't take new players right now. Ask for a new one.";
+    let Some(link) = st.db.seat_link(ctx.id, &token).await else {
+        return render::signup_result(gone, false);
+    };
+    match invite_of(&st, &ctx, &link).await {
+        Some(i) => render::seat_page(&i.host, &i.game, &ctx.row.name, &token),
+        None => render::signup_result(gone, false),
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct JoinForm {
+    name: String,
+}
+
+pub(crate) async fn seat_post(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Path(token): Path<String>,
+    Form(f): Form<JoinForm>,
+) -> Response {
+    let gone = "This link has been used or revoked, or the season can't take new players right now. Ask for a new one.";
+    let refuse = |text: &str| render::signup_result(text, false).into_response();
+    let name = f.name.trim();
+    if let Some(e) = db::seat_name_error(name) {
+        return refuse(e);
+    }
+    let Some(link) = st.db.seat_link(ctx.id, &token).await else {
+        return refuse(gone);
+    };
+    let Some(invite) = invite_of(&st, &ctx, &link).await else {
+        return refuse(gone);
+    };
+    if st.db.slot_name_taken(ctx.id, name).await {
+        return refuse(&name_taken(name));
+    }
+    let joined = match (&invite.signup, invite.live_slot) {
+        (Some(sub), _) => st.db.join_signup(ctx.id, &token, sub, me.id(), name).await,
+        (None, Some(ap)) => {
+            st.db
+                .join_live(ctx.id, &token, ap, &invite.game, me.id(), name)
+                .await
+        }
+        _ => return refuse(gone),
+    };
+    match joined {
+        Ok(db::JoinOutcome::Joined) => {
+            export_mc_whitelist(&st).await;
+            let to = match (&invite.signup, invite.live_slot) {
+                (Some(sub), _) => format!("/signup/game/{}", sub.id),
+                (_, Some(ap)) => format!("/game/{ap}"),
+                _ => "/signup".to_string(),
+            };
+            Redirect::to(&ctx.url(&to)).into_response()
+        }
+        Ok(db::JoinOutcome::NameTaken) => refuse(&name_taken(name)),
+        Ok(db::JoinOutcome::AlreadyIn) => refuse("You're already playing this game."),
+        Ok(db::JoinOutcome::LinkGone) => refuse(gone),
+        Err(e) => {
+            tracing::warn!("joining through a seat link in season {}: {e}", ctx.id);
+            refuse("Couldn't add you to the game.")
+        }
+    }
 }

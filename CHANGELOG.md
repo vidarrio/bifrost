@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Co-op partners join through one-use invite links from a game's host, before or after
+  generation, and pick their own seat name. They can edit the game's notes and, before
+  generation, rename their seat.
 - *Sign up for a season* on the home page now lists the seasons open for signup. Each
   game on a season's page opens its own page, with notes for the other players and, for
   its host, a way to replace the YAML without losing the signup.
@@ -65,6 +68,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   players' names and games, as they would from Archipelago on connect. Packs
   that read the seed's options there now track them, such as Satisfactory's
   starting recipes.
+
+### Changed
+
+- Players no longer claim or unclaim slots. Moderators assign slots in seasons with no
+  signups. A signup can't be removed once its season is generated, and nobody is removed
+  from a seat after that.
 
 ## [0.2.0] - 2026-10-29
 

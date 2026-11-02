@@ -207,13 +207,13 @@ pub fn claim_page(
 ) -> Html<String> {
     let mut out = page_head(Some(me));
     out.push_str(&format!(
-        r#"<h1>Claim a slot</h1><div class="crumb"><a href="board">← board</a>{}</div>
-<p class="empty">Claim your slot so only you can hint on it. You can unclaim it again if you grabbed the wrong one.</p>"#,
+        r#"<h1>Slots</h1><div class="crumb"><a href="board">← board</a>{}</div>
+<p class="empty">A signup's host has their slot from the start, and partners join through the host's invite links. Only a slot's players can hint on it.</p>"#,
         if is_admin { " · admin" } else { "" },
     ));
 
     if slots.is_empty() {
-        out.push_str(r#"<div class="empty">No slots to claim yet.</div>"#);
+        out.push_str(r#"<div class="empty">No slots yet.</div>"#);
         out.push_str("</main></body></html>");
         return Html(out);
     }
@@ -235,19 +235,19 @@ pub fn claim_page(
             let (by, action) = match &r.claimed_by {
                 Some(_) if mine => (
                     r#"<span class="by mine">you</span>"#.to_string(),
-                    claim_button(r.id, "unclaim", "Unclaim", true, "/claim"),
+                    String::new(),
                 ),
                 Some(who) => (
                     format!(r#"<span class="by">{}</span>"#, esc(who)),
-                    if is_admin {
-                        claim_button(r.id, "unclaim", "Force unclaim", true, "/claim")
-                    } else {
-                        String::new()
-                    },
+                    String::new(),
                 ),
                 None => (
                     r#"<span class="by free">unclaimed</span>"#.to_string(),
-                    claim_button(r.id, "claim", "Claim", false, "/claim"),
+                    if is_admin {
+                        assign_form(r.id, "/claim")
+                    } else {
+                        String::new()
+                    },
                 ),
             };
             out.push_str(&format!(
@@ -289,12 +289,11 @@ document.querySelectorAll('form.hintform').forEach(function(f){
 });
 </script>"#;
 
-pub(super) fn claim_button(id: i64, op: &str, label: &str, ghost: bool, back: &str) -> String {
-    let cls = if ghost { "ghost" } else { "" };
+pub(super) fn assign_form(id: i64, back: &str) -> String {
     format!(
         r#"<form method="post" action="claim" style="display:inline;margin-left:6px">
-<input type="hidden" name="slot_id" value="{id}"><input type="hidden" name="op" value="{op}">
-<input type="hidden" name="back" value="{back}">
-<button class="{cls}" type="submit">{label}</button></form>"#
+<input type="hidden" name="slot_id" value="{id}"><input type="hidden" name="op" value="assign">
+<input type="hidden" name="back" value="{back}"><input name="account" placeholder="account" required>
+<button type="submit">Assign</button></form>"#
     )
 }

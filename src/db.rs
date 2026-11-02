@@ -12,10 +12,12 @@ mod auth;
 mod migrate;
 pub use migrate::SCHEMA_VERSION;
 mod seasons;
+mod seats;
 mod settings;
 mod worlds;
 pub use auth::{AccountRow, LinkKind, LinkRow, RedeemError};
 pub use seasons::{MAX_DAILY_HINTS, MAX_GAMES_LIMIT, SeasonRow, State};
+pub use seats::{JoinOutcome, SeatLink, SeatRow, name_clash, seat_name_error};
 pub use settings::{Approval, Discord, Instance};
 pub use worlds::{CatalogWorld, WorldRequest};
 
@@ -97,6 +99,8 @@ pub struct SubmissionRow {
     pub held_err: Option<String>,
     /// Shared notes for the season's other players.
     pub notes: String,
+    /// Partners' seat names, comma-separated.
+    pub seat_names: String,
 }
 
 impl SubmissionRow {
@@ -1012,7 +1016,7 @@ impl Db {
 
     /// Seed a freshly-generated season from submissions: 1:1 Bifrost slots from
     /// the AP roster, each matching submission's uploader auto-claimed, and a
-    /// co-op Bifrost slot minted (unclaimed) per co-op name.
+    /// co-op Bifrost slot minted per seat (claimed) and per old co-op name (not).
     pub async fn seed_from_submissions(
         &self,
         season: i64,
@@ -1062,6 +1066,28 @@ impl Db {
                     .bind(coop)
                     .bind(num)
                     .bind(game)
+                    .execute(&self.pool)
+                    .await?;
+                }
+                // Partners who joined through a link already have an account.
+                for seat in self.seats_of(sub.id).await {
+                    sqlx::query(
+                        "INSERT OR IGNORE INTO bifrost_slot (season, name, ap_slot, game) VALUES (?, ?, ?, ?)",
+                    )
+                    .bind(season)
+                    .bind(&seat.name)
+                    .bind(num)
+                    .bind(game)
+                    .execute(&self.pool)
+                    .await?;
+                    sqlx::query(
+                        "INSERT OR IGNORE INTO claim (bifrost_slot_id, account_id, claimed_at)
+                         SELECT id, ?, ? FROM bifrost_slot WHERE season = ? AND name = ?",
+                    )
+                    .bind(seat.account_id)
+                    .bind(now)
+                    .bind(season)
+                    .bind(&seat.name)
                     .execute(&self.pool)
                     .await?;
                 }
@@ -1278,7 +1304,8 @@ impl Db {
     pub async fn submissions(&self, season: i64) -> Result<Vec<SubmissionRow>, sqlx::Error> {
         sqlx::query_as::<_, SubmissionRow>(
             "SELECT s.id, s.account_id, a.username, s.slot_name, s.game, s.is_custom,
-                    s.coop_names, s.yaml_file, s.held_for, s.held_err, s.notes
+                    s.coop_names, s.yaml_file, s.held_for, s.held_err, s.notes,
+                    COALESCE((SELECT group_concat(name, ', ') FROM seat WHERE submission_id = s.id), '') AS seat_names
              FROM submission s JOIN account a ON a.id = s.account_id
              WHERE s.season = ? ORDER BY s.created_at",
         )
@@ -1291,7 +1318,8 @@ impl Db {
     pub async fn submission(&self, season: i64, id: i64) -> Option<SubmissionRow> {
         sqlx::query_as::<_, SubmissionRow>(
             "SELECT s.id, s.account_id, a.username, s.slot_name, s.game, s.is_custom,
-                    s.coop_names, s.yaml_file, s.held_for, s.held_err, s.notes
+                    s.coop_names, s.yaml_file, s.held_for, s.held_err, s.notes,
+                    COALESCE((SELECT group_concat(name, ', ') FROM seat WHERE submission_id = s.id), '') AS seat_names
              FROM submission s JOIN account a ON a.id = s.account_id
              WHERE s.id = ? AND s.season = ?",
         )
@@ -1303,7 +1331,7 @@ impl Db {
         .flatten()
     }
 
-    /// Set a game's notes, for its host, until the season generates.
+    /// Set a game's notes, for its host and partners, until the season generates.
     pub async fn set_submission_notes(
         &self,
         season: i64,
@@ -1313,7 +1341,9 @@ impl Db {
     ) -> Result<bool, sqlx::Error> {
         let res = sqlx::query(
             "UPDATE submission SET notes = ?1
-             WHERE id = ?2 AND season = ?3 AND account_id = ?4
+             WHERE id = ?2 AND season = ?3
+               AND (account_id = ?4
+                    OR EXISTS (SELECT 1 FROM seat WHERE submission_id = ?2 AND account_id = ?4))
                AND (SELECT state FROM season WHERE id = ?3) IN ('draft', 'signup')",
         )
         .bind(notes)
@@ -1429,36 +1459,5 @@ impl Db {
         .bind(season)
         .fetch_optional(&self.pool)
         .await
-    }
-
-    /// Release a claim. A non-admin may only release their own; an admin any.
-    /// Release `slot_id` (one of `season`'s slots): the claimant's own, or
-    /// anyone's for that season's admins.
-    pub async fn unclaim(
-        &self,
-        season: i64,
-        slot_id: i64,
-        account: i64,
-        is_admin: bool,
-    ) -> Result<bool, sqlx::Error> {
-        const IN_SEASON: &str =
-            "bifrost_slot_id IN (SELECT id FROM bifrost_slot WHERE id = ? AND season = ?)";
-        let res = if is_admin {
-            sqlx::query(&format!("DELETE FROM claim WHERE {IN_SEASON}"))
-                .bind(slot_id)
-                .bind(season)
-                .execute(&self.pool)
-                .await?
-        } else {
-            sqlx::query(&format!(
-                "DELETE FROM claim WHERE {IN_SEASON} AND account_id = ?"
-            ))
-            .bind(slot_id)
-            .bind(season)
-            .bind(account)
-            .execute(&self.pool)
-            .await?
-        };
-        Ok(res.rows_affected() > 0)
     }
 }

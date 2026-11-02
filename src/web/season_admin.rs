@@ -183,6 +183,7 @@ pub(crate) async fn clear_signups(st: &AppState, season: i64) {
 /// the staged Players/ YAMLs.
 pub(crate) async fn clear_current_players(st: &AppState, season: i64) {
     let _ = st.db.clear_all_slots(season).await;
+    let _ = st.db.clear_seat_links(season).await;
     let _ = generate::clear_player_yamls(season).await;
 }
 

@@ -38,7 +38,6 @@ try:
 
     claim = get(root, f"/s/{sid}/claim").text
     ids = re.findall(r'name="slot_id" value="(\d+)"', claim)
-    r = post(root, f"/s/{sid}/claim", data=dict(slot_id=ids[0], op="claim"))
     get(root, f"/s/{sid}/game/1")                       # points relay
     hint = lambda: (j := post(root, f"/s/{sid}/hint", data=dict(slot_id=ids[0], item="Map Width")).json()) \
         and "isn't live" not in j.get("message", "") and j                             # hint relay, once the tracker's in

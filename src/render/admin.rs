@@ -42,6 +42,11 @@ pub(super) fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool) -> String
         } else {
             String::new()
         };
+        let seats = if s.seat_names.is_empty() {
+            String::new()
+        } else {
+            format!(r#"<div class="meta">+ {}</div>"#, esc(&s.seat_names))
+        };
         let notes = if s.notes.is_empty() {
             String::new()
         } else {
@@ -49,7 +54,7 @@ pub(super) fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool) -> String
         };
         b.push_str(&format!(
             r#"<div class="slot idle stretch"><div class="game"><a class="cover" href="signup/game/{}">{}</a>{custom}</div>
-<div class="meta">{} · by {}</div>{held}{coop}{notes}<div class="seat"><span></span>{del}</div></div>"#,
+<div class="meta">{} · by {}</div>{held}{coop}{seats}{notes}<div class="seat"><span></span>{del}</div></div>"#,
             s.id,
             esc(&s.slot_name),
             esc(&s.game),

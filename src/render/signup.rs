@@ -159,7 +159,7 @@ pub fn signup_page(
   <section class="wstep" data-step="3" hidden>
     <h2>Players</h2>
     <div class="coopown">You: <b id="myname">your slot</b> <span class="by free">from your YAML — already in</span></div>
-    <label class="chk"><input type="checkbox" id="coopchk"> Sharing this game between people (co-op, e.g. Don't Starve Together)</label>
+    <label class="chk"><input type="checkbox" name="coop" value="1"> Sharing this game between people (co-op, e.g. Don't Starve Together). You'll get links to invite them.</label>
     <div id="coopbox" hidden>
       <label class="hint">You're already included above — just list the <b>other</b> people sharing this game, comma-separated. They can claim their seat once the season is generated.<input type="text" name="coop" placeholder="e.g. Robin, Sam"></label>
     </div>
@@ -227,8 +227,6 @@ pub fn signup_page(
      else{next2.disabled=true;chkmsg.className='inlinemsg bad';chkmsg.textContent=(j.errors&&j.errors.length?j.errors.join('; '):(j.error||'Did not pass.'));}
    }).catch(function(){chkbtn.disabled=false;chkmsg.className='inlinemsg bad';chkmsg.textContent='Check failed (network).';});
  });
- var coopchk=document.getElementById('coopchk');
- coopchk.addEventListener('change',function(){document.getElementById('coopbox').hidden=!coopchk.checked;});
  show(1);
 })();
 </script>"#
@@ -278,14 +276,63 @@ pub fn signups_list(seasons: &[(i64, String, Vec<SubmissionRow>)]) -> Html<Strin
     Html(b)
 }
 
+/// What a game's page shows its viewer.
+pub struct SignupGame<'a> {
+    pub sub: &'a SubmissionRow,
+    pub seats: &'a [crate::db::SeatRow],
+    /// The viewer's own seat, while it can still be renamed.
+    pub my_seat: Option<&'a crate::db::SeatRow>,
+    pub is_host: bool,
+    pub pre_gen: bool,
+    pub edit_notes: bool,
+    pub replace: bool,
+    /// The invite box, for the host.
+    pub invite: String,
+    pub max_notes: usize,
+}
+
+/// The box a game's host invites co-op partners from: a one-use link each.
+pub fn invite_box(action: &str, link_base: &str, tokens: &[String]) -> String {
+    let mut b = String::from(
+        r#"<h2>Co-op partners</h2><p class="empty">Each link seats one person with an account here. They pick their own seat name.</p>"#,
+    );
+    for t in tokens {
+        b.push_str(&format!(
+            r#"<div class="seat"><a class="seatlink" href="{link_base}{t}">{link_base}{t}</a><form method="post" action="{action}/revoke" style="display:inline"><input type="hidden" name="token" value="{t}"><button class="ghost" type="submit">Revoke</button></form></div>"#,
+            link_base = esc(link_base),
+            t = esc(t),
+            action = esc(action),
+        ));
+    }
+    b.push_str(&format!(
+        r#"<form method="post" action="{}/invite"><button type="submit">Create an invite link</button></form>
+<script>document.querySelectorAll('.seatlink').forEach(function(a){{a.textContent=a.href;}});</script>"#,
+        esc(action)
+    ));
+    b
+}
+
+/// A seat link's page: who's inviting you, and your seat's name.
+pub fn seat_page(host: &str, game: &str, season: &str, token: &str) -> Html<String> {
+    let mut b = page_head(None);
+    b.push_str(&format!(
+        r#"<h1>Join {game}</h1><p>{host} has invited you to join them for <b>{game}</b> in {season}.</p>
+<form class="signup" method="post" action="seat/{token}" autocomplete="off"><label>Your seat's name<input type="text" id="seatname" name="name" maxlength="16" required></label><button type="submit" id="seatgo" disabled>Claim this seat</button></form>
+<script>(function(){{var n=document.getElementById('seatname'),g=document.getElementById('seatgo');n.addEventListener('input',function(){{g.disabled=!n.value.trim();}});}})();</script>
+</main></body></html>"#,
+        host = esc(host),
+        game = esc(game),
+        season = esc(season),
+        token = esc(token),
+    ));
+    Html(b)
+}
+
 /// A game before the season generates. Anyone signed in can read it; the forms
-/// are for its host.
-pub fn signup_game_page(
-    s: &SubmissionRow,
-    edit_notes: bool,
-    replace: bool,
-    max_notes: usize,
-) -> Html<String> {
+/// are for its host and partners.
+pub fn signup_game_page(g: &SignupGame) -> Html<String> {
+    let s = g.sub;
+    let (edit_notes, replace, max_notes) = (g.edit_notes, g.replace, g.max_notes);
     let mut b = page_head(None);
     b.push_str(&format!(
         r#"<h1>{}</h1><div class="crumb"><a href="signup">← season</a></div>
@@ -300,6 +347,30 @@ pub fn signup_game_page(
             esc(&s.coop_names)
         ));
     }
+    for seat in g.seats {
+        let remove = if g.is_host && g.pre_gen {
+            format!(
+                r#"<form method="post" action="signup/game/{}/seat/remove" style="display:inline"><input type="hidden" name="seat" value="{}"><button class="ghost" type="submit">Remove</button></form>"#,
+                s.id, seat.id
+            )
+        } else {
+            String::new()
+        };
+        b.push_str(&format!(
+            r#"<div class="seat"><span class="who">{}</span><span><span class="by">{}</span> {remove}</span></div>"#,
+            esc(&seat.name),
+            esc(&seat.username),
+        ));
+    }
+    if let Some(seat) = g.my_seat {
+        b.push_str(&format!(
+            r#"<form class="signup" method="post" action="signup/game/{}/seat/rename"><input type="hidden" name="seat" value="{}"><label>Your seat's name<input type="text" name="name" maxlength="16" value="{}" required></label><button type="submit">Rename</button></form>"#,
+            s.id,
+            seat.id,
+            esc(&seat.name),
+        ));
+    }
+    b.push_str(&g.invite);
     match (&s.held_for, &s.held_err) {
         (Some(_), Some(e)) => b.push_str(&format!(
             r#"<div class="banner bad">Held: {}</div>"#,
@@ -333,6 +404,17 @@ pub fn signup_game_page(
         ));
     }
     b.push_str("</main></body></html>");
+    Html(b)
+}
+
+/// A co-op signup is done: its page has the invite links.
+pub fn signup_coop_result(text: &str, id: i64) -> Html<String> {
+    let mut b = page_head(None);
+    b.push_str(&format!(
+        r#"<h1>Signup</h1><div class="crumb"><a href="signup">← signup</a></div>
+<div class="banner ok">{}</div><p><a href="signup/game/{id}">Invite your co-op partners on your game's page →</a></p></main></body></html>"#,
+        esc(text)
+    ));
     Html(b)
 }
 

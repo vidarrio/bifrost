@@ -29,6 +29,38 @@ const STEPS: &[&str] = &[
     "ALTER TABLE season ADD COLUMN max_games INTEGER NOT NULL DEFAULT 0",
     // 4: a game's notes for the season's other players.
     "ALTER TABLE submission ADD COLUMN notes TEXT NOT NULL DEFAULT ''",
+    // 5: co-op partners join through one-use links from a game's host. A name is
+    // unique across a season's signups and seats.
+    "CREATE TABLE seat (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
+         submission_id INTEGER NOT NULL REFERENCES submission(id) ON DELETE CASCADE,
+         account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+         name TEXT NOT NULL,
+         created_at INTEGER NOT NULL,
+         UNIQUE(season, name),
+         UNIQUE(submission_id, account_id)
+     );
+     CREATE TABLE seat_link (
+         token TEXT PRIMARY KEY,
+         season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
+         submission_id INTEGER REFERENCES submission(id) ON DELETE CASCADE,
+         slot_name TEXT,
+         created_by INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+         created_at INTEGER NOT NULL
+     );
+     CREATE TRIGGER seat_name_insert BEFORE INSERT ON seat
+     WHEN EXISTS (SELECT 1 FROM submission WHERE season = NEW.season AND slot_name = NEW.name)
+     BEGIN SELECT RAISE(ABORT, 'slot name taken'); END;
+     CREATE TRIGGER seat_name_update BEFORE UPDATE OF name ON seat
+     WHEN EXISTS (SELECT 1 FROM submission WHERE season = NEW.season AND slot_name = NEW.name)
+     BEGIN SELECT RAISE(ABORT, 'slot name taken'); END;
+     CREATE TRIGGER submission_name_insert BEFORE INSERT ON submission
+     WHEN EXISTS (SELECT 1 FROM seat WHERE season = NEW.season AND name = NEW.slot_name)
+     BEGIN SELECT RAISE(ABORT, 'slot name taken'); END;
+     CREATE TRIGGER submission_name_update BEFORE UPDATE OF slot_name ON submission
+     WHEN EXISTS (SELECT 1 FROM seat WHERE season = NEW.season AND name = NEW.slot_name)
+     BEGIN SELECT RAISE(ABORT, 'slot name taken'); END",
 ];
 
 /// The schema version this build writes.
