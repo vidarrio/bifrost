@@ -239,18 +239,38 @@ pub async fn approve(db: &Db, season: Id, file: &str, by: &str) -> Result<WorldR
     Ok(req)
 }
 
-/// Reject a pending upload; its held signups say so until they're removed.
+/// Reject a pending upload; its held signups say so until they're replaced or removed.
 pub async fn reject(db: &Db, season: Id, file: &str, by: &str) -> Result<(), String> {
     let req = db
         .take_world_request(season, file)
         .await
         .ok_or("Nothing is waiting under that name.")?;
     let _ = tokio::fs::remove_file(config::get().season(season).pending.join(&req.file)).await;
-    let why = format!("{} was rejected by {by} — remove this signup", req.file);
-    for (id, _) in db.held_submissions(season, &req.file).await {
-        let _ = db.set_held_err(id, &why).await;
+    let why = format!(
+        "{} was rejected by {by}: replace the YAML with an installed game's, or remove this signup",
+        req.file
+    );
+    for (id, yaml) in db.held_submissions(season, &req.file).await {
+        let _ = db.set_held_err(id, &yaml, &why).await;
     }
     Ok(())
+}
+
+/// A signup just stored as held for `file`: if its world was decided while that was
+/// going on, nothing else will look at it, so settle it now.
+pub async fn settle_held(db: &Db, season: Id, id: Id, yaml: &str, file: &str) {
+    if db.world_request(season, file).await.is_some() {
+        return;
+    }
+    if config::get().season(season).worlds.join(file).is_file() {
+        let (db, file) = (db.clone(), file.to_string());
+        tokio::spawn(async move { recheck_held(&db, season, &file).await });
+    } else {
+        let why = format!(
+            "{file} was rejected: replace the YAML with an installed game's, or remove this signup"
+        );
+        let _ = db.set_held_err(id, yaml, &why).await;
+    }
 }
 
 /// A signup is one game, so its file holds one player.
@@ -280,14 +300,14 @@ pub async fn recheck_held(db: &Db, season: Id, file: &str) {
         };
         let res = match outcome {
             Ok((name, game)) => db
-                .release_submission(id, &name, &game)
+                .release_submission(id, &yaml_path, &name, &game)
                 .await
                 .map_err(|_| format!("the slot name {name} is already signed up")),
             Err(e) => Err(e),
         };
         if let Err(e) = res {
             tracing::info!("held signup {id} in season {season} still held: {e}");
-            let _ = db.set_held_err(id, &e).await;
+            let _ = db.set_held_err(id, &yaml_path, &e).await;
         }
     }
 }
@@ -408,32 +428,55 @@ pub async fn clear_pending(db: &Db, season: Id) {
     let _ = db.clear_world_requests(season).await;
 }
 
-/// Whether a YAML not yet checkable declares more than one top-level name.
-pub fn yaml_names_several(yaml: &str) -> bool {
-    yaml.lines().filter(|l| l.starts_with("name:")).count() > 1
-}
+/// The longest name or game a held signup goes by until its check reads the real one.
+const MAX_NAME: usize = 80;
 
-/// The slot name and game a YAML declares at top level, read without AP
-/// (for signups held before their world can be checked). `None` where it
-/// isn't a plain value (e.g. a weighted `game:` map).
-pub fn yaml_name_game(yaml: &str) -> (Option<String>, Option<String>) {
-    let value = |key: &str| {
-        yaml.lines().find_map(|l| {
-            let v = l.strip_prefix(key)?.strip_prefix(':')?;
-            let v = match v.find(" #") {
-                Some(i) => &v[..i],
-                None => v,
-            }
-            .trim();
-            let v = v
-                .strip_prefix('"')
-                .and_then(|v| v.strip_suffix('"'))
-                .or_else(|| v.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
-                .unwrap_or(v);
-            (!v.is_empty()).then(|| v.chars().take(80).collect::<String>())
-        })
+/// What a first look at a held YAML can tell without running its world: it's YAML,
+/// for one player, with a plain name, and for the game waiting for approval
+/// (`world_game`, empty if the manifest didn't say). Returns its slot name and game.
+/// Options only the world's code understands wait for the check on approval.
+pub fn judge_first_look(
+    look: &crate::ap_adapter::FirstLook,
+    world_game: &str,
+) -> Result<(String, String), String> {
+    if let Some(e) = &look.error {
+        return Err(format!("That isn't valid YAML: {e}"));
+    }
+    if look.players.len() > 1 {
+        return Err(ONE_GAME_PER_FILE.to_string());
+    }
+    let Some(player) = look.players.first() else {
+        return Err("Couldn't read a player from that YAML.".to_string());
     };
-    (value("name"), value("game"))
+    let name = player
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .ok_or(
+            "Couldn't find a top-level name: in that YAML. While its world waits for approval, \
+             it has to be plain text, in quotes if it could read as something else.",
+        )?;
+    if name.chars().count() > MAX_NAME {
+        return Err(format!(
+            "That name is too long: at most {MAX_NAME} characters."
+        ));
+    }
+    if player.games.is_empty() {
+        return Err("Couldn't find a game: in that YAML.".to_string());
+    }
+    if !world_game.is_empty() && !player.games.iter().any(|g| g == world_game) {
+        return Err(format!(
+            "That YAML is for {}, but the world waiting for approval is {world_game}.",
+            player.games.join(", ")
+        ));
+    }
+    let game = if world_game.is_empty() {
+        player.games[0].chars().take(MAX_NAME).collect()
+    } else {
+        world_game.to_string()
+    };
+    Ok((name.to_string(), game))
 }
 
 #[cfg(test)]
@@ -490,13 +533,49 @@ mod tests {
     }
 
     #[test]
-    fn yaml_name_and_game_are_read_at_top_level() {
-        let y = "# comment\nname: \"Robin\"  # me\ngame: Foo Quest\nFoo Quest:\n  name: nested\n";
+    fn a_first_look_is_judged() {
+        use crate::ap_adapter::{FirstLook, LookedPlayer};
+        let one = |name: Option<&str>, games: &[&str]| FirstLook {
+            players: vec![LookedPlayer {
+                name: name.map(str::to_string),
+                games: games.iter().map(|g| g.to_string()).collect(),
+            }],
+            error: None,
+        };
+        let judge = |l: &FirstLook| judge_first_look(l, "Foo");
         assert_eq!(
-            yaml_name_game(y),
-            (Some("Robin".into()), Some("Foo Quest".into()))
+            judge(&one(Some("Sam"), &["Foo"])),
+            Ok(("Sam".into(), "Foo".into()))
         );
-        let y = "name: Sam\ngame:\n  A: 1\n  B: 1\n";
-        assert_eq!(yaml_name_game(y), (Some("Sam".into()), None));
+        assert_eq!(
+            judge(&one(Some("Sam"), &["Bar", "Foo"])),
+            Ok(("Sam".into(), "Foo".into()))
+        );
+        assert_eq!(
+            judge_first_look(&one(Some("Sam"), &["Bar"]), ""),
+            Ok(("Sam".into(), "Bar".into())),
+            "a manifest that names no game can't be compared"
+        );
+        let long = "x".repeat(81);
+        let cases = [
+            (one(Some(long.as_str()), &["Foo"]), "too long"),
+            (one(None, &["Foo"]), "top-level name"),
+            (one(Some("Sam"), &[]), "game:"),
+            (one(Some("Sam"), &["Bar"]), "is for Bar"),
+        ];
+        for (look, why) in cases {
+            assert!(judge(&look).unwrap_err().contains(why), "{why}");
+        }
+        let mut two = one(Some("A"), &["Foo"]);
+        two.players.push(LookedPlayer {
+            name: Some("B".into()),
+            games: vec!["Foo".into()],
+        });
+        assert!(judge(&two).unwrap_err().contains("several players"));
+        let broken = FirstLook {
+            players: vec![],
+            error: Some("line 1".into()),
+        };
+        assert!(judge(&broken).unwrap_err().contains("valid YAML"));
     }
 }

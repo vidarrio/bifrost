@@ -64,6 +64,8 @@ pub(crate) async fn signups_list(State(st): State<AppState>, me: auth::Me) -> Ht
     render::signups_list(&open)
 }
 
+const NOT_TEXT: &str = "That YAML isn't UTF-8 text. Save it as UTF-8 and try again.";
+
 /// The most a game's notes can hold, in characters.
 const MAX_NOTES: usize = 2000;
 
@@ -116,6 +118,7 @@ pub(crate) async fn signup_game(
         is_host,
         pre_gen,
         edit_notes: is_mod || (pre_gen && (is_host || my_seat.is_some())),
+        show_reason: is_mod || is_host || my_seat.is_some(),
         replace,
         welcome,
         invite: invites
@@ -189,25 +192,50 @@ pub(crate) async fn signup_game_yaml(
     let Some(yaml) = yaml.filter(|b| !b.is_empty()) else {
         return refuse("No YAML uploaded.");
     };
-    let yaml_str = String::from_utf8_lossy(&yaml).to_string();
-    let result = match checker::check_yaml(&ctx.dirs(), &yaml_str).await {
-        Ok(r) => r,
-        Err(e) => return refuse(&format!("Checker error: {e}")),
+    let Ok(yaml_str) = String::from_utf8(yaml.clone()) else {
+        return refuse(NOT_TEXT);
     };
-    if !result.ok {
-        return refuse(&format!(
-            "That YAML didn't pass: {}.",
-            result.errors.join("; ")
-        ));
-    }
-    if result.players.len() > 1 {
-        return refuse(worlds::ONE_GAME_PER_FILE);
-    }
-    let Some(p0) = result.players.first() else {
-        return refuse("Couldn't read a player from that YAML.");
+    // Its world still waiting: it can't be checked yet, so it gets the first look
+    // and stays held. Otherwise it has to pass like a new signup.
+    let waiting = match &sub.held_for {
+        Some(world) => st.db.world_request(ctx.id, world).await,
+        None => None,
     };
-    let game = p0.game.clone().unwrap_or_else(|| "?".into());
-    let Some(yaml_path) = store_yaml(&ctx, &p0.name, &yaml).await else {
+    let (slot_name, game) = if let Some(request) = &waiting {
+        if yaml.len() > checker::MAX_YAML {
+            return refuse("That YAML is too large.");
+        }
+        let look = match checker::first_look(&ctx.dirs(), &yaml_str).await {
+            Ok(look) => look,
+            Err(e) => return refuse(&format!("Checker error: {e}")),
+        };
+        match worlds::judge_first_look(&look, &request.game) {
+            Ok(found) => found,
+            Err(e) => return refuse(&e),
+        }
+    } else {
+        let result = match checker::check_yaml(&ctx.dirs(), &yaml_str).await {
+            Ok(r) => r,
+            Err(e) => return refuse(&format!("Checker error: {e}")),
+        };
+        if !result.ok {
+            return refuse(&format!(
+                "That YAML didn't pass: {}.",
+                result.errors.join("; ")
+            ));
+        }
+        if result.players.len() > 1 {
+            return refuse(worlds::ONE_GAME_PER_FILE);
+        }
+        let Some(p0) = result.players.first() else {
+            return refuse("Couldn't read a player from that YAML.");
+        };
+        (
+            p0.name.clone(),
+            p0.game.clone().unwrap_or_else(|| "?".into()),
+        )
+    };
+    let Some(yaml_path) = store_yaml(&ctx, &slot_name, &yaml).await else {
         return refuse("Couldn't store the YAML.");
     };
     let replaced = st
@@ -217,7 +245,8 @@ pub(crate) async fn signup_game_yaml(
             id,
             me.id(),
             is_mod,
-            &p0.name,
+            waiting.is_some(),
+            &slot_name,
             &game,
             &sub.yaml_file,
             &yaml_path,
@@ -226,6 +255,9 @@ pub(crate) async fn signup_game_yaml(
     let page = match replaced {
         Ok(true) => {
             let _ = tokio::fs::remove_file(&sub.yaml_file).await;
+            if let Some(req) = &waiting {
+                worlds::settle_held(&st.db, ctx.id, id, &yaml_path, &req.file).await;
+            }
             if sub.account_id != me.id() {
                 tracing::info!(
                     "season {}: {} replaced the YAML of {} ({} → {})",
@@ -233,13 +265,13 @@ pub(crate) async fn signup_game_yaml(
                     me.username(),
                     sub.username,
                     sub.slot_name,
-                    p0.name
+                    slot_name
                 );
             }
             return Redirect::to(&ctx.url(&format!("/signup/game/{id}"))).into_response();
         }
         Ok(false) => refuse(closed),
-        Err(e) if db::name_clash(&e) => refuse(&slot_taken(&p0.name)),
+        Err(e) if db::name_clash(&e) => refuse(&slot_taken(&slot_name)),
         Err(e) => {
             tracing::warn!("replacing a signup in season {}: {e}", ctx.id);
             refuse("Couldn't store the signup.")
@@ -347,7 +379,9 @@ pub(crate) async fn signup_check(
     let Some(yaml) = yaml.filter(|b| !b.is_empty()) else {
         return Json(serde_json::json!({"ok": false, "error": "No YAML received."}));
     };
-    let yaml_str = String::from_utf8_lossy(&yaml).to_string();
+    let Ok(yaml_str) = String::from_utf8(yaml) else {
+        return Json(serde_json::json!({"ok": false, "error": NOT_TEXT}));
+    };
     match checker::check_yaml(&ctx.dirs(), &yaml_str).await {
         Ok(r) => {
             let (name, game) = r
@@ -376,7 +410,8 @@ pub(crate) async fn signup_check(
 
 /// Write a signup's YAML to a new file of its own and return its path.
 async fn store_yaml(ctx: &scope::SeasonCtx, slot_name: &str, yaml: &[u8]) -> Option<String> {
-    let slug = slugify(slot_name);
+    // Names can be long, and file names can't.
+    let slug: String = slugify(slot_name).chars().take(64).collect();
     let uploads = ctx.dirs().submissions;
     let _ = tokio::fs::create_dir_all(&uploads).await;
     let nonce = &auth::new_token()[..16];
@@ -439,26 +474,30 @@ pub(crate) async fn signup_post(
     let Some(yaml) = yaml.filter(|b| !b.is_empty()) else {
         return refuse("No YAML uploaded.");
     };
-    let yaml_str = String::from_utf8_lossy(&yaml).to_string();
+    let Ok(yaml_str) = String::from_utf8(yaml.clone()) else {
+        return refuse(NOT_TEXT);
+    };
     let held_for = pending_world.trim().to_string();
     let (slot_name, game) = if !held_for.is_empty() {
         // Its world waits for approval, so the YAML can't be checked yet: hold
         // the signup under the name it declares; it's checked on approval.
-        if st.db.world_request(ctx.id, &held_for).await.is_none() {
+        let Some(request) = st.db.world_request(ctx.id, &held_for).await else {
             return refuse("That apworld isn't waiting for approval any more — start over.");
-        }
+        };
         if yaml.len() > checker::MAX_YAML {
             return refuse("That YAML is too large.");
         }
         // A first look, so the player hears now; the check on approval decides.
-        if worlds::yaml_names_several(&yaml_str) {
-            return refuse(worlds::ONE_GAME_PER_FILE);
-        }
-        match worlds::yaml_name_game(&yaml_str) {
-            (Some(name), game) => (name, game.unwrap_or_else(|| "?".into())),
-            (None, _) => {
-                return refuse("Couldn't find a top-level name: in that YAML.");
+        let look = match checker::first_look(&ctx.dirs(), &yaml_str).await {
+            Ok(look) => look,
+            Err(e) => return refuse(&format!("Checker error: {e}")),
+        };
+        match worlds::judge_first_look(&look, &request.game) {
+            Ok((name, _)) if st.db.slot_name_taken(ctx.id, &name).await => {
+                return refuse(&slot_taken(&name));
             }
+            Ok(found) => found,
+            Err(e) => return refuse(&e),
         }
     } else {
         // Trust-but-verify: the wizard already checked, but re-roll server-side so a
@@ -512,6 +551,9 @@ pub(crate) async fn signup_post(
         }
         // The game's page is where the rest happens: its invite links, notes and YAML.
         Ok(Some(id)) => {
+            if !held_for.is_empty() {
+                worlds::settle_held(&st.db, ctx.id, id, &yaml_path, &held_for).await;
+            }
             Redirect::to(&ctx.url(&format!("/signup/game/{id}?new=true"))).into_response()
         }
         Err(e) => {

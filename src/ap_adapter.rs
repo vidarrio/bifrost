@@ -426,6 +426,48 @@ pub async fn check_yaml(season: &SeasonDirs, yaml: &str) -> Result<CheckResult, 
     last_json_line(&out.stdout, "").map_err(|e| format!("could not read checker output: {e}"))
 }
 
+/// What a YAML says, read with AP's own parser and without loading any world.
+#[derive(Debug, serde::Deserialize, PartialEq)]
+pub struct FirstLook {
+    pub players: Vec<LookedPlayer>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, PartialEq)]
+pub struct LookedPlayer {
+    /// `None` when it isn't plain text.
+    pub name: Option<String>,
+    pub games: Vec<String>,
+}
+
+/// Read a YAML without running any world's code. The caller serializes runs.
+pub async fn first_look(season: &SeasonDirs, yaml: &str) -> Result<FirstLook, String> {
+    let dir = scratch_dir("look").await?;
+    let path = dir.join("player.yaml");
+    let result = async {
+        tokio::fs::write(&path, yaml)
+            .await
+            .map_err(|e| format!("temp write: {e}"))?;
+        let access = Access {
+            read: vec![dir.clone()],
+            ..Default::default()
+        };
+        run_helper(
+            "bifrost_first_look.py",
+            vec![path.clone().into()],
+            season,
+            access,
+            CHECK_TIMEOUT,
+        )
+        .await
+        .map_err(|e| format!("first look: {e}"))
+    }
+    .await;
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+    let out = result?;
+    last_json_line(&out.stdout, "").map_err(|e| format!("could not read its output: {e}"))
+}
+
 /// Decode a seed zip's multidata into the season facts the board needs.
 pub async fn decode_meta(season: &SeasonDirs, seed_zip: &Path) -> Result<Meta, String> {
     check_worlds(season)?;

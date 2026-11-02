@@ -200,33 +200,44 @@ impl Db {
         .unwrap_or_default()
     }
 
-    /// A held submission passed its check: take the slot name and game the
-    /// check read, and stop holding it. Fails if that slot name is taken. A
-    /// signup no longer held (its host replaced the YAML meanwhile) stays as it is.
+    /// A held submission's file passed its check: take the slot name and game the
+    /// check read, and stop holding it. Fails if that slot name is taken. If its
+    /// host replaced the file meanwhile, it stays as it is.
     pub async fn release_submission(
         &self,
         id: Id,
+        yaml_file: &str,
         slot_name: &str,
         game: &str,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             "UPDATE submission SET slot_name = ?, game = ?, held_for = NULL, held_err = NULL
-             WHERE id = ? AND held_for IS NOT NULL",
+             WHERE id = ? AND yaml_file = ? AND held_for IS NOT NULL",
         )
         .bind(slot_name)
         .bind(game)
         .bind(id)
+        .bind(yaml_file)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
-    pub async fn set_held_err(&self, id: Id, err: &str) -> Result<(), sqlx::Error> {
-        sqlx::query("UPDATE submission SET held_err = ? WHERE id = ? AND held_for IS NOT NULL")
-            .bind(err)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+    /// Why a held submission's file can't go ahead, unless it's been replaced since.
+    pub async fn set_held_err(
+        &self,
+        id: Id,
+        yaml_file: &str,
+        err: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE submission SET held_err = ? WHERE id = ? AND yaml_file = ? AND held_for IS NOT NULL",
+        )
+        .bind(err)
+        .bind(id)
+        .bind(yaml_file)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 }
@@ -301,10 +312,12 @@ mod tests {
             db.held_submissions(season, "foo.apworld").await,
             vec![(id, "/x.yaml".into())]
         );
-        db.set_held_err(id, "nope").await.unwrap();
+        db.set_held_err(id, "/x.yaml", "nope").await.unwrap();
         let sub = &db.submissions(season).await.unwrap()[0];
         assert!(sub.held() && sub.held_err.as_deref() == Some("nope"));
-        db.release_submission(id, "Alice2", "Foo").await.unwrap();
+        db.release_submission(id, "/x.yaml", "Alice2", "Foo")
+            .await
+            .unwrap();
         let sub = &db.submissions(season).await.unwrap()[0];
         assert!(!sub.held() && sub.held_err.is_none() && sub.slot_name == "Alice2");
         assert_eq!(db.take_world_request(season, "foo.apworld").await, Some(r));
@@ -358,7 +371,7 @@ mod tests {
         let replace = |account, old: &'static str, game: &'static str, new: &'static str| {
             let db = &db;
             async move {
-                db.replace_submission(season, id, account, false, "New", game, old, new)
+                db.replace_submission(season, id, account, false, false, "New", game, old, new)
                     .await
                     .unwrap()
             }
@@ -385,8 +398,10 @@ mod tests {
             "same game, no hold"
         );
         // A re-check of the old file that was already running changes nothing.
-        db.release_submission(id, "Stale", "Stale").await.unwrap();
-        db.set_held_err(id, "stale").await.unwrap();
+        db.release_submission(id, "/old.yaml", "Stale", "Stale")
+            .await
+            .unwrap();
+        db.set_held_err(id, "/old.yaml", "stale").await.unwrap();
         let sub = db.submission(season, id).await.unwrap();
         assert_eq!(sub.slot_name, "New");
         assert!(sub.held_err.is_none());
@@ -402,14 +417,18 @@ mod tests {
             "signups are closed"
         );
         assert!(
-            db.replace_submission(season, id, other, true, "New", "Bar", "/b.yaml", "/m.yaml")
-                .await
-                .unwrap()
+            db.replace_submission(
+                season, id, other, true, false, "New", "Bar", "/b.yaml", "/m.yaml"
+            )
+            .await
+            .unwrap()
         );
         assert!(
-            db.replace_submission(season, id, other, true, "New", "Bar", "/m.yaml", "/b.yaml")
-                .await
-                .unwrap()
+            db.replace_submission(
+                season, id, other, true, false, "New", "Bar", "/m.yaml", "/b.yaml"
+            )
+            .await
+            .unwrap()
         );
         db.transition(season, State::Signup, 1).await.unwrap();
         // Once generating: neither.
@@ -421,9 +440,11 @@ mod tests {
         );
         assert!(!replace(host, "/b.yaml", "Bar", "/c.yaml").await);
         assert!(
-            !db.replace_submission(season, id, other, true, "New", "Bar", "/b.yaml", "/c.yaml")
-                .await
-                .unwrap(),
+            !db.replace_submission(
+                season, id, other, true, false, "New", "Bar", "/b.yaml", "/c.yaml"
+            )
+            .await
+            .unwrap(),
             "not even a moderator once it's generating"
         );
         assert!(

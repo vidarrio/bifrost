@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Held signups: a YAML for a world awaiting approval gets checked as far as it can be
+  without running the world, and can be replaced while it waits. A signup that fails its
+  check shows a clear notice, on the season's page and to moderators, who can replace its
+  YAML or dismiss it. The approval screen lists who's waiting, and a refused generation
+  names the signups.
 - A season's moderators can delete it before generation, and cancel a live one back to
   signups, keeping its signups, notes and partners. Sysadmins can delete an archived
   season. Each asks you to type the season's name.
