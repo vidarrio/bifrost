@@ -453,12 +453,12 @@ async fn run_once(
     coop: &[(String, String)],
 ) -> Result<(), String> {
     // The tracker connects as one of the room's slots: the configured one,
-    // else the season's first (the roster exists once it's generated).
+    // else the season's lowest (the roster exists once it's generated).
     let slot = if cfg.slot.is_empty() {
         db.slots(season)
             .await
             .ok()
-            .and_then(|s| s.into_iter().min_by_key(|r| r.ap_slot).map(|r| r.name))
+            .and_then(|s| crate::db::connect_slot(&s, None))
             .ok_or("no slots yet to connect the tracker as")?
     } else {
         cfg.slot.clone()

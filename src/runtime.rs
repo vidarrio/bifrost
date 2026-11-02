@@ -121,7 +121,7 @@ impl Runtimes {
             };
             // Bifrost's own connections (tracker, admin console) join the
             // room as one of its slots: the configured one when this season
-            // has it (BIFROST_SLOT is instance-wide), else the first.
+            // has it (BIFROST_SLOT is instance-wide), else the lowest (`connect_slot`).
             let slots = self.db.slots(id).await.unwrap_or_default();
             let configured = config::var("BIFROST_SLOT");
             let slot = crate::db::connect_slot(&slots, configured.as_deref());

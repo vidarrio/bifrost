@@ -600,6 +600,14 @@ mod tests {
         db.remap_season(s, &[(7, "Host".into(), "G".into())])
             .await
             .unwrap();
+        let rerolled = db.slots(s).await.unwrap();
+        assert!(rerolled.iter().find(|r| r.name == "Ann").unwrap().is_seat);
+        assert!(!rerolled.iter().find(|r| r.name == "Host").unwrap().is_seat);
+        assert_eq!(
+            db.ap_slot_of_game(s, id).await,
+            Some(7),
+            "the game keeps its id"
+        );
         assert!(db.claims_ap_slot(s, bob, 7).await && db.claims_ap_slot(s, ann, 7).await);
         // Retracting is over too.
         assert_eq!(db.delete_submission(s, id, host, true).await.unwrap(), None);

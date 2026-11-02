@@ -112,15 +112,11 @@ pub struct SubmissionRow {
 /// slot of this season, else the lowest. Never a co-op seat, which the server
 /// doesn't know.
 pub fn connect_slot(slots: &[SlotRow], configured: Option<&str>) -> Option<String> {
-    let mut real = slots.iter().filter(|r| !r.is_seat);
+    let real = || slots.iter().filter(|r| !r.is_seat);
     configured
-        .filter(|n| slots.iter().any(|r| !r.is_seat && r.name == *n))
+        .filter(|n| real().any(|r| r.name == *n))
         .map(str::to_string)
-        .or_else(|| {
-            real.by_ref()
-                .min_by_key(|r| r.ap_slot)
-                .map(|r| r.name.clone())
-        })
+        .or_else(|| real().min_by_key(|r| r.ap_slot).map(|r| r.name.clone()))
 }
 
 impl SubmissionRow {
@@ -201,7 +197,7 @@ impl Db {
     }
 }
 
-/// The schema as of schema version 1, the first release's. Frozen: change the
+/// The schema as of schema version 1, 0.3.0's. Frozen once that's released: change the
 /// schema with a step in [`migrate::STEPS`], never by editing these tables.
 async fn baseline(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // Accounts and seasons first: the tables below reference them.
