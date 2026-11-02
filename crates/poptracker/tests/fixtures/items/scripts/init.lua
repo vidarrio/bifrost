@@ -144,3 +144,63 @@ Archipelago:AddClearHandler("levels", function()
   custom.CanProvideCodeFunc = function(self, code) return code == "HostedCode" end
   custom.ProvidesCodeFunc = function() return 1 end
 end)
+
+-- Watches hear of what changed, once the operation that changed it is done.
+HEARD = {}
+ScriptHost:AddWatchForCode("single", "starts", function(code) HEARD[code] = (HEARD[code] or 0) + 1 end)
+ScriptHost:AddWatchForCode("any case", "MIXED", function(code)
+  HEARD[code] = true
+  item("coins").AcquiredCount = 4
+end)
+ScriptHost:AddWatchForCode("set off", "coins", function(code) HEARD.chained = code end)
+ScriptHost:AddWatchForCode("not this", "always", function() error("unchanged") end)
+ScriptHost:AddWatchForCode("wild", "*", function(codes) if codes == "starts" then HEARD.wild = codes end end)
+ScriptHost:AddWatchForCode("part", "pair", function() HEARD.pair = true end)
+ScriptHost:AddWatchForCode("custom", "ByCustom", function(code) HEARD[code] = true end)
+ScriptHost:AddWatchForCode("custom wild", "*", function(codes)
+  if codes == "byCustomName" then HEARD.customWild = true end
+  if codes == "bystander" then error("this one didn't change") end
+end)
+-- A watch may remove itself, and one that keeps changing things is stopped.
+HEARD.once = 0
+ScriptHost:AddWatchForCode("once", "starts", function()
+  HEARD.once = HEARD.once + 1
+  ScriptHost:RemoveWatchForCode("once")
+end)
+HEARD.flips = 0
+ScriptHost:AddWatchForCode("flip", "unlimited", function()
+  HEARD.flips = HEARD.flips + 1
+  local u = item("unlimited")
+  u.AcquiredCount = u.AcquiredCount + 1
+end)
+local bystander = ScriptHost:CreateLuaItem()
+bystander.Name = "bystander"
+bystander.CanProvideCodeFunc = function(self, code) return code == "NotThisOne" end
+ScriptHost:AddWatchForCode("custom other", "NotThisOne", function() error("this one didn't change") end)
+local byCustom = ScriptHost:CreateLuaItem()
+byCustom.CanProvideCodeFunc = function(self, code) return code == "ByCustom" end
+byCustom.Name = "byCustomName"
+Archipelago:AddClearHandler("change", function()
+  HEARD.flips = 0
+  item("starts").Active = false
+  item("mixed").Active = true
+  item("left").Active = true
+  item("left").Active = false
+  byCustom:Set("v", 1)
+  item("unlimited").AcquiredCount = 1
+  assert(HEARD.starts == nil, "not during the handler")
+end)
+Archipelago:AddItemHandler("heard", function()
+  assert(HEARD.starts == 1, "a watch on its code")
+  assert(HEARD.wild == "starts", "a wildcard gets the item's codes")
+  assert(HEARD.MIXED == true, "any case, given as the pack wrote it")
+  assert(HEARD.chained == "coins", "a watch's change sets off others")
+  assert(HEARD.pair == true, "a composite through its part")
+  assert(HEARD.ByCustom == true, "a custom item's Set")
+  assert(HEARD.customWild == true, "a wildcard hears which custom item")
+  assert(HEARD.once == 1, "removed, it isn't told again")
+  assert(HEARD.flips > 0 and HEARD.flips <= 8, "stopped after a few rounds")
+  Tracker:FindObjectForCode("always").Active = true
+  HEARD.checked = true
+  item("level_ok").Active = true
+end)

@@ -205,5 +205,10 @@
         "codes": "nd"
       }
     ]
+  },
+  {
+    "name": "Watches heard",
+    "type": "toggle",
+    "codes": "level_ok"
   }
 ]
