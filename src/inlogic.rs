@@ -68,23 +68,15 @@ async fn tick(
         if b.seed.is_none() {
             return Ok(()); // the season's room hasn't been seen yet
         }
-        let slots: Vec<(i64, String, String, i64, i64)> = b
+        let slots: Vec<(i64, String, i64, i64)> = b
             .slots
             .iter()
-            .map(|(k, s)| {
-                (
-                    *k,
-                    s.name.clone(),
-                    s.game.clone(),
-                    s.sent as i64,
-                    s.received as i64,
-                )
-            })
+            .map(|(k, s)| (*k, s.name.clone(), s.sent as i64, s.received as i64))
             .collect();
         slots
     };
 
-    for (ap_slot, name, game, sent, received) in slots {
+    for (ap_slot, name, sent, received) in slots {
         if name.is_empty() {
             continue; // can't connect a tracker without the slot's name
         }
@@ -95,22 +87,18 @@ async fn tick(
         let season_dirs = config::get().season(season);
         match ap_adapter::inlogic(&season_dirs, &name, password, connect, RUN_TIMEOUT).await {
             Ok(ap_adapter::InLogic {
-                game: ut_game,
                 locations: locs,
                 captured: true,
             }) => {
-                let g = if ut_game.is_empty() { game } else { ut_game };
                 let json = serde_json::to_string(&locs).unwrap_or_else(|_| "[]".into());
                 db.inlogic_set(
                     season,
                     ap_slot,
                     now(),
-                    &g,
                     sent,
                     received,
                     locs.len() as i64,
                     &json,
-                    false,
                     None,
                 )
                 .await;
@@ -140,12 +128,10 @@ async fn tick(
                     season,
                     ap_slot,
                     now(),
-                    &game,
                     sent,
                     received,
                     count,
                     &locs_json,
-                    false,
                     Some(&msg),
                 )
                 .await;

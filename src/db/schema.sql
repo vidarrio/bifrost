@@ -1,9 +1,10 @@
 -- The database as of schema version 1, Bifrost 0.3.0. Frozen once that's released:
 -- change the schema with a step in `STEPS` (src/db/migrate.rs), never here.
 --
--- Conventions: tables are STRICT. A reference is `<table>_id`. Seasons, games, slots
--- and seats have generated ids (src/id.rs); accounts have integer ones, as they never
--- reach a URL. Times are epoch seconds. Booleans are 0 or 1.
+-- Conventions: tables are STRICT. A reference to a table is `<table>_id`, or says its
+-- role (`created_by`). Seasons, games, slots and seats have generated ids (src/id.rs);
+-- accounts have integer ones, as they never reach a URL. Times are epoch seconds, in
+-- `<event>_at`, or `ts` for when a logged event happened. Booleans are 0 or 1.
 
 CREATE TABLE account (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,7 +40,9 @@ CREATE TABLE auth_link (
     expires_at INTEGER NOT NULL,
     revoked INTEGER NOT NULL DEFAULT 0 CHECK (revoked IN (0, 1)),
     created_by INTEGER REFERENCES account(id) ON DELETE SET NULL,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    CHECK (kind = 'community' OR max_uses = 1),
+    CHECK (kind <> 'reset' OR account_id IS NOT NULL)
 ) STRICT;
 CREATE INDEX auth_link_account ON auth_link (account_id);
 CREATE INDEX auth_link_created_by ON auth_link (created_by);
@@ -81,7 +84,9 @@ CREATE TABLE season (
     -- The Archipelago version that generated the current seed.
     ap_version TEXT,
     -- While generating: the state it started from (crash recovery).
-    gen_from TEXT
+    gen_from TEXT CHECK (gen_from IN ('draft', 'signup', 'live')),
+    CHECK (private_signup = 0 OR signup_token IS NOT NULL),
+    CHECK (ap_port BETWEEN 1 AND 65535)
 ) STRICT;
 CREATE INDEX season_created_by ON season (created_by);
 
@@ -276,12 +281,10 @@ CREATE TABLE inlogic (
     season_id TEXT NOT NULL REFERENCES season(id) ON DELETE CASCADE,
     ap_slot INTEGER NOT NULL,
     ts INTEGER NOT NULL,
-    game TEXT NOT NULL DEFAULT '',
     sent INTEGER NOT NULL DEFAULT 0,
     received INTEGER NOT NULL DEFAULT 0,
     count INTEGER NOT NULL DEFAULT 0,
     locations TEXT NOT NULL DEFAULT '[]',
-    approx INTEGER NOT NULL DEFAULT 0 CHECK (approx IN (0, 1)),
     err TEXT,
     PRIMARY KEY (season_id, ap_slot)
 ) STRICT;

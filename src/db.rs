@@ -182,13 +182,25 @@ impl Db {
 
     /// Open the database without touching its schema, so startup can look at
     /// its [`Stamp`] (and back it up) before [`Db::migrate`] changes it.
+    /// Close the database, which folds the write-ahead log back into its file.
+    pub async fn close(&self) {
+        if let Err(e) = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(&self.pool)
+            .await
+        {
+            tracing::warn!("folding the database's log into it: {e}");
+        }
+        self.pool.close().await;
+    }
+
     pub async fn connect(path: &str) -> Result<Self, sqlx::Error> {
         let opts = SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(true)
-            // Readers don't wait for writers, and a commit needs one fsync less.
+            // Readers don't wait for writers. Fully synced, so that a revoked session or a
+            // spent link stays that way through a power loss.
             .journal_mode(SqliteJournalMode::Wal)
-            .synchronous(SqliteSynchronous::Normal)
+            .synchronous(SqliteSynchronous::Full)
             .foreign_keys(true)
             .busy_timeout(std::time::Duration::from_secs(10));
         let pool = SqlitePoolOptions::new()
@@ -600,31 +612,27 @@ impl Db {
         season: Id,
         ap_slot: i64,
         ts: i64,
-        game: &str,
         sent: i64,
         received: i64,
         count: i64,
         locations: &str,
-        approx: bool,
         err: Option<&str>,
     ) {
         let _ = sqlx::query(
-            "INSERT INTO inlogic (season_id, ap_slot, ts, game, sent, received, count, locations, approx, err)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO inlogic (season_id, ap_slot, ts, sent, received, count, locations, err)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(season_id, ap_slot) DO UPDATE SET
-               ts = excluded.ts, game = excluded.game, sent = excluded.sent,
+               ts = excluded.ts, sent = excluded.sent,
                received = excluded.received, count = excluded.count,
-               locations = excluded.locations, approx = excluded.approx, err = excluded.err",
+               locations = excluded.locations, err = excluded.err",
         )
         .bind(season)
         .bind(ap_slot)
         .bind(ts)
-        .bind(game)
         .bind(sent)
         .bind(received)
         .bind(count)
         .bind(locations)
-        .bind(approx as i64)
         .bind(err)
         .execute(&self.pool)
         .await;

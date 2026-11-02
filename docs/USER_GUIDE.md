@@ -503,6 +503,12 @@ are on the [releases page](https://github.com/vidarrio/bifrost/releases) and
 in the [changelog](../CHANGELOG.md). Sysadmins see a banner in the console
 when a newer release is out (see [Configuration](#configuration)).
 
+**Copying the data directory.** The database runs in write-ahead mode, so while
+Bifrost runs, recent changes live in `bifrost.db-wal` beside `bifrost.db`. Keep the data
+directory on a local filesystem, not a network share. To copy the database, use
+`bifrost backup`, or stop Bifrost first. To go back to a backup, use `bifrost backup
+restore`, not a copied file.
+
 **What an update does.** Updating means stopping Bifrost, swapping the image
 or file, and starting it again. Unless the changelog says otherwise, everything
 else carries over. Bifrost is in very early development, so a version can break

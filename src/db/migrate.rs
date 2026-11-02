@@ -119,14 +119,27 @@ async fn apply(pool: &SqlitePool, steps: &[&str]) -> Result<(), sqlx::Error> {
         )));
     }
     if at == 0 {
-        // All of it or none of it.
-        let mut tx = pool.begin().await?;
-        sqlx::raw_sql(BASELINE).execute(&mut *tx).await?;
-        sqlx::raw_sql("PRAGMA user_version = 1")
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        at = 1;
+        // All of it or none of it, and only one process does it: two starting at once
+        // both see an empty file, so look again once holding the write lock.
+        let mut conn = pool.acquire().await?;
+        sqlx::raw_sql("BEGIN IMMEDIATE").execute(&mut *conn).await?;
+        let res: Result<(), sqlx::Error> = async {
+            let again: i64 = sqlx::query_scalar("PRAGMA user_version")
+                .fetch_one(&mut *conn)
+                .await?;
+            if again == 0 {
+                sqlx::raw_sql(BASELINE).execute(&mut *conn).await?;
+                sqlx::raw_sql("PRAGMA user_version = 1")
+                    .execute(&mut *conn)
+                    .await?;
+            }
+            Ok(())
+        }
+        .await;
+        let end = if res.is_ok() { "COMMIT" } else { "ROLLBACK" };
+        sqlx::raw_sql(end).execute(&mut *conn).await?;
+        res?;
+        at = user_version(pool).await?;
     }
     for (i, sql) in steps.iter().enumerate().skip(at as usize - 1) {
         let to = i as i64 + 2;

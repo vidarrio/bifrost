@@ -260,6 +260,7 @@ async fn main() {
         .filter(|s| s.state() == db::State::Live)
         .map(|s| shutdown_seasons.stop(s.id));
     futures_util::future::join_all(stops).await;
+    shutdown_db.close().await;
     tracing::info!("Bifrost stopped");
 }
 

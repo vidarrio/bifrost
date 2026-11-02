@@ -90,6 +90,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The database runs in write-ahead mode, so `bifrost.db-wal` sits beside `bifrost.db`
+  while it runs. Keep the data directory on a local filesystem, and copy the database
+  through `bifrost backup` or with Bifrost stopped.
 - A season's apworlds are locked once it's generated.
 - If you use forward auth, add `/seat` to your proxy's signed-in paths when you upgrade.
   To reach private seasons' pages, also add `/board`, `/log` and `/season`, then set
