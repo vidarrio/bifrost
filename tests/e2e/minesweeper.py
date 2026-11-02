@@ -32,8 +32,8 @@ def play(s, prefix, lose=False):
             res = post(s, f"{prefix}/minesweeper/reveal", data=dict(r=r, c=c, kind="standard")).json()
             if res.get("state") == "won" and not lose:
                 return res
-            if res.get("state") != "play":
-                break
+            # Only a mine it worked out wrong, or a refused move, ends up here.
+            assert res.get("state") == "play", res
             shown.update({(x["r"], x["c"]): x["n"] for x in res["cells"]})
             # What each number still needs, then one number's cells inside another's.
             needs = []
