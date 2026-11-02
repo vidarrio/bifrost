@@ -48,7 +48,8 @@ loop.CanProvideCodeFunc = function(self, code)
   return code == "loop" and Tracker:FindObjectForCode("loop") ~= nil
 end
 assert(Tracker:FindObjectForCode("loop") == nil)
-assert(ImageReference:FromImageReference("a.png", "@disabled") == "a.png")
+assert(ImageReference:FromImageReference("a.png", "grey") == "a.png:grey")
+assert(ImageReference:FromImageReference("a.png:grey", "dim") == "a.png:grey,dim")
 
 assert(Archipelago:GetPlayerGame(1) == nil)
 assert(Archipelago:GetPlayerAlias(1) == "")

@@ -1048,9 +1048,9 @@ fn items_draw_with_their_filters() {
     let s = Session::new(&Pack::load(dir).unwrap()).unwrap();
     let st = s.state();
     let item = |name: &str| st.items.iter().find(|i| i.name == name).unwrap();
-    let dim = || Brightness { value: 0.5 };
+    let off = || vec![Saturation { value: 0.2 }, Brightness { value: 0.5 }];
     assert_eq!(item("Plain").img.as_deref(), Some("p.png"));
-    assert_eq!(item("Plain").filters, [dim()], "settings.json's @disabled");
+    assert_eq!(item("Plain").filters, off(), "settings.json's @disabled");
     assert_eq!(item("PlainOn").filters, [Brightness { value: 2.0 }]);
     assert_eq!(item("OffImg").img.as_deref(), Some("off.png"));
     assert_eq!(item("OffImg").filters, [], "an unknown mod is no filter");
@@ -1068,7 +1068,7 @@ fn items_draw_with_their_filters() {
     );
     // Stage 1, off: its own disabled image, and @disabled from its default mods.
     assert_eq!(item("Stages").img.as_deref(), Some("s1off.png"));
-    assert_eq!(item("Stages").filters, [dim()]);
+    assert_eq!(item("Stages").filters, off());
     assert_eq!(item("NotDisabled").img.as_deref(), Some("nd.png"));
     assert_eq!(item("NotDisabled").filters, [], "always on");
     assert_eq!(
@@ -1077,7 +1077,32 @@ fn items_draw_with_their_filters() {
         "a toggle ignores stages"
     );
     assert_eq!(item("Icon").img.as_deref(), Some("custom.png"));
-    assert_eq!(item("Icon").filters, [dim()]);
+    assert_eq!(
+        item("Icon").filters,
+        [Brightness { value: 0.5 }],
+        "from its path:mods"
+    );
+    assert_eq!(
+        item("Mistyped").filters,
+        [],
+        "only the whole mod is @disabled"
+    );
+    assert_eq!(item("Alias").filters, off(), "an alias");
+    assert_eq!(
+        item("Static").img.as_deref(),
+        Some("p.png"),
+        "a static item is on"
+    );
+    assert_eq!(
+        item("Colon").img.as_deref(),
+        Some("a:b.png"),
+        "only an override splits"
+    );
+    assert_eq!(
+        item("Pair").img.as_deref(),
+        Some("l.png"),
+        "its left part is on"
+    );
     assert_eq!(st.maps[0].location_orientation.as_deref(), Some("east"));
     assert_eq!(st.maps[0].location_border, Some(3.0));
 }

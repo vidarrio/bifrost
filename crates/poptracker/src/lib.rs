@@ -550,7 +550,12 @@ const MAX_IMAGE_FILTERS: usize = 16;
 /// which is how packs write "none".
 fn parse_filters(mods: &str, disabled: &str) -> Vec<ImageFilter> {
     mods.split(',')
-        .filter_map(|m| parse_filter(m.trim_matches(' '), disabled))
+        .map(|m| m.trim_matches(' '))
+        .flat_map(|m| match m {
+            // Itself a list. Empty here, so it can't refer to itself.
+            "@disabled" | "@disable" => parse_filters(disabled, ""),
+            _ => parse_filter(m, disabled).into_iter().collect(),
+        })
         .take(MAX_IMAGE_FILTERS)
         .collect()
 }
@@ -565,7 +570,6 @@ fn parse_filter(text: &str, disabled: &str) -> Option<ImageFilter> {
             .map_or(0.5, |v| v.clamp(0.0, 255.0))
     };
     match name {
-        "@disabled" if text != disabled => parse_filter(disabled, ""),
         "grey" | "gray" | "disable" => Some(ImageFilter::Grey),
         "saturation" => Some(ImageFilter::Saturation {
             value: fraction(args.first()),
@@ -579,7 +583,7 @@ fn parse_filter(text: &str, disabled: &str) -> Option<ImageFilter> {
             img: img_path(args[0]),
             filters: args[1..]
                 .iter()
-                .filter_map(|f| parse_filter(f, disabled))
+                .flat_map(|f| parse_filters(f, disabled))
                 .filter(|f| !matches!(f, ImageFilter::Overlay { .. }))
                 .take(MAX_IMAGE_FILTERS)
                 .collect(),
@@ -603,8 +607,10 @@ struct JsonItem {
     disabled_img: String,
     mods: Vec<ImageFilter>,
     disabled_mods: Vec<ImageFilter>,
-    /// A pack's `IconMods`, for its `Icon`.
+    /// The filters of a pack's `Icon`, which is `path:mods`.
     icon_mods: Vec<ImageFilter>,
+    /// Its `Icon`, as the pack wrote it.
+    icon_text: Option<String>,
     allow_disabled: bool,
     active: bool,
     stage: i64,
@@ -939,7 +945,7 @@ fn item_get(lua: &Lua, eng: &E, index: usize, key: &str) -> mlua::Result<Value> 
             "IgnoreUserInput" => return Ok(Value::Boolean(it.ignore_user_input)),
             "Type" => it.kind.clone(),
             "Name" => it.name.clone(),
-            "Icon" => match &it.icon {
+            "Icon" => match &it.icon_text {
                 Some(icon) => icon.clone(),
                 None => it.image().0.unwrap_or_default(),
             },
@@ -1006,6 +1012,7 @@ fn item_set(lua: &Lua, eng: &E, index: usize, key: &str, v: Value) -> mlua::Resu
             if it.active != val {
                 it.active = val;
                 it.icon = None;
+                it.icon_text = None;
                 changed = true;
             }
         }
@@ -1029,6 +1036,7 @@ fn item_set(lua: &Lua, eng: &E, index: usize, key: &str, v: Value) -> mlua::Resu
                 it.active = en;
                 it.stage = val;
                 it.icon = None;
+                it.icon_text = None;
                 changed = true;
             }
         }
@@ -1061,18 +1069,20 @@ fn item_set(lua: &Lua, eng: &E, index: usize, key: &str, v: Value) -> mlua::Resu
             eng.borrow_mut().items[index].decrement = n;
         }
         "Icon" => {
-            // Nil clears it.
-            let icon = if v.is_nil() { String::new() } else { text(v)? };
-            eng.borrow_mut().items[index].icon = Some(icon);
+            // Nil clears it. An override is `path:mods`, unlike a plain `img`, whose
+            // paths may have a colon in them.
+            let written = if v.is_nil() { String::new() } else { text(v)? };
+            let (path, mods) = written.split_once(':').unwrap_or((&written, ""));
+            let mut e = eng.borrow_mut();
+            let filters = parse_filters(mods, &e.disabled_filter);
+            let it = &mut e.items[index];
+            it.icon = Some(path.to_string());
+            it.icon_mods = filters;
+            it.icon_text = Some(written);
         }
         "IgnoreUserInput" => {
             let on = truthy(&v);
             eng.borrow_mut().items[index].ignore_user_input = on;
-        }
-        "IconMods" => {
-            let t = text(v)?;
-            let filter = eng.borrow().disabled_filter.clone();
-            eng.borrow_mut().items[index].icon_mods = parse_filters(&t, &filter);
         }
         "BadgeText" => {
             let t = text(v)?;
@@ -2791,7 +2801,19 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     )?;
     img.set(
         "FromImageReference",
-        lua.create_function(|_, (_t, r, _mods): (Table, Value, MultiValue)| Ok(r))?,
+        lua.create_function(|lua, (_t, r, m): (Table, Value, Option<String>)| {
+            // A mod is added to the reference: `path:mod,mod`.
+            let (Value::String(r), Some(m)) = (&r, m.filter(|m| !m.is_empty())) else {
+                return Ok(r);
+            };
+            let r = r.to_string_lossy();
+            let joined = if r.contains(':') {
+                format!("{r},{m}")
+            } else {
+                format!("{r}:{m}")
+            };
+            lua.create_string(&joined).map(Value::String)
+        })?,
     )?;
     g.set("ImageReference", &img)?;
 

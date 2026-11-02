@@ -1,1 +1,1 @@
-{"disabled_image_filter": "dim"}
+{"disabled_image_filter": "saturation|0.2, dim"}

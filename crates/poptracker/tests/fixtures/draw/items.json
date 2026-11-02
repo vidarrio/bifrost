@@ -72,5 +72,52 @@
     "type": "toggle",
     "codes": "icon",
     "img": "p.png"
+  },
+  {
+    "name": "Mistyped",
+    "type": "toggle",
+    "codes": "mistyped",
+    "img": "p.png",
+    "disabled_img_mods": "@disabled|false"
+  },
+  {
+    "name": "Alias",
+    "type": "toggle",
+    "codes": "alias",
+    "img": "p.png",
+    "disabled_img_mods": "@disable"
+  },
+  {
+    "name": "Static",
+    "type": "static",
+    "codes": "st",
+    "img": "p.png",
+    "disabled_img": "no.png"
+  },
+  {
+    "name": "Colon",
+    "type": "toggle",
+    "codes": "colon",
+    "img": "a:b.png"
+  },
+  {
+    "name": "Pair",
+    "type": "composite_toggle",
+    "codes": "pair",
+    "item_left": "plain_on",
+    "item_right": "plain",
+    "images": [
+      {
+        "left": true,
+        "right": false,
+        "img": "l.png",
+        "img_mods": "dim"
+      },
+      {
+        "left": false,
+        "right": false,
+        "img": "n.png"
+      }
+    ]
   }
 ]
