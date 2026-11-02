@@ -255,6 +255,9 @@ pub async fn reject(db: &Db, season: i64, file: &str, by: &str) -> Result<(), St
 /// Check every signup held for `file` now that it's installed: those that
 /// pass go ahead (with the name and game the check read); the rest keep
 /// the reason.
+/// A signup is one game, so its file holds one player.
+pub const ONE_GAME_PER_FILE: &str = "That YAML holds several players. Sign up one game per file.";
+
 pub async fn recheck_held(db: &Db, season: i64, file: &str) {
     let dirs = config::get().season(season);
     for (id, yaml_path) in db.held_submissions(season, file).await {
@@ -266,6 +269,7 @@ pub async fn recheck_held(db: &Db, season: i64, file: &str) {
                     "couldn't be checked ({e}) — it's tried again before generating"
                 )),
                 Ok(r) if !r.ok => Err(format!("its YAML didn't pass: {}", r.errors.join("; "))),
+                Ok(r) if r.players.len() > 1 => Err(ONE_GAME_PER_FILE.to_string()),
                 Ok(r) => r
                     .players
                     .first()

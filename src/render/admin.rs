@@ -471,7 +471,8 @@ pub fn admin_page(
         format!("at most <b>{limit}</b>")
     };
     b.push_str(&format!(
-        r#"<div class="statline">Games per player: {limit_text}.</div>
+        r#"<h2>Games per player</h2>
+<div class="statline">Games per player: {limit_text}.</div>
 <form class="console" method="post" action="admin/signups/limit" autocomplete="off"><input type="number" name="games" min="0" max="{max}" value="{limit}"><button type="submit">Set limit</button></form>
 <p class="empty">How many games a player can sign up with in this season; 0 means no limit. Signups already made stay.</p>"#,
         max = crate::db::MAX_GAMES_LIMIT,

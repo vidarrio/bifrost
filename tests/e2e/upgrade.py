@@ -123,8 +123,8 @@ srv.start()
 srv.stop()
 check("with room for the backup it upgrades", stamp(srv) == (schema, version), stamp(srv))
 with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
-    caps = db.execute("SELECT mine_daily_hints FROM season WHERE name = 'Old'").fetchall()
-check("the upgrade migrates the schema, keeping existing rows", caps == [(5,)], caps)
+    caps = db.execute("SELECT mine_daily_hints, max_games FROM season WHERE name = 'Old'").fetchall()
+check("the upgrade migrates the schema, keeping existing rows", caps == [(5, 0)], caps)
 
 
 

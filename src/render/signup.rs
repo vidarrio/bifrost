@@ -70,6 +70,11 @@ pub fn signup_page(
             r#"</div>
 <script>document.getElementById('addgame').addEventListener('click',function(){document.getElementById('wizbox').hidden=false;this.hidden=true;});</script>"#,
         )
+    } else if max_games > 0 {
+        (
+            format!(r#"<p class="empty">{}</p>"#, limit_note.trim_start()),
+            "",
+        )
     } else {
         (String::new(), "")
     };

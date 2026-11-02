@@ -71,8 +71,9 @@ open. The wizard has three steps:
 You can replace or delete your signup until the season is generated.
 
 You can play several games in a season. Once you have a signup, the page shows
-**Add another game** instead of the form. A season's moderators can limit how many
-games a player can have.
+**Add another game** instead of the form. Each game needs its own YAML, with its own
+slot name and one player in the file. A season's moderators can limit how many games a
+player can sign up with.
 
 On some servers, uploading a world that isn't in the catalog makes it wait for
 a moderator's approval. Your signup then shows as *held*. It is checked
@@ -206,9 +207,8 @@ The season console has six tabs:
   commands, such as `/send`, with auto-completion.
 - **Options.** Turn the season's minesweeper and the common game on or off,
   and set how many bonus hints a player can earn from minesweeper in any
-  24 hours (5 by default; 0 means no limit).
-- **Games per player.** How many games a player can sign up with; 0, the default,
-  means no limit. Signups already made stay.
+  24 hours (5 by default; 0 means no limit). Also set how many games a player
+  can sign up with (0, the default, means no limit); signups already made stay.
 - **Archive & reset.**
   - **Archive this season.** Finishes it: the server is stopped, a summary is
     written for *Past seasons*, and the season's files are packed into a

@@ -34,7 +34,7 @@ try:
     bob = srv.invite_user(root, "bob")
     subs = os.path.join(srv.data, "seasons", str(sid), "submissions")
     r = post(bob, f"/s/{sid}/signup", files={"yaml": ("y.yaml", YAML.replace(b"ChecksFinder: {}", b"ChecksFinder: {}\n# bob"))})
-    check("a duplicate slot name is refused", "already signed up" in r.text, r.text[-300:])
+    check("a duplicate slot name is refused", "already taken" in r.text, r.text[-300:])
     yamls = sorted(os.listdir(subs))
     check("…and leaves the first signup's YAML as it was",
           len(yamls) == 1 and open(os.path.join(subs, yamls[0]), "rb").read() == YAML, yamls)
@@ -42,6 +42,14 @@ try:
         r = post(bob, f"/s/{sid}/signup", files={"yaml": ("y.yaml", b"name: " + name + b"\ngame: ChecksFinder\nChecksFinder: {}\n")})
         check(f"{name.decode()} signs up", f"Signed up: {name.decode()}" in r.text, r.text[-300:])
     check("…each into a file of its own", len(os.listdir(subs)) == 3, os.listdir(subs))
+    # A signup is one game, so its file can't carry more players past the limit.
+    two = b"name: One\ngame: ChecksFinder\nChecksFinder: {}\n---\nname: Two\ngame: ChecksFinder\nChecksFinder: {}\n"
+    r = post(bob, f"/s/{sid}/signup", files={"yaml": ("y.yaml", two)})
+    check("a file with several players is refused", "several players" in r.text and len(os.listdir(subs)) == 3, r.text[-300:])
+    j = post(bob, f"/s/{sid}/signup/check", files={"yaml": ("y.yaml", two)}).json()
+    check("…and the check step says so", not j["ok"] and "several players" in j["error"], j)
+    j = post(bob, f"/s/{sid}/signup/check", files={"yaml": ("y.yaml", YAML)}).json()
+    check("the check step flags a slot name that's taken", not j["ok"] and "already taken" in j["error"], j)
     # A player with a game gets a button for another, within the season's limit.
     fresh = srv.invite_user(root, "fresh")
     page = get(fresh, f"/s/{sid}/signup").text
