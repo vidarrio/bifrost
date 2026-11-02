@@ -13,7 +13,7 @@ cd "$(dirname "$0")"
 # minutes each on a runner). A new native suite goes into one of them; a new
 # shard also goes into `shard)` and `shards)` below.
 shard1="apupdate backup forward_auth homepill minesweeper packs upgrade"
-shard2="quiet load"
+shard2="quiet load season_actions"
 shard3="catalog supervisor season_import"
 native="$shard1 $shard2 $shard3"
 case "${1:-native}" in

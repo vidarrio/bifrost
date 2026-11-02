@@ -239,6 +239,12 @@ impl Runtimes {
         self.spawn_workers(id, &rt, ap);
     }
 
+    /// Forget a deleted season's runtime.
+    pub async fn forget(&self, id: Id) {
+        self.stop(id).await;
+        self.map.lock().unwrap().remove(&id);
+    }
+
     /// Stop a season's AP server (saving) and workers, and clear its board
     /// (on archive).
     pub async fn stop(&self, id: Id) {

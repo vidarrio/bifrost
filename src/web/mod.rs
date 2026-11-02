@@ -179,6 +179,8 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         .route("/admin/minesweeper/hints", post(admin_mine_hints))
         .route("/admin/signups/limit", post(admin_games_limit))
         .route("/admin/privacy", post(admin_privacy))
+        .route("/admin/cancel", post(admin_cancel))
+        .route("/admin/season/delete", post(admin_delete_season))
         .route("/admin/mc", post(admin_mc))
         .route("/admin/output", get(admin_output))
         .route("/admin/archive-season", post(admin_archive_season))

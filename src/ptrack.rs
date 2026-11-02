@@ -129,6 +129,12 @@ pub async fn install_pack(
 }
 
 /// Remove a slot's installed pack.
+/// Remove every pack of a season.
+pub fn remove_season(season: Id) {
+    SLOTS.lock().unwrap().retain(|(s, _), _| *s != season);
+    let _ = std::fs::remove_dir_all(config::get().packs_dir().join(season.to_string()));
+}
+
 pub fn remove(season: Id, ap_slot: i64) {
     SLOTS.lock().unwrap().remove(&(season, ap_slot));
     let _ = std::fs::remove_dir_all(slot_dir(season, ap_slot));

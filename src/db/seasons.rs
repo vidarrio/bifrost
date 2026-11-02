@@ -749,6 +749,47 @@ impl Db {
     /// re-roll deploys a new one): activity log + cursor, hint priorities and
     /// the in-logic cache. Slots/claims are remapped separately; minesweeper
     /// results and hint credits belong to the season and are kept.
+    /// Delete a season and, through the cascades, everything of it: before
+    /// generation, or once archived if `archived_too`. False if it can't go.
+    pub async fn delete_season(&self, id: Id, archived_too: bool) -> Result<bool, sqlx::Error> {
+        let res = sqlx::query(
+            "DELETE FROM season WHERE id = ?1
+               AND (state IN ('draft', 'signup') OR (?2 AND state = 'archived'))",
+        )
+        .bind(id)
+        .bind(archived_too)
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Take a live season back to signups: its seed, port, slots and everything
+    /// played are gone, and its signups, notes and partners stay. False if it
+    /// isn't live.
+    pub async fn cancel_generation(&self, id: Id) -> Result<bool, sqlx::Error> {
+        let res = sqlx::query(
+            "UPDATE season SET state = 'signup', seed = NULL, live_at = NULL, ap_port = NULL,
+                    ap_version = NULL
+             WHERE id = ? AND state = 'live'",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        if res.rows_affected() == 0 {
+            return Ok(false);
+        }
+        self.clear_seed_data(id).await?;
+        for table in ["hint_credit", "mine_result"] {
+            sqlx::query(&format!("DELETE FROM {table} WHERE season = ?"))
+                .bind(id)
+                .execute(&self.pool)
+                .await?;
+        }
+        self.clear_all_slots(id).await?;
+        self.clear_seat_links(id).await?;
+        Ok(true)
+    }
+
     pub async fn clear_seed_data(&self, id: Id) -> Result<(), sqlx::Error> {
         for table in ["activity", "hint_priority", "inlogic"] {
             sqlx::query(&format!("DELETE FROM {table} WHERE season = ?"))
