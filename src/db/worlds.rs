@@ -204,7 +204,8 @@ impl Db {
     }
 
     /// A held submission passed its check: take the slot name and game the
-    /// check read, and stop holding it. Fails if that slot name is taken.
+    /// check read, and stop holding it. Fails if that slot name is taken. A
+    /// signup no longer held (its host replaced the YAML meanwhile) stays as it is.
     pub async fn release_submission(
         &self,
         id: i64,
@@ -213,7 +214,7 @@ impl Db {
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             "UPDATE submission SET slot_name = ?, game = ?, held_for = NULL, held_err = NULL
-             WHERE id = ?",
+             WHERE id = ? AND held_for IS NOT NULL",
         )
         .bind(slot_name)
         .bind(game)
@@ -224,7 +225,7 @@ impl Db {
     }
 
     pub async fn set_held_err(&self, id: i64, err: &str) -> Result<(), sqlx::Error> {
-        sqlx::query("UPDATE submission SET held_err = ? WHERE id = ?")
+        sqlx::query("UPDATE submission SET held_err = ? WHERE id = ? AND held_for IS NOT NULL")
             .bind(err)
             .bind(id)
             .execute(&self.pool)
@@ -313,6 +314,101 @@ mod tests {
         assert_eq!(db.take_world_request(season, "foo.apworld").await, Some(r));
         assert!(db.world_requests(season).await.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_game_changes_only_for_its_host_and_while_the_season_allows() {
+        use crate::db::State;
+        let (db, dir) = db("game-edits").await;
+        let season = db.create_season("S", None, 0).await.unwrap();
+        let host = db
+            .create_account("host", "h", crate::auth::Role::User, 0)
+            .await
+            .unwrap();
+        let other = db
+            .create_account("other", "h", crate::auth::Role::User, 0)
+            .await
+            .unwrap();
+        let id = db
+            .add_submission(
+                season,
+                host,
+                "Old",
+                "Foo",
+                true,
+                "",
+                "/old.yaml",
+                Some("foo.apworld"),
+                0,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        // Draft: notes yes, the YAML no.
+        assert!(
+            db.set_submission_notes(season, id, host, "n")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !db.set_submission_notes(season, id, other, "x")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !db.set_submission_notes(season + 1, id, host, "x")
+                .await
+                .unwrap()
+        );
+        let replace = |account, old: &'static str, game: &'static str, new: &'static str| {
+            let db = &db;
+            async move {
+                db.replace_submission(season, id, account, "New", game, old, new)
+                    .await
+                    .unwrap()
+            }
+        };
+        assert!(!replace(host, "/old.yaml", "Foo", "/a.yaml").await);
+        db.transition(season, State::Signup, 1).await.unwrap();
+        assert!(!replace(other, "/old.yaml", "Foo", "/a.yaml").await);
+        assert!(
+            !replace(host, "/stale.yaml", "Foo", "/a.yaml").await,
+            "lost a race"
+        );
+        assert!(replace(host, "/old.yaml", "Foo", "/a.yaml").await);
+        let sub = db.submission(season, id).await.unwrap();
+        assert_eq!(
+            (
+                sub.slot_name.as_str(),
+                sub.yaml_file.as_str(),
+                sub.notes.as_str()
+            ),
+            ("New", "/a.yaml", "n")
+        );
+        assert!(
+            sub.is_custom && sub.held_for.is_none(),
+            "same game, no hold"
+        );
+        // A re-check of the old file that was already running changes nothing.
+        db.release_submission(id, "Stale", "Stale").await.unwrap();
+        db.set_held_err(id, "stale").await.unwrap();
+        let sub = db.submission(season, id).await.unwrap();
+        assert_eq!(sub.slot_name, "New");
+        assert!(sub.held_err.is_none());
+        assert!(replace(host, "/a.yaml", "Bar", "/b.yaml").await);
+        assert!(
+            !db.submission(season, id).await.unwrap().is_custom,
+            "another game"
+        );
+        // Once generating: neither.
+        db.transition(season, State::Generating, 2).await.unwrap();
+        assert!(
+            !db.set_submission_notes(season, id, host, "x")
+                .await
+                .unwrap()
+        );
+        assert!(!replace(host, "/b.yaml", "Bar", "/c.yaml").await);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]

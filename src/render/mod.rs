@@ -162,6 +162,9 @@ h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute
 .slot{background:var(--panel);border:1px solid var(--bd);border-left-width:4px;border-radius:10px;padding:11px 13px}
 .slot.goal{border-left-color:var(--ok)}.slot.playing{border-left-color:var(--accent)}.slot.idle{border-left-color:var(--bd)}
 .slot.released{border-left-color:var(--warn)}
+.slot.stretch{position:relative}.stretch .cover{color:inherit;text-decoration:none}.stretch .cover::after{content:"";position:absolute;inset:0}.stretch:hover{border-color:var(--accent)}.stretch form,.stretch .notes{position:relative;z-index:1}.stretch .notes{max-height:7.5em;overflow:auto}
+.signup textarea{font-family:inherit}
+.notes{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;margin-top:6px}
 .slot .game{font-weight:600;font-size:14px}.slot .st{font-family:var(--mono);font-size:11px;color:var(--muted);float:right}
 .slot.goal .st{color:var(--ok)}
 .slot.released .st{color:var(--warn)}
@@ -174,7 +177,7 @@ h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute
 .hintform{display:flex;gap:6px;margin:4px 0 8px}.hintform input{flex:1;min-width:0;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:5px 8px;font-size:12px}
 .banner{border-radius:10px;padding:12px 16px;margin:0 0 14px}.banner.ok{background:rgba(40,165,109,.15);border:1px solid var(--ok)}.banner.bad{background:rgba(226,77,95,.13);border:1px solid var(--bad)}.muted{color:var(--muted)}.banner.warn{background:rgba(217,131,36,.13);border:1px solid var(--warn)}.loadcharts{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:8px 0 12px}.loadchart{background:var(--panel);border:1px solid var(--bd);border-radius:10px;padding:10px 12px}.loadchart h3{margin:0 0 4px;font-size:12px;font-weight:600;color:var(--fg)}.loadchart .now{font-family:var(--mono);font-size:20px;color:var(--fg)}.loadchart svg{display:block;width:100%;height:80px;overflow:visible}.loadchart .axis{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10.5px;color:var(--muted)}.loadchart .grid{stroke:var(--bd);stroke-width:1}.loadchart .plot{position:relative}.loadchart .ylab{position:absolute;right:0;top:calc(50% - 15px);font-family:var(--mono);font-size:10.5px;color:var(--muted);pointer-events:none}.loadchart .line{fill:none;stroke:var(--accent);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}.loadchart .hit{fill:transparent}.loadchart .hit:hover{fill:rgba(90,169,230,.18)}
 .signup{display:grid;gap:12px;max-width:460px;margin-bottom:10px}.signup label{display:grid;gap:4px;font-size:13px;color:var(--muted)}.signup label.chk{display:flex;flex-direction:row;align-items:center;gap:8px}
-.signup input[type=file],.signup input[type=text]{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:6px 8px;font-size:13px}
+.signup input[type=file],.signup input[type=text],.signup textarea{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:6px 8px;font-size:13px}
 code{font-family:var(--mono);font-size:12px;color:var(--accent)}
 .mcjoin{margin:4px 0 10px;padding-left:20px;font-size:13.5px;line-height:1.55}.mcjoin li{margin:4px 0}.mcjoin code{background:var(--bg);padding:1px 5px;border-radius:4px}
 details.prism{margin:6px 0 4px;border:1px solid var(--bd);border-radius:7px;padding:2px 12px;background:var(--bg)}

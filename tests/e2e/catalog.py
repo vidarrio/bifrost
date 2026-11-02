@@ -61,6 +61,10 @@ try:
     check("…one the first look misses is held", "held until" in r.text, r.text[-300:])
 
     page = get(alice, f"{S}/signup").text
+    game = re.search(r'href="signup/game/(\d+)">Pfoo<', page).group(1)
+    check("a held game's page says so", "waiting for foo.apworld" in get(alice, f"{S}/signup/game/{game}").text)
+    r = post(alice, f"{S}/signup/game/{game}/yaml", files={"yaml": ("foo.yaml", fixture("foo.yaml"))})
+    check("its YAML can't replace itself before the world is in", "didn't pass" in r.text, r.text[-300:])
     check("roster shows the held signup", "waiting for foo.apworld to be approved" in page)
     adm = get(root, f"{S}/admin").text
     check("admin page lists the request", "Apworlds waiting for approval" in adm and "Foo Finder" in adm)

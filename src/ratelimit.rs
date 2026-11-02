@@ -46,6 +46,7 @@ pub fn rule_for(method: &Method, path: &str) -> Option<Rule> {
     match path {
         // Each check runs a sandboxed AP process loading every world.
         "/check" | "/signup/check" => r("check", 10, 10, false),
+        p if p.starts_with("/signup/game/") && p.ends_with("/yaml") => r("check", 10, 10, false),
         "/signup" => r("signup", 10, 10, false),
         "/signup/apworld" => r("upload", 10, 60, false),
         "/login" => r("login", 20, 10, true),
@@ -254,6 +255,7 @@ mod tests {
             "/signup/check",
             "/signup",
             "/signup/apworld",
+            "/signup/game/1/yaml",
             "/login",
             "/setup",
             "/invite/abc",

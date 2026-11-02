@@ -50,6 +50,34 @@ try:
     check("…and the check step says so", not j["ok"] and "several players" in j["error"], j)
     j = post(bob, f"/s/{sid}/signup/check", files={"yaml": ("y.yaml", YAML)}).json()
     check("the check step flags a slot name that's taken", not j["ok"] and "already taken" in j["error"], j)
+    # The seasons open for signup, and a game's own page.
+    page = get(bob, "/signups").text
+    check("the list shows the season", f'href="/s/{sid}/signup"' in page and "Super" in page, page[-300:])
+    game = re.search(r'href="signup/game/(\d+)">Bo b<', get(bob, f"/s/{sid}/signup").text).group(1)
+    url = f"/s/{sid}/signup/game/{game}"
+    post(bob, f"{url}/notes", data=dict(notes="No <b>double</b> jump"))
+    check("the host's notes show on the card, escaped", "No &lt;b&gt;double&lt;/b&gt; jump" in root.get(root.base + f"/s/{sid}/signup").text)  # not lib.get, which decodes
+    post(root, f"{url}/notes", data=dict(notes="root was here"))
+    check("nobody else can change them", "root was here" not in get(bob, url).text)
+    check("nor sees the forms", 'action="signup/game' not in get(root, url).text and "double" in get(root, url).text)
+    r = post(bob, f"{url}/notes", data=dict(notes="x" * 2001))
+    check("notes have a limit", "at most 2000" in r.text)
+    before = set(os.listdir(subs))
+    r = post(root, f"{url}/yaml", files={"yaml": ("y.yaml", b"name: Stolen\ngame: ChecksFinder\nChecksFinder: {}\n")})
+    check("only the host can replace the YAML", "can't replace" in r.text and set(os.listdir(subs)) == before, r.text[-300:])
+    r = post(bob, f"{url}/yaml", files={"yaml": ("y.yaml", YAML)})
+    check("a replacement can't take another game's name", "already taken" in r.text and set(os.listdir(subs)) == before, r.text[-300:])
+    r = post(bob, f"{url}/yaml", files={"yaml": ("y.yaml", b"name: Bo c\ngame: ChecksFinder\nChecksFinder: {}\n")})
+    check("the host replaces it, renaming the slot", "<h1>Bo c</h1>" in r.text and "Save notes" in r.text and "Replace the YAML" in r.text, r.text[-300:])
+    check("…leaving one file for it", len(os.listdir(subs)) == len(before), os.listdir(subs))
+    check("…and keeping its notes", "double" in get(bob, url).text and "Bo c" in get(bob, url).text)
+    check("the game page escapes them too", "<b>double" not in bob.get(bob.base + url).text)
+    post(root, "/admin/seasons", data=dict(name="Elsewhere"))
+    other = max(int(n) for n in re.findall(r"/s/(\d+)/admin", get(root, "/admin/seasons").text))
+    check("a game isn't found through another season", "double" not in get(bob, f"/s/{other}/signup/game/{game}").text)
+    post(bob, f"/s/{other}/signup/game/{game}/notes", data=dict(notes="elsewhere"))
+    check("…nor changed", "elsewhere" not in get(bob, url).text)
+    check("a game's page needs a sign-in", "double" not in get(srv.session(), url).text)
     # A player with a game gets a button for another, within the season's limit.
     fresh = srv.invite_user(root, "fresh")
     page = get(fresh, f"/s/{sid}/signup").text
@@ -70,13 +98,17 @@ try:
     post(root, f"/s/{sid}/admin/signups/limit", data=dict(games="0"))
     post(root, f"/s/{sid}/admin/generate")
     wait_for(lambda: "Generated seed" in get(root, f"/s/{sid}/admin").text, 300, 3)
+    r = post(bob, f"{url}/notes", data=dict(notes="too late"))
+    check("once generated the notes are read-only", "can't change" in r.text and "Save notes" not in get(bob, url).text, r.text[-300:])
+    r = post(bob, f"{url}/yaml", files={"yaml": ("y.yaml", b"name: Late\ngame: ChecksFinder\nChecksFinder: {}\n")})
+    check("…and the YAML can't be replaced", "can't replace" in r.text and "Replace the YAML" not in get(bob, url).text, r.text[-300:])
     connected = lambda: '"connected":true' in get(root, f"/s/{sid}/board/fragment").text.replace(" ", "") \
         or "isn't connected" not in post(root, f"/s/{sid}/admin/console", data={"cmd": "/players"}).text
     pid = wait_for(lambda: server_pid(srv), 60, 1)
     check("the season's AP server runs", pid)
     r = wait_for(lambda: (t := post(root, f"/s/{sid}/admin/console", data={"cmd": "/players"}).text) and "Ann" in t and t, 60, 3)
     check("a console command reaches it", r)
-    check("all three signups made it into the seed", r and "Bo b" in r and "Bo_b" in r, (r or "")[-300:])
+    check("all three signups made it into the seed, the replaced one by its new name", r and "Bo c" in r and "Bo_b" in r, (r or "")[-300:])
     os.kill(pid, signal.SIGKILL)
     check("the supervisor notices the exit", wait_for(lambda: "AP server exited" in srv.logtext(), 30, 1))
     new = wait_for(lambda: (p := server_pid(srv)) and p != pid and p, 60, 1)

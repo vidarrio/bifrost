@@ -126,6 +126,10 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         )
         .route("/signup/check", post(signup_check))
         .route("/signup/delete", post(signup_delete))
+        .route("/signups", get(signups_list))
+        .route("/signup/game/{id}", get(signup_game))
+        .route("/signup/game/{id}/notes", post(signup_game_notes))
+        .route("/signup/game/{id}/yaml", post(signup_game_yaml))
         .route("/admin", get(admin_view))
         .route("/admin/seasons", get(seasons_view).post(seasons_create))
         .route(

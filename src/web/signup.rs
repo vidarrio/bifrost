@@ -36,7 +36,158 @@ pub(crate) async fn signup_get(
         manual: st.db.approval().await == db::Approval::Manual,
         catalog: st.db.catalog().await,
     };
-    render::signup_page(&subs, &me, is_admin, open, ctx.row.max_games, &worlds)
+    render::signup_page(
+        &ctx.row.name,
+        &subs,
+        &me,
+        is_admin,
+        open,
+        ctx.row.max_games,
+        &worlds,
+    )
+}
+
+/// The seasons open for signup, each leading to its own page.
+pub(crate) async fn signups_list(State(st): State<AppState>, _me: auth::Me) -> Html<String> {
+    let mut open = Vec::new();
+    for s in st.db.seasons().await {
+        if s.state().accepts_signups() {
+            let subs = st.db.submissions(s.id).await.unwrap_or_default();
+            open.push((s.id, s.name, subs));
+        }
+    }
+    render::signups_list(&open)
+}
+
+/// The most a game's notes can hold, in characters.
+const MAX_NOTES: usize = 2000;
+
+/// A game before the season generates: who's in it and its notes, and for its
+/// host the notes form and replacing the YAML.
+pub(crate) async fn signup_game(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Path(id): Path<i64>,
+) -> Response {
+    let Some(sub) = st.db.submission(ctx.id, id).await else {
+        return Redirect::to(&ctx.url("/signup")).into_response();
+    };
+    let is_host = sub.account_id == me.id();
+    let state = ctx.state();
+    let edit_notes = is_host && matches!(state, db::State::Draft | db::State::Signup);
+    let replace = is_host && state.accepts_signups();
+    render::signup_game_page(&sub, edit_notes, replace, MAX_NOTES).into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct NotesForm {
+    notes: String,
+}
+
+pub(crate) async fn signup_game_notes(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Path(id): Path<i64>,
+    Form(f): Form<NotesForm>,
+) -> Response {
+    // Browsers send line breaks as CRLF but count them as one.
+    let notes = f.notes.replace("\r\n", "\n");
+    let notes = notes.trim();
+    if notes.chars().count() > MAX_NOTES {
+        return render::signup_result(
+            &format!("Notes can be at most {MAX_NOTES} characters."),
+            false,
+        )
+        .into_response();
+    }
+    match st.db.set_submission_notes(ctx.id, id, me.id(), notes).await {
+        Ok(true) => Redirect::to(&ctx.url(&format!("/signup/game/{id}"))).into_response(),
+        _ => render::signup_result("You can't change these notes.", false).into_response(),
+    }
+}
+
+/// Replace a game's YAML: the new file has to pass like a new signup's. Its
+/// name and game can change; everything else about the game stays.
+pub(crate) async fn signup_game_yaml(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Path(id): Path<i64>,
+    mut mp: Multipart,
+) -> Response {
+    let closed = "You can't replace this YAML: it isn't yours, or signups are closed.";
+    let refuse = |text: &str| render::signup_result(text, false).into_response();
+    let Some(sub) = st.db.submission(ctx.id, id).await else {
+        return refuse(closed);
+    };
+    if sub.account_id != me.id() || !ctx.state().accepts_signups() {
+        return refuse(closed);
+    }
+    let mut yaml: Option<Vec<u8>> = None;
+    while let Ok(Some(field)) = mp.next_field().await {
+        if field.name() == Some("yaml") {
+            yaml = field.bytes().await.ok().map(|b| b.to_vec());
+        } else {
+            let _ = field.bytes().await;
+        }
+    }
+    let Some(yaml) = yaml.filter(|b| !b.is_empty()) else {
+        return refuse("No YAML uploaded.");
+    };
+    let yaml_str = String::from_utf8_lossy(&yaml).to_string();
+    let result = match checker::check_yaml(&ctx.dirs(), &yaml_str).await {
+        Ok(r) => r,
+        Err(e) => return refuse(&format!("Checker error: {e}")),
+    };
+    if !result.ok {
+        return refuse(&format!(
+            "That YAML didn't pass: {}.",
+            result.errors.join("; ")
+        ));
+    }
+    if result.players.len() > 1 {
+        return refuse(worlds::ONE_GAME_PER_FILE);
+    }
+    let Some(p0) = result.players.first() else {
+        return refuse("Couldn't read a player from that YAML.");
+    };
+    let game = p0.game.clone().unwrap_or_else(|| "?".into());
+    let Some(yaml_path) = store_yaml(&ctx, &p0.name, &yaml).await else {
+        return refuse("Couldn't store the YAML.");
+    };
+    let replaced = st
+        .db
+        .replace_submission(
+            ctx.id,
+            id,
+            me.id(),
+            &p0.name,
+            &game,
+            &sub.yaml_file,
+            &yaml_path,
+        )
+        .await;
+    let page = match replaced {
+        Ok(true) => {
+            let _ = tokio::fs::remove_file(&sub.yaml_file).await;
+            return Redirect::to(&ctx.url(&format!("/signup/game/{id}"))).into_response();
+        }
+        Ok(false) => refuse(closed),
+        Err(e)
+            if e.as_database_error()
+                .is_some_and(|d| d.is_unique_violation()) =>
+        {
+            refuse(&slot_taken(&p0.name))
+        }
+        Err(e) => {
+            tracing::warn!("replacing a signup in season {}: {e}", ctx.id);
+            refuse("Couldn't store the signup.")
+        }
+    };
+    let _ = tokio::fs::remove_file(&yaml_path).await;
+    page
 }
 
 /// Whether this player already has as many games as the season allows. An early
@@ -169,9 +320,36 @@ pub(crate) async fn signup_check(
     }
 }
 
+/// Write a signup's YAML to a new file of its own and return its path.
+async fn store_yaml(ctx: &scope::SeasonCtx, slot_name: &str, yaml: &[u8]) -> Option<String> {
+    let slug = slugify(slot_name);
+    let uploads = ctx.dirs().submissions;
+    let _ = tokio::fs::create_dir_all(&uploads).await;
+    let nonce = &auth::new_token()[..16];
+    let yaml_path = uploads
+        .join(format!("{slug}-{nonce}.yaml"))
+        .to_string_lossy()
+        .into_owned();
+    // `create_new`: what's already there isn't ours, so leave it alone.
+    let mut f = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&yaml_path)
+        .await
+        .ok()?;
+    if tokio::io::AsyncWriteExt::write_all(&mut f, yaml)
+        .await
+        .is_err()
+    {
+        let _ = tokio::fs::remove_file(&yaml_path).await;
+        return None;
+    }
+    Some(yaml_path)
+}
+
 fn slot_taken(name: &str) -> String {
     format!(
-        "The slot name '{name}' is already taken in this season. Each game needs its own: change name: in the YAML and try again. To replace your own signup, remove it first."
+        "The slot name '{name}' is already taken in this season. Each game needs its own: change name: in the YAML and try again. To replace your own signup, upload the new file on its page."
     )
 }
 
@@ -267,31 +445,9 @@ pub(crate) async fn signup_post(
 
     // A file of its own, never another signup's: names that slugify alike
     // (`Ann B`, `Ann-B`) or a refused duplicate must not touch an existing one.
-    let slug = slugify(&slot_name);
-    let uploads = ctx.dirs().submissions;
-    let _ = tokio::fs::create_dir_all(&uploads).await;
-    let nonce = &auth::new_token()[..16];
-    let yaml_path = uploads
-        .join(format!("{slug}-{nonce}.yaml"))
-        .to_string_lossy()
-        .into_owned();
-    let created = tokio::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&yaml_path)
-        .await;
-    let Ok(mut f) = created else {
-        // Not ours (or not made): leave whatever is there alone.
+    let Some(yaml_path) = store_yaml(&ctx, &slot_name, &yaml).await else {
         return render::signup_result("Couldn't store the YAML.", false);
     };
-    if tokio::io::AsyncWriteExt::write_all(&mut f, &yaml)
-        .await
-        .is_err()
-    {
-        let _ = tokio::fs::remove_file(&yaml_path).await;
-        return render::signup_result("Couldn't store the YAML.", false);
-    }
-    drop(f);
     let coop_clean: String = coop
         .split([',', '\n'])
         .map(str::trim)
