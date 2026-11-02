@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The minesweeper on the home page is for any account, whether or not they play in a
+  season. A season's own minesweeper is for its players and those running it.
 - Private seasons. A new season's board, log and game pages are for its players,
   its moderators and sysadmins, and a moderator can open them to anyone. Moderators can also make
   a season's signups private, reachable only through a link. Non-members don't see a

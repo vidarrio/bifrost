@@ -13,6 +13,9 @@ try:
     alice = srv.invite_user(root, "alice")
     post(root, "/admin/seasons", data=dict(name="Mines"))
     post(root, "/s/1/admin/minesweeper", data=dict(open="1"))
+    # A season's minesweeper is for its players.
+    post(root, "/s/1/admin/signups", data=dict(open="1"))
+    post(alice, "/s/1/signup", files={"yaml": ("y.yaml", b"name: Alice\ngame: ChecksFinder\nChecksFinder: {}\n")})
 
     def limit():
         m = re.search(r'name="hints" value="(\d+)"', get(root, "/s/1/admin").text)

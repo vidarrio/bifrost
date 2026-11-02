@@ -57,9 +57,9 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
             })
             .cloned(),
     };
-    // The board and minesweeper cards need a season. If there is one but this viewer
-    // can't see any, they'd only lead to a refusal; a visitor who can still sign in
-    // may turn out to be a member.
+    // The board card needs a season. If there is one but this viewer can't see any,
+    // it would only lead to a refusal; a visitor who can still sign in may turn out
+    // to be a member.
     let can_sign_in = me.principal().is_none() && st.auth.mode == auth::AuthMode::Native;
     let season_cards = default.is_some() || can_sign_in || st.db.default_season().await.is_none();
     let season_base = default

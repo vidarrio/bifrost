@@ -171,14 +171,15 @@ them with your game's client or patcher.
 
 ### Bonus hints: minesweeper
 
-If the season's moderators turned it on, **minesweeper** on the season board
-earns bonus hints. Each board you clear without hitting a mine earns one
+If the season's moderators turned it on, **minesweeper**, linked from your game page's
+hint tab, earns bonus hints. Each board you clear without hitting a mine earns one
 bonus hint, up to a daily limit the moderators set for the season (five
 unless they change it; the minesweeper page says what it is), counted over
 any 24 hours. Every board can be solved without guessing. Bonus hints are
 spent automatically when you're out of hint points.
 
-The minesweeper linked from the home page is free play: it counts toward the
+A season's minesweeper is for its players. The minesweeper linked from the home
+page is for any account, and is free play: it counts toward the
 all-time leaderboard but earns no hints.
 
 ### The common game
