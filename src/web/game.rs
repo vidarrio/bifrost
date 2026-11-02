@@ -294,10 +294,29 @@ pub(crate) async fn game_view(
         (b.snapshot(), game, items, cn)
     }) {
         Some(v) => v,
-        None => return Html("board unavailable".into()),
+        None => {
+            return render::notice(
+                "This game isn't up yet. Try again in a moment.",
+                false,
+                "board",
+            );
+        }
     };
     if game.is_empty() {
-        return Html("<p>Unknown game slot.</p>".into());
+        // No board to read: the season has finished, or its server isn't up yet.
+        return if ctx.state() == crate::db::State::Archived {
+            render::notice(
+                "This season has finished. See its final standings.",
+                false,
+                "season",
+            )
+        } else {
+            render::notice(
+                "This game isn't up yet. Try again in a moment.",
+                false,
+                "board",
+            )
+        };
     }
     let season = ctx.id;
     let slots = st.db.slots(season).await.unwrap_or_default();
@@ -390,6 +409,7 @@ pub(crate) async fn game_view(
         cost,
         points,
         credits,
+        ctx.row.minesweeper_enabled,
         i_have_claim,
         my_mc.as_deref(),
         mc_addr().as_deref(),

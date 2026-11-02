@@ -24,6 +24,11 @@ try:
     sid = new_season(mod, "Draft one")
     check("the season has a directory", os.path.isdir(dirs(sid)))
     page = get(mod, f"/s/{sid}/admin").text
+    check("a draft doesn't offer archiving", "admin/archive-season" not in page)
+    for path, text in (("/nosuchpage", "No such page"), (f"/s/{sid}/nosuchpage", "No such page"), ("/admin/users", "Sysadmins only")):
+        r = get(mod, path)
+        check(f"{path} says so on a page", "<h1>" in r.text and text in r.text, (r.status_code, r.text[:100]))
+    check("an API path just gets the status", get(mod, "/api/nosuch").status_code == 404 and not get(mod, "/api/nosuch").text)
     check("no partial wipes on offer", all(w not in page for w in ("Full reset", "Clear session save", "Clear generated world", "Clear current players")))
     r = post(mod, f"/s/{sid}/admin/season/delete", data=dict(name="wrong"))
     check("deleting needs the season's name", "type the season" in r.text and get(mod, f"/s/{sid}/admin").status_code == 200, r.text[-200:])

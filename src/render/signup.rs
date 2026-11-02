@@ -298,6 +298,8 @@ pub struct SignupGame<'a> {
     pub replace: bool,
     /// Shown just after signing up.
     pub welcome: Option<String>,
+    /// What was just changed.
+    pub saved: Option<String>,
     /// The invite box, for the host.
     pub invite: String,
     pub max_notes: usize,
@@ -353,6 +355,9 @@ pub fn signup_game_page(g: &SignupGame) -> Html<String> {
         esc(&s.game),
         esc(&s.username),
     ));
+    if let Some(s) = &g.saved {
+        b.push_str(&format!(r#"<div class="banner ok">{}</div>"#, esc(s)));
+    }
     if let Some(w) = &g.welcome {
         b.push_str(&format!(r#"<div class="banner ok">{}</div>"#, esc(w)));
     }

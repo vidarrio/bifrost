@@ -67,6 +67,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A URL nothing answers shows a page, rather than the browser's own error, and so do "Moderators only"
+  and a game page with no game to show.
+- The first game on a board no longer says "connected" just because Bifrost's own tracker joined as it.
+- A season's Archive tab only offers archiving once it's live, as it couldn't be done before then.
+- A game page only links to minesweeper when the season has it on.
+- A game page's notes and YAML say when they've been saved.
+- Long links and paths no longer widen the page, a failed generation shows as a failure, and the
+  apworld approval options are laid out properly.
 - A game's PopTracker pack stays with it through a re-roll. Packs are stored by game id, not by
   the slot number a re-roll can change.
 - PopTracker locations honour `parent`, and map markers their own

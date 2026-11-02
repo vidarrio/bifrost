@@ -891,10 +891,18 @@ pub async fn middleware(State(auth): State<Auth>, mut req: Request, next: Next) 
         }
         (_, None) => return unauthenticated(&auth, &req),
         (Tier::Admin, Some(p)) if p.role < Role::Moderator => {
-            return (StatusCode::FORBIDDEN, "Moderators only.").into_response();
+            return (
+                StatusCode::FORBIDDEN,
+                crate::render::notice("Moderators only.", false, "/"),
+            )
+                .into_response();
         }
         (Tier::Sysadmin, Some(p)) if p.role < Role::Sysadmin => {
-            return (StatusCode::FORBIDDEN, "Sysadmins only.").into_response();
+            return (
+                StatusCode::FORBIDDEN,
+                crate::render::notice("Sysadmins only.", false, "/"),
+            )
+                .into_response();
         }
         _ => {}
     }

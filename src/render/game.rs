@@ -551,6 +551,7 @@ pub fn game_page(
     cost: i64,
     points: Option<i64>,
     credits: i64,
+    minesweeper_on: bool,
     can_hint_common: bool,
     mc_username: Option<&str>,
     mc_addr: Option<&str>,
@@ -819,10 +820,17 @@ pub fn game_page(
         } else {
             String::new()
         };
+        let mines = if minesweeper_on {
+            format!(
+                r#"<p class="empty"><a href="minesweeper?back={back}">Play minesweeper to earn bonus hints →</a></p>"#
+            )
+        } else {
+            String::new()
+        };
         out.push_str(&format!(
             r#"<h2>Send a hint</h2>
 <p class="empty">{have}Each hint in this world costs <b>{cost}</b> points.{bonus} Search your pool and hint one.</p>
-<p class="empty"><a href="minesweeper?back={back}">Play minesweeper to earn bonus hints →</a></p>
+{mines}
 <form method="post" action="hint" class="hintform" id="hintform">
 <input type="hidden" name="slot_id" value="{sid}"><input type="hidden" name="back" value="{back}">
 <input id="hintq" name="item" placeholder="search your items…" autocomplete="off" required>

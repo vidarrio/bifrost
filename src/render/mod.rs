@@ -172,6 +172,7 @@ h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute
 .slot.released .st{color:var(--warn)}
 .slot .meta{font-family:var(--mono);font-size:11px;color:var(--muted);margin:4px 0 8px}
 .seat{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 0;border-top:1px solid var(--bd)}
+.seatlink{overflow-wrap:anywhere;min-width:0}.seat form{flex:none}
 .seat .who{font-family:var(--mono);font-size:13px}.seat .by{font-family:var(--mono);font-size:11px;color:var(--muted)}
 .seat .by.mine{color:var(--ok)}.seat .free{color:var(--warn)}
 .slot .hint{font-family:var(--mono);font-size:11px;color:var(--warn);margin-top:4px;padding-left:8px;border-left:2px solid var(--bd)}
@@ -242,7 +243,7 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .logfilter .classchip{gap:7px}
 .logfilter .classchip .dotc{width:9px;height:9px;border-radius:50%;background:var(--c);flex:none}
 .logfilter .classchip:has(input:checked){border-color:var(--c);color:var(--fg)}
-.logfilter .classrow{gap:6px}
+.logfilter .classrow{gap:6px;flex-wrap:wrap}
 .logfilter input[type=text],.logfilter select,.logfilter input[type=datetime-local],.logfilter .ffbtns button,.logfilter .ffbtns .pill{height:30px;box-sizing:border-box}
 .logfilter input[type=text],.logfilter select,.logfilter input[type=datetime-local]{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:0 8px;font-size:12.5px;font-family:var(--font)}
 .logfilter input[type=text]{width:120px}
@@ -276,6 +277,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .nav .back{background:transparent;border:1px solid var(--bd);color:var(--muted)}
 .inlinemsg{font-family:var(--mono);font-size:12.5px;margin-top:8px;min-height:1em;word-break:break-word}.inlinemsg.ok{color:var(--ok)}.inlinemsg.bad{color:var(--bad)}
 .chk{display:flex;gap:9px;align-items:center;font-size:14px;margin-bottom:8px}
+.authform label.chk{display:flex;flex-direction:row;align-items:flex-start;gap:9px}.authform label.chk input{width:auto;flex:none;margin-top:3px}
 .btnrow{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
 button.danger{background:var(--bad);color:#fff}
 button.finish{background:var(--ok);color:#0d1117}

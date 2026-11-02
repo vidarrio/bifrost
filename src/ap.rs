@@ -76,6 +76,8 @@ pub struct Board {
     pub stored: Arc<serde_json::Map<String, Value>>,
     pub connected: bool,
     pub team: i64,
+    /// The slot Bifrost's own tracker is connected as.
+    pub tracker_slot: Option<i64>,
     pub seed: Option<String>,
     /// Percentage of a world's locations that must be checked to afford a hint.
     pub hint_cost: i64,
@@ -607,6 +609,7 @@ fn on_connected(board: &Arc<RwLock<Board>>, pkt: &Value) -> Vec<String> {
     };
     b.connected = true;
     b.team = team;
+    b.tracker_slot = pkt.get("slot").and_then(Value::as_i64);
     if let Some(info) = pkt.get("slot_info").and_then(Value::as_object) {
         for (slot_str, ns) in info {
             let slot: i64 = match slot_str.parse() {
@@ -648,6 +651,13 @@ fn apply_storage(b: &mut Board, key: &str, value: &Value) {
             return;
         };
         let status = value.as_i64().unwrap_or(0);
+        // Joining sets a slot to connected, and our tracker joined this one, so
+        // it says nothing about its player until they go further.
+        let status = if status == 5 && b.tracker_slot == Some(slot) {
+            0
+        } else {
+            status
+        };
         let Some(s) = b.slots.get_mut(&slot) else {
             return;
         };
@@ -1250,6 +1260,23 @@ pub async fn slot_points(url: &str, password: &str, name: &str) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn our_own_join_isnt_a_player_connecting() {
+        let mut b = super::Board::default();
+        for slot in [1, 2] {
+            b.slots.insert(slot, Default::default());
+        }
+        b.tracker_slot = Some(1);
+        let status = |b: &mut super::Board, slot: i64, value: i64| {
+            let key = format!("_read_client_status_0_{slot}");
+            super::apply_storage(b, &key, &serde_json::json!(value));
+            b.slots[&slot].status
+        };
+        assert_eq!(status(&mut b, 1, 5), 0);
+        assert_eq!(status(&mut b, 2, 5), 5);
+        assert_eq!(status(&mut b, 1, 20), 20);
+    }
+
     use super::*;
 
     #[test]

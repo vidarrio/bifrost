@@ -91,8 +91,23 @@ pub(crate) fn download_response(member: &str, data: Vec<u8>) -> Response {
 
 /// Every route, behind the auth and rate-limit middleware and the baseline
 /// response headers. `main` wraps it in the season-URL rewrite.
+/// A page for a URL nothing answers, not the browser's own error. An API client
+/// only needs the status.
+async fn page_not_found(uri: axum::http::Uri) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if uri.path().starts_with("/api") {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    }
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        render::notice("No such page.", false, "/"),
+    )
+        .into_response()
+}
+
 pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net::Cidr>) -> Router {
     Router::new()
+        .fallback(page_not_found)
         .route("/health", get(health))
         .route("/", get(landing))
         .route("/favicon.svg", get(favicon))
