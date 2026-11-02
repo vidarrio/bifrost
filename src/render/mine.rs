@@ -112,7 +112,7 @@ pub fn minesweeper_page(
     let crumb = if free {
         r#"<div class="crumb"><a href="/">← Bifrost</a></div>"#.to_string()
     } else {
-        let label = if back.starts_with("/game/") {
+        let label = if back.contains("/game/") {
             "← back to game"
         } else {
             "← board"
@@ -179,8 +179,7 @@ pub fn minesweeper_page(
     </aside>
   </div>
 </div>
-<div id="lbview" class="lbview" style="display:none"></div>
-<script>var FREE={free};</script>"#,
+<div id="lbview" class="lbview" style="display:none"></div>"#,
         stats = mine_stats_html(standard, expert),
     ));
     b.push_str(MINE_STYLE);
@@ -271,10 +270,6 @@ function fmtTime(ms){var s=Math.max(0,Math.floor(ms/1000));return Math.floor(s/6
 function renderTimer(){if(timerEl)timerEl.textContent=fmtTime(baseMs+(running?(Date.now()-syncAt):0));}
 function setTimer(ms,isRunning){if(ms!=null)baseMs=ms;running=!!isRunning;syncAt=Date.now();renderTimer();}
 setInterval(renderTimer,250);
-// Freeplay (minigame section) vs seasonal (board) — thread the mode through
-// every request so the server records to the right scope and skips bonus hints.
-// `FREE` is the page-level global set just above this script.
-var IS_FREE=(typeof FREE!=='undefined')&&FREE===true;
 function post(url,body){return fetch(url,{method:'POST',body:body?new URLSearchParams(body):undefined}).then(function(r){return r.json()});}
 function setStats(h){if(h!=null&&statsEl)statsEl.innerHTML=h;}
 function openCell(cell){var cb=cells[cell.r][cell.c];cb.classList.remove('flag');cb.classList.add('open');if(cell.n>0){cb.textContent=cell.n;cb.setAttribute('data-n',cell.n);}else{cb.textContent='';}}

@@ -290,7 +290,7 @@ impl FromRequestParts<AppState> for MineScope {
         if !ctx.can_manage(&me) && !st.db.is_season_member(ctx.id, me.id()).await {
             return Err((
                 StatusCode::FORBIDDEN,
-                crate::render::notice("This season's minesweeper is for its players.", false, "/"),
+                crate::render::notice("This season's minesweeper is for its players. Anyone can play the general one.", false, "/minesweeper"),
             )
                 .into_response());
         }

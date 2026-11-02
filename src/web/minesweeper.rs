@@ -255,9 +255,8 @@ pub(crate) async fn mine_reveal(
             }
         }
         // Freeplay stats are all-time; seasonal stats scope to the season.
-        let stat_scope = scope;
-        let standard = st.db.mine_stats(stat_scope, my_id, "standard").await;
-        let expert = st.db.mine_stats(stat_scope, my_id, "expert").await;
+        let standard = st.db.mine_stats(scope, my_id, "standard").await;
+        let expert = st.db.mine_stats(scope, my_id, "expert").await;
         Some(render::mine_stats_html(&standard, &expert))
     } else {
         None
