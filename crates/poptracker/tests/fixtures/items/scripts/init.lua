@@ -140,5 +140,7 @@ Archipelago:AddClearHandler("levels", function()
   item("left").Active = true
   assert(boss.AccessibilityLevel == AccessibilityLevel.Cleared, "boss held")
   item("left").Active = false
-  custom.CanProvideCodeFunc = function() return false end
+  -- Hosted codes reach a custom item as written.
+  custom.CanProvideCodeFunc = function(self, code) return code == "HostedCode" end
+  custom.ProvidesCodeFunc = function() return 1 end
 end)

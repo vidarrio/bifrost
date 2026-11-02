@@ -842,4 +842,29 @@ fn items_behave_as_in_poptracker() {
         1,
         "an empty list hosts nothing"
     );
+    assert!(section("HostedCustom").checked, "hosted codes as written");
+}
+
+#[test]
+fn custom_item_calls_are_bounded() {
+    // Host functions as callbacks run no Lua instructions, so only the count of
+    // calls stops them. Without it this would fan out for good.
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(tmp.path().join("scripts")).unwrap();
+    std::fs::write(
+        tmp.path().join("scripts/init.lua"),
+        r#"
+        for i = 1, 30 do
+          local c = ScriptHost:CreateLuaItem()
+          c.CanProvideCodeFunc = Tracker.ProviderCountForCode
+          c.ProvidesCodeFunc = Tracker.ProviderCountForCode
+        end
+        print(Tracker:ProviderCountForCode("x"))
+        Archipelago:AddClearHandler("c", function() end)
+        "#,
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    let _ = Session::new(&Pack::load(tmp.path()).unwrap());
+    assert!(started.elapsed().as_secs() < 60, "{:?}", started.elapsed());
 }

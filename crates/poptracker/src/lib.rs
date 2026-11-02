@@ -968,6 +968,8 @@ struct Eng {
     code_items: HashMap<String, Vec<usize>>,
     /// Which of them are composite toggles.
     composites: Vec<usize>,
+    /// Calls to custom items' functions in this operation (see `count_custom_call`).
+    custom_calls: u64,
     /// How deep custom items' `ProvidesCodeFunc`s have nested.
     provider_depth: u32,
     maps: Vec<MapDef>,
@@ -1025,6 +1027,10 @@ const ITEM_METHODS: &str = "bifrost.item_methods";
 /// each that says which item it is.
 const ITEM_OBJECTS: &str = "bifrost.item_objects";
 const ITEM_INDEX: &str = "__item";
+
+/// How many calls to custom items' functions one operation may make. Ample: real
+/// packs have few such items, and their counts are kept while rules settle.
+const MAX_CUSTOM_CALLS: u64 = 2_000_000;
 
 /// How deep `FindObjectForCode` may nest through custom items'
 /// `CanProvideCodeFunc`s that look up other codes.
@@ -1135,6 +1141,7 @@ impl Session {
         let mut e = self.eng.borrow_mut();
         e.accessibility_stale = true;
         e.visibility_stale = true;
+        e.custom_calls = 0;
     }
 
     /// Set the slot's AP player number (`Archipelago.PlayerNumber`), which some
@@ -1474,12 +1481,15 @@ fn provider_count(lua: &Lua, eng: &E, code: &str) -> i64 {
         if budget.get() == 0 {
             break;
         }
-        if !custom_can_provide(&item, code) {
+        if !custom_can_provide(eng, &item, code) {
             continue;
         }
         let Ok(Value::Function(gives)) = item.raw_get::<Value>("ProvidesCodeFunc") else {
             continue;
         };
+        if !count_custom_call(eng) {
+            break;
+        }
         match gives.call::<Value>((&item, code)) {
             Ok(Value::Boolean(b)) => total += b as i64,
             Ok(n) => {
@@ -1497,9 +1507,22 @@ fn provider_count(lua: &Lua, eng: &E, code: &str) -> i64 {
     total
 }
 
+/// Count a call to a custom item's function, false once there have been too many
+/// or the budget's gone. A function may be a host function, which runs no Lua
+/// instructions, so the budget alone wouldn't notice them.
+fn count_custom_call(eng: &E) -> bool {
+    let mut e = eng.borrow_mut();
+    e.custom_calls += 1;
+    if e.custom_calls > MAX_CUSTOM_CALLS {
+        e.budget.set(0);
+    }
+    e.budget.get() != 0
+}
+
 /// PopTracker's `LuaItem::canProvideCode`: its `PotentialCodes` if it has them, else
-/// its `CanProvideCodeFunc`. One that fails accepts nothing.
-fn custom_can_provide(item: &Table, code: &str) -> bool {
+/// its `CanProvideCodeFunc`. One that fails accepts nothing, and running out of
+/// memory stops the operation's rules, as it does a rule function.
+fn custom_can_provide(eng: &E, item: &Table, code: &str) -> bool {
     if let Ok(Value::Table(list)) = item.raw_get::<Value>("PotentialCodes") {
         return list
             .sequence_values::<String>()
@@ -1509,8 +1532,19 @@ fn custom_can_provide(item: &Table, code: &str) -> bool {
     let Ok(Value::Function(can)) = item.raw_get::<Value>("CanProvideCodeFunc") else {
         return false;
     };
-    can.call::<Value>((item, code))
-        .is_ok_and(|v| !matches!(v, Value::Nil | Value::Boolean(false)))
+    if !count_custom_call(eng) {
+        return false;
+    }
+    match can.call::<Value>((item, code)) {
+        Ok(v) => !matches!(v, Value::Nil | Value::Boolean(false)),
+        Err(e) => {
+            if is_memory_error(&e) {
+                note_error(eng, &e.to_string());
+                eng.borrow().budget.set(0);
+            }
+            false
+        }
+    }
 }
 
 /// A bare numeric code in a rule (chiefly `visibility_rules`) is an AP location
@@ -2182,7 +2216,7 @@ fn flatten_locations(
                             .unwrap_or("")
                             .to_string(),
                         // A `ref` or a hosted item holds no chests of its own.
-                        item_count: s.get("item_count").and_then(num).map_or(
+                        item_count: s.get("item_count").and_then(|v| v.as_i64()).map_or(
                             if s.get("ref").is_some() || !hosted.is_empty() {
                                 0
                             } else {
@@ -2486,7 +2520,10 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                     let custom: Table = lua.globals().get("__LUAITEMS")?;
                     for item in custom.sequence_values::<Table>() {
                         let item = item?;
-                        if custom_can_provide(&item, &code) {
+                        if eng2.borrow().budget.get() == 0 {
+                            break;
+                        }
+                        if custom_can_provide(&eng2, &item, &code) {
                             return Ok(Value::Table(item));
                         }
                     }
