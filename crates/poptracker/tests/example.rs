@@ -920,3 +920,38 @@ fn data_storage_is_replayed_from_a_copy() {
     );
     assert_eq!(st.locations[0].sections[1].highlight, 0);
 }
+
+#[test]
+fn a_map_added_again_replaces_its_name() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(tmp.path().join("scripts")).unwrap();
+    std::fs::write(
+        tmp.path().join("a.json"),
+        r#"[{"name": "M", "img": "a.png"}, {"name": "N", "img": "n.png"}]"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("b.json"),
+        r#"[{"name": "M", "img": "b.png"}]"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("scripts/init.lua"),
+        "Tracker:AddMaps('a.json') Tracker:AddMaps('b.json')",
+    )
+    .unwrap();
+    let s = Session::new(&Pack::load(tmp.path()).unwrap()).unwrap();
+    let maps: Vec<_> = s
+        .state()
+        .maps
+        .into_iter()
+        .map(|m| (m.name, m.img))
+        .collect();
+    assert_eq!(
+        maps,
+        [
+            ("M".to_string(), "b.png".to_string()),
+            ("N".to_string(), "n.png".to_string())
+        ]
+    );
+}

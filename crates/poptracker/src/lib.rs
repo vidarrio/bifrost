@@ -513,6 +513,8 @@ struct JsonItem {
     kind: String,
     name: String,
     codes: Vec<String>,
+    /// Its codes as the pack wrote them, as a "*" watch is told.
+    codes_text: String,
     stages: Vec<ItemStage>,
     img: String,
     allow_disabled: bool,
@@ -683,6 +685,20 @@ fn read_item(v: &serde_json::Value) -> JsonItem {
     {
         item.active = true;
     }
+    let mut written: Vec<String> = vec![text("codes")];
+    if let Some(stages) = v.get("stages").and_then(|s| s.as_array()) {
+        written.extend(
+            stages
+                .iter()
+                .filter_map(|st| st.get("codes")?.as_str().map(String::from)),
+        );
+    }
+    if kind == "composite_toggle" {
+        written.push(text("item_left"));
+        written.push(text("item_right"));
+    }
+    written.retain(|c| !c.is_empty());
+    item.codes_text = written.join(", ");
     item.stage = int("initial_stage_idx", 0)
         .min(item.stages.len() as i64 - 1)
         .max(0);
@@ -978,7 +994,8 @@ struct Eng {
     /// whether by `SetNotify`, and those it has been (`replay_storage`).
     storage_asked: BTreeSet<(String, bool)>,
     storage_answered: HashSet<(String, bool)>,
-    /// Items changed since code watches last ran, and whether a custom item did.
+    /// Items changed since code watches last ran, and whether a custom item did
+    /// (which ones are in `DIRTY_CUSTOM`).
     dirty_items: BTreeSet<usize>,
     dirty_custom: bool,
     /// Calls to custom items' functions in this operation (see `count_custom_call`).
@@ -1040,6 +1057,9 @@ const ITEM_METHODS: &str = "bifrost.item_methods";
 /// each that says which item it is.
 const ITEM_OBJECTS: &str = "bifrost.item_objects";
 const ITEM_INDEX: &str = "__item";
+
+/// Registry key of the custom items changed since watches last ran (item -> true).
+const DIRTY_CUSTOM: &str = "bifrost.dirty_custom";
 
 /// How much of the data storage a pack can ask for, and how many times the answers
 /// may lead it to ask for more.
@@ -1130,29 +1150,53 @@ impl Session {
     /// Tell code watches what's changed, as PopTracker does on each change, here at
     /// the end of each operation. A watch gets the code it watches, and a "*" one
     /// the item's codes. A watch may change items, which is told in turn, a few times.
+    /// So a watch also hears of what changed earlier in the operation that added it,
+    /// and one added by a watch hears from the next round. All of this counts as
+    /// work against the operation's limit: it runs no Lua instructions.
     fn run_code_watches(&self) -> Result<()> {
         for _ in 0..MAX_WATCH_ROUNDS {
-            let (items, custom): (Vec<(String, Vec<String>)>, bool) = {
+            let (items, custom_changed): (Vec<(String, Vec<String>)>, bool) = {
                 let mut e = self.eng.borrow_mut();
                 let dirty = std::mem::take(&mut e.dirty_items);
                 let custom = std::mem::take(&mut e.dirty_custom);
                 let items = dirty
                     .into_iter()
-                    .map(|i| {
-                        let codes = e.items[i].all_codes();
-                        (codes.join(", "), codes)
-                    })
+                    .map(|i| (e.items[i].codes_text.clone(), e.items[i].all_codes()))
                     .collect();
                 (items, custom)
             };
-            if items.is_empty() && !custom {
+            if items.is_empty() && !custom_changed {
                 return Ok(());
             }
+            let dirty_codes: HashSet<&str> = items
+                .iter()
+                .flat_map(|(_, codes)| codes.iter().map(String::as_str))
+                .collect();
+            // Which custom items changed, in the order they were made.
+            let dirty_custom: Vec<Table> = if custom_changed {
+                let dirty: Table = self.lua.named_registry_value(DIRTY_CUSTOM)?;
+                let all: Table = self.lua.globals().get("__LUAITEMS")?;
+                let changed = all
+                    .sequence_values::<Table>()
+                    .flatten()
+                    .filter(|i| dirty.raw_get::<bool>(i).unwrap_or(false))
+                    .collect();
+                self.lua
+                    .set_named_registry_value(DIRTY_CUSTOM, self.lua.create_table()?)?;
+                changed
+            } else {
+                Vec::new()
+            };
             let Ok(list) = self.lua.named_registry_value::<Table>(CODE_WATCHES) else {
                 return Ok(());
             };
             let watches: Vec<Table> = list.sequence_values::<Table>().flatten().collect();
             for w in watches {
+                if !count_custom_call(&self.eng) {
+                    return Err(Error::Lua(
+                        "instruction limit exceeded (too many code watches)".into(),
+                    ));
+                }
                 if w.get::<bool>("dead").unwrap_or(true) {
                     continue;
                 }
@@ -1160,24 +1204,19 @@ impl Session {
                     continue;
                 };
                 if code == "*" {
-                    for (joined, _) in &items {
-                        self.guard(f.call::<()>(joined.as_str()))?;
+                    for (text, _) in &items {
+                        self.guard(f.call::<()>(text.as_str()))?;
                     }
-                    if custom {
-                        self.guard(f.call::<()>(""))?;
+                    for item in &dirty_custom {
+                        let name = item.raw_get::<Option<String>>("Name").ok().flatten();
+                        self.guard(f.call::<()>(name.unwrap_or_default()))?;
                     }
                     continue;
                 }
-                let lower = code.to_lowercase();
-                let mut hit = items.iter().any(|(_, codes)| codes.contains(&lower));
-                if !hit && custom {
-                    let all = self.lua.globals().get::<Table>("__LUAITEMS");
-                    hit = all.is_ok_and(|all| {
-                        all.sequence_values::<Table>()
-                            .flatten()
-                            .any(|i| custom_can_provide(&self.eng, &i, &code))
-                    });
-                }
+                let hit = dirty_codes.contains(code.to_lowercase().as_str())
+                    || dirty_custom
+                        .iter()
+                        .any(|i| custom_can_provide(&self.eng, i, &code));
                 if hit {
                     self.guard(f.call::<()>(code.as_str()))?;
                 }
@@ -1419,6 +1458,9 @@ impl Session {
                 .is_ok_and(|c| c.as_bytes().as_ref() == b"*")
         }) {
             self.guard_noting(w.call::<()>("*"));
+        }
+        if let Err(e) = self.run_code_watches() {
+            note_error(&self.eng, &e.to_string());
         }
         self.charge();
         let mut out = TrackerState::default();
@@ -1703,6 +1745,11 @@ fn count_custom_call(eng: &E) -> bool {
 /// memory stops the operation's rules, as it does a rule function.
 fn custom_can_provide(eng: &E, item: &Table, code: &str) -> bool {
     if let Ok(Value::Table(list)) = item.raw_get::<Value>("PotentialCodes") {
+        // Scanning it is work too, whoever asks.
+        eng.borrow_mut().custom_calls += list.raw_len() as u64;
+        if !count_custom_call(eng) {
+            return false;
+        }
         return list
             .sequence_values::<String>()
             .flatten()
@@ -2634,7 +2681,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                 };
                 let mut e = eng2.borrow_mut();
                 for m in json.as_array().cloned().unwrap_or_default() {
-                    e.maps.push(MapDef {
+                    let map = MapDef {
                         name: m
                             .get("name")
                             .and_then(|v| v.as_str())
@@ -2649,7 +2696,13 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                         location_shape: m
                             .get("location_shape")
                             .and_then(|v| v.as_str().map(String::from)),
-                    });
+                    };
+                    // A map added again replaces the one of that name, as in PopTracker:
+                    // packs switch a map's image this way.
+                    match e.maps.iter_mut().find(|old| old.name == map.name) {
+                        Some(old) => *old = map,
+                        None => e.maps.push(map),
+                    }
                 }
                 Ok(true)
             })?,
@@ -3002,7 +3055,10 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         lua.set_named_registry_value(ITEM_OBJECTS, lua.create_table()?)?;
     }
     let eng2 = eng.clone();
-    let changed = lua.create_function(move |_, ()| {
+    lua.set_named_registry_value(DIRTY_CUSTOM, lua.create_table()?)?;
+    let changed = lua.create_function(move |lua, item: Table| {
+        let dirty: Table = lua.named_registry_value(DIRTY_CUSTOM)?;
+        dirty.raw_set(item, true)?;
         let mut e = eng2.borrow_mut();
         e.accessibility_stale = true;
         e.visibility_stale = true;
@@ -3021,7 +3077,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
             local old = self.ItemState[k]
             self.ItemState[k] = v
             if old ~= v then
-              changed()
+              changed(self)
               if type(self.PropertyChangedFunc) == "function" then
                 self:PropertyChangedFunc(k, v, old)
               end
