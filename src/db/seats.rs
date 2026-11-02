@@ -68,18 +68,19 @@ impl Db {
     /// slot (before generation, slots are only
     /// what a failed attempt left, which the next one clears).
     pub async fn slot_name_taken(&self, season: Id, name: &str) -> bool {
-        sqlx::query_scalar::<_, i64>(
-            "SELECT EXISTS(SELECT 1 FROM submission WHERE season_id = ?1 AND slot_name = ?2)
-                 OR EXISTS(SELECT 1 FROM seat WHERE season_id = ?1 AND name = ?2)
-                 OR ((SELECT state FROM season WHERE id = ?1) NOT IN ('draft', 'signup')
-                     AND EXISTS(SELECT 1 FROM slot WHERE season_id = ?1 AND name = ?2))",
+        let names: Vec<String> = sqlx::query_scalar(
+            "SELECT slot_name FROM submission WHERE season_id = ?1
+             UNION ALL SELECT name FROM seat WHERE season_id = ?1
+             UNION ALL SELECT name FROM slot WHERE season_id = ?1
+               AND (SELECT state FROM season WHERE id = ?1) NOT IN ('draft', 'signup')",
         )
         .bind(season)
-        .bind(name)
-        .fetch_one(&self.pool)
+        .fetch_all(&self.pool)
         .await
-        .unwrap_or(0)
-            != 0
+        .unwrap_or_default();
+        // In Rust: SQLite only folds ASCII, and Archipelago folds all of it.
+        let name = name.to_lowercase();
+        names.iter().any(|n| n.to_lowercase() == name)
     }
 
     pub async fn add_seat_link(
@@ -453,6 +454,7 @@ mod tests {
             3,
             "a refusal spends nothing"
         );
+        assert!(db.slot_name_taken(s, "hOST").await);
         assert_eq!(join("t1", ann, "Ann").await, JoinOutcome::Joined);
         assert_eq!(join("t1", bob, "Bob").await, JoinOutcome::LinkGone);
         assert_eq!(join("t2", ann, "Ann2").await, JoinOutcome::AlreadyIn);

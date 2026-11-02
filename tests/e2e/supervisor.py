@@ -84,7 +84,7 @@ try:
     check("…nor changed", "elsewhere" not in get(bob, url).text)
     check("a game's page needs a sign-in", "double" not in get(srv.session(), url).text)
     check("the signup form has no co-op step", 'name="coop"' not in get(root, f"/s/{sid}/signup").text)
-    for bad, why in ((b"Player{number}", "placeholders"), (b"seventeen letters", "too long"), (b"ANN", "already taken")):
+    for bad, why in ((b"Player{number}", "placeholders"), (b"50%%", "placeholders"), (b"seventeen letters", "too long"), (b"ANN", "already taken"), (b"123", "plain"), (b"[A, B]", "plain")):
         y = b"name: " + bad + b"\ngame: ChecksFinder\nChecksFinder: {}\n"
         r = post(cat_early, f"/s/{sid}/signup", files={"yaml": ("y.yaml", y)})
         check(f"the name {bad.decode()} is refused", why in r.text, r.text[-300:])

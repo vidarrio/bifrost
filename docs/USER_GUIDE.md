@@ -506,8 +506,9 @@ in the [changelog](../CHANGELOG.md). Sysadmins see a banner in the console
 when a newer release is out (see [Configuration](#configuration)).
 
 **Permissions.** Bifrost keeps its data directory to its own user, as it holds password
-hashes, tokens, spoilers and Archipelago passwords: the directory is `0711`, and what's in
-it `0700` or `0600`. The exception is `mc-whitelist.json`, for the host's service that
+hashes, tokens, spoilers and Archipelago passwords. Each start, it tightens the directory
+to at most `0711` and its own files in it to at most `0700` (it won't touch files another
+user owns, such as a `config.toml` you own, or do this when run as root). The exception is `mc-whitelist.json`, for the host's service that
 applies it. That service also needs to run as Bifrost's user, or as root, to read
 `connect_password.request` on an external server.
 

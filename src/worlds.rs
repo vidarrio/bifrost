@@ -293,7 +293,7 @@ pub async fn recheck_held(db: &Db, season: Id, file: &str) {
                 Ok(r) if r.players.len() > 1 => Err(ONE_GAME_PER_FILE.to_string()),
                 Ok(r) => match r.players.first() {
                     None => Err("couldn't read a player from its YAML".to_string()),
-                    Some(p) => slot_name_of(&p.name)
+                    Some(p) => slot_name_of_player(p)
                         .map(|name| (name, p.game.clone().unwrap_or_else(|| "?".into()))),
                 },
             },
@@ -428,6 +428,18 @@ pub async fn clear_pending(db: &Db, season: Id) {
     let _ = db.clear_world_requests(season).await;
 }
 
+/// A checked player's slot name, or why it can't be one.
+pub fn slot_name_of_player(p: &crate::checker::PlayerResult) -> Result<String, String> {
+    if !p.plain_name {
+        return Err(
+            "That YAML needs one plain top-level name: as text, in quotes if it could read \
+             as something else."
+                .to_string(),
+        );
+    }
+    slot_name_of(&p.name)
+}
+
 /// The longest game name a held signup goes by until its check reads the real one.
 const MAX_GAME: usize = 80;
 
@@ -439,7 +451,11 @@ pub fn slot_name_of(name: &str) -> Result<String, String> {
     if name.is_empty() {
         return Err("Couldn't find a top-level name: in that YAML.".to_string());
     }
-    if name.contains(['{', '}']) || name.contains("%number%") || name.contains("%player%") {
+    if name.contains(['{', '}'])
+        || name.contains("%%")
+        || name.contains("%number%")
+        || name.contains("%player%")
+    {
         return Err(format!(
             "The name '{name}' needs to be one plain name, without placeholders or weights: \
              it's how your slot is found once the seed is rolled."
@@ -559,6 +575,7 @@ mod tests {
             "",
             "Player{number}",
             "Sam%player%",
+            "50%%",
             "{'A': 1, 'B': 1}",
             "seventeen letters",
             "Archipelago",
