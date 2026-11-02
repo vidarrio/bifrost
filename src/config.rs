@@ -13,7 +13,7 @@
 //! ```text
 //! $BIFROST_DATA/
 //!   bifrost.db
-//!   packs/<season>/<ap_slot>/     poptracker packs
+//!   packs/<season>/<game>/        poptracker packs
 //!   uploads/                      submitted player YAMLs
 //!   common/                       operator-supplied shared-game assets
 //!   archives/<seed>.tar.gz        raw season bundles
