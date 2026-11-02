@@ -18,9 +18,10 @@ This guide has a part for each role:
 | **Moderator** | Everything a user can, plus create seasons and run the ones they created or co-moderate. |
 | **Sysadmin** | Everything, on every season, plus users, invites, the apworld catalog, Archipelago versions, backups and instance settings. |
 
-Some pages are public: the home page, the live board, the activity log, the
-YAML checker and past-season summaries. Everything else needs you to be
-signed in.
+The home page and the YAML checker are public. A season before generation is for
+signed-in users. After generation, a new season's board, log and pages are for its
+players, its moderators and sysadmins, unless a moderator opens them to anyone.
+Everything else needs you to be signed in.
 
 ### Seasons
 
@@ -104,7 +105,8 @@ automatically once the world is approved. If the world is rejected, the signup
 stays flagged and you'll need to pick something else.
 
 The **YAML checker** (`/check`) runs the same check without signing up. It's
-useful when you're tuning options.
+useful when you're tuning options. It checks against the worlds of the current
+season if you can see that season, and otherwise against the core worlds only.
 
 ### After generation: your slot
 
@@ -228,7 +230,13 @@ The season console has six tabs:
 - **Connection.** The season's address, its **connect password** (changing it
   restarts the server), and a **server console** for Archipelago server
   commands, such as `/send`, with auto-completion.
-- **Options.** Turn the season's minesweeper and the common game on or off,
+- **Options.** Choose who can see the season. A new season's pages after
+  generation are for its players, moderators and admins, and you can open them to
+  anyone. Its signups are open to any signed-in user, and you can make them private:
+  only people with the link shown there can reach them. Non-members don't see a
+  private season on the home page or in past seasons. Seasons from before this
+  setting stay open until you change them, and so do imported seasons.
+  Turn the season's minesweeper and the common game on or off,
   and set how many bonus hints a player can earn from minesweeper in any
   24 hours (5 by default; 0 means no limit). Also set how many games a player
   can sign up with (0, the default, means no limit); signups already made stay.
@@ -684,15 +692,26 @@ Configure it under `[forward_auth]`:
   groups are refused. Without it, roles are assigned in the console.
 - `sign_in_url` / `sign_out_url` are used for the header's links.
 
+Private seasons need the proxy's identity on their pages too, so `/board`, `/log`
+and `/season` belong in the rule below. Once they're covered, set `season_pages =
+true` under `[forward_auth]` (`BIFROST_FWD_SEASON_PAGES`). Only then does Bifrost
+believe identity headers on those pages; with it set and the paths not covered,
+anyone could claim to be anyone there. Without it, nobody can read a private
+season's pages, or any season's before generation, sysadmins included, and since
+new seasons are private that means every new season once it's generated. Open
+seasons' pages work without it, as long as the proxy lets those paths through. The
+home page never sees an identity under forward auth, so it lists only seasons open
+to anyone, and a season's `/s/<id>/check` needs a sign-in the proxy can't give it.
+
 The proxy must run forward-auth on every signed-in path. That includes the
 season-scoped forms under `/s/<id>/`, not only the plain prefixes. Otherwise a
 client can send its own identity headers through the proxy. The signed-in
-prefixes are `/admin`, `/claim`, `/hint`, `/signup`, `/seat`, `/game`, `/prioritize`,
+prefixes are `/admin`, `/board`, `/log`, `/season`, `/claim`, `/hint`, `/signup`, `/seat`, `/game`, `/prioritize`,
 `/minesweeper`, `/api` and `/mc`. Everything else is public. A Traefik rule
-for the season forms looks like:
+covering both forms looks like:
 
 ```
-PathRegexp(`^/s/[^/]*/+(admin|claim|hint|signup|seat|game|prioritize|minesweeper|api|mc)`)
+PathRegexp(`^(/s/[^/]*/+|/)(admin|board|log|season|claim|hint|signup|seat|game|prioritize|minesweeper|api|mc)`)
 ```
 
 Match any season id there, not just digits, so that no spelling of a season

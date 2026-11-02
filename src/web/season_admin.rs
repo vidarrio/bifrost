@@ -839,3 +839,36 @@ pub(crate) async fn admin_output(
     };
     download_response(&q.file, data)
 }
+
+#[derive(Deserialize)]
+pub(crate) struct PrivacyForm {
+    what: String,
+    private: String,
+}
+
+/// Who can see the season: its pages after generation, and its signups. Turning
+/// private signups on, or doing so again, makes a new link.
+pub(crate) async fn admin_privacy(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Form(f): Form<PrivacyForm>,
+) -> Redirect {
+    let (_me, is_admin) = ctx.ident(&me);
+    let private = match f.private.as_str() {
+        "0" => false,
+        "1" => true,
+        _ => return Redirect::to(&ctx.url("/admin")),
+    };
+    if is_admin {
+        let res = match f.what.as_str() {
+            "live" => st.db.set_private_live(ctx.id, private).await,
+            "signup" => st.db.set_private_signup(ctx.id, private).await,
+            _ => Ok(()),
+        };
+        if let Err(e) = res {
+            tracing::warn!("season {} privacy: {e}", ctx.id);
+        }
+    }
+    Redirect::to(&ctx.url("/admin"))
+}

@@ -143,6 +143,12 @@ pub struct SeasonRow {
     pub mine_daily_hints: i64,
     /// How many games a player may sign up with (0 = no limit).
     pub max_games: i64,
+    /// Pages after generation are for members, moderators and admins.
+    pub private_live: bool,
+    /// Signups are only reachable through a link from a moderator.
+    pub private_signup: bool,
+    /// The current private-signup link's key.
+    pub signup_token: Option<String>,
     pub ap_port: Option<i64>,
     /// The Archipelago version that generated its current seed (it keeps
     /// running on that one; see `apinstall`).
@@ -166,7 +172,7 @@ impl SeasonRow {
 }
 
 const COLS: &str = "id, name, state, created_by, created_at, seed, live_at, archived_at,
-                    minesweeper_enabled, mc_enabled, mine_daily_hints, max_games, ap_port, ap_version";
+                    minesweeper_enabled, mc_enabled, mine_daily_hints, max_games, private_live, private_signup, signup_token, ap_port, ap_version";
 
 /// Why a transition was refused.
 #[derive(Debug, PartialEq)]
@@ -216,7 +222,7 @@ impl Db {
     ) -> Result<i64, sqlx::Error> {
         let admin_pw: String = crate::auth::new_token().chars().take(24).collect();
         let r = sqlx::query(
-            "INSERT INTO season (name, created_by, created_at, ap_admin_password) VALUES (?, ?, ?, ?)",
+            "INSERT INTO season (name, created_by, created_at, ap_admin_password, private_live) VALUES (?, ?, ?, ?, 1)",
         )
             .bind(name)
             .bind(created_by)
@@ -571,6 +577,67 @@ impl Db {
         sqlx::query("UPDATE season SET minesweeper_enabled = ? WHERE id = ?")
             .bind(on)
             .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Who can see the season's pages after generation.
+    pub async fn set_private_live(&self, id: i64, private: bool) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE season SET private_live = ? WHERE id = ?")
+            .bind(private)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Make signups private behind a new link, or open them to any user again.
+    pub async fn set_private_signup(&self, id: i64, private: bool) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE season SET private_signup = ?1, signup_token = CASE WHEN ?1 THEN ?2 END WHERE id = ?3",
+        )
+        .bind(private)
+        .bind(crate::auth::new_token())
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Whether `account` plays in the season: a signup, a seat or a slot.
+    pub async fn is_season_member(&self, season: i64, account: i64) -> bool {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT EXISTS(SELECT 1 FROM submission WHERE season = ?1 AND account_id = ?2)
+                 OR EXISTS(SELECT 1 FROM seat WHERE season = ?1 AND account_id = ?2)
+                 OR EXISTS(SELECT 1 FROM claim c JOIN bifrost_slot s ON s.id = c.bifrost_slot_id
+                           WHERE s.season = ?1 AND c.account_id = ?2)",
+        )
+        .bind(season)
+        .bind(account)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0)
+            != 0
+    }
+
+    /// Whether `account` came through the season's private signup link.
+    pub async fn is_season_invited(&self, season: i64, account: i64) -> bool {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT EXISTS(SELECT 1 FROM season_invited WHERE season = ? AND account_id = ?)",
+        )
+        .bind(season)
+        .bind(account)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0)
+            != 0
+    }
+
+    pub async fn add_season_invited(&self, season: i64, account: i64) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT OR IGNORE INTO season_invited (season, account_id) VALUES (?, ?)")
+            .bind(season)
+            .bind(account)
             .execute(&self.pool)
             .await?;
         Ok(())

@@ -29,12 +29,44 @@ pub(crate) async fn api_me(State(st): State<AppState>, me: auth::Me) -> Json<ser
     }))
 }
 
-pub(crate) async fn landing(State(st): State<AppState>) -> Html<String> {
+pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<String> {
+    // Only what this viewer can see: a private season stays off the page.
+    let mut seen = Vec::new();
+    for season in st.db.seasons().await {
+        let mods = st.db.season_mods(season.id).await;
+        if scope::can_view(&st, &season, &mods, &me).await {
+            seen.push(season);
+        }
+    }
     // The roster is rendered live so it never needs hand-editing between
     // seasons: AP slot names from the default season's live board, the people
     // (incl. co-op) from the DB. Before its seed exists, the section shows the
     // season's sign-up queue, filling in live as people register.
-    let (label, roster) = match st.db.default_season().await {
+    // The season the page is about: the default, or if this viewer can't see that,
+    // the one of theirs that's furthest along.
+    let default = match st.db.default_season().await {
+        Some(d) if seen.iter().any(|s| s.id == d.id) => Some(d),
+        _ => seen
+            .iter()
+            .filter(|s| s.state() != db::State::Archived)
+            .min_by_key(|s| match s.state() {
+                db::State::Live => 0,
+                db::State::Generating => 1,
+                db::State::Signup => 2,
+                _ => 3,
+            })
+            .cloned(),
+    };
+    // The board and minesweeper cards need a season. If there is one but this viewer
+    // can't see any, they'd only lead to a refusal; a visitor who can still sign in
+    // may turn out to be a member.
+    let can_sign_in = me.principal().is_none() && st.auth.mode == auth::AuthMode::Native;
+    let season_cards = default.is_some() || can_sign_in || st.db.default_season().await.is_none();
+    let season_base = default
+        .as_ref()
+        .map(|d| format!("/s/{}", d.id))
+        .unwrap_or_default();
+    let (label, roster) = match default {
         Some(season) if season.state() != db::State::Archived => {
             let slots = st.db.slots(season.id).await.unwrap_or_default();
             if slots.is_empty() {
@@ -57,33 +89,39 @@ pub(crate) async fn landing(State(st): State<AppState>) -> Html<String> {
         }
         _ => ("No season under way".to_string(), String::new()),
     };
-    let past: Vec<(i64, String, i64)> = st
-        .db
-        .seasons()
-        .await
-        .into_iter()
+    let past: Vec<(i64, String, i64)> = seen
+        .iter()
         .filter(|s| s.state() == db::State::Archived)
+        .cloned()
         .map(|s| (s.id, s.name, s.archived_at.unwrap_or(s.created_at)))
         .collect();
     let past_html = render::past_seasons_section(&past);
     // Everything operator-specific comes from the instance settings; the AP
     // version from the install Bifrost actually runs.
     let inst = st.db.instance().await;
-    let live: Vec<(String, Option<String>)> = st
-        .db
-        .seasons()
-        .await
-        .into_iter()
+    let live: Vec<(String, Option<String>)> = seen
+        .iter()
         .filter(|s| s.state() == db::State::Live)
+        .cloned()
         .map(|s| {
             let addr = st.seasons.connect_address(&s, &inst.domain);
             (s.name, addr)
         })
         .collect();
+    let mut landing = LANDING.to_string();
+    if !season_cards {
+        while let (Some(i), Some(j)) = (
+            landing.find("<!--SEASONCARD-->"),
+            landing.find("<!--/SEASONCARD-->"),
+        ) {
+            landing.replace_range(i..j + "<!--/SEASONCARD-->".len(), "");
+        }
+    }
     Html(
-        LANDING
+        landing
             // Constant first, so no data inserted below can be read as it.
             .replace("<!--IDENTITYJS-->", render::IDENTITY_JS)
+            .replace("<!--SEASONBASE-->", &season_base)
             .replace("<!--SEASONLABEL-->", &render::escape(&label))
             .replace("<!--ROSTER-->", &roster)
             .replace("<!--PASTSEASONS-->", &past_html)

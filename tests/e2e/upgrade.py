@@ -32,6 +32,10 @@ def to_baseline(srv):
         db.execute("ALTER TABLE season DROP COLUMN mine_daily_hints")
         db.execute("ALTER TABLE mine_result DROP COLUMN earned")
         db.execute("ALTER TABLE season DROP COLUMN max_games")
+        db.execute("DROP TABLE season_invited")
+        db.execute("ALTER TABLE season DROP COLUMN private_live")
+        db.execute("ALTER TABLE season DROP COLUMN private_signup")
+        db.execute("ALTER TABLE season DROP COLUMN signup_token")
         db.execute("DROP TRIGGER submission_name_insert")
         db.execute("DROP TRIGGER submission_name_update")
         db.execute("DROP TABLE seat_link")
@@ -128,8 +132,8 @@ srv.start()
 srv.stop()
 check("with room for the backup it upgrades", stamp(srv) == (schema, version), stamp(srv))
 with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
-    caps = db.execute("SELECT mine_daily_hints, max_games FROM season WHERE name = 'Old'").fetchall()
-check("the upgrade migrates the schema, keeping existing rows", caps == [(5, 0)], caps)
+    caps = db.execute("SELECT mine_daily_hints, max_games, private_live FROM season WHERE name = 'Old'").fetchall()
+check("the upgrade migrates the schema, keeping existing rows", caps == [(5, 0, 0)], caps)
 
 
 

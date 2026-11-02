@@ -255,6 +255,9 @@ pub struct ForwardAuth {
     pub groups_header: String,
     /// IdP group → role. Non-empty = the IdP is authoritative for roles.
     pub role_groups: Vec<(Role, String)>,
+    /// The proxy authenticates `/board`, `/log` and `/season` as well, so identity
+    /// headers can be believed there. Off by default: they'd be the client's own.
+    pub season_pages: bool,
     /// Where the header bar's sign-in / sign-out links point.
     pub sign_in_url: String,
     pub sign_out_url: String,
@@ -282,6 +285,8 @@ impl ForwardAuth {
             groups_header: var("BIFROST_FWD_GROUPS_HEADER")
                 .unwrap_or_else(|| "x-auth-request-groups".into()),
             role_groups,
+            season_pages: var("BIFROST_FWD_SEASON_PAGES")
+                .is_some_and(|v| matches!(v.trim(), "1" | "true")),
             sign_in_url: var("BIFROST_FWD_SIGN_IN_URL").unwrap_or_else(|| "/oauth2/sign_in".into()),
             sign_out_url: var("BIFROST_FWD_SIGN_OUT_URL")
                 .unwrap_or_else(|| "/oauth2/sign_out".into()),
@@ -772,6 +777,8 @@ pub fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Tier {
+    /// Public, but a signed-in identity is read when there is one.
+    Optional,
     Public,
     LoggedIn,
     /// Season administration: moderators and up (handlers then check that the
@@ -790,6 +797,9 @@ const SYSADMIN_PREFIXES: &[&str] = &[
     "/admin/catalog",
 ];
 const ADMIN_PREFIXES: &[&str] = &["/admin"];
+/// Public, unless the season is private (`scope`): identity counts if present,
+/// and under forward auth only with `season_pages`.
+const OPTIONAL_PREFIXES: &[&str] = &["/board", "/log", "/season"];
 const LOGGED_IN_PREFIXES: &[&str] = &[
     "/claim",
     "/hint",
@@ -809,6 +819,12 @@ pub fn tier(path: &str) -> Tier {
         Tier::Admin
     } else if LOGGED_IN_PREFIXES.iter().any(|p| path.starts_with(p)) {
         Tier::LoggedIn
+    } else if OPTIONAL_PREFIXES.iter().any(|p| {
+        // Whole segments: `/log` isn't `/login`.
+        path.strip_prefix(p)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    }) {
+        Tier::Optional
     } else {
         Tier::Public
     }
@@ -852,7 +868,10 @@ pub async fn middleware(State(auth): State<Auth>, mut req: Request, next: Next) 
         // Identity headers are only meaningful where the proxy authenticated
         // the request (and overwrote them) — on public routes a client could
         // supply its own.
-        AuthMode::ForwardAuth if tier != Tier::Public => {
+        // So are season pages, unless the operator says the proxy covers them.
+        AuthMode::ForwardAuth
+            if tier != Tier::Public && (tier != Tier::Optional || auth.fwd.season_pages) =>
+        {
             let peer = req
                 .extensions()
                 .get::<ConnectInfo<SocketAddr>>()
@@ -866,7 +885,7 @@ pub async fn middleware(State(auth): State<Auth>, mut req: Request, next: Next) 
     };
 
     match (tier, &principal) {
-        (Tier::Public, _) => {}
+        (Tier::Public | Tier::Optional, _) => {}
         (_, None) if req.uri().path().starts_with("/api") => {
             return api_unauthenticated(&auth).await;
         }
@@ -988,7 +1007,7 @@ mod tests {
         let guide = include_str!("../docs/USER_GUIDE.md");
         let rule = guide
             .lines()
-            .find(|l| l.starts_with("PathRegexp(`^/s/"))
+            .find(|l| l.starts_with("PathRegexp(`^(/s/"))
             .expect("the guide's season rule");
         let alts = rule
             .split_once('(')
@@ -999,6 +1018,7 @@ mod tests {
         for p in SYSADMIN_PREFIXES
             .iter()
             .chain(ADMIN_PREFIXES)
+            .chain(OPTIONAL_PREFIXES)
             .chain(LOGGED_IN_PREFIXES)
         {
             let first = p.trim_start_matches('/').split('/').next().unwrap();
@@ -1022,6 +1042,9 @@ mod tests {
         assert_eq!(tier("/admin/settings"), Tier::Sysadmin);
         assert_eq!(tier("/admin/catalog"), Tier::Sysadmin);
         assert_eq!(tier("/admin/worlds/approve"), Tier::Admin);
+        for p in ["/board", "/board/fragment", "/log", "/season"] {
+            assert_eq!(tier(p), Tier::Optional, "{p}");
+        }
         for p in [
             "/claim",
             "/hint",
@@ -1041,11 +1064,7 @@ mod tests {
         }
         for p in [
             "/",
-            "/board",
-            "/board/fragment",
             "/check",
-            "/log",
-            "/season/1",
             "/health",
             "/favicon.svg",
             "/login",

@@ -489,6 +489,39 @@ pub fn admin_page(
         max = crate::db::MAX_GAMES_LIMIT,
     ));
 
+    // Who can see the season.
+    b.push_str(r#"<h2>Who can see this season</h2>"#);
+    b.push_str(&format!(
+        r#"<div class="statline">After generation, its pages are for <b>{}</b>.</div><div class="btnrow">{}</div>"#,
+        if season.private_live { "its players, moderators and admins" } else { "anyone" },
+        if season.private_live {
+            action_btn("admin/privacy", &[("what", "live"), ("private", "0")], "Open to anyone", false, "Anyone will be able to see this season's board, log and games. Continue?")
+        } else {
+            action_btn("admin/privacy", &[("what", "live"), ("private", "1")], "Make private", false, "")
+        },
+    ));
+    let signup_stage = matches!(
+        season.state(),
+        crate::db::State::Draft | crate::db::State::Signup
+    );
+    match (&season.private_signup, &season.signup_token) {
+        _ if !signup_stage => {}
+        (true, Some(t)) => {
+            let link = format!("/s/{}/signup/join/{}", season.id, esc(t));
+            b.push_str(&format!(
+                r#"<div class="statline">Signups are <b>private</b>: only people with this link can reach them.</div>
+<p><a class="seatlink" href="{link}">{link}</a></p><div class="btnrow">{}{}</div>
+<script>document.querySelectorAll('.seatlink').forEach(function(a){{a.textContent=a.href;}});</script>"#,
+                action_btn("admin/privacy", &[("what", "signup"), ("private", "1")], "Make a new link", false, "The current link will stop working. People who already used it keep their access. Continue?"),
+                action_btn("admin/privacy", &[("what", "signup"), ("private", "0")], "Open to any user", false, ""),
+            ));
+        }
+        _ => b.push_str(&format!(
+            r#"<div class="statline">Signups are open to any signed-in user.</div><div class="btnrow">{}</div>"#,
+            action_btn("admin/privacy", &[("what", "signup"), ("private", "1")], "Make private, with a link", false, ""),
+        )),
+    }
+
     // Common game (shared Minecraft server) — read at generation time to decide
     // whether the communal in-pool slot is included. Toggle it before generating.
     b.push_str(r#"<h2>Common game (Minecraft)</h2>"#);

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Private seasons. A new season's board, log and game pages are for its players,
+  its moderators and sysadmins, and a moderator can open them to anyone. Moderators can also make
+  a season's signups private, reachable only through a link. Non-members don't see a
+  private season on the home page or in past seasons. Seasons you already have, and
+  imported ones, stay open after generation. Before generation, every season's pages
+  now need a sign-in.
 - Co-op partners join through one-use invite links from a game's host, before or after
   generation, and pick their own seat name. They can edit the game's notes and, before
   generation, rename their seat.
@@ -71,8 +77,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- If you use forward auth, add `/seat` to your proxy's signed-in paths, as in the user
-  guide's rule. Do this when you upgrade.
+- If you use forward auth, add `/seat` to your proxy's signed-in paths when you upgrade.
+  To reach private seasons' pages, also add `/board`, `/log` and `/season`, then set
+  `season_pages = true`. Until you do, nobody can read a private season's pages or any
+  season's before generation, sysadmins included, and new seasons are private. Don't set
+  it before the paths are covered: those pages would believe identity headers sent by
+  anyone. See the user guide.
 - Players no longer claim or unclaim slots. Moderators assign slots in seasons with no
   signups. A signup can't be removed once its season is generated, and nobody is removed
   from a seat after that.

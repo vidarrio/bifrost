@@ -388,6 +388,12 @@ async fn init_auth(db: &db::Db) -> auth::Auth {
              nobody can sign in"
         );
     }
+    if mode == auth::AuthMode::ForwardAuth && !fwd.season_pages {
+        tracing::warn!(
+            "forward-auth: season_pages is off, so nobody can read a private season's pages or \
+             any season's before generation; see the user guide"
+        );
+    }
     let setup_token =
         (mode == auth::AuthMode::Native && db.account_count().await == 0).then(|| {
             let t = auth::new_token();
