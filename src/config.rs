@@ -319,7 +319,35 @@ impl Config {
         ] {
             std::fs::create_dir_all(d)?;
         }
-        self.core_season().ensure()
+        self.core_season().ensure()?;
+        self.lock_down();
+        Ok(())
+    }
+
+    /// Keep what's in the data dir to Bifrost's user: it holds password hashes,
+    /// tokens, spoilers and AP passwords. The dir itself can still be passed through,
+    /// for a host's service to read the Minecraft whitelist by its name.
+    fn lock_down(&self) {
+        use std::os::unix::fs::PermissionsExt;
+        let set = |path: &std::path::Path, mode: u32| {
+            if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)) {
+                tracing::warn!("restricting {}: {e}", path.display());
+            }
+        };
+        set(&self.data_dir, 0o711);
+        let Ok(entries) = std::fs::read_dir(&self.data_dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path == self.mc_whitelist_file() {
+                set(&path, 0o644);
+            } else if path.is_dir() {
+                set(&path, 0o700);
+            } else {
+                set(&path, 0o600);
+            }
+        }
     }
 }
 

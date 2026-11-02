@@ -8,6 +8,7 @@ import contextlib
 import glob
 import os
 import shutil
+import stat
 import sqlite3
 import sys
 import zipfile
@@ -62,6 +63,9 @@ srv = server()
 srv.start()
 srv.stop()
 check("a restart on the same version takes no backup", backups(srv) == [], backups(srv))
+mode = lambda *p: stat.S_IMODE(os.stat(os.path.join(srv.data, *p)).st_mode)
+check("the data dir is kept to Bifrost's user",
+      (mode(), mode("bifrost.db"), mode("seasons")) == (0o711, 0o600, 0o700), (oct(mode()), oct(mode("bifrost.db")), oct(mode("seasons"))))
 snap = os.path.join(srv.data, "snap.db")
 shutil.copy(os.path.join(srv.data, "bifrost.db"), snap)
 with contextlib.closing(sqlite3.connect(snap)) as db, db:

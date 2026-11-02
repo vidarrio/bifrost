@@ -846,12 +846,19 @@ mod tests {
         ));
         assert!(db.slot_detail(s2, slot).await.unwrap().is_none());
 
-        // Deleting the account cascades its rows away.
-        sqlx::query("DELETE FROM account WHERE id = ?")
-            .bind(p.account_id)
+        // An account with history can't be deleted.
+        let delete = || {
+            sqlx::query("DELETE FROM account WHERE id = ?")
+                .bind(p.account_id)
+                .execute(&db.pool)
+        };
+        assert!(delete().await.is_err());
+        // Without it, what's its own alone goes with it.
+        sqlx::query("DELETE FROM claim")
             .execute(&db.pool)
             .await
             .unwrap();
+        delete().await.unwrap();
         assert!(db.slots(s).await.unwrap()[0].claimed_by.is_none());
         assert_eq!(db.credits(s, p.account_id).await, 0);
     }

@@ -291,11 +291,11 @@ pub async fn recheck_held(db: &Db, season: Id, file: &str) {
                 )),
                 Ok(r) if !r.ok => Err(format!("its YAML didn't pass: {}", r.errors.join("; "))),
                 Ok(r) if r.players.len() > 1 => Err(ONE_GAME_PER_FILE.to_string()),
-                Ok(r) => r
-                    .players
-                    .first()
-                    .map(|p| (p.name.clone(), p.game.clone().unwrap_or_else(|| "?".into())))
-                    .ok_or_else(|| "couldn't read a player from its YAML".to_string()),
+                Ok(r) => match r.players.first() {
+                    None => Err("couldn't read a player from its YAML".to_string()),
+                    Some(p) => slot_name_of(&p.name)
+                        .map(|name| (name, p.game.clone().unwrap_or_else(|| "?".into()))),
+                },
             },
         };
         let res = match outcome {
@@ -428,8 +428,33 @@ pub async fn clear_pending(db: &Db, season: Id) {
     let _ = db.clear_world_requests(season).await;
 }
 
-/// The longest name or game a held signup goes by until its check reads the real one.
-const MAX_NAME: usize = 80;
+/// The longest game name a held signup goes by until its check reads the real one.
+const MAX_GAME: usize = 80;
+
+/// A YAML's `name:` as its slot's name, or why it can't be. Archipelago trims names to
+/// 16 characters and fills in placeholders when it rolls the seed, and that's the name
+/// the host's slot is found by, so the name has to be what it'll end up as.
+pub fn slot_name_of(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Couldn't find a top-level name: in that YAML.".to_string());
+    }
+    if name.contains(['{', '}']) || name.contains("%number%") || name.contains("%player%") {
+        return Err(format!(
+            "The name '{name}' needs to be one plain name, without placeholders or weights: \
+             it's how your slot is found once the seed is rolled."
+        ));
+    }
+    if name.chars().count() > 16 {
+        return Err(format!(
+            "The name '{name}' is too long: Archipelago cuts names at 16 characters."
+        ));
+    }
+    if name == "Archipelago" {
+        return Err("Archipelago doesn't allow that name.".to_string());
+    }
+    Ok(name.to_string())
+}
 
 /// What a first look at a held YAML can tell without running its world: it's YAML,
 /// for one player, with a plain name, and for the game waiting for approval
@@ -448,20 +473,11 @@ pub fn judge_first_look(
     let Some(player) = look.players.first() else {
         return Err("Couldn't read a player from that YAML.".to_string());
     };
-    let name = player
-        .name
-        .as_deref()
-        .map(str::trim)
-        .filter(|n| !n.is_empty())
-        .ok_or(
-            "Couldn't find a top-level name: in that YAML. While its world waits for approval, \
-             it has to be plain text, in quotes if it could read as something else.",
-        )?;
-    if name.chars().count() > MAX_NAME {
-        return Err(format!(
-            "That name is too long: at most {MAX_NAME} characters."
-        ));
-    }
+    let name = player.name.as_deref().ok_or(
+        "Couldn't find a top-level name: in that YAML. It has to be plain text, in quotes if \
+         it could read as something else.",
+    )?;
+    let name = slot_name_of(name)?;
     if player.games.is_empty() {
         return Err("Couldn't find a game: in that YAML.".to_string());
     }
@@ -472,11 +488,11 @@ pub fn judge_first_look(
         ));
     }
     let game = if world_game.is_empty() {
-        player.games[0].chars().take(MAX_NAME).collect()
+        player.games[0].chars().take(MAX_GAME).collect()
     } else {
         world_game.to_string()
     };
-    Ok((name.to_string(), game))
+    Ok((name, game))
 }
 
 #[cfg(test)]
@@ -533,6 +549,25 @@ mod tests {
     }
 
     #[test]
+    fn a_slot_name_is_what_archipelago_will_call_it() {
+        assert_eq!(slot_name_of("  Sam "), Ok("Sam".to_string()));
+        assert_eq!(
+            slot_name_of("Sixteen letters!"),
+            Ok("Sixteen letters!".to_string())
+        );
+        for bad in [
+            "",
+            "Player{number}",
+            "Sam%player%",
+            "{'A': 1, 'B': 1}",
+            "seventeen letters",
+            "Archipelago",
+        ] {
+            assert!(slot_name_of(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
     fn a_first_look_is_judged() {
         use crate::ap_adapter::{FirstLook, LookedPlayer};
         let one = |name: Option<&str>, games: &[&str]| FirstLook {
@@ -556,7 +591,7 @@ mod tests {
             Ok(("Sam".into(), "Bar".into())),
             "a manifest that names no game can't be compared"
         );
-        let long = "x".repeat(81);
+        let long = "x".repeat(17);
         let cases = [
             (one(Some(long.as_str()), &["Foo"]), "too long"),
             (one(None, &["Foo"]), "top-level name"),

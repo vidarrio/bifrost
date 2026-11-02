@@ -89,6 +89,9 @@ async fn main() {
     }
 
     let cfg = config::init(config::Config::load());
+    // Everything Bifrost writes is its own, unless it says otherwise.
+    // SAFETY: umask only sets this process's file creation mask.
+    unsafe { libc::umask(0o077) };
     cfg.ensure_dirs()
         .unwrap_or_else(|e| panic!("create data dirs under {}: {e}", cfg.data_dir.display()));
     let port = cfg.port;

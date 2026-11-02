@@ -230,10 +230,10 @@ pub(crate) async fn signup_game_yaml(
         let Some(p0) = result.players.first() else {
             return refuse("Couldn't read a player from that YAML.");
         };
-        (
-            p0.name.clone(),
-            p0.game.clone().unwrap_or_else(|| "?".into()),
-        )
+        match worlds::slot_name_of(&p0.name) {
+            Ok(name) => (name, p0.game.clone().unwrap_or_else(|| "?".into())),
+            Err(e) => return refuse(&e),
+        }
     };
     let Some(yaml_path) = store_yaml(&ctx, &slot_name, &yaml).await else {
         return refuse("Couldn't store the YAML.");
@@ -392,6 +392,8 @@ pub(crate) async fn signup_check(
             let taken = r.ok && st.db.slot_name_taken(ctx.id, &name).await;
             let refusal = if r.ok && r.players.len() > 1 {
                 Some(worlds::ONE_GAME_PER_FILE.to_string())
+            } else if let (true, Err(e)) = (r.ok, worlds::slot_name_of(&name)) {
+                Some(e)
             } else {
                 taken.then(|| slot_taken(&name))
             };
@@ -520,10 +522,10 @@ pub(crate) async fn signup_post(
         if result.players.len() > 1 {
             return refuse(worlds::ONE_GAME_PER_FILE);
         }
-        (
-            p0.name.clone(),
-            p0.game.clone().unwrap_or_else(|| "?".into()),
-        )
+        match worlds::slot_name_of(&p0.name) {
+            Ok(name) => (name, p0.game.clone().unwrap_or_else(|| "?".into())),
+            Err(e) => return refuse(&e),
+        }
     };
 
     // A file of its own, never another signup's: names that slugify alike

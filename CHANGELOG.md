@@ -90,6 +90,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A signup's `name:` has to be one plain name of at most 16 characters, without
+  placeholders. Those worked until generation, but the host then didn't get their slot.
+- Slot names ignore case when checking they're free, as Archipelago does.
+- The data directory is kept to Bifrost's user. `mc-whitelist.json` stays readable; a
+  service reading `connect_password.request` needs to run as Bifrost's user or root.
+- An account that has played can't be deleted, so history stays complete.
 - The database runs in write-ahead mode, so `bifrost.db-wal` sits beside `bifrost.db`
   while it runs. Keep the data directory on a local filesystem, and copy the database
   through `bifrost backup` or with Bifrost stopped.
