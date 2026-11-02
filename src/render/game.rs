@@ -411,25 +411,25 @@ pub(super) const PT_JS: &str = r#"<script>
 
 /// The PopTracker tab panel: the map host (filled by `PT_JS`) + upload/manage
 /// controls for a claimant or admin, or a prompt/placeholder otherwise.
-pub(super) fn poptracker_panel(ap_slot: i64, has_pack: bool, can_manage: bool) -> String {
+pub(super) fn poptracker_panel(game_id: Id, has_pack: bool, can_manage: bool) -> String {
     let mut s = String::from(r#"<div class="gtabpanel" id="tab-pt" hidden><h2>PopTracker</h2>"#);
     if has_pack {
         s.push_str(&format!(
-            r#"<div class="ptmap" id="ptmap" data-slot="{ap_slot}"><p class="empty">Loading tracker…</p></div>"#
+            r#"<div class="ptmap" id="ptmap" data-slot="{game_id}"><p class="empty">Loading tracker…</p></div>"#
         ));
         if can_manage {
             s.push_str(&format!(
                 r#"<details class="ptmanage"><summary>Manage pack</summary>
-<form method="post" action="game/{ap_slot}/poptracker" enctype="multipart/form-data" class="ptform">
+<form method="post" action="game/{game_id}/poptracker" enctype="multipart/form-data" class="ptform">
 <input type="file" name="pack" accept=".zip,application/zip" required><button type="submit">Replace pack</button></form>
-<form method="post" action="game/{ap_slot}/poptracker/remove" onsubmit="return confirm('Remove this pack?')"><button type="submit" class="ghost">Remove pack</button></form></details>"#
+<form method="post" action="game/{game_id}/poptracker/remove" onsubmit="return confirm('Remove this pack?')"><button type="submit" class="ghost">Remove pack</button></form></details>"#
             ));
         }
         s.push_str(PT_JS);
     } else if can_manage {
         s.push_str(&format!(
             r#"<p class="empty">Upload a <a href="https://github.com/black-sliver/PopTracker" target="_blank" rel="noopener">PopTracker</a> pack (.zip) for this game to get its map here, auto-tracked from the server — no setup for anyone viewing. The pack must support Archipelago auto-tracking.</p>
-<form method="post" action="game/{ap_slot}/poptracker" enctype="multipart/form-data" class="ptform">
+<form method="post" action="game/{game_id}/poptracker" enctype="multipart/form-data" class="ptform">
 <input type="file" name="pack" accept=".zip,application/zip" required><button type="submit">Upload pack</button></form>"#
         ));
     } else {
@@ -457,7 +457,7 @@ pub fn game_log_pages(total: i64, rpp: i64) -> i64 {
 /// pager links carry the active search `qs` + `rpp` and are intercepted
 /// client-side so navigation swaps in place.
 pub fn game_log_feed(
-    ap_slot: i64,
+    game_id: Id,
     rows: &[crate::db::ActivityRow],
     page: i64,
     pages: i64,
@@ -470,7 +470,7 @@ pub fn game_log_feed(
         return s;
     }
     render_feed(&mut s, rows, None);
-    let base = format!("game/{ap_slot}/log/fragment");
+    let base = format!("game/{game_id}/log/fragment");
     s.push_str(&activity_pager(&base, qs, page, pages, rpp));
     s
 }
@@ -478,16 +478,16 @@ pub fn game_log_feed(
 /// The game page's "Log" tab: this slot's own activity (items it sent or
 /// received, its goals/releases/collects), newest first, with a type-to-filter
 /// search box and a viewport-fitted paginated feed.
-pub(super) fn log_panel(ap_slot: i64, rows: &[crate::db::ActivityRow], total: i64) -> String {
+pub(super) fn log_panel(game_id: Id, rows: &[crate::db::ActivityRow], total: i64) -> String {
     let mut s = String::from(
         r#"<div class="gtabpanel" id="tab-log" hidden><h2>This game's activity</h2>
 <div class="gamelogbar"><input type="search" id="gamelogq" placeholder="Search this game's activity…" autocomplete="off"></div>"#,
     );
     s.push_str(&format!(
-        r#"<div id="gamelog" class="gamelog" data-slot="{ap_slot}">"#
+        r#"<div id="gamelog" class="gamelog" data-slot="{game_id}">"#
     ));
     s.push_str(&game_log_feed(
-        ap_slot,
+        game_id,
         rows,
         1,
         game_log_pages(total, GAME_LOG_RPP),
@@ -540,6 +540,7 @@ pub(super) fn inlogic_panel(inlogic: Option<&crate::db::InLogic>) -> String {
 #[allow(clippy::too_many_arguments)]
 pub fn game_page(
     ap_slot: i64,
+    game_id: Id,
     game: &str,
     snap: &BoardSnapshot,
     slots: &[SlotRow],
@@ -562,7 +563,7 @@ pub fn game_page(
     invite: &str,
 ) -> Html<String> {
     let live = snap.ap.get(&ap_slot).cloned().unwrap_or_default();
-    let back = format!("/game/{ap_slot}");
+    let back = format!("/game/{game_id}");
     let here: Vec<&SlotRow> = slots.iter().filter(|r| r.ap_slot == ap_slot).collect();
     let is_common = here.iter().any(|r| r.is_common);
     let mut out = page_head(Some(me));
@@ -571,7 +572,7 @@ pub fn game_page(
     // The UT and Log tab panels are the same for the common and regular slot
     // branches; build them once.
     let ut_html = inlogic_panel(inlogic);
-    let log_html = log_panel(ap_slot, log, log_total);
+    let log_html = log_panel(game_id, log, log_total);
     // "available now" count from the slot's Universal Tracker result (if any).
     let avail = inlogic
         .filter(|il| il.err.is_none())
@@ -596,7 +597,7 @@ pub fn game_page(
             out.push_str(r#"<div class="adminfin"><span class="finnote">✓ Marked finished (goaled).</span></div>"#);
         } else {
             out.push_str(&format!(
-                r#"<form class="adminfin" method="post" action="game/{ap_slot}/finish" onsubmit="return confirm('Mark this game as finished? It registers their goal (announces it) and collects/releases their items per the server settings. This can\'t be undone from here.')">
+                r#"<form class="adminfin" method="post" action="game/{game_id}/finish" onsubmit="return confirm('Mark this game as finished? It registers their goal (announces it) and collects/releases their items per the server settings. This can\'t be undone from here.')">
 <input type="hidden" name="back" value="{back}">
 <button type="submit" class="finish">Mark finished</button></form>"#
             ));
@@ -738,7 +739,7 @@ pub fn game_page(
         out.push_str("</div>"); // close #worldhints
         out.push_str("</div>"); // close #tab-hints
         out.push_str(&ut_html);
-        out.push_str(&poptracker_panel(ap_slot, pt_has_pack, pt_can_manage));
+        out.push_str(&poptracker_panel(game_id, pt_has_pack, pt_can_manage));
         out.push_str(&log_html);
         out.push_str(TABS_JS);
         out.push_str(GAME_TAB_JS);
@@ -778,14 +779,14 @@ pub fn game_page(
 
     // Generated files for this slot — shown only to a claimant of it (or admin);
     // the caller passes an empty list to everyone else. Downloaded through the
-    // claimant-gated /game/{ap_slot}/output route (not the admin one).
+    // claimant-gated /game/{game}/output route (not the admin one).
     if !files.is_empty() {
         out.push_str(r#"<h2>Your game files</h2>"#);
         out.push_str(r#"<p class="empty">The generator produced these for your slot — download and use them with your client to play this seed.</p>"#);
         out.push_str(r#"<div class="grid">"#);
         for f in files {
             out.push_str(&format!(
-                r#"<div class="slot idle"><div class="prow"><span class="who"><code>.{}</code> file · {}</span><a class="ghost" href="game/{ap_slot}/output?file={}">download</a></div></div>"#,
+                r#"<div class="slot idle"><div class="prow"><span class="who"><code>.{}</code> file · {}</span><a class="ghost" href="game/{game_id}/output?file={}">download</a></div></div>"#,
                 esc(&f.ext),
                 human_size(f.size),
                 urlq(&f.member),
@@ -853,7 +854,7 @@ pub fn game_page(
     out.push_str("</div>"); // close #worldhints
     out.push_str("</div>"); // close #tab-hints
     out.push_str(&ut_html);
-    out.push_str(&poptracker_panel(ap_slot, pt_has_pack, pt_can_manage));
+    out.push_str(&poptracker_panel(game_id, pt_has_pack, pt_can_manage));
     out.push_str(&log_html);
     out.push_str(TABS_JS);
     out.push_str(GAME_TAB_JS);

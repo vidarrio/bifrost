@@ -13,6 +13,8 @@ use std::sync::Arc;
 mod account;
 mod activity;
 mod ap;
+pub mod id;
+pub(crate) use id::Id;
 mod ap_adapter;
 mod apinstall;
 mod apserver;
@@ -260,6 +262,10 @@ async fn main() {
 /// first, so going back is a restore away. A data dir a newer Bifrost has
 /// migrated is refused.
 async fn upgrade(db: &db::Db) {
+    if db.is_pre_0_3().await.unwrap_or(false) {
+        tracing::error!("{}", db::PRE_0_3);
+        std::process::exit(1);
+    }
     let stamp = db
         .stamp()
         .await
@@ -335,6 +341,10 @@ async fn upgrade(db: &db::Db) {
 /// and migrates it (a command may run while an older server still does). So
 /// they refuse a database whose schema isn't this build's, except a fresh one.
 async fn cli_ready(db: &db::Db) {
+    if db.is_pre_0_3().await.unwrap_or(false) {
+        eprintln!("{}", db::PRE_0_3);
+        std::process::exit(1);
+    }
     let stamp = db
         .stamp()
         .await

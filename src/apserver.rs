@@ -9,6 +9,7 @@
 //! copied in, so a dying server can never write the old seed's hints/checks
 //! into the new world's save.
 
+use crate::id::Id;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -45,7 +46,7 @@ pub struct ApServer {
 /// How to launch the season's server.
 #[derive(Clone)]
 pub struct Launch {
-    pub season: i64,
+    pub season: Id,
     /// The season's pinned port (from `BIFROST_AP_PORTS`).
     pub port: u16,
     pub password: String,
@@ -84,17 +85,17 @@ impl ApServer {
 }
 
 struct Running {
-    season: i64,
+    season: Id,
     child: Child,
     stdin: ChildStdin,
 }
 
 /// Live season → its running server's pid (bubblewrap's, or the server's on
 /// the limits tier) — for `load`, which counts everything under it.
-static PIDS: std::sync::Mutex<std::collections::BTreeMap<i64, u32>> =
+static PIDS: std::sync::Mutex<std::collections::BTreeMap<Id, u32>> =
     std::sync::Mutex::new(std::collections::BTreeMap::new());
 
-pub fn server_pids() -> std::collections::BTreeMap<i64, u32> {
+pub fn server_pids() -> std::collections::BTreeMap<Id, u32> {
     PIDS.lock().unwrap().clone()
 }
 
@@ -221,7 +222,7 @@ async fn swap_seed(dirs: &SeasonDirs, zip: &std::path::Path) -> Result<(), Strin
 
 /// Ask the server to save and exit (`/exit` on its console); kill it if it
 /// doesn't within the grace period.
-async fn stop(season: i64, mut r: Running) {
+async fn stop(season: Id, mut r: Running) {
     let _ = r.stdin.write_all(b"/exit\n").await;
     let _ = r.stdin.flush().await;
     if tokio::time::timeout(STOP_GRACE, r.child.wait())
@@ -326,7 +327,7 @@ fn start(
 /// Append the server's output to `logs/server.log` and feed gameplay lines to
 /// the activity log.
 async fn capture(
-    season: i64,
+    season: Id,
     stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     log: PathBuf,
     db: Db,

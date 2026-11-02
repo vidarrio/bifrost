@@ -19,6 +19,7 @@
 //! The state is held in memory (resolved synchronously by `ap_adapter` and the
 //! AP server supervisor) and loaded from the database at startup.
 
+use crate::id::Id;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -43,7 +44,7 @@ struct State {
     /// The active version, when it isn't the bundled one.
     active: Option<String>,
     /// Season → the version that generated its current seed.
-    pins: BTreeMap<i64, String>,
+    pins: BTreeMap<crate::id::Id, String>,
 }
 
 static STATE: RwLock<State> = RwLock::new(State {
@@ -173,7 +174,7 @@ fn find_pinned(version: &str) -> Option<Install> {
 
 /// The version a season is pinned to when no install provides it (e.g. the
 /// image was upgraded to a newer bundled Archipelago).
-pub fn missing_pin(id: i64) -> Option<String> {
+pub fn missing_pin(id: crate::id::Id) -> Option<String> {
     let v = STATE.read().unwrap().pins.get(&id).cloned()?;
     find_pinned(&v).is_none().then_some(v)
 }
@@ -185,7 +186,7 @@ pub fn pinned_versions() -> Vec<String> {
 
 /// The install a season's helpers and server run: the one its seed was
 /// generated with, else the active one.
-pub fn for_season(id: i64) -> Install {
+pub fn for_season(id: crate::id::Id) -> Install {
     let v = STATE.read().unwrap().pins.get(&id).cloned();
     match v.map(|v| (find_pinned(&v), v)) {
         Some((Some(i), _)) => i,
@@ -208,7 +209,7 @@ pub fn for_dirs(dirs: &SeasonDirs) -> Install {
 }
 
 /// Load the active version and season pins (startup).
-pub fn load(active: Option<String>, pins: BTreeMap<i64, String>) {
+pub fn load(active: Option<String>, pins: BTreeMap<crate::id::Id, String>) {
     let mut st = STATE.write().unwrap();
     st.active = active.filter(|v| {
         let ok = find(v).is_some();
@@ -227,7 +228,7 @@ pub fn set_active(version: Option<String>) {
     STATE.write().unwrap().active = version;
 }
 
-pub fn pin(season: i64, version: Option<String>) {
+pub fn pin(season: Id, version: Option<String>) {
     let mut st = STATE.write().unwrap();
     match version {
         Some(v) => st.pins.insert(season, v),
@@ -236,8 +237,8 @@ pub fn pin(season: i64, version: Option<String>) {
 }
 
 /// Seasons pinned to `version`.
-pub fn pinned_to(version: &str) -> Vec<i64> {
-    let mut v: Vec<i64> = STATE
+pub fn pinned_to(version: &str) -> Vec<crate::id::Id> {
+    let mut v: Vec<crate::id::Id> = STATE
         .read()
         .unwrap()
         .pins

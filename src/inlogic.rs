@@ -13,6 +13,7 @@
 //! most ONE at a time (the loop is sequential) and recompute a slot only when its
 //! `(sent, received)` state has actually moved since the last cached result.
 
+use crate::id::Id;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -28,7 +29,7 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(150);
 
 /// Spawn the recomputer. No-op without an AP config (nothing to connect to).
 pub fn spawn(
-    season: i64,
+    season: Id,
     board: Arc<RwLock<Board>>,
     db: Db,
     cfg: &ApConfig,
@@ -54,7 +55,7 @@ pub fn spawn(
 }
 
 async fn tick(
-    season: i64,
+    season: Id,
     board: &Arc<RwLock<Board>>,
     db: &Db,
     connect: &str,

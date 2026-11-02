@@ -12,6 +12,7 @@
 //! in-logic cache, minesweeper results — references `season(id)` and cascades
 //! with it. Per-season toggles and the journal cursor live on the row.
 
+use crate::id::Id;
 use sqlx::{FromRow, SqlitePool};
 
 use super::Db;
@@ -19,7 +20,7 @@ use super::Db;
 pub(super) async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"CREATE TABLE IF NOT EXISTS season (
-             id INTEGER PRIMARY KEY,
+             id TEXT PRIMARY KEY NOT NULL,
              name TEXT NOT NULL,
              state TEXT NOT NULL DEFAULT 'draft'
                  CHECK (state IN ('draft', 'signup', 'generating', 'live', 'archived')),
@@ -31,6 +32,14 @@ pub(super) async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
              archived_at INTEGER,
              minesweeper_enabled INTEGER NOT NULL DEFAULT 0,
              mc_enabled INTEGER NOT NULL DEFAULT 0,
+             -- Bonus hints a player can earn from minesweeper in any 24 hours (0 = no cap).
+             mine_daily_hints INTEGER NOT NULL DEFAULT 5,
+             -- How many games a player may sign up with (0 = no limit).
+             max_games INTEGER NOT NULL DEFAULT 0,
+             -- Pages after generation are for members; signups need a link.
+             private_live INTEGER NOT NULL DEFAULT 1,
+             private_signup INTEGER NOT NULL DEFAULT 0,
+             signup_token TEXT,
              -- Where this season's AP-journal ingest resumes.
              journal_cursor TEXT,
              -- Frozen final standings (JSON), captured when archived.
@@ -54,10 +63,20 @@ pub(super) async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS season_seed ON season(seed)")
         .execute(pool)
         .await?;
+    // Who came through a private season's signup link.
+    sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS season_invited (
+             season TEXT NOT NULL REFERENCES season(id) ON DELETE CASCADE,
+             account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+             PRIMARY KEY (season, account_id)
+           )"#,
+    )
+    .execute(pool)
+    .await?;
     // Co-moderators: besides its creator, who may run a season.
     sqlx::query(
         r#"CREATE TABLE IF NOT EXISTS season_mod (
-             season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
+             season TEXT NOT NULL REFERENCES season(id) ON DELETE CASCADE,
              account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
              PRIMARY KEY (season, account_id)
            )"#,
@@ -126,7 +145,7 @@ pub const MAX_GAMES_LIMIT: i64 = 1000;
 
 #[derive(Debug, Clone, FromRow)]
 pub struct SeasonRow {
-    pub id: i64,
+    pub id: Id,
     pub name: String,
     #[sqlx(try_from = "String")]
     pub state: StateCol,
@@ -219,22 +238,24 @@ impl Db {
         name: &str,
         created_by: Option<i64>,
         now: i64,
-    ) -> Result<i64, sqlx::Error> {
+    ) -> Result<Id, sqlx::Error> {
         let admin_pw: String = crate::auth::new_token().chars().take(24).collect();
-        let r = sqlx::query(
-            "INSERT INTO season (name, created_by, created_at, ap_admin_password, private_live) VALUES (?, ?, ?, ?, 1)",
+        let id = Id::new();
+        sqlx::query(
+            "INSERT INTO season (id, name, created_by, created_at, ap_admin_password) VALUES (?, ?, ?, ?, ?)",
         )
+            .bind(id)
             .bind(name)
             .bind(created_by)
             .bind(now)
             .bind(admin_pw)
             .execute(&self.pool)
             .await?;
-        Ok(r.last_insert_rowid())
+        Ok(id)
     }
 
     /// The season holding `seed`, if any.
-    pub async fn season_by_seed(&self, seed: &str) -> Option<i64> {
+    pub async fn season_by_seed(&self, seed: &str) -> Option<Id> {
         sqlx::query_scalar("SELECT id FROM season WHERE seed = ?")
             .bind(seed)
             .fetch_optional(&self.pool)
@@ -256,11 +277,13 @@ impl Db {
         live_at: Option<i64>,
         archived_at: i64,
         ap_version: Option<&str>,
-    ) -> Result<i64, sqlx::Error> {
-        let r = sqlx::query(
-            "INSERT INTO season (name, state, created_by, created_at, seed, live_at, archived_at, summary, ap_version)
-             VALUES (?, 'archived', ?, ?, ?, ?, ?, ?, ?)",
+    ) -> Result<Id, sqlx::Error> {
+        let id = Id::new();
+        sqlx::query(
+            "INSERT INTO season (id, name, state, created_by, created_at, seed, live_at, archived_at, summary, ap_version, private_live)
+             VALUES (?, ?, 'archived', ?, ?, ?, ?, ?, ?, ?, 0)",
         )
+        .bind(id)
         .bind(name)
         .bind(created_by)
         .bind(created_at)
@@ -271,10 +294,10 @@ impl Db {
         .bind(ap_version)
         .execute(&self.pool)
         .await?;
-        Ok(r.last_insert_rowid())
+        Ok(id)
     }
 
-    pub async fn season(&self, id: i64) -> Option<SeasonRow> {
+    pub async fn season(&self, id: Id) -> Option<SeasonRow> {
         sqlx::query_as(&format!("SELECT {COLS} FROM season WHERE id = ?"))
             .bind(id)
             .fetch_optional(&self.pool)
@@ -286,7 +309,7 @@ impl Db {
     /// Every season, newest first.
     pub async fn seasons(&self) -> Vec<SeasonRow> {
         sqlx::query_as(&format!(
-            "SELECT {COLS} FROM season ORDER BY created_at DESC, id DESC"
+            "SELECT {COLS} FROM season ORDER BY created_at DESC, rowid DESC"
         ))
         .fetch_all(&self.pool)
         .await
@@ -301,7 +324,7 @@ impl Db {
             "SELECT {COLS} FROM season ORDER BY
                CASE state WHEN 'live' THEN 0 WHEN 'generating' THEN 1 WHEN 'signup' THEN 2
                           WHEN 'draft' THEN 3 ELSE 4 END,
-               COALESCE(live_at, archived_at, created_at) DESC, id DESC
+               COALESCE(live_at, archived_at, created_at) DESC, rowid DESC
              LIMIT 1"
         ))
         .fetch_optional(&self.pool)
@@ -312,7 +335,7 @@ impl Db {
 
     /// Everyone who may run the season besides sysadmins: its creator and its
     /// co-moderators.
-    pub async fn season_mods(&self, id: i64) -> Vec<i64> {
+    pub async fn season_mods(&self, id: Id) -> Vec<i64> {
         sqlx::query_scalar(
             "SELECT created_by FROM season WHERE id = ? AND created_by IS NOT NULL
              UNION SELECT account_id FROM season_mod WHERE season = ?",
@@ -325,7 +348,7 @@ impl Db {
     }
 
     /// Co-moderators (not the creator) as (account id, username).
-    pub async fn co_mods(&self, id: i64) -> Vec<(i64, String)> {
+    pub async fn co_mods(&self, id: Id) -> Vec<(i64, String)> {
         sqlx::query_as(
             "SELECT a.id, a.username FROM season_mod m JOIN account a ON a.id = m.account_id
              WHERE m.season = ? ORDER BY a.username COLLATE NOCASE",
@@ -336,7 +359,7 @@ impl Db {
         .unwrap_or_default()
     }
 
-    pub async fn add_co_mod(&self, id: i64, account: i64) -> Result<(), sqlx::Error> {
+    pub async fn add_co_mod(&self, id: Id, account: i64) -> Result<(), sqlx::Error> {
         sqlx::query("INSERT OR IGNORE INTO season_mod (season, account_id) VALUES (?, ?)")
             .bind(id)
             .bind(account)
@@ -345,7 +368,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn remove_co_mod(&self, id: i64, account: i64) -> Result<(), sqlx::Error> {
+    pub async fn remove_co_mod(&self, id: Id, account: i64) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM season_mod WHERE season = ? AND account_id = ?")
             .bind(id)
             .bind(account)
@@ -354,7 +377,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn rename_season(&self, id: i64, name: &str) -> Result<(), sqlx::Error> {
+    pub async fn rename_season(&self, id: Id, name: &str) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE season SET name = ? WHERE id = ?")
             .bind(name)
             .bind(id)
@@ -379,7 +402,7 @@ impl Db {
         Ok(r.rows_affected())
     }
 
-    pub async fn transition(&self, id: i64, to: State, now: i64) -> Result<(), TransitionError> {
+    pub async fn transition(&self, id: Id, to: State, now: i64) -> Result<(), TransitionError> {
         let db = |e: sqlx::Error| TransitionError::Db(e.to_string());
         // IMMEDIATE: this reads then writes; a deferred transaction would
         // fail outright (not wait) if another writer got in between.
@@ -428,7 +451,7 @@ impl Db {
 
     /// Could the season go live right now (is there room)? Lets generation
     /// refuse before doing the work.
-    pub async fn can_go_live(&self, id: i64) -> Result<(), TransitionError> {
+    pub async fn can_go_live(&self, id: Id) -> Result<(), TransitionError> {
         let mut tx = self
             .pool
             .begin()
@@ -444,7 +467,7 @@ impl Db {
     async fn live_slot(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-        id: i64,
+        id: Id,
     ) -> Result<Option<u16>, TransitionError> {
         let db = |e: sqlx::Error| TransitionError::Db(e.to_string());
         let Some(range) = self.ap_ports.clone() else {
@@ -532,7 +555,7 @@ impl Db {
     }
 
     /// The season's AP server (connect, admin) passwords.
-    pub async fn ap_passwords(&self, id: i64) -> (String, String) {
+    pub async fn ap_passwords(&self, id: Id) -> (String, String) {
         sqlx::query_as("SELECT ap_password, ap_admin_password FROM season WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
@@ -542,7 +565,7 @@ impl Db {
             .unwrap_or_default()
     }
 
-    pub async fn set_ap_password(&self, id: i64, password: &str) -> Result<(), sqlx::Error> {
+    pub async fn set_ap_password(&self, id: Id, password: &str) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE season SET ap_password = ? WHERE id = ?")
             .bind(password)
             .bind(id)
@@ -551,7 +574,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn set_season_seed(&self, id: i64, seed: &str) -> Result<(), sqlx::Error> {
+    pub async fn set_season_seed(&self, id: Id, seed: &str) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE season SET seed = ? WHERE id = ?")
             .bind(seed)
             .bind(id)
@@ -562,7 +585,7 @@ impl Db {
 
     pub async fn set_season_ap_version(
         &self,
-        id: i64,
+        id: Id,
         version: Option<&str>,
     ) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE season SET ap_version = ? WHERE id = ?")
@@ -573,7 +596,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn set_minesweeper_enabled(&self, id: i64, on: bool) -> Result<(), sqlx::Error> {
+    pub async fn set_minesweeper_enabled(&self, id: Id, on: bool) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE season SET minesweeper_enabled = ? WHERE id = ?")
             .bind(on)
             .bind(id)
@@ -583,7 +606,7 @@ impl Db {
     }
 
     /// Who can see the season's pages after generation.
-    pub async fn set_private_live(&self, id: i64, private: bool) -> Result<(), sqlx::Error> {
+    pub async fn set_private_live(&self, id: Id, private: bool) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE season SET private_live = ? WHERE id = ?")
             .bind(private)
             .bind(id)
@@ -593,7 +616,7 @@ impl Db {
     }
 
     /// Make signups private behind a new link, or open them to any user again.
-    pub async fn set_private_signup(&self, id: i64, private: bool) -> Result<(), sqlx::Error> {
+    pub async fn set_private_signup(&self, id: Id, private: bool) -> Result<(), sqlx::Error> {
         sqlx::query(
             "UPDATE season SET private_signup = ?1, signup_token = CASE WHEN ?1 THEN ?2 END WHERE id = ?3",
         )
@@ -606,7 +629,7 @@ impl Db {
     }
 
     /// Whether `account` plays in the season: a signup, a seat or a slot.
-    pub async fn is_season_member(&self, season: i64, account: i64) -> bool {
+    pub async fn is_season_member(&self, season: Id, account: i64) -> bool {
         sqlx::query_scalar::<_, i64>(
             "SELECT EXISTS(SELECT 1 FROM submission WHERE season = ?1 AND account_id = ?2)
                  OR EXISTS(SELECT 1 FROM seat WHERE season = ?1 AND account_id = ?2)
@@ -622,7 +645,7 @@ impl Db {
     }
 
     /// Whether `account` came through the season's private signup link.
-    pub async fn is_season_invited(&self, season: i64, account: i64) -> bool {
+    pub async fn is_season_invited(&self, season: Id, account: i64) -> bool {
         sqlx::query_scalar::<_, i64>(
             "SELECT EXISTS(SELECT 1 FROM season_invited WHERE season = ? AND account_id = ?)",
         )
@@ -634,7 +657,7 @@ impl Db {
             != 0
     }
 
-    pub async fn add_season_invited(&self, season: i64, account: i64) -> Result<(), sqlx::Error> {
+    pub async fn add_season_invited(&self, season: Id, account: i64) -> Result<(), sqlx::Error> {
         sqlx::query("INSERT OR IGNORE INTO season_invited (season, account_id) VALUES (?, ?)")
             .bind(season)
             .bind(account)
@@ -643,7 +666,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn set_max_games(&self, id: i64, limit: i64) -> Result<(), sqlx::Error> {
+    pub async fn set_max_games(&self, id: Id, limit: i64) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE season SET max_games = ? WHERE id = ?")
             .bind(limit)
             .bind(id)
@@ -652,7 +675,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn set_mine_daily_hints(&self, id: i64, cap: i64) -> Result<(), sqlx::Error> {
+    pub async fn set_mine_daily_hints(&self, id: Id, cap: i64) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE season SET mine_daily_hints = ? WHERE id = ?")
             .bind(cap)
             .bind(id)
@@ -661,7 +684,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn set_mc_enabled(&self, id: i64, on: bool) -> Result<(), sqlx::Error> {
+    pub async fn set_mc_enabled(&self, id: Id, on: bool) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE season SET mc_enabled = ? WHERE id = ?")
             .bind(on)
             .bind(id)
@@ -670,7 +693,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn journal_cursor(&self, id: i64) -> Option<String> {
+    pub async fn journal_cursor(&self, id: Id) -> Option<String> {
         sqlx::query_scalar("SELECT journal_cursor FROM season WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
@@ -680,7 +703,7 @@ impl Db {
             .flatten()
     }
 
-    pub async fn set_journal_cursor(&self, id: i64, cursor: Option<&str>) {
+    pub async fn set_journal_cursor(&self, id: Id, cursor: Option<&str>) {
         let _ = sqlx::query("UPDATE season SET journal_cursor = ? WHERE id = ?")
             .bind(cursor)
             .bind(id)
@@ -689,7 +712,7 @@ impl Db {
     }
 
     /// Store a season's frozen final standings (JSON).
-    pub async fn set_season_summary(&self, id: i64, summary: &str) -> Result<(), sqlx::Error> {
+    pub async fn set_season_summary(&self, id: Id, summary: &str) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE season SET summary = ? WHERE id = ?")
             .bind(summary)
             .bind(id)
@@ -698,7 +721,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn season_summary(&self, id: i64) -> Option<String> {
+    pub async fn season_summary(&self, id: Id) -> Option<String> {
         sqlx::query_scalar("SELECT summary FROM season WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
@@ -710,7 +733,7 @@ impl Db {
 
     /// When the most recent *other* season was archived (0 if none) — the lower
     /// bound for a season's one-time journal backfill.
-    pub async fn last_archived_before(&self, id: i64) -> i64 {
+    pub async fn last_archived_before(&self, id: Id) -> i64 {
         sqlx::query_scalar::<_, Option<i64>>(
             "SELECT MAX(archived_at) FROM season WHERE id <> ? AND archived_at IS NOT NULL",
         )
@@ -726,7 +749,7 @@ impl Db {
     /// re-roll deploys a new one): activity log + cursor, hint priorities and
     /// the in-logic cache. Slots/claims are remapped separately; minesweeper
     /// results and hint credits belong to the season and are kept.
-    pub async fn clear_seed_data(&self, id: i64) -> Result<(), sqlx::Error> {
+    pub async fn clear_seed_data(&self, id: Id) -> Result<(), sqlx::Error> {
         for table in ["activity", "hint_priority", "inlogic"] {
             sqlx::query(&format!("DELETE FROM {table} WHERE season = ?"))
                 .bind(id)

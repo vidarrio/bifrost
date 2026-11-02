@@ -37,7 +37,8 @@ its own port. When a page isn't tied to a particular season (the home page,
 `/board`, `/signup`), it means the live season. If none is live, it means the
 newest season in progress, and failing that the most recently archived one.
 Every season also has its own addresses under `/s/<id>/…`, such as
-`/s/3/board`.
+`/s/4kzp9mwq2xhtc7jn/board`. Its id is generated, so an address says nothing about
+what other seasons exist.
 
 ---
 
@@ -723,7 +724,7 @@ PathRegexp(`^(/s/[^/]*/+|/)(admin|board|log|season|claim|hint|signup|seat|game|p
 ```
 
 Match any season id there, not just digits, so that no spelling of a season
-URL slips past the rule. Bifrost itself only accepts plain digits.
+URL slips past the rule. Bifrost itself only accepts a generated id there.
 
 ### Isolation
 

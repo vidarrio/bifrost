@@ -240,7 +240,7 @@ pub fn signup_page(
 }
 
 /// The seasons open for signup, as cards leading to each season's page.
-pub fn signups_list(seasons: &[(i64, String, Vec<SubmissionRow>)]) -> Html<String> {
+pub fn signups_list(seasons: &[(Id, String, Vec<SubmissionRow>)]) -> Html<String> {
     let mut b = page_head(None);
     b.push_str(
         r#"<h1>Sign up for a season</h1><div class="crumb"><a href="/">← Bifrost</a></div>"#,
@@ -337,12 +337,6 @@ pub fn signup_game_page(g: &SignupGame) -> Html<String> {
     ));
     if let Some(w) = &g.welcome {
         b.push_str(&format!(r#"<div class="banner ok">{}</div>"#, esc(w)));
-    }
-    if !s.coop_names.is_empty() {
-        b.push_str(&format!(
-            r#"<div class="meta">+ {}</div>"#,
-            esc(&s.coop_names)
-        ));
     }
     if !g.pre_gen && !s.seat_names.is_empty() {
         b.push_str(&format!(

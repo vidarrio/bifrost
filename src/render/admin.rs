@@ -28,11 +28,6 @@ pub(super) fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool, pre_gen: 
             ),
             _ => String::new(),
         };
-        let coop = if s.coop_names.is_empty() {
-            String::new()
-        } else {
-            format!(r#"<div class="meta">+ {}</div>"#, esc(&s.coop_names))
-        };
         let del = if pre_gen && (is_admin || s.username == me) {
             format!(
                 r#"<form method="post" action="signup/delete" style="display:inline">
@@ -54,7 +49,7 @@ pub(super) fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool, pre_gen: 
         };
         b.push_str(&format!(
             r#"<div class="slot idle stretch"><div class="game"><a class="cover" href="signup/game/{}">{}</a>{custom}</div>
-<div class="meta">{} · by {}</div>{held}{coop}{seats}{notes}<div class="seat"><span></span>{del}</div></div>"#,
+<div class="meta">{} · by {}</div>{held}{seats}{notes}<div class="seat"><span></span>{del}</div></div>"#,
             s.id,
             esc(&s.slot_name),
             esc(&s.game),

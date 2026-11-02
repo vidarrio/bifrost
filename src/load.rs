@@ -26,7 +26,7 @@ pub struct Sample {
     /// Host CPU busy, % of all cores.
     pub cpu: f32,
     /// Live season → its AP server's (resident bytes, CPU % of one core).
-    pub servers: BTreeMap<i64, (u64, f32)>,
+    pub servers: BTreeMap<crate::id::Id, (u64, f32)>,
     /// Bifrost's other child processes right now — sandboxed helpers, release
     /// installs, archive tar: (resident bytes, CPU % of one core, count).
     pub helpers: (u64, f32, usize),
@@ -193,11 +193,11 @@ impl Sampler {
             _ => 0.0,
         };
         let me = std::process::id();
-        let server_pids: HashMap<u32, i64> = crate::apserver::server_pids()
+        let server_pids: HashMap<u32, crate::id::Id> = crate::apserver::server_pids()
             .into_iter()
             .map(|(season, pid)| (pid, season))
             .collect();
-        let mut servers: BTreeMap<i64, (u64, f32)> =
+        let mut servers: BTreeMap<crate::id::Id, (u64, f32)> =
             server_pids.values().map(|&s| (s, (0, 0.0))).collect();
         let mut helpers = (0u64, 0f32, 0usize);
         let mut bifrost = (0u64, 0f32);
@@ -211,7 +211,7 @@ impl Sampler {
         // Everything Bifrost started, by ancestry: a server and all under it
         // (bubblewrap's children start sessions of their own) are its season's;
         // the rest are helpers, each direct child of Bifrost one job.
-        let mut stack: Vec<(u32, Option<i64>)> = children
+        let mut stack: Vec<(u32, Option<crate::id::Id>)> = children
             .get(&me)
             .into_iter()
             .flatten()
@@ -424,8 +424,8 @@ mod tests {
     fn a_season_needs_at_least_what_the_biggest_server_uses() {
         let mut s = Sample::default();
         assert_eq!(per_season(&s), 256 * MIB);
-        s.servers.insert(1, (900 * MIB, 1.0));
-        s.servers.insert(2, (300 * MIB, 1.0));
+        s.servers.insert(crate::id::Id::new(), (900 * MIB, 1.0));
+        s.servers.insert(crate::id::Id::new(), (300 * MIB, 1.0));
         assert_eq!(per_season(&s), 900 * MIB);
     }
 

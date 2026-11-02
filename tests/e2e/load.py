@@ -6,7 +6,7 @@ import re
 import sys
 import time
 
-from lib import Server, check, get, post, summary, wait_for
+from lib import Server, check, get, new_season, post, summary, wait_for
 
 YAML = b"name: Ann\ngame: ChecksFinder\nChecksFinder: {}\n"
 SHOT = os.environ.get("SHOT")
@@ -17,8 +17,7 @@ try:
     root = srv.setup_sysadmin()
     first = get(root, "/admin/settings/load").text
     check("panel answers before/at the first sample", "Memory used" in first or "first sample" in first)
-    post(root, "/admin/seasons", data=dict(name="Loaded"))
-    sid = int(re.search(r"/s/(\d+)/admin", get(root, "/admin/seasons").text).group(1))
+    sid = new_season(root, "Loaded")
     post(root, f"/s/{sid}/admin/signups", data=dict(open="1"))
     post(root, f"/s/{sid}/signup", files={"yaml": ("y.yaml", YAML)})
     post(root, f"/s/{sid}/admin/generate")

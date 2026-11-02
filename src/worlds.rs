@@ -8,6 +8,7 @@
 //! Every install goes through [`ap_adapter::install_world`], which pins the
 //! hash; nothing here bypasses the pin check that guards generation.
 
+use crate::id::Id;
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -110,7 +111,7 @@ async fn install(dirs: SeasonDirs, file: String, bytes: Vec<u8>, pin: Pin) -> Re
 /// the instance auto-approves, otherwise pending.
 pub async fn place_upload(
     db: &Db,
-    season: i64,
+    season: Id,
     file: &str,
     bytes: Vec<u8>,
     uploader: &str,
@@ -174,7 +175,7 @@ pub async fn place_upload(
 /// Install a catalog world into `season`. Returns the file name it took.
 pub async fn install_from_catalog(
     db: &Db,
-    season: i64,
+    season: Id,
     sha256: &str,
     by: &str,
 ) -> Result<String, String> {
@@ -207,7 +208,7 @@ pub async fn install_from_catalog(
 
 /// Approve a pending upload: install it, then check the signups held for it
 /// (in the background — each check can take a while).
-pub async fn approve(db: &Db, season: i64, file: &str, by: &str) -> Result<WorldRequest, String> {
+pub async fn approve(db: &Db, season: Id, file: &str, by: &str) -> Result<WorldRequest, String> {
     let dirs = config::get().season(season);
     let req = db
         .world_request(season, file)
@@ -239,7 +240,7 @@ pub async fn approve(db: &Db, season: i64, file: &str, by: &str) -> Result<World
 }
 
 /// Reject a pending upload; its held signups say so until they're removed.
-pub async fn reject(db: &Db, season: i64, file: &str, by: &str) -> Result<(), String> {
+pub async fn reject(db: &Db, season: Id, file: &str, by: &str) -> Result<(), String> {
     let req = db
         .take_world_request(season, file)
         .await
@@ -258,7 +259,7 @@ pub const ONE_GAME_PER_FILE: &str = "That YAML holds several players. Sign up on
 /// Check every signup held for `file` now that it's installed: those that
 /// pass go ahead (with the name and game the check read); the rest keep
 /// the reason.
-pub async fn recheck_held(db: &Db, season: i64, file: &str) {
+pub async fn recheck_held(db: &Db, season: Id, file: &str) {
     let dirs = config::get().season(season);
     for (id, yaml_path) in db.held_submissions(season, file).await {
         let outcome = match tokio::fs::read_to_string(&yaml_path).await {
@@ -315,7 +316,7 @@ async fn check_with_retries(
 /// Finish re-checks that were cut short (a restart mid-loop, a check that
 /// couldn't run): held signups whose world is installed and no longer waits
 /// for approval. Run at startup and before generating.
-pub async fn recheck_stale(db: &Db, season: i64) {
+pub async fn recheck_stale(db: &Db, season: Id) {
     let dirs = config::get().season(season);
     for file in db.stale_holds(season).await {
         if dirs.worlds.join(&file).is_file() {
@@ -372,7 +373,7 @@ pub async fn catalog_add(
 /// Add a world already installed in a season to the catalog.
 pub async fn catalog_add_installed(
     db: &Db,
-    season: i64,
+    season: Id,
     file: &str,
     by: &str,
 ) -> Result<CatalogWorld, String> {
@@ -400,7 +401,7 @@ pub async fn catalog_remove(db: &Db, sha256: &str) -> Result<(), String> {
 }
 
 /// Drop every pending upload of a season (season reset).
-pub async fn clear_pending(db: &Db, season: i64) {
+pub async fn clear_pending(db: &Db, season: Id) {
     let dirs = config::get().season(season);
     let _ = tokio::fs::remove_dir_all(&dirs.pending).await;
     let _ = tokio::fs::create_dir_all(&dirs.pending).await;

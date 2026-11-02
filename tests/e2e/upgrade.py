@@ -25,25 +25,6 @@ def stamp(srv, version=None, schema=None):
         return db.execute("PRAGMA user_version").fetchone()[0], row and row[0]
 
 
-def to_baseline(srv):
-    """As if an older build had left the database at the baseline (schema 1):
-    undo every migration step (src/db/migrate.rs, STEPS)."""
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
-        db.execute("ALTER TABLE season DROP COLUMN mine_daily_hints")
-        db.execute("ALTER TABLE mine_result DROP COLUMN earned")
-        db.execute("ALTER TABLE season DROP COLUMN max_games")
-        db.execute("DROP TABLE season_invited")
-        db.execute("ALTER TABLE season DROP COLUMN private_live")
-        db.execute("ALTER TABLE season DROP COLUMN private_signup")
-        db.execute("ALTER TABLE season DROP COLUMN signup_token")
-        db.execute("DROP TRIGGER submission_name_insert")
-        db.execute("DROP TRIGGER submission_name_update")
-        db.execute("DROP TABLE seat_link")
-        db.execute("DROP TABLE seat")
-        db.execute("ALTER TABLE submission DROP COLUMN notes")
-    stamp(srv, schema=1)
-
-
 def backups(srv):
     d = os.path.join(srv.data, "backups")
     return sorted(n for n in os.listdir(d) if n.endswith(".zip")) if os.path.isdir(d) else []
@@ -115,40 +96,10 @@ stamp(srv, version="0.0.0-old")
 srv = server(BIFROST_BACKUP_DIR=blocked)
 check("a failed backup doesn't stop a start that keeps the schema", refused(srv) is None)
 check("it says so", "pre-upgrade backup failed" in srv.logtext() and "starting anyway" in srv.logtext())
-# An older Bifrost, on the baseline schema.
-to_baseline(srv)
-with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
-    db.execute("INSERT INTO season (name, created_at) VALUES ('Old', 0)")
-stamp(srv, version="0.0.0-old")
-r = srv.cli("auth", "status")
-check("a command refuses a database on an older schema", r.returncode == 1 and "start Bifrost" in r.stderr, (r.returncode, r.stderr))
-srv = server(BIFROST_BACKUP_DIR=blocked)
-check("a failed backup stops a start that would migrate", refused(srv) == 1)
-check("it says why", "not migrating the database without one" in srv.logtext(), srv.logtext()[-1500:])
-check("and leaves the database alone", stamp(srv) == (1, "0.0.0-old"), stamp(srv))
+# Migrating needs a schema step, and there are none since the 0.3.0 baseline: when
+# the first arrives, test here that a failed backup stops a start that would
+# migrate, and that a migration backs up first and keeps existing rows.
 os.remove(os.path.join(srv.data, "blocker"))
-srv = server()
-srv.start()
-srv.stop()
-check("with room for the backup it upgrades", stamp(srv) == (schema, version), stamp(srv))
-with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
-    caps = db.execute("SELECT mine_daily_hints, max_games, private_live FROM season WHERE name = 'Old'").fetchall()
-check("the upgrade migrates the schema, keeping existing rows", caps == [(5, 0, 0)], caps)
-
-
-
-# A build between releases: the same version number, an older schema.
-before = backups(srv)
-to_baseline(srv)
-srv = server()
-srv.start()
-srv.stop()
-new = [b for b in backups(srv) if b not in before]
-check("a schema change backs up first even under the same version",
-      len(new) == 1 and new[0].endswith(f"-pre-upgrade-from-{version}.zip") and stamp(srv) == (schema, version),
-      (new, stamp(srv)))
-
-# A newer Bifrost migrated the database past this build: refuse it.
 stamp(srv, version="99.0.0", schema=schema + 1)
 srv = server()
 code = refused(srv)
@@ -161,6 +112,20 @@ check("commands that use the database are refused too", r.returncode == 1 and "9
 r = srv.cli("backup", "list")
 check("but the backups can still be listed", r.returncode == 0 and "pre-upgrade-from-0.0.0-old.zip" in r.stdout, (r.returncode, r.stdout, r.stderr))
 check("and the database is left alone", stamp(srv) == (schema + 1, "99.0.0"), stamp(srv))
+
+# Numeric season ids, from before 0.3.0, have no upgrade: not from a release (0.1
+# has no schema version, 0.2 has 2), or from a build between releases.
+for old in (0, 2, 6):
+    os.remove(os.path.join(srv.data, "bifrost.db"))
+    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+        db.execute("CREATE TABLE season (id INTEGER PRIMARY KEY, name TEXT)")
+        db.execute(f"PRAGMA user_version = {old}")
+    srv = server()
+    check(f"a database from before 0.3.0 is refused (schema {old})", refused(srv) not in (None, 0))
+    check("saying so", "before 0.3.0" in srv.logtext(), srv.logtext()[-800:])
+    r = srv.cli("auth", "status")
+    check("commands refuse it too", r.returncode == 1 and "before 0.3.0" in r.stderr, (r.returncode, r.stderr))
+os.remove(os.path.join(srv.data, "bifrost.db"))
 
 # `bifrost update` is for the single-file build (see bundle.py); this one has
 # no bundled runtime.

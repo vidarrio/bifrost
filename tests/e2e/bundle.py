@@ -16,7 +16,7 @@ import time
 
 import requests
 
-from lib import REPO, Server, check, get, post, summary, wait_for, tiny_pack
+from lib import REPO, Server, check, first_game, get, new_season, post, summary, tiny_pack, wait_for
 
 _built = glob.glob(os.path.join(REPO, "dist", "bifrost-*-x86_64-linux"))
 if not _built:
@@ -37,8 +37,7 @@ try:
     check("strong isolation (host bwrap)", "isolation: strong" in log)
 
     root = srv.setup_sysadmin()
-    post(root, "/admin/seasons", data=dict(name="Native"))
-    sid = int(re.search(r"/s/(\d+)/admin", get(root, "/admin/seasons").text).group(1))
+    sid = new_season(root, "Native")
     post(root, f"/s/{sid}/admin/signups", data=dict(open="1"))
     r = post(root, f"/s/{sid}/signup/check", files={"yaml": ("y.yaml", YAML)}).json()
     check("YAML check runs on the bundled Python", r.get("ok"), r)
@@ -51,9 +50,9 @@ try:
     ps = lambda: subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True).stdout
     check("live server on the bundled Python", wait_for(lambda: any(l.startswith(py) and "bifrost_server.py" in l for l in ps().splitlines()), 30))
     check("tracker connects", wait_for(lambda: "Ann" in get(root, f"/s/{sid}/board").text, 60))
-    r = post(root, f"/s/{sid}/game/1/poptracker", files={"pack": ("p.zip", tiny_pack())})
+    r = post(root, f"/s/{sid}/game/{first_game(root, sid)}/poptracker", files={"pack": ("p.zip", tiny_pack())})
     check("a PopTracker pack passes its worker in the bundle", "Pack rejected" not in r.text, r.text[:300])
-    d = get(root, f"/s/{sid}/game/1/poptracker/state").json()
+    d = get(root, f"/s/{sid}/game/{first_game(root, sid)}/poptracker/state").json()
     check("…and tracks", d.get("state", {}).get("items", [{}])[0].get("active"), d)
 
     srv.stop()
@@ -215,8 +214,8 @@ try:
     s.base = base
     pw = "correct horse battery"
     s.post(base + "/setup", data=dict(token=tok.group(1), username="root", password=pw, confirm=pw))
-    s.post(base + "/admin/seasons", data=dict(name="Bare"))
-    sid = int(re.search(r"/s/(\d+)/admin", s.get(base + "/admin/seasons").text).group(1))
+    r = s.post(base + "/admin/seasons", data=dict(name="Bare"))
+    sid = re.search(r"/s/([0-9a-z]+)/admin", r.url).group(1)
     s.post(base + f"/s/{sid}/admin/signups", data=dict(open="1"))
     r = s.post(base + f"/s/{sid}/signup/check", files={"yaml": ("y.yaml", YAML)}).json()
     check("YAML check on bare Debian", r.get("ok"), r)

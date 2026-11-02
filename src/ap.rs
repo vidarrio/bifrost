@@ -8,6 +8,7 @@
 //! `activity.rs`); the only live `PrintJSON` handling left here is flipping a
 //! slot to "goaled" immediately so the board doesn't wait for the next poll.
 
+use crate::id::Id;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -388,7 +389,7 @@ impl ApConfig {
 /// maps an AP slot name to an extra Bifrost-slot name (co-op seats), used when
 /// seeding the season's slots.
 pub fn spawn(
-    season: i64,
+    season: Id,
     board: Arc<RwLock<Board>>,
     cfg: ApConfig,
     db: crate::db::Db,
@@ -445,19 +446,19 @@ pub fn spawn(
 }
 
 async fn run_once(
-    season: i64,
+    season: Id,
     board: &Arc<RwLock<Board>>,
     cfg: &ApConfig,
     db: &crate::db::Db,
     coop: &[(String, String)],
 ) -> Result<(), String> {
     // The tracker connects as one of the room's slots: the configured one,
-    // else the season's first (the roster exists once it's generated).
+    // else the season's lowest (the roster exists once it's generated).
     let slot = if cfg.slot.is_empty() {
         db.slots(season)
             .await
             .ok()
-            .and_then(|s| s.into_iter().min_by_key(|r| r.ap_slot).map(|r| r.name))
+            .and_then(|s| crate::db::connect_slot(&s, None))
             .ok_or("no slots yet to connect the tracker as")?
     } else {
         cfg.slot.clone()

@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 
-from lib import AP_DIR, DEV, Server, check, get, post, summary, wait_for
+from lib import AP_DIR, DEV, Server, check, first_game, get, new_season, post, summary, wait_for
 
 UPSTREAM = sys.argv[1:] == ["upstream"]  # control run: the plain release announces everything
 AP = os.environ.get("QUIET_AP") or (os.path.join(DEV, "archipelago") if UPSTREAM else AP_DIR)
@@ -26,8 +26,7 @@ try:
     check("runs the expected build", f"Archipelago {VERSION} bundled" in srv.logtext())
     root = srv.setup_sysadmin()
     check("landing shows the upstream version", f"Archipelago {BASE}<" in get(root, "/").text or f"Archipelago {BASE} " in get(root, "/").text)
-    post(root, "/admin/seasons", data=dict(name="Quiet"))
-    sid = int(re.search(r"/s/(\d+)/admin", get(root, "/admin/seasons").text).group(1))
+    sid = new_season(root, "Quiet")
     post(root, f"/s/{sid}/admin/signups", data=dict(open="1"))
     for y in YAMLS:
         post(root, f"/s/{sid}/signup", files={"yaml": ("y.yaml", y)})
@@ -37,8 +36,8 @@ try:
     check("tracker connects", wait_for(lambda: "Ann" in get(root, f"/s/{sid}/board").text, 60))
 
     claim = get(root, f"/s/{sid}/claim").text
-    ids = re.findall(r'name="slot_id" value="(\d+)"', claim)
-    get(root, f"/s/{sid}/game/1")                       # points relay
+    ids = re.findall(r'name="slot_id" value="([0-9a-z]+)"', claim)
+    get(root, f"/s/{sid}/game/{first_game(root, sid)}")                       # points relay
     hint = lambda: (j := post(root, f"/s/{sid}/hint", data=dict(slot_id=ids[0], item="Map Width")).json()) \
         and "isn't live" not in j.get("message", "") and j                             # hint relay, once the tracker's in
     check("hint relay answers", wait_for(hint, 60, 2))

@@ -57,7 +57,7 @@ pub(crate) struct KindQuery {
 /// (general vs seasonal), so the two can be in progress at once without
 /// clobbering each other. A seasonal game belongs to its season: finishing it
 /// under another season's URL mustn't credit that one.
-pub(crate) fn mine_key(account: i64, season: Option<i64>, kind: mine::Kind) -> (i64, String) {
+pub(crate) fn mine_key(account: i64, season: Option<Id>, kind: mine::Kind) -> (i64, String) {
     let mode = match season {
         Some(id) => format!("s{id}:"),
         None => "free:".to_string(),

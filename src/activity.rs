@@ -11,6 +11,7 @@
 //! Rows are tagged with the live season and queried back by it.
 //! Relative "x ago" and the archive's frozen reference are handled at render.
 
+use crate::id::Id;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -24,7 +25,7 @@ const POLL: Duration = Duration::from_secs(5);
 
 /// Spawn the live season's journal ingester. Idles until the tracker has
 /// seen the season's room (its seed).
-pub fn spawn(season: i64, board: Arc<RwLock<Board>>, db: Db) -> tokio::task::JoinHandle<()> {
+pub fn spawn(season: Id, board: Arc<RwLock<Board>>, db: Db) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         loop {
             if let Err(e) = ingest(season, &board, &db).await {
@@ -44,7 +45,7 @@ enum Mode {
     SeekEnd,
 }
 
-async fn ingest(season: i64, board: &Arc<RwLock<Board>>, db: &Db) -> Result<(), String> {
+async fn ingest(season: Id, board: &Arc<RwLock<Board>>, db: &Db) -> Result<(), String> {
     if !board.read().is_ok_and(|b| b.seed.is_some()) {
         return Ok(()); // the season's room hasn't been seen yet
     }
@@ -168,7 +169,7 @@ async fn ingest(season: i64, board: &Arc<RwLock<Board>>, db: &Db) -> Result<(), 
 
 /// Record one AP server log line (a managed server's output) as activity, if
 /// it's gameplay. `ts` is when it was seen.
-pub async fn ingest_line(season: i64, board: &Arc<RwLock<Board>>, db: &Db, line: &str, ts: i64) {
+pub async fn ingest_line(season: Id, board: &Arc<RwLock<Board>>, db: &Db, line: &str, ts: i64) {
     let Some((kind, body, sender, receiver, location)) = classify(line) else {
         return;
     };
@@ -190,7 +191,7 @@ pub async fn ingest_line(season: i64, board: &Arc<RwLock<Board>>, db: &Db, line:
 }
 
 /// Deploy time of the season's seed, as epoch seconds (0 if unknown).
-fn current_zip_mtime(season: i64) -> i64 {
+fn current_zip_mtime(season: Id) -> i64 {
     std::fs::metadata(config::get().season(season).current_zip())
         .and_then(|m| m.modified())
         .ok()

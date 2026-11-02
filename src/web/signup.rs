@@ -79,7 +79,7 @@ pub(crate) async fn signup_game(
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     me: auth::Me,
-    Path(id): Path<i64>,
+    Path(id): Path<Id>,
     Query(q): Query<GameQuery>,
 ) -> Response {
     let Some(sub) = st.db.submission(ctx.id, id).await else {
@@ -136,7 +136,7 @@ pub(crate) async fn signup_game_notes(
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     me: auth::Me,
-    Path(id): Path<i64>,
+    Path(id): Path<Id>,
     Form(f): Form<NotesForm>,
 ) -> Response {
     // Browsers send line breaks as CRLF but count them as one.
@@ -165,7 +165,7 @@ pub(crate) async fn signup_game_yaml(
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     me: auth::Me,
-    Path(id): Path<i64>,
+    Path(id): Path<Id>,
     mut mp: Multipart,
 ) -> Response {
     let closed = "You can't replace this YAML: it isn't yours, or signups are closed.";
@@ -500,7 +500,6 @@ pub(crate) async fn signup_post(
             &slot_name,
             &game,
             is_custom,
-            "",
             &yaml_path,
             (!held_for.is_empty()).then_some(held_for.as_str()),
             ctx.row.max_games,
@@ -529,7 +528,7 @@ pub(crate) async fn signup_post(
 
 #[derive(Deserialize)]
 pub(crate) struct DelForm {
-    pub(crate) id: i64,
+    pub(crate) id: Id,
 }
 
 pub(crate) async fn signup_delete(
@@ -556,7 +555,7 @@ async fn hosted(
     st: &AppState,
     ctx: &scope::SeasonCtx,
     me: &auth::Me,
-    id: i64,
+    id: Id,
 ) -> Option<db::SubmissionRow> {
     st.db
         .submission(ctx.id, id)
@@ -569,7 +568,7 @@ pub(crate) async fn signup_game_invite(
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     me: auth::Me,
-    Path(id): Path<i64>,
+    Path(id): Path<Id>,
 ) -> Redirect {
     if hosted(&st, &ctx, &me, id).await.is_some() {
         let _ = st
@@ -584,7 +583,7 @@ pub(crate) async fn signup_game_revoke(
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     me: auth::Me,
-    Path(id): Path<i64>,
+    Path(id): Path<Id>,
     Form(f): Form<TokenForm>,
 ) -> Redirect {
     if hosted(&st, &ctx, &me, id).await.is_some()
@@ -597,7 +596,7 @@ pub(crate) async fn signup_game_revoke(
 
 #[derive(Deserialize)]
 pub(crate) struct SeatForm {
-    seat: i64,
+    seat: Id,
     #[serde(default)]
     name: String,
 }
@@ -606,7 +605,7 @@ pub(crate) async fn signup_seat_remove(
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     me: auth::Me,
-    Path(id): Path<i64>,
+    Path(id): Path<Id>,
     Form(f): Form<SeatForm>,
 ) -> Redirect {
     let _ = st.db.remove_seat(ctx.id, f.seat, me.id()).await;
@@ -617,7 +616,7 @@ pub(crate) async fn signup_seat_leave(
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     me: auth::Me,
-    Path(id): Path<i64>,
+    Path(id): Path<Id>,
 ) -> Redirect {
     let _ = st.db.leave_seat(ctx.id, id, me.id()).await;
     // Not back to the game: leaving may mean they can't see this season any more.
@@ -628,7 +627,7 @@ pub(crate) async fn signup_seat_rename(
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     me: auth::Me,
-    Path(id): Path<i64>,
+    Path(id): Path<Id>,
     Form(f): Form<SeatForm>,
 ) -> Response {
     let name = f.name.trim();
@@ -659,7 +658,8 @@ struct Invite {
     host: String,
     game: String,
     signup: Option<db::SubmissionRow>,
-    live_slot: Option<i64>,
+    /// On a live season: the AP slot and game a new seat goes on.
+    live: Option<(i64, Id)>,
 }
 
 async fn invite_of(st: &AppState, ctx: &scope::SeasonCtx, link: &db::SeatLink) -> Option<Invite> {
@@ -678,7 +678,7 @@ async fn invite_of(st: &AppState, ctx: &scope::SeasonCtx, link: &db::SeatLink) -
             host: row.claimed_by.clone().unwrap_or(slot_name),
             game: row.game.clone(),
             signup: None,
-            live_slot: Some(row.ap_slot),
+            live: Some((row.ap_slot, row.game_id)),
         });
     }
     if !matches!(ctx.state(), db::State::Draft | db::State::Signup) {
@@ -689,7 +689,7 @@ async fn invite_of(st: &AppState, ctx: &scope::SeasonCtx, link: &db::SeatLink) -
         host: sub.username.clone(),
         game: sub.game.clone(),
         signup: Some(sub),
-        live_slot: None,
+        live: None,
     })
 }
 
@@ -737,11 +737,11 @@ pub(crate) async fn seat_post(
     if st.db.slot_name_taken(ctx.id, name).await {
         return refuse(&name_taken(name));
     }
-    let joined = match (&invite.signup, invite.live_slot) {
+    let joined = match (&invite.signup, invite.live) {
         (Some(sub), _) => st.db.join_signup(ctx.id, &token, sub, me.id(), name).await,
-        (None, Some(ap)) => {
+        (None, Some((ap, game_id))) => {
             st.db
-                .join_live(ctx.id, &token, ap, &invite.game, me.id(), name)
+                .join_live(ctx.id, &token, ap, game_id, &invite.game, me.id(), name)
                 .await
         }
         _ => return refuse(gone),
@@ -749,9 +749,9 @@ pub(crate) async fn seat_post(
     match joined {
         Ok(db::JoinOutcome::Joined) => {
             export_mc_whitelist(&st).await;
-            let to = match (&invite.signup, invite.live_slot) {
+            let to = match (&invite.signup, invite.live) {
                 (Some(sub), _) => format!("/signup/game/{}", sub.id),
-                (_, Some(ap)) => format!("/game/{ap}"),
+                (_, Some((_, game_id))) => format!("/game/{game_id}"),
                 _ => "/signup".to_string(),
             };
             Redirect::to(&ctx.url(&to)).into_response()

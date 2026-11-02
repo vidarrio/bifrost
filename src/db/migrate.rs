@@ -20,63 +20,16 @@ use super::Db;
 /// Steps run with foreign keys off, so rebuilding a table others reference
 /// doesn't cascade into them; the references are checked before the step
 /// commits.
-const STEPS: &[&str] = &[
-    // 2: the cap on bonus hints from seasonal minesweeper (per player, in any
-    // 24 hours; 0 = no cap), and which wins earned one (the cap counts those).
-    "ALTER TABLE season ADD COLUMN mine_daily_hints INTEGER NOT NULL DEFAULT 5;
-     ALTER TABLE mine_result ADD COLUMN earned INTEGER NOT NULL DEFAULT 0",
-    // 3: how many games a player may sign up with in a season (0 = no limit).
-    "ALTER TABLE season ADD COLUMN max_games INTEGER NOT NULL DEFAULT 0",
-    // 4: a game's notes for the season's other players.
-    "ALTER TABLE submission ADD COLUMN notes TEXT NOT NULL DEFAULT ''",
-    // 5: co-op partners join through one-use links from a game's host. A name is
-    // unique across a season's signups and seats.
-    "CREATE TABLE seat (
-         id INTEGER PRIMARY KEY AUTOINCREMENT,
-         season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
-         submission_id INTEGER NOT NULL REFERENCES submission(id) ON DELETE CASCADE,
-         account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-         name TEXT NOT NULL,
-         created_at INTEGER NOT NULL,
-         UNIQUE(season, name),
-         UNIQUE(submission_id, account_id)
-     );
-     CREATE TABLE seat_link (
-         token TEXT PRIMARY KEY,
-         season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
-         submission_id INTEGER REFERENCES submission(id) ON DELETE CASCADE,
-         slot_name TEXT,
-         created_by INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-         created_at INTEGER NOT NULL
-     );
-     CREATE TRIGGER seat_name_insert BEFORE INSERT ON seat
-     WHEN EXISTS (SELECT 1 FROM submission WHERE season = NEW.season AND slot_name = NEW.name)
-     BEGIN SELECT RAISE(ABORT, 'slot name taken'); END;
-     CREATE TRIGGER seat_name_update BEFORE UPDATE OF name ON seat
-     WHEN EXISTS (SELECT 1 FROM submission WHERE season = NEW.season AND slot_name = NEW.name)
-     BEGIN SELECT RAISE(ABORT, 'slot name taken'); END;
-     CREATE TRIGGER submission_name_insert BEFORE INSERT ON submission
-     WHEN EXISTS (SELECT 1 FROM seat WHERE season = NEW.season AND name = NEW.slot_name)
-     BEGIN SELECT RAISE(ABORT, 'slot name taken'); END;
-     CREATE TRIGGER submission_name_update BEFORE UPDATE OF slot_name ON submission
-     WHEN EXISTS (SELECT 1 FROM seat WHERE season = NEW.season AND name = NEW.slot_name)
-     BEGIN SELECT RAISE(ABORT, 'slot name taken'); END",
-    // 6: who can see a season. Existing seasons stay as they were; new ones
-    // start with members-only pages after generation (`create_season`).
-    "ALTER TABLE season ADD COLUMN private_live INTEGER NOT NULL DEFAULT 0;
-     ALTER TABLE season ADD COLUMN private_signup INTEGER NOT NULL DEFAULT 0;
-     ALTER TABLE season ADD COLUMN signup_token TEXT;
-     CREATE TABLE season_invited (
-         season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
-         account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-         PRIMARY KEY (season, account_id)
-     )",
-];
+const STEPS: &[&str] = &[];
 
 /// The schema version this build writes.
 pub const SCHEMA_VERSION: i64 = 1 + STEPS.len() as i64;
 
 const VERSION_KEY: &str = "bifrost_version";
+
+/// What a database from before 0.3.0 gets told.
+pub const PRE_0_3: &str = "this database is from a Bifrost before 0.3.0, which can't be \
+                           upgraded: start with an empty data directory";
 
 /// Who last used a database: its schema version, and the Bifrost version
 /// that last opened it (`None` for a fresh file).
@@ -103,6 +56,11 @@ impl Stamp {
 }
 
 impl Db {
+    /// Whether this database is from before 0.3.0, which can't be upgraded.
+    pub async fn is_pre_0_3(&self) -> Result<bool, sqlx::Error> {
+        is_pre_0_3(&self.pool).await
+    }
+
     /// Read the database's [`Stamp`] without changing anything.
     pub async fn stamp(&self) -> Result<Stamp, sqlx::Error> {
         let schema = user_version(&self.pool).await?;
@@ -135,7 +93,20 @@ async fn user_version(pool: &SqlitePool) -> Result<i64, sqlx::Error> {
         .await
 }
 
+/// Whether this database is from before 0.3.0, when seasons had numeric ids.
+/// There's no upgrade from those.
+async fn is_pre_0_3(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
+    let season_id: Option<String> =
+        sqlx::query_scalar("SELECT type FROM pragma_table_info('season') WHERE name = 'id'")
+            .fetch_optional(pool)
+            .await?;
+    Ok(season_id.as_deref() == Some("INTEGER"))
+}
+
 async fn apply(pool: &SqlitePool, steps: &[&str]) -> Result<(), sqlx::Error> {
+    if is_pre_0_3(pool).await? {
+        return Err(sqlx::Error::Protocol(PRE_0_3.into()));
+    }
     let latest = 1 + steps.len() as i64;
     let mut at = user_version(pool).await?;
     if at > latest {
@@ -230,10 +201,12 @@ mod tests {
     async fn seasons_from_the_baseline_get_the_default_bonus_hint_cap() {
         let (dir, db) = fresh("cap").await;
         apply(&db.pool, &[]).await.unwrap();
-        sqlx::query("INSERT INTO season (name, created_at) VALUES ('Old', 0)")
-            .execute(&db.pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO season (id, name, created_at) VALUES ('abcdefghjkmnpqrs', 'Old', 0)",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
         db.migrate().await.unwrap();
         let caps: Vec<i64> = sqlx::query_scalar("SELECT mine_daily_hints FROM season")
             .fetch_all(&db.pool)
@@ -241,6 +214,24 @@ mod tests {
             .unwrap();
         assert_eq!(caps, vec![5]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_database_with_numeric_season_ids_is_refused_whatever_its_version() {
+        for version in [0, 2, 6] {
+            let (dir, db) = fresh(&format!("old{version}")).await;
+            sqlx::raw_sql(&format!(
+                "CREATE TABLE season (id INTEGER PRIMARY KEY, name TEXT);
+                 PRAGMA user_version = {version}"
+            ))
+            .execute(&db.pool)
+            .await
+            .unwrap();
+            assert!(db.is_pre_0_3().await.unwrap());
+            let err = db.migrate().await.unwrap_err().to_string();
+            assert!(err.contains("before 0.3.0"), "{err}");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     #[tokio::test]

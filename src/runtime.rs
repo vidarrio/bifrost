@@ -7,6 +7,7 @@
 //! Managed servers each get the port their season holds; with an
 //! external server only one season can be live.
 
+use crate::id::Id;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
@@ -52,7 +53,7 @@ pub struct Runtimes {
     /// The external AP server's connection (`BIFROST_AP_MODE=external`).
     external: Option<ApConfig>,
     coop: Vec<(String, String)>,
-    map: Mutex<HashMap<i64, Arc<SeasonRt>>>,
+    map: Mutex<HashMap<Id, Arc<SeasonRt>>>,
 }
 
 impl Runtimes {
@@ -66,7 +67,7 @@ impl Runtimes {
     }
 
     /// The season's runtime (created on first use).
-    pub fn get(&self, id: i64) -> Arc<SeasonRt> {
+    pub fn get(&self, id: Id) -> Arc<SeasonRt> {
         self.map
             .lock()
             .unwrap()
@@ -85,7 +86,7 @@ impl Runtimes {
 
     /// Bring a live season up: its AP server (managed mode) and workers.
     /// Idempotent.
-    pub async fn start_live(&self, id: i64) {
+    pub async fn start_live(&self, id: Id) {
         let rt = self.get(id);
         if !rt.workers.lock().unwrap().is_empty() || rt.server().is_some() {
             return;
@@ -120,14 +121,13 @@ impl Runtimes {
             };
             // Bifrost's own connections (tracker, admin console) join the
             // room as one of its slots: the configured one when this season
-            // has it (BIFROST_SLOT is instance-wide), else the first.
+            // has it (BIFROST_SLOT is instance-wide), else the lowest (`connect_slot`).
             let slots = self.db.slots(id).await.unwrap_or_default();
-            let configured =
-                config::var("BIFROST_SLOT").filter(|n| slots.iter().any(|r| &r.name == n));
-            let first_slot = slots.into_iter().min_by_key(|r| r.ap_slot).map(|r| r.name);
+            let configured = config::var("BIFROST_SLOT");
+            let slot = crate::db::connect_slot(&slots, configured.as_deref());
             Some(ApConfig {
                 url: format!("ws://{host}:{port}"),
-                slot: configured.or(first_slot).unwrap_or_default(),
+                slot: slot.unwrap_or_default(),
                 password,
                 admin_password,
             })
@@ -140,7 +140,7 @@ impl Runtimes {
 
     /// The season's tracker, in-logic recomputer and (external mode) activity
     /// ingester, connecting with `ap`.
-    fn spawn_workers(&self, id: i64, rt: &SeasonRt, ap: Option<ApConfig>) {
+    fn spawn_workers(&self, id: Id, rt: &SeasonRt, ap: Option<ApConfig>) {
         let cfg = config::get();
         let mut workers = rt.workers.lock().unwrap();
         if let Some(ap) = ap {
@@ -196,7 +196,7 @@ impl Runtimes {
     /// stops the server, swaps the seed in with a fresh save, and restarts it.
     /// External: copy it in as `current.zip`; the host's watcher restarts the
     /// server (and must wipe the save after stopping it).
-    pub async fn redeploy(&self, id: i64, seed_zip: &Path) -> Result<(), String> {
+    pub async fn redeploy(&self, id: Id, seed_zip: &Path) -> Result<(), String> {
         if let Some(server) = self.get(id).server() {
             return server.redeploy(seed_zip.to_path_buf()).await;
         }
@@ -212,7 +212,7 @@ impl Runtimes {
 
     /// Send a server console command (managed mode); false if there's no
     /// managed server for the season.
-    pub async fn console(&self, id: i64, cmd: &str) -> bool {
+    pub async fn console(&self, id: Id, cmd: &str) -> bool {
         match self.get(id).server() {
             Some(server) => {
                 server.console(cmd).await;
@@ -225,7 +225,7 @@ impl Runtimes {
     /// Update the live season's connect password everywhere Bifrost uses it:
     /// the shared config, and the workers (restarted, as they hold their own
     /// copy). The AP server supervisor reads it from the database on each start.
-    pub fn set_connect_password(&self, id: i64, password: &str) {
+    pub fn set_connect_password(&self, id: Id, password: &str) {
         let rt = self.get(id);
         let ap = {
             let mut ap = rt.ap.write().unwrap();
@@ -241,7 +241,7 @@ impl Runtimes {
 
     /// Stop a season's AP server (saving) and workers, and clear its board
     /// (on archive).
-    pub async fn stop(&self, id: i64) {
+    pub async fn stop(&self, id: Id) {
         let rt = self.get(id);
         let server = rt.server.lock().unwrap().take();
         if let Some(server) = server {

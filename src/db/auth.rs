@@ -594,6 +594,7 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::id::Id;
 
     /// A fresh database file per test (not `:memory:` — each pooled
     /// connection would get its own empty in-memory database).
@@ -612,7 +613,7 @@ mod tests {
         let season = db.create_season("S", None, 0).await.unwrap();
         let other = db.create_season("T", None, 0).await.unwrap();
         let id = db.create_account("Ann", "h", Role::User, 0).await.unwrap();
-        let win = |s: Option<i64>, won: bool| {
+        let win = |s: Option<Id>, won: bool| {
             let db = db.clone();
             async move {
                 db.record_mine_result(s, id, "standard", won, 1000)
@@ -620,7 +621,7 @@ mod tests {
                     .unwrap()
             }
         };
-        let award = |r: i64, s: i64, cap: i64| {
+        let award = |r: i64, s: Id, cap: i64| {
             let db = db.clone();
             async move { db.award_mine_hint(r, s, id, cap, 3600).await.unwrap() }
         };
@@ -855,9 +856,11 @@ mod tests {
             .unwrap();
         let s = db.create_season("S", None, 0).await.unwrap();
         sqlx::query(
-            "INSERT INTO bifrost_slot (season, name, ap_slot, game) VALUES (?, 'Slot', 1, 'G')",
+            "INSERT INTO bifrost_slot (id, season, game_id, name, ap_slot, game) VALUES (?, ?, ?, 'Slot', 1, 'G')",
         )
+        .bind(Id::new())
         .bind(s)
+        .bind(Id::new())
         .execute(&db.pool)
         .await
         .unwrap();

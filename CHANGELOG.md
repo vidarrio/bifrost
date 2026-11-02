@@ -95,6 +95,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signups. A signup can't be removed once its season is generated, and nobody is removed
   from a seat after that.
 
+### Removed
+
+- Upgrading from 0.2 or earlier. Seasons, games, slots and seats now have generated ids,
+  in URLs and in the database and data directory, so old URLs stop working and older data
+  can't be carried over: start with an empty data directory. This is a one-time break;
+  from 0.3.0 upgrades keep working.
+
 ## [0.2.0] - 2026-10-29
 
 Upgrading from 0.1.x:

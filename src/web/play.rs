@@ -56,7 +56,7 @@ pub(crate) async fn claim_get(
 
 #[derive(Deserialize)]
 pub(crate) struct ClaimForm {
-    pub(crate) slot_id: i64,
+    pub(crate) slot_id: Id,
     pub(crate) op: String,
     #[serde(default)]
     pub(crate) account: String,
@@ -103,7 +103,7 @@ pub(crate) async fn claim_post(
 
 #[derive(Deserialize)]
 pub(crate) struct HintForm {
-    pub(crate) slot_id: i64,
+    pub(crate) slot_id: Id,
     pub(crate) item: String,
 }
 

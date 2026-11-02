@@ -13,6 +13,7 @@
 //! `summary.json` (the Past Seasons summary), and [`import`] turns one into an
 //! archived season here (`bifrost season import`, or the Seasons console).
 
+use crate::id::Id;
 use std::path::Path;
 use std::process::Stdio;
 use tokio::process::Command;
@@ -81,7 +82,7 @@ async fn copy_ext(src: &Path, dst: &Path, ext: &str) -> std::io::Result<()> {
 /// `<data>/archives/<seed>.tar.gz`. `season_txt` is the human-readable
 /// roster/metadata the caller composed. Returns the bundle path on success.
 pub async fn bundle_season(
-    season_id: i64,
+    season_id: Id,
     seed: &str,
     season_txt: &str,
     manifest: &Manifest,
@@ -242,7 +243,7 @@ fn valid_seed(seed: &str) -> bool {
 /// it, so concurrent imports can't both win). `movable`: the caller's file may
 /// be moved into place rather than copied (an upload's temp file). Returns
 /// the new season's id.
-pub async fn import(db: &Db, path: &Path, by: Option<i64>, movable: bool) -> Result<i64, String> {
+pub async fn import(db: &Db, path: &Path, by: Option<i64>, movable: bool) -> Result<Id, String> {
     let (m, mut summary) = read_bundle(path).await?;
     if let Some(id) = db.season_by_seed(&m.seed).await {
         return Err(already(id, &m.seed));
@@ -296,7 +297,7 @@ pub async fn import(db: &Db, path: &Path, by: Option<i64>, movable: bool) -> Res
     Ok(id)
 }
 
-fn already(id: i64, seed: &str) -> String {
+fn already(id: Id, seed: &str) -> String {
     format!("season {id} here already has seed {seed} — it's imported already")
 }
 

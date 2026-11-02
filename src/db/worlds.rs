@@ -3,6 +3,7 @@
 //! The files themselves live on disk (`catalog/<sha256>.apworld`,
 //! `seasons/<id>/pending/`); these tables hold what they are and who sent them.
 
+use crate::id::Id;
 use sqlx::{FromRow, SqlitePool};
 
 use super::Db;
@@ -24,7 +25,7 @@ pub(super) async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .await?;
     sqlx::query(
         r#"CREATE TABLE IF NOT EXISTS world_request (
-             season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
+             season TEXT NOT NULL REFERENCES season(id) ON DELETE CASCADE,
              file TEXT NOT NULL,
              sha256 TEXT NOT NULL,
              game TEXT NOT NULL DEFAULT '',
@@ -111,7 +112,7 @@ impl Db {
         Ok(r.rows_affected() > 0)
     }
 
-    pub async fn world_requests(&self, season: i64) -> Vec<WorldRequest> {
+    pub async fn world_requests(&self, season: Id) -> Vec<WorldRequest> {
         sqlx::query_as::<_, WorldRequest>(
             "SELECT file, sha256, game, uploaded_by, uploaded_at
              FROM world_request WHERE season = ? ORDER BY uploaded_at",
@@ -122,7 +123,7 @@ impl Db {
         .unwrap_or_default()
     }
 
-    pub async fn world_request(&self, season: i64, file: &str) -> Option<WorldRequest> {
+    pub async fn world_request(&self, season: Id, file: &str) -> Option<WorldRequest> {
         sqlx::query_as::<_, WorldRequest>(
             "SELECT file, sha256, game, uploaded_by, uploaded_at
              FROM world_request WHERE season = ? AND file = ?",
@@ -135,11 +136,7 @@ impl Db {
         .flatten()
     }
 
-    pub async fn add_world_request(
-        &self,
-        season: i64,
-        r: &WorldRequest,
-    ) -> Result<(), sqlx::Error> {
+    pub async fn add_world_request(&self, season: Id, r: &WorldRequest) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT INTO world_request (season, file, sha256, game, uploaded_by, uploaded_at)
              VALUES (?, ?, ?, ?, ?, ?)",
@@ -156,7 +153,7 @@ impl Db {
     }
 
     /// Remove a request (approved or rejected), returning it.
-    pub async fn take_world_request(&self, season: i64, file: &str) -> Option<WorldRequest> {
+    pub async fn take_world_request(&self, season: Id, file: &str) -> Option<WorldRequest> {
         let r = self.world_request(season, file).await?;
         sqlx::query("DELETE FROM world_request WHERE season = ? AND file = ?")
             .bind(season)
@@ -167,7 +164,7 @@ impl Db {
         Some(r)
     }
 
-    pub async fn clear_world_requests(&self, season: i64) -> Result<(), sqlx::Error> {
+    pub async fn clear_world_requests(&self, season: Id) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM world_request WHERE season = ?")
             .bind(season)
             .execute(&self.pool)
@@ -176,8 +173,8 @@ impl Db {
     }
 
     /// Submissions held for `file`: (id, YAML path).
-    pub async fn held_submissions(&self, season: i64, file: &str) -> Vec<(i64, String)> {
-        sqlx::query_as::<_, (i64, String)>(
+    pub async fn held_submissions(&self, season: Id, file: &str) -> Vec<(Id, String)> {
+        sqlx::query_as::<_, (Id, String)>(
             "SELECT id, yaml_file FROM submission WHERE season = ? AND held_for = ?",
         )
         .bind(season)
@@ -190,7 +187,7 @@ impl Db {
     /// Worlds signups are still held for although nothing waits for approval
     /// under that name, and that no verdict was reached on (never checked, or
     /// the check couldn't run): a re-check was cut short.
-    pub async fn stale_holds(&self, season: i64) -> Vec<String> {
+    pub async fn stale_holds(&self, season: Id) -> Vec<String> {
         sqlx::query_scalar(
             "SELECT DISTINCT held_for FROM submission s
              WHERE season = ? AND held_for IS NOT NULL
@@ -208,7 +205,7 @@ impl Db {
     /// signup no longer held (its host replaced the YAML meanwhile) stays as it is.
     pub async fn release_submission(
         &self,
-        id: i64,
+        id: Id,
         slot_name: &str,
         game: &str,
     ) -> Result<(), sqlx::Error> {
@@ -224,7 +221,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn set_held_err(&self, id: i64, err: &str) -> Result<(), sqlx::Error> {
+    pub async fn set_held_err(&self, id: Id, err: &str) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE submission SET held_err = ? WHERE id = ? AND held_for IS NOT NULL")
             .bind(err)
             .bind(id)
@@ -293,7 +290,6 @@ mod tests {
                 "Alice",
                 "Foo",
                 true,
-                "",
                 "/x.yaml",
                 Some("foo.apworld"),
                 0,
@@ -336,7 +332,6 @@ mod tests {
                 "Old",
                 "Foo",
                 true,
-                "",
                 "/old.yaml",
                 Some("foo.apworld"),
                 0,
@@ -356,7 +351,7 @@ mod tests {
                 .unwrap()
         );
         assert!(
-            !db.set_submission_notes(season + 1, id, host, false, "x")
+            !db.set_submission_notes(Id::new(), id, host, false, "x")
                 .await
                 .unwrap()
         );
@@ -455,7 +450,7 @@ mod tests {
         let add = |season, account, name: &'static str, limit| {
             let db = &db;
             async move {
-                db.add_submission(season, account, name, "G", false, "", "/y", None, limit)
+                db.add_submission(season, account, name, "G", false, "/y", None, limit)
                     .await
                     .unwrap()
                     .is_some()
@@ -477,7 +472,7 @@ mod tests {
             .into_iter()
             .map(|s| s.slot_name)
             .collect();
-        assert_eq!(names, ["A1", "A2", "A5", "B1"]);
+        assert_eq!(names, ["A1", "A2", "B1", "A5"]);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

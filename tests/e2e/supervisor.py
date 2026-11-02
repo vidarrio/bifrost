@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 
-from lib import Server, ap_servers, check, get, post, summary, wait_for
+from lib import Server, ap_servers, check, first_game, get, new_season, post, summary, wait_for
 
 YAML = b"name: Ann\ngame: ChecksFinder\nChecksFinder: {}\n"
 
@@ -26,8 +26,7 @@ try:
     iso = re.search(r"isolation: (.*)", srv.logtext())
     check("jobs run under the syscall filter", iso and "syscall filter" in iso.group(1) and "no syscall filter" not in iso.group(1),
           iso and iso.group(1))
-    post(root, "/admin/seasons", data=dict(name="Super"))
-    sid = int(re.search(r"/s/(\d+)/admin", get(root, "/admin/seasons").text).group(1))
+    sid = new_season(root, "Super")
     post(root, f"/s/{sid}/admin/signups", data=dict(open="1"))
     post(root, f"/s/{sid}/signup", files={"yaml": ("y.yaml", YAML)})
     # Signup files are per signup: a refused duplicate name, or a name that
@@ -54,7 +53,7 @@ try:
     # The seasons open for signup, and a game's own page.
     page = get(bob, "/signups").text
     check("the list shows the season", f'href="/s/{sid}/signup"' in page and "Super" in page, page[-300:])
-    game = re.search(r'href="signup/game/(\d+)">Bo b<', get(bob, f"/s/{sid}/signup").text).group(1)
+    game = re.search(r'href="signup/game/([0-9a-z]+)">Bo b<', get(bob, f"/s/{sid}/signup").text).group(1)
     url = f"/s/{sid}/signup/game/{game}"
     post(bob, f"{url}/notes", data=dict(notes="No <b>double</b> jump"))
     check("the host's notes show on the card, escaped", "No &lt;b&gt;double&lt;/b&gt; jump" in root.get(root.base + f"/s/{sid}/signup").text)  # not lib.get, which decodes
@@ -79,8 +78,7 @@ try:
     post(bob, f"{url}/yaml", files={"yaml": ("y.yaml", b"name: Bo c\ngame: ChecksFinder\nChecksFinder: {}\n")})
     check("…and keeping its notes", "double" in get(bob, url).text and "Bo c" in get(bob, url).text)
     check("the game page escapes them too", "<b>double" not in bob.get(bob.base + url).text)
-    post(root, "/admin/seasons", data=dict(name="Elsewhere"))
-    other = max(int(n) for n in re.findall(r"/s/(\d+)/admin", get(root, "/admin/seasons").text))
+    other = new_season(root, "Elsewhere")
     check("a game isn't found through another season", "double" not in get(bob, f"/s/{other}/signup/game/{game}").text)
     post(bob, f"/s/{other}/signup/game/{game}/notes", data=dict(notes="elsewhere"))
     check("…nor changed", "elsewhere" not in get(bob, url).text)
@@ -112,7 +110,7 @@ try:
     post(cat, f"{url}/notes", data=dict(notes="Shared notes"))
     check("a partner edits the same notes", "Shared notes" in get(bob, url).text)
     check("…but can't replace the YAML", "Replace the YAML" not in get(cat, url).text and "Create an invite link" not in get(cat, url).text)
-    seat = re.search(r'name="seat" value="(\d+)"', get(cat, url).text).group(1)
+    seat = re.search(r'name="seat" value="([0-9a-z]+)"', get(cat, url).text).group(1)
     post(cat, f"{url}/seat/rename", data=dict(seat=seat, name="Kitty"))
     check("a partner renames their seat", "Kitty" in get(bob, url).text)
     r = post(cat, f"{url}/seat/rename", data=dict(seat=seat, name="Ann"))
@@ -121,7 +119,7 @@ try:
     check("a signup can't take a seat's name", "already taken" in r.text, r.text[-300:])
     link = f"/s/{sid}/seat/" + new_link()
     post(dee, link, data=dict(name="Dee"))
-    dseat = [s for s in re.findall(r'name="seat" value="(\d+)"', get(bob, url).text) if s != seat][0]
+    dseat = [s for s in re.findall(r'name="seat" value="([0-9a-z]+)"', get(bob, url).text) if s != seat][0]
     post(cat, f"{url}/seat/remove", data=dict(seat=dseat))
     check("a partner can't remove anyone", "Dee" in get(bob, url).text)
     post(bob, f"{url}/seat/remove", data=dict(seat=dseat))
@@ -136,15 +134,17 @@ try:
     check("the host revokes an unused link", "used or revoked" in get(dee, f"/s/{sid}/seat/{token}").text)
     r = post(dee, f"/s/{sid}/signup", files={"yaml": ("y.yaml", b"name: DeeCo\ngame: ChecksFinder\nChecksFinder: {}\n")})
     check("signing up leads to your game's page", "Signed up: DeeCo" in r.text and "Create an invite link" in r.text and "/signup/game/" in r.url, r.url)
-    deeg = re.search(r'href="signup/game/(\d+)">DeeCo<', get(dee, f"/s/{sid}/signup").text).group(1)
+    deeg = re.search(r'href="signup/game/([0-9a-z]+)">DeeCo<', get(dee, f"/s/{sid}/signup").text).group(1)
     post(dee, f"/s/{sid}/signup/game/{deeg}/invite")
     post(cat, f"/s/{sid}/seat/" + re.search(r"/seat/([0-9a-f]+)", get(dee, f"/s/{sid}/signup/game/{deeg}").text).group(1), data=dict(name="<b>x"))
     check("a seat's name is escaped", "&lt;b&gt;x" in cat.get(cat.base + f"/s/{sid}/signup").text and "<b>x" not in cat.get(cat.base + f"/s/{sid}/signup/game/{deeg}").text)
+    check("a numeric season URL doesn't exist", get(root, "/s/1/signup").status_code == 404 and get(root, "/s/1/board").status_code == 404)
+    check("nor a numeric game", get(root, f"/s/{sid}/signup/game/1").status_code in (400, 404))
     # Who can see a season: signups are open, pages after generation aren't.
     stranger = srv.invite_user(root, "stranger")
     check("a stranger sees open signups", "Bo c" in get(stranger, f"/s/{sid}/signup").text)
     check("…but an anonymous visitor doesn't, even on the board", "Bo c" not in get(srv.session(), f"/s/{sid}/board").text and "Bo c" not in get(srv.session(), "/").text)
-    priv = max(int(n) for n in re.findall(r"/s/(\d+)/admin", get(root, "/admin/seasons").text))
+    priv = other
     post(root, f"/s/{priv}/admin/signups", data=dict(open="1"))
     post(root, f"/s/{priv}/admin/privacy", data=dict(what="signup", private="1"))
     post(stranger, f"/s/{priv}/admin/privacy", data=dict(what="signup", private="0"))
@@ -195,7 +195,7 @@ try:
     anon = srv.session()
     check("anonymous gets the sign-in", get(anon, f"/s/{sid}/board", allow_redirects=False).status_code in (302, 303))
     check("a stranger's told there's no such season", get(stranger, f"/s/{sid}/board").status_code == 404)
-    pages = ("log", "log/fragment", "board/fragment", "game/1", "game/1/hints", "game/1/items", "game/1/output", "game/1/poptracker/state", "game/1/poptracker/asset?path=x", "game/1/log/fragment", "signup", "claim", "minesweeper", "minesweeper/leaderboard", "season", "check")
+    pages = ("log", "log/fragment", "board/fragment", f"game/{game}", f"game/{game}/hints", f"game/{game}/items", f"game/{game}/output", f"game/{game}/poptracker/state", f"game/{game}/poptracker/asset?path=x", f"game/{game}/log/fragment", "signup", "claim", "minesweeper", "minesweeper/leaderboard", "season", "check")
     check("…on every page", all(get(stranger, f"/s/{sid}/{p}").status_code == 404 for p in pages), [p for p in pages if get(stranger, f"/s/{sid}/{p}").status_code != 404])
     check("a bare season URL goes to the board", get(anon, f"/s/{sid}", allow_redirects=False).headers.get("location") == f"/s/{sid}/board")
     r = post(anon, "/check", data=dict(yaml="name: A\ngame: ChecksFinder\nChecksFinder: {}\n"))
@@ -207,8 +207,7 @@ try:
     r = get(other_mod, "/admin/seasons")
     check("a moderator who isn't in it doesn't see it listed", r.status_code == 200 and "Super" not in r.text, r.status_code)
     check("a signed-in player who can't see any season gets no board card", 'Live board' not in get(stranger, "/").text)
-    post(root, "/admin/seasons", data=dict(name="Visible"))
-    vis = max(int(n) for n in re.findall(r"/s/(\d+)/admin", get(root, "/admin/seasons").text))
+    vis = new_season(root, "Visible")
     check("the home page falls back to a season the viewer can see", f"/s/{vis}/board" in get(stranger, "/").text)
     check("a visitor who can't see any isn't sent to a season", f"/s/{sid}/board" not in get(anon, "/").text)
     check("…and can't hint", post(stranger, f"/s/{sid}/hint", data=dict(slot_id=1, item="x")).status_code == 404)
@@ -238,13 +237,14 @@ try:
     r = post(root, f"/s/{sid}/admin/clear", data=dict(what="signups"))
     page = get(root, f"/s/{sid}/signup").text
     check("a game can't be retracted once generated, by anyone", "Bo c" in page and "signups stay" in r.text and ">Remove<" not in page, page[-300:])
-    sid_slot = re.search(r'name="slot_id" value="(\d+)"', get(bob, f"/s/{sid}/claim").text)
+    sid_slot = re.search(r'name="slot_id" value="([0-9a-z]+)"', get(bob, f"/s/{sid}/claim").text)
     for op in ("claim", "unclaim", "assign"):
         post(bob, f"/s/{sid}/claim", data=dict(slot_id=sid_slot.group(1) if sid_slot else 1, op=op, account="bob"))
     check("players can't claim, unclaim or assign", get(root, f"/s/{sid}/claim").text == slots, slots[-300:])
     r = post(root, f"/s/{sid}/claim", data=dict(slot_id=sid_slot.group(1) if sid_slot else 1, op="assign", account="dee"))
     check("a moderator can't reassign a slot with a player", "already has a player" in r.text, r.text[-300:])
-    ap = wait_for(lambda: next((n for n in range(1, 8) if "Create an invite link" in get(bob, f"/s/{sid}/game/{n}").text), None), 60, 2)
+    ap = game  # A signup's game keeps its id once live.
+    check("the host has an invite box on the live game", wait_for(lambda: "Create an invite link" in get(bob, f"/s/{sid}/game/{ap}").text, 60, 2))
     check("a partner has no invite box on the live game", "Create an invite link" not in get(cat, f"/s/{sid}/game/{ap}").text)
     post(cat, f"/s/{sid}/game/{ap}/invite")
     post(bob, f"/s/{sid}/game/{ap}/invite")
@@ -274,7 +274,8 @@ try:
     post(root, f"/s/{sid}/admin/privacy", data=dict(what="live", private="1"))
     # A slot with no player: a moderator assigns it.
     with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
-        free = db.execute("INSERT INTO bifrost_slot (season, name, ap_slot, game) VALUES (?, 'Free', ?, 'ChecksFinder')", (sid, ap)).lastrowid
+        free = "abcdefghjkmnpqrs"
+        db.execute("INSERT INTO bifrost_slot (id, season, game_id, name, ap_slot, game) SELECT ?, season, game_id, 'Free', ap_slot, game FROM bifrost_slot WHERE game_id = ? LIMIT 1", (free, ap))
     post(bob, f"/s/{sid}/claim", data=dict(slot_id=free, op="assign", account="bob"))
     check("a player can't assign an empty slot", "unclaimed" in get(root, f"/s/{sid}/claim").text)
     r = post(root, f"/s/{sid}/claim", data=dict(slot_id=free, op="assign", account="nobody"))

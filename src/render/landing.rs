@@ -66,7 +66,7 @@ pub fn landing_roster(
 
 /// The home page's "Join" block: where each live season's connection details
 /// are (its own address and password, on its board).
-pub fn landing_connect(live: &[(i64, String)]) -> String {
+pub fn landing_connect(live: &[(Id, String)]) -> String {
     let mut out = String::from(r#"<div class="lbl">Connect to</div>"#);
     if live.is_empty() {
         out.push_str(r#"<div class="cs">no season is live</div>"#);
@@ -142,9 +142,8 @@ pub fn landing_signups(subs: &[SubmissionRow]) -> String {
             // Primary player first, then any co-op seats, matching the live roster.
             let mut names = vec![s.slot_name.clone()];
             names.extend(
-                [s.coop_names.as_str(), s.seat_names.as_str()]
-                    .into_iter()
-                    .flat_map(|n| n.split(','))
+                s.seat_names
+                    .split(',')
                     .map(str::trim)
                     .filter(|n| !n.is_empty())
                     .map(str::to_string),
@@ -171,7 +170,7 @@ pub fn landing_signups(subs: &[SubmissionRow]) -> String {
 
 /// The frontpage "Past seasons" block — a card per archived season linking to
 /// its detail page. Empty string when there are none (so the section hides).
-pub fn past_seasons_section(seasons: &[(i64, String, i64)]) -> String {
+pub fn past_seasons_section(seasons: &[(Id, String, i64)]) -> String {
     if seasons.is_empty() {
         return String::new();
     }
