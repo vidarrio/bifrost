@@ -151,11 +151,11 @@ pub fn signup_page(
   </section>
   <section class="wstep" data-step="2" hidden>
     <h2>Options YAML</h2>
-    <p class="hint" id="yamlhint">Upload your options file. It's rolled against the installed worlds — it has to pass before you continue.</p>
+    <p class="hint" id="yamlhint">Upload your options file. It's rolled against the installed worlds — it has to pass before you can sign up.</p>
     <input type="file" name="yaml" id="yamlfile" accept=".yaml,.yml" required>
     <button type="button" id="checkbtn" class="back">Check it</button>
     <div id="checkmsg" class="inlinemsg"></div>
-    <div class="nav"><button type="button" class="back" data-goto="1">← Back</button><button type="submit" id="tostep3" disabled><!--SUBMIT--></button></div>
+    <div class="nav"><button type="button" class="back" data-goto="1">← Back</button><button type="submit" id="wizsubmit" disabled><!--SUBMIT--></button></div>
     <input type="hidden" name="is_custom" id="iscustom" value="">
     <input type="hidden" name="pending_world" id="pendingworld" value="">
   </section>
@@ -169,7 +169,7 @@ pub fn signup_page(
  }
  form.querySelectorAll('[data-goto]').forEach(function(btn){btn.addEventListener('click',function(){if(!btn.disabled)show(Number(btn.dataset.goto))})});
  var ready={core:true,catalog:false,custom:false},pending='',next1=document.getElementById('tostep2');
- var chkbtn=document.getElementById('checkbtn'),chkmsg=document.getElementById('checkmsg'),next2=document.getElementById('tostep3'),yamlfile=document.getElementById('yamlfile');
+ var chkbtn=document.getElementById('checkbtn'),chkmsg=document.getElementById('checkmsg'),next2=document.getElementById('wizsubmit'),yamlfile=document.getElementById('yamlfile');
  function gtype(){var r=form.querySelector('input[name=gtype]:checked');return r?r.value:'core';}
  function refresh1(){
    var t=gtype();
@@ -278,7 +278,7 @@ pub struct SignupGame<'a> {
     pub pre_gen: bool,
     pub edit_notes: bool,
     pub replace: bool,
-    /// Shown once, just after signing up.
+    /// Shown just after signing up.
     pub welcome: Option<String>,
     /// The invite box, for the host.
     pub invite: String,
@@ -377,6 +377,8 @@ pub fn signup_game_page(g: &SignupGame) -> Html<String> {
     }
     b.push_str(&g.invite);
     match (&s.held_for, &s.held_err) {
+        // Just signed up: the welcome has said this already.
+        (Some(_), None) if g.welcome.is_some() => {}
         (Some(_), Some(e)) => b.push_str(&format!(
             r#"<div class="banner bad">Held: {}</div>"#,
             esc(e)

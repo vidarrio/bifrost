@@ -219,6 +219,10 @@ try:
     post(root, f"/s/{sid}/admin/privacy", data=dict(what="live", private="0"))
     check("a moderator opens it", get(stranger, f"/s/{sid}/board").status_code == 200 and get(anon, f"/s/{sid}/board").status_code == 200)
     post(root, f"/s/{sid}/admin/privacy", data=dict(what="live", private="1"))
+    post(other_mod, f"{url}/notes", data=dict(notes="other mod"))
+    check("a moderator of other seasons can't edit a game's notes", "other mod" not in get(bob, url).text)
+    post(root, f"{url}/notes", data=dict(notes="Live edit"))
+    check("the season's moderators can, once live", "Live edit" in get(bob, url).text)
     # Once live: partners seated, nobody removed, and links still work.
     slots = get(root, f"/s/{sid}/claim").text
     check("a partner's seat is theirs after generation", re.search(r"Kitty</span><span><span class=\"by\">cat", slots), slots[-800:])
