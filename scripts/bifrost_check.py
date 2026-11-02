@@ -3,7 +3,10 @@
 the installed worlds, using AP's own roll_settings (the same logic the WebHost
 /check page uses). Reads a YAML file path as argv[1], prints a JSON result:
 
-  {"ok": bool, "players": [{"name","game","ok","error"?}], "errors": [str]}
+  {"ok": bool, "players": [{"name","plain_name","game","ok","error"?}], "errors": [str]}
+
+`plain_name` says the YAML's name is one piece of text, rather than missing, a number,
+a choice of several, or something its triggers can change.
 
 Runs under the AP venv; imports only Generate + Utils (no Flask/WebHost).
 Validates against the season's custom worlds (see bifrost_ap)."""
@@ -11,7 +14,7 @@ import sys
 import json
 
 try:
-    import bifrost_ap  # noqa: F401  (pins AP paths; must precede AP imports)
+    from bifrost_ap import name_can_change  # pins AP paths; must precede AP imports
     from Generate import roll_settings, PlandoOptions
     from Utils import parse_yamls
 except Exception as e:  # pragma: no cover
@@ -39,15 +42,16 @@ def main() -> None:
         if doc is None:
             continue
         name = str(doc.get("name", "?"))
+        plain_name = isinstance(doc.get("name"), str) and not name_can_change(doc)
         game = str(doc.get("game", "?"))
         try:
             settings = roll_settings(doc, plando_options=PLANDO)
             game = getattr(settings, "game", None) or game
-            out["players"].append({"name": name, "game": str(game), "ok": True})
+            out["players"].append({"name": name, "plain_name": plain_name, "game": str(game), "ok": True})
         except Exception as e:
             cause = " - %s" % e.__cause__ if getattr(e, "__cause__", None) else ""
             msg = "%s%s" % (e, cause)
-            out["players"].append({"name": name, "game": game, "ok": False, "error": msg})
+            out["players"].append({"name": name, "plain_name": plain_name, "game": game, "ok": False, "error": msg})
             out["errors"].append("%s: %s" % (name, msg))
             out["ok"] = False
 

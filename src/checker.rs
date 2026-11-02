@@ -46,6 +46,9 @@ pub struct CheckResult {
 #[derive(Debug, Deserialize)]
 pub struct PlayerResult {
     pub name: String,
+    /// The YAML's name is one piece of text, rather than missing, a number or a choice.
+    #[serde(default)]
+    pub plain_name: bool,
     #[serde(default)]
     pub game: Option<String>,
     pub ok: bool,

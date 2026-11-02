@@ -5,6 +5,8 @@
 -- role (`created_by`). Seasons, games, slots and seats have generated ids (src/id.rs);
 -- accounts have integer ones, as they never reach a URL. Times are epoch seconds, in
 -- `<event>_at`, or `ts` for when a logged event happened. Booleans are 0 or 1.
+-- An account with history can't be deleted: what it played stays. Only what's its own
+-- alone goes with it. Slot and seat names ignore case, as Archipelago's do.
 
 CREATE TABLE account (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -139,7 +141,7 @@ CREATE TABLE slot (
     season_id TEXT NOT NULL REFERENCES season(id) ON DELETE CASCADE,
     -- A game's id: shared by its seats, and the signup's id if it had one.
     game_id TEXT NOT NULL,
-    name TEXT NOT NULL,
+    name TEXT NOT NULL COLLATE NOCASE,
     ap_slot INTEGER NOT NULL,
     game TEXT NOT NULL,
     -- The shared "common game" slot (one AP slot everyone plays).
@@ -153,7 +155,7 @@ CREATE INDEX slot_game ON slot (season_id, game_id);
 
 CREATE TABLE claim (
     slot_id TEXT PRIMARY KEY NOT NULL REFERENCES slot(id) ON DELETE CASCADE,
-    account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    account_id INTEGER NOT NULL REFERENCES account(id),
     claimed_at INTEGER NOT NULL
 ) STRICT;
 CREATE INDEX claim_account ON claim (account_id);
@@ -162,8 +164,8 @@ CREATE INDEX claim_account ON claim (account_id);
 CREATE TABLE submission (
     id TEXT PRIMARY KEY NOT NULL,
     season_id TEXT NOT NULL REFERENCES season(id) ON DELETE CASCADE,
-    account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-    slot_name TEXT NOT NULL,
+    account_id INTEGER NOT NULL REFERENCES account(id),
+    slot_name TEXT NOT NULL COLLATE NOCASE,
     game TEXT NOT NULL,
     is_custom INTEGER NOT NULL DEFAULT 0 CHECK (is_custom IN (0, 1)),
     yaml_file TEXT NOT NULL,
@@ -184,15 +186,17 @@ CREATE TABLE seat (
     id TEXT PRIMARY KEY NOT NULL,
     season_id TEXT NOT NULL REFERENCES season(id) ON DELETE CASCADE,
     submission_id TEXT NOT NULL REFERENCES submission(id) ON DELETE CASCADE,
-    account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
+    account_id INTEGER NOT NULL REFERENCES account(id),
+    name TEXT NOT NULL COLLATE NOCASE,
     created_at INTEGER NOT NULL,
     UNIQUE (season_id, name),
     UNIQUE (submission_id, account_id)
 ) STRICT;
 CREATE INDEX seat_account ON seat (account_id);
 
--- A link is to a signup, or to a live game by its connect name.
+-- A link is to a signup, or to a live game by its connect name. Its token is kept
+-- readable, unlike sessions' and auth links', as its host can see it again. It only
+-- seats one person with an account here.
 CREATE TABLE seat_link (
     token TEXT PRIMARY KEY NOT NULL,
     season_id TEXT NOT NULL REFERENCES season(id) ON DELETE CASCADE,
@@ -241,7 +245,7 @@ CREATE TABLE hint_priority (
 CREATE TABLE mine_result (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     season_id TEXT REFERENCES season(id) ON DELETE CASCADE,
-    account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    account_id INTEGER NOT NULL REFERENCES account(id),
     won INTEGER NOT NULL CHECK (won IN (0, 1)),
     duration_ms INTEGER NOT NULL,
     -- Whether this win earned a bonus hint (the daily cap counts those).

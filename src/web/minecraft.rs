@@ -28,7 +28,21 @@ pub(crate) async fn write_mc_whitelist(db: &db::Db) {
     let json = serde_json::to_string(&names).unwrap_or_else(|_| "[]".into());
     let file = config::get().mc_whitelist_file();
     let tmp = file.with_extension("json.tmp");
-    if let Err(e) = std::fs::write(&tmp, &json).and_then(|_| std::fs::rename(&tmp, &file)) {
+    // Readable by the host's service that applies it, unlike the rest of the data dir.
+    // A new file: never through whatever may be at that name.
+    let _ = std::fs::remove_file(&tmp);
+    let written = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .and_then(|mut f| {
+            use std::io::Write;
+            use std::os::unix::fs::PermissionsExt;
+            f.write_all(json.as_bytes())?;
+            f.set_permissions(std::fs::Permissions::from_mode(0o644))
+        })
+        .and_then(|_| std::fs::rename(&tmp, &file));
+    if let Err(e) = written {
         tracing::warn!("mc whitelist export failed: {e}");
     }
 }

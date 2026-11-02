@@ -67,7 +67,9 @@ have no game there yet, the signup wizard is on the page too, with two steps:
    - an upload of another custom world's `.apworld` file, if the server allows custom worlds.
 2. **Upload your options YAML.** It is checked against the season's installed
    worlds with Archipelago's own code, and has to pass before you can
-   continue. Errors are shown as Archipelago reports them.
+   continue. Its `name:` has to be one plain name of at most 16 characters, without
+   placeholders such as `{number}`, as that's how your slot is found once the seed is
+   rolled. Errors are shown as Archipelago reports them.
 
 Signing up takes you to your game's page, where you can invite co-op partners.
 
@@ -502,6 +504,14 @@ documentation, but no new features or behaviour changes. Each release's notes
 are on the [releases page](https://github.com/vidarrio/bifrost/releases) and
 in the [changelog](../CHANGELOG.md). Sysadmins see a banner in the console
 when a newer release is out (see [Configuration](#configuration)).
+
+**Permissions.** Bifrost keeps its data directory to its own user, as it holds password
+hashes, tokens, spoilers and Archipelago passwords. Each start, it tightens the directory
+to at most `0711` and its own files in it to at most `0700` (it won't touch files another
+user owns, such as a `config.toml` you own, or do this when run as root). The exception is `mc-whitelist.json`, for the host's service that
+applies it. If that service isn't Bifrost's user or root, it also needs to pass through
+the directory: `chmod 711` it, as Bifrost creates it `700`. That service also needs to run as Bifrost's user, or as root, to read
+`connect_password.request` on an external server.
 
 **Copying the data directory.** The database runs in write-ahead mode, so while
 Bifrost runs, recent changes live in `bifrost.db-wal` beside `bifrost.db`. Keep the data

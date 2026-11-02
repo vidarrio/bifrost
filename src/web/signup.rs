@@ -230,11 +230,17 @@ pub(crate) async fn signup_game_yaml(
         let Some(p0) = result.players.first() else {
             return refuse("Couldn't read a player from that YAML.");
         };
-        (
-            p0.name.clone(),
-            p0.game.clone().unwrap_or_else(|| "?".into()),
-        )
+        match worlds::slot_name_of_player(p0) {
+            Ok(name) => (name, p0.game.clone().unwrap_or_else(|| "?".into())),
+            Err(e) => return refuse(&e),
+        }
     };
+    // Its own name is fine, in any case.
+    if slot_name.to_lowercase() != sub.slot_name.to_lowercase()
+        && st.db.slot_name_taken(ctx.id, &slot_name).await
+    {
+        return refuse(&slot_taken(&slot_name));
+    }
     let Some(yaml_path) = store_yaml(&ctx, &slot_name, &yaml).await else {
         return refuse("Couldn't store the YAML.");
     };
@@ -389,9 +395,14 @@ pub(crate) async fn signup_check(
                 .first()
                 .map(|p| (p.name.clone(), p.game.clone().unwrap_or_default()))
                 .unwrap_or_default();
+            let name = name.trim().to_string();
             let taken = r.ok && st.db.slot_name_taken(ctx.id, &name).await;
             let refusal = if r.ok && r.players.len() > 1 {
                 Some(worlds::ONE_GAME_PER_FILE.to_string())
+            } else if let (true, Some(Err(e))) =
+                (r.ok, r.players.first().map(worlds::slot_name_of_player))
+            {
+                Some(e)
             } else {
                 taken.then(|| slot_taken(&name))
             };
@@ -493,9 +504,6 @@ pub(crate) async fn signup_post(
             Err(e) => return refuse(&format!("Checker error: {e}")),
         };
         match worlds::judge_first_look(&look, &request.game) {
-            Ok((name, _)) if st.db.slot_name_taken(ctx.id, &name).await => {
-                return refuse(&slot_taken(&name));
-            }
             Ok(found) => found,
             Err(e) => return refuse(&e),
         }
@@ -520,11 +528,15 @@ pub(crate) async fn signup_post(
         if result.players.len() > 1 {
             return refuse(worlds::ONE_GAME_PER_FILE);
         }
-        (
-            p0.name.clone(),
-            p0.game.clone().unwrap_or_else(|| "?".into()),
-        )
+        match worlds::slot_name_of_player(p0) {
+            Ok(name) => (name, p0.game.clone().unwrap_or_else(|| "?".into())),
+            Err(e) => return refuse(&e),
+        }
     };
+
+    if st.db.slot_name_taken(ctx.id, &slot_name).await {
+        return refuse(&slot_taken(&slot_name));
+    }
 
     // A file of its own, never another signup's: names that slugify alike
     // (`Ann B`, `Ann-B`) or a refused duplicate must not touch an existing one.
@@ -676,7 +688,14 @@ pub(crate) async fn signup_seat_rename(
     if let Some(e) = db::seat_name_error(name) {
         return render::signup_result(e, false).into_response();
     }
-    if st.db.slot_name_taken(ctx.id, name).await {
+    // Its own name is fine, in any case.
+    let own = st
+        .db
+        .seats_of(id)
+        .await
+        .iter()
+        .any(|s| s.id == f.seat && s.name.to_lowercase() == name.to_lowercase());
+    if !own && st.db.slot_name_taken(ctx.id, name).await {
         return render::signup_result(&name_taken(name), false).into_response();
     }
     match st.db.rename_seat(ctx.id, f.seat, me.id(), name).await {

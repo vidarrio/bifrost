@@ -36,3 +36,20 @@ settings.skip_autosave = True
 
 def season_path(*parts: str) -> str:
     return os.path.join(SEASON_DIR, *parts)
+
+
+def name_can_change(doc):
+    """Whether a player's triggers or linked options can set their `name:`, so that
+    what's rolled isn't what the YAML says. Bifrost finds a slot by its name."""
+    for key in ("triggers", "linked_options"):
+        rules = doc.get(key)
+        for rule in rules if isinstance(rules, list) else []:
+            options = rule.get("options") if isinstance(rule, dict) else None
+            if not isinstance(options, dict):
+                continue
+            # Root options are under a null or empty category.
+            for category in (None, "null", ""):
+                root = options.get(category)
+                if isinstance(root, dict) and any(k.lstrip("+-") == "name" for k in root if isinstance(k, str)):
+                    return True
+    return False

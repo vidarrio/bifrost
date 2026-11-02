@@ -319,7 +319,56 @@ impl Config {
         ] {
             std::fs::create_dir_all(d)?;
         }
-        self.core_season().ensure()
+        self.core_season().ensure()?;
+        self.lock_down();
+        Ok(())
+    }
+
+    /// Keep what's in the data dir to Bifrost's user: it holds password hashes,
+    /// tokens, spoilers and AP passwords. Only ever tightens, and only what's Bifrost's
+    /// own, by its service: never as root, as anyone able to write here could point a
+    /// link anywhere, and an operator's own files stay as they set them. The dir
+    /// itself can still be passed through, for a host's service to read the Minecraft
+    /// whitelist by its name.
+    fn lock_down(&self) {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        // SAFETY: geteuid only reads this process's user id.
+        let me = unsafe { libc::geteuid() };
+        if me == 0 {
+            return;
+        }
+        let tighten = |path: &std::path::Path, keep: u32| {
+            // Not following links, and nobody else's.
+            let Ok(meta) = std::fs::symlink_metadata(path) else {
+                return;
+            };
+            let mode = meta.permissions().mode() & 0o7777;
+            if meta.file_type().is_symlink() || meta.uid() != me || mode & !keep == 0 {
+                return;
+            }
+            let tighter = std::fs::Permissions::from_mode(mode & keep);
+            if let Err(e) = std::fs::set_permissions(path, tighter) {
+                tracing::warn!("restricting {}: {e}", path.display());
+            }
+        };
+        tighten(&self.data_dir, 0o711);
+        let Ok(entries) = std::fs::read_dir(&self.data_dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path != self.mc_whitelist_file() {
+                tighten(&path, 0o700);
+                continue;
+            }
+            // For a host's service; a restored backup would have it private.
+            if let Ok(meta) = std::fs::symlink_metadata(&path)
+                && meta.is_file()
+                && meta.uid() == me
+            {
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644));
+            }
+        }
     }
 }
 
