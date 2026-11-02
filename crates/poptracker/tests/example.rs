@@ -793,6 +793,7 @@ fn items_behave_as_in_poptracker() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/items");
     let s = Session::new(&Pack::load(dir).unwrap()).unwrap();
     s.on_clear(&serde_json::json!({})).unwrap();
+    s.on_item(0, 1, "", 1).unwrap();
     let st = s.state();
     assert_eq!(st.pack_error_count, 0, "{:?}", st.pack_errors);
     let item = |code: &str| {
@@ -801,6 +802,7 @@ fn items_behave_as_in_poptracker() {
             .find(|i| i.codes.iter().any(|c| c == code))
             .unwrap_or_else(|| panic!("no item {code}"))
     };
+    assert!(item("level_ok").active, "the item handler's checks ran");
     assert_eq!(
         item("s0").img.as_deref(),
         Some("s0.png"),
@@ -818,10 +820,14 @@ fn items_behave_as_in_poptracker() {
     );
     assert_eq!(
         item("coins").overlay.as_deref(),
-        Some("3"),
-        "the count, over text"
+        Some("4"),
+        "the count, over text; a watch set it to 4"
     );
-    assert!(item("always").active && item("starts").active);
+    assert!(item("always").active);
+    assert!(
+        !item("starts").active,
+        "the fixture's handler turned it off"
+    );
     assert!(item("nd").active, "allow_disabled false draws as on");
     let section = |loc: &str| {
         &st.locations
@@ -831,7 +837,11 @@ fn items_behave_as_in_poptracker() {
             .sections[0]
     };
     assert_eq!(section("Both").level, "reachable", "shared codes add up");
-    assert_eq!(section("AnyCase").level, "none");
+    assert_eq!(
+        section("AnyCase").level,
+        "reachable",
+        "the handler turned it on"
+    );
     assert!(
         !section("Boss").checked,
         "a hosted section isn't done until its item is held"

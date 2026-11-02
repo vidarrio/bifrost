@@ -144,3 +144,37 @@ Archipelago:AddClearHandler("levels", function()
   custom.CanProvideCodeFunc = function(self, code) return code == "HostedCode" end
   custom.ProvidesCodeFunc = function() return 1 end
 end)
+
+-- Watches hear of what changed, once the operation that changed it is done.
+HEARD = {}
+ScriptHost:AddWatchForCode("single", "starts", function(code) HEARD[code] = (HEARD[code] or 0) + 1 end)
+ScriptHost:AddWatchForCode("any case", "MIXED", function(code)
+  HEARD[code] = true
+  item("coins").AcquiredCount = 4
+end)
+ScriptHost:AddWatchForCode("set off", "coins", function(code) HEARD.chained = code end)
+ScriptHost:AddWatchForCode("not this", "always", function() error("unchanged") end)
+ScriptHost:AddWatchForCode("wild", "*", function(codes) if codes == "starts" then HEARD.wild = codes end end)
+ScriptHost:AddWatchForCode("part", "pair", function() HEARD.pair = true end)
+ScriptHost:AddWatchForCode("custom", "ByCustom", function(code) HEARD[code] = true end)
+local byCustom = ScriptHost:CreateLuaItem()
+byCustom.CanProvideCodeFunc = function(self, code) return code == "ByCustom" end
+Archipelago:AddClearHandler("change", function()
+  item("starts").Active = false
+  item("mixed").Active = true
+  item("left").Active = true
+  item("left").Active = false
+  byCustom:Set("v", 1)
+  assert(HEARD.starts == nil, "not during the handler")
+end)
+Archipelago:AddItemHandler("heard", function()
+  assert(HEARD.starts == 1, "a watch on its code")
+  assert(HEARD.wild == "starts", "a wildcard gets the item's codes")
+  assert(HEARD.MIXED == true, "any case, given as the pack wrote it")
+  assert(HEARD.chained == "coins", "a watch's change sets off others")
+  assert(HEARD.pair == true, "a composite through its part")
+  assert(HEARD.ByCustom == true, "a custom item's Set")
+  Tracker:FindObjectForCode("always").Active = true
+  HEARD.checked = true
+  item("level_ok").Active = true
+end)

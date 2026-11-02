@@ -28,7 +28,7 @@
 //!   of `os` or Lua's own `require`), plus a memory cap.
 //!
 //! ## Not done yet (the long tail — tracked for the real build-out)
-//! - Custom items' clicks and icons, and watches on single codes.
+//! - Custom items' clicks and icons.
 //! - The reactive recompute loop and renderer data
 //!   (maps/coordinates/item layout) for the visual tab.
 //! - Memory-autotracking packs (SNES/N64) are inherently unsupported server-side.
@@ -711,6 +711,7 @@ fn item_changed(eng: &E, index: usize) {
     e.accessibility_stale = true;
     e.visibility_stale = true;
     e.provider_cache.clear();
+    e.dirty_items.insert(index);
     // A change may pass on, through a part shared by composites. Each step only
     // follows a real change, and links can't go on for long in any sane pack.
     let mut todo = vec![index];
@@ -731,6 +732,7 @@ fn item_changed(eng: &E, index: usize) {
                     if it.active != on {
                         it.active = on;
                         it.icon = None;
+                        e.dirty_items.insert(part);
                         todo.push(part);
                     }
                 }
@@ -750,6 +752,7 @@ fn item_changed(eng: &E, index: usize) {
                     if it.stage != stage {
                         it.stage = stage;
                         it.icon = None;
+                        e.dirty_items.insert(c);
                         todo.push(c);
                     }
                 }
@@ -975,6 +978,9 @@ struct Eng {
     /// whether by `SetNotify`, and those it has been (`replay_storage`).
     storage_asked: BTreeSet<(String, bool)>,
     storage_answered: HashSet<(String, bool)>,
+    /// Items changed since code watches last ran, and whether a custom item did.
+    dirty_items: BTreeSet<usize>,
+    dirty_custom: bool,
     /// Calls to custom items' functions in this operation (see `count_custom_call`).
     custom_calls: u64,
     /// How deep custom items' `ProvidesCodeFunc`s have nested.
@@ -1014,8 +1020,8 @@ struct Eng {
 /// callbacks (name → function) and `ScriptHost:AddWatchForCode` ones (name →
 /// `{code, fn}`). They live in Lua, so the memory cap counts them. There are
 /// no frames here: frame handlers run once after `init.lua`, after each clear
-/// and before each `state`. Watches on every code ("*") run before each
-/// `state`, since anything may have changed by then.
+/// and before each `state`. Watches run after each operation that changed what
+/// they watch (see `Session::run_code_watches`).
 const FRAME_HANDLERS: &str = "bifrost.frame_handlers";
 const CODE_WATCHES: &str = "bifrost.code_watches";
 
@@ -1040,6 +1046,9 @@ const ITEM_INDEX: &str = "__item";
 const MAX_STORAGE_KEY: usize = 1024;
 const MAX_STORAGE_KEYS: usize = 65536;
 const MAX_STORAGE_ROUNDS: usize = 8;
+
+/// How many times watches may set off further watches in one operation.
+const MAX_WATCH_ROUNDS: usize = 8;
 
 /// How many calls to custom items' functions one operation may make. Ample: real
 /// packs have few such items, and their counts are kept while rules settle.
@@ -1114,7 +1123,68 @@ impl Session {
 
         let s = Session { lua, eng, budget };
         s.run_frame_handlers()?;
+        s.run_code_watches()?;
         Ok(s)
+    }
+
+    /// Tell code watches what's changed, as PopTracker does on each change, here at
+    /// the end of each operation. A watch gets the code it watches, and a "*" one
+    /// the item's codes. A watch may change items, which is told in turn, a few times.
+    fn run_code_watches(&self) -> Result<()> {
+        for _ in 0..MAX_WATCH_ROUNDS {
+            let (items, custom): (Vec<(String, Vec<String>)>, bool) = {
+                let mut e = self.eng.borrow_mut();
+                let dirty = std::mem::take(&mut e.dirty_items);
+                let custom = std::mem::take(&mut e.dirty_custom);
+                let items = dirty
+                    .into_iter()
+                    .map(|i| {
+                        let codes = e.items[i].all_codes();
+                        (codes.join(", "), codes)
+                    })
+                    .collect();
+                (items, custom)
+            };
+            if items.is_empty() && !custom {
+                return Ok(());
+            }
+            let Ok(list) = self.lua.named_registry_value::<Table>(CODE_WATCHES) else {
+                return Ok(());
+            };
+            let watches: Vec<Table> = list.sequence_values::<Table>().flatten().collect();
+            for w in watches {
+                if w.get::<bool>("dead").unwrap_or(true) {
+                    continue;
+                }
+                let (Ok(code), Ok(f)) = (w.get::<String>("code"), w.get::<Function>("fn")) else {
+                    continue;
+                };
+                if code == "*" {
+                    for (joined, _) in &items {
+                        self.guard(f.call::<()>(joined.as_str()))?;
+                    }
+                    if custom {
+                        self.guard(f.call::<()>(""))?;
+                    }
+                    continue;
+                }
+                let lower = code.to_lowercase();
+                let mut hit = items.iter().any(|(_, codes)| codes.contains(&lower));
+                if !hit && custom {
+                    let all = self.lua.globals().get::<Table>("__LUAITEMS");
+                    hit = all.is_ok_and(|all| {
+                        all.sequence_values::<Table>()
+                            .flatten()
+                            .any(|i| custom_can_provide(&self.eng, &i, &code))
+                    });
+                }
+                if hit {
+                    self.guard(f.call::<()>(code.as_str()))?;
+                }
+            }
+        }
+        // Still changing after that: the next operation picks it up.
+        Ok(())
     }
 
     /// As in PopTracker, an error in one of the pack's handlers is noted and the
@@ -1209,7 +1279,8 @@ impl Session {
         for h in handlers {
             self.guard(h.call::<()>(sd.clone()))?;
         }
-        self.run_frame_handlers()
+        self.run_frame_handlers()?;
+        self.run_code_watches()
     }
 
     /// Fire the pack's Item handlers for one received item.
@@ -1219,6 +1290,7 @@ impl Session {
         for h in handlers {
             self.guard(h.call::<()>((index, item_id, item_name, player)))?;
         }
+        self.run_code_watches()?;
         Ok(())
     }
 
@@ -1229,6 +1301,7 @@ impl Session {
         for h in handlers {
             self.guard(h.call::<()>((location_id, location_name)))?;
         }
+        self.run_code_watches()?;
         Ok(())
     }
 
@@ -1243,6 +1316,7 @@ impl Session {
         for h in handlers {
             self.guard(h.call::<()>((key, v.clone())))?;
         }
+        self.run_code_watches()?;
         Ok(())
     }
 
@@ -1297,6 +1371,7 @@ impl Session {
                     self.guard(h.call::<()>(args))?;
                 }
             }
+            self.run_code_watches()?;
         }
         Ok(())
     }
@@ -1333,6 +1408,11 @@ impl Session {
         if let Err(e) = self.run_frame_handlers() {
             note_error(&self.eng, &e.to_string());
             self.charge();
+        }
+        // Frame handlers may have changed items, and a "*" watch hears once more that
+        // anything may have changed: a pack may keep state outside items.
+        if let Err(e) = self.run_code_watches() {
+            note_error(&self.eng, &e.to_string());
         }
         for w in registered(&self.lua, CODE_WATCHES, |e| {
             e.get::<mlua::LuaString>("code")
@@ -2927,6 +3007,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         e.accessibility_stale = true;
         e.visibility_stale = true;
         e.provider_cache.clear();
+        e.dirty_custom = true;
         Ok(())
     })?;
     lua.load(

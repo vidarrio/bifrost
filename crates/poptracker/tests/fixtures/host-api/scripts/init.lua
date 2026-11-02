@@ -75,9 +75,11 @@ ScriptHost:AddOnFrameHandler("once", function()
 end)
 
 -- "*" watches run before every state; removed ones don't.
-ScriptHost:AddWatchForCode("all", "*", function()
-  local w = Tracker:FindObjectForCode("watched")
-  w.AcquiredCount = w.AcquiredCount + 1
+ScriptHost:AddWatchForCode("all", "*", function(codes)
+  if codes == "*" then
+    local w = Tracker:FindObjectForCode("watched")
+    w.AcquiredCount = w.AcquiredCount + 1
+  end
 end)
 ScriptHost:AddWatchForCode("gone", "*", function() error("removed watch ran") end)
 ScriptHost:RemoveWatchForCode("gone")
