@@ -36,7 +36,7 @@ pub(crate) async fn signup_get(
         manual: st.db.approval().await == db::Approval::Manual,
         catalog: st.db.catalog().await,
     };
-    render::signup_page(&subs, &me, is_admin, open, &worlds)
+    render::signup_page(&subs, &me, is_admin, open, ctx.row.max_games, &worlds)
 }
 
 /// Step 1 of signup: put a custom world in the season — a catalog pick
@@ -261,16 +261,27 @@ pub(crate) async fn signup_post(
             &coop_clean,
             &yaml_path,
             (!held_for.is_empty()).then_some(held_for.as_str()),
+            ctx.row.max_games,
         )
         .await
     {
-        Ok(_) if !held_for.is_empty() => render::signup_result(
+        Ok(None) => {
+            let _ = tokio::fs::remove_file(&yaml_path).await;
+            render::signup_result(
+                &format!(
+                    "You've reached this season's limit of {} game(s) per player.",
+                    ctx.row.max_games
+                ),
+                false,
+            )
+        }
+        Ok(Some(_)) if !held_for.is_empty() => render::signup_result(
             &format!(
                 "Signed up: {slot_name} — held until a moderator approves {held_for}; your YAML is checked then."
             ),
             true,
         ),
-        Ok(_) => render::signup_result(&format!("Signed up: {slot_name} — {game}."), true),
+        Ok(Some(_)) => render::signup_result(&format!("Signed up: {slot_name} — {game}."), true),
         Err(_) => {
             let _ = tokio::fs::remove_file(&yaml_path).await;
             render::signup_result(

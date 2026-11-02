@@ -31,6 +31,7 @@ pub fn signup_page(
     me: &str,
     is_admin: bool,
     open: bool,
+    max_games: i64,
     worlds: &SignupWorlds,
 ) -> Html<String> {
     let mut b = page_head(Some(me));
@@ -43,6 +44,36 @@ pub fn signup_page(
         b.push_str("</main></body></html>");
         return Html(b);
     }
+    // Someone who has a game isn't signing up again: they may add another, on
+    // purpose, so the form waits behind a button.
+    let mine = subs.iter().filter(|s| s.username == me).count() as i64;
+    if max_games > 0 && mine >= max_games {
+        b.push_str(&format!(
+            r#"<div class="banner ok">You've reached this season's limit of {max_games} game(s) per player. Your signups are below.</div>"#
+        ));
+        b.push_str(&roster(subs, me, is_admin));
+        b.push_str("</main></body></html>");
+        return Html(b);
+    }
+    let limit_note = if max_games > 0 {
+        format!(" This season allows {max_games} per player.")
+    } else {
+        String::new()
+    };
+    let (wizard_open, wizard_close) = if mine > 0 {
+        (
+            format!(
+                r#"<p class="empty">You're signed up with {mine} game(s), listed below.{limit_note}</p>
+<div class="btnrow"><button type="button" id="addgame">Add another game</button></div>
+<div id="wizbox" hidden>"#
+            ),
+            r#"</div>
+<script>document.getElementById('addgame').addEventListener('click',function(){document.getElementById('wizbox').hidden=false;this.hidden=true;});</script>"#,
+        )
+    } else {
+        (String::new(), "")
+    };
+    b.push_str(&wizard_open);
     let mut step1 = String::from(
         r#"<div class="choice">
       <label><input type="radio" name="gtype" value="core" checked> <span>A core / officially supported game</span></label>"#,
@@ -104,7 +135,7 @@ pub fn signup_page(
 </ol>
 <form id="wiz" method="post" action="signup" enctype="multipart/form-data">
   <section class="wstep" data-step="1">
-    <h2>Your game</h2>
+    <h2><!--GAMEHEAD--></h2>
 <!--STEP1-->
     <div class="nav"><button type="button" id="tostep2" data-goto="2">Next →</button></div>
   </section>
@@ -125,7 +156,7 @@ pub fn signup_page(
     </div>
     <input type="hidden" name="is_custom" id="iscustom" value="">
     <input type="hidden" name="pending_world" id="pendingworld" value="">
-    <div class="nav"><button type="button" class="back" data-goto="2">← Back</button><button type="submit">Sign me up</button></div>
+    <div class="nav"><button type="button" class="back" data-goto="2">← Back</button><button type="submit"><!--SUBMIT--></button></div>
   </section>
 </form>
 <script>
@@ -192,8 +223,17 @@ pub fn signup_page(
  show(1);
 })();
 </script>"#
-            .replace("<!--STEP1-->", &step1),
+            .replace("<!--STEP1-->", &step1)
+            .replace(
+                "<!--GAMEHEAD-->",
+                if mine > 0 { "Your other game" } else { "Your game" },
+            )
+            .replace(
+                "<!--SUBMIT-->",
+                if mine > 0 { "Add this game" } else { "Sign me up" },
+            ),
     );
+    b.push_str(wizard_close);
 
     b.push_str(&roster(subs, me, is_admin));
     b.push_str("</main></body></html>");

@@ -42,6 +42,24 @@ try:
         r = post(bob, f"/s/{sid}/signup", files={"yaml": ("y.yaml", b"name: " + name + b"\ngame: ChecksFinder\nChecksFinder: {}\n")})
         check(f"{name.decode()} signs up", f"Signed up: {name.decode()}" in r.text, r.text[-300:])
     check("…each into a file of its own", len(os.listdir(subs)) == 3, os.listdir(subs))
+    # A player with a game gets a button for another, within the season's limit.
+    fresh = srv.invite_user(root, "fresh")
+    page = get(fresh, f"/s/{sid}/signup").text
+    check("no game yet: the signup form, no button", 'id="wiz"' in page and "Add another game" not in page and 'id="wizbox"' not in page)
+    page = get(bob, f"/s/{sid}/signup").text
+    check("with a game: Add another game", "Add another game" in page and 'id="wizbox" hidden' in page and "Add this game" in page)
+    post(root, f"/s/{sid}/admin/signups/limit", data=dict(games="2"))
+    check("a moderator sets the limit", "Games per player: at most <b>2</b>" in get(root, f"/s/{sid}/admin").text)
+    post(bob, f"/s/{sid}/admin/signups/limit", data=dict(games="9"))
+    check("a player can't", "at most <b>2</b>" in get(root, f"/s/{sid}/admin").text)
+    r = post(bob, f"/s/{sid}/signup", files={"yaml": ("y.yaml", b"name: Third\ngame: ChecksFinder\nChecksFinder: {}\n")})
+    check("past the limit, a game is refused", "limit of 2" in r.text, r.text[-300:])
+    check("…leaving no file", len(os.listdir(subs)) == 3, os.listdir(subs))
+    page = get(bob, f"/s/{sid}/signup").text
+    check("…and the page says so, with no form", "limit of 2" in page and 'id="wiz"' not in page)
+    r = post(root, f"/s/{sid}/admin/signups/limit", data=dict(games="-1"))
+    check("a bad limit is refused", "must be a whole number" in r.text)
+    post(root, f"/s/{sid}/admin/signups/limit", data=dict(games="0"))
     post(root, f"/s/{sid}/admin/generate")
     wait_for(lambda: "Generated seed" in get(root, f"/s/{sid}/admin").text, 300, 3)
     connected = lambda: '"connected":true' in get(root, f"/s/{sid}/board/fragment").text.replace(" ", "") \

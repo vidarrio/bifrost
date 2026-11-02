@@ -31,6 +31,7 @@ def to_baseline(srv):
     with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
         db.execute("ALTER TABLE season DROP COLUMN mine_daily_hints")
         db.execute("ALTER TABLE mine_result DROP COLUMN earned")
+        db.execute("ALTER TABLE season DROP COLUMN max_games")
     stamp(srv, schema=1)
 
 

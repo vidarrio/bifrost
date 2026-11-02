@@ -25,6 +25,8 @@ const STEPS: &[&str] = &[
     // 24 hours; 0 = no cap), and which wins earned one (the cap counts those).
     "ALTER TABLE season ADD COLUMN mine_daily_hints INTEGER NOT NULL DEFAULT 5;
      ALTER TABLE mine_result ADD COLUMN earned INTEGER NOT NULL DEFAULT 0",
+    // 3: how many games a player may sign up with in a season (0 = no limit).
+    "ALTER TABLE season ADD COLUMN max_games INTEGER NOT NULL DEFAULT 0",
 ];
 
 /// The schema version this build writes.

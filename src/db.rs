@@ -15,7 +15,7 @@ mod seasons;
 mod settings;
 mod worlds;
 pub use auth::{AccountRow, LinkKind, LinkRow, RedeemError};
-pub use seasons::{MAX_DAILY_HINTS, SeasonRow, State};
+pub use seasons::{MAX_DAILY_HINTS, MAX_GAMES_LIMIT, SeasonRow, State};
 pub use settings::{Approval, Discord, Instance};
 pub use worlds::{CatalogWorld, WorldRequest};
 
@@ -69,8 +69,6 @@ pub enum ClaimOutcome {
     Ok,
     /// The slot is already claimed by someone else.
     SlotTaken,
-    /// This player already claims another slot this season (its name).
-    AlreadyHave(String),
 }
 
 /// Result of setting a Minecraft username for the whitelist.
@@ -1188,7 +1186,6 @@ impl Db {
         .await
     }
 
-    /// Claim a slot, enforcing one claim per player per season.
     /// Claim `slot_id` — only if it's one of `season`'s slots.
     pub async fn claim_one(
         &self,
@@ -1204,19 +1201,6 @@ impl Db {
                 .await?;
         if found.is_none() {
             return Ok(ClaimOutcome::SlotTaken);
-        }
-        // Already holding a *different* slot this season? One per player.
-        let existing: Option<String> = sqlx::query_scalar(
-            "SELECT s.name FROM claim c JOIN bifrost_slot s ON s.id = c.bifrost_slot_id
-             WHERE s.season = ? AND c.account_id = ? AND s.id <> ?",
-        )
-        .bind(season)
-        .bind(account)
-        .bind(slot_id)
-        .fetch_optional(&self.pool)
-        .await?;
-        if let Some(name) = existing {
-            return Ok(ClaimOutcome::AlreadyHave(name));
         }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1246,7 +1230,9 @@ impl Db {
         }
     }
 
-    /// Record a signup submission. Errors (e.g. duplicate slot name) bubble up.
+    /// Record a signup submission, unless `limit` (0 = none) says the account has
+    /// enough already: `None` then, decided within the insert so that parallel
+    /// signups can't pass it. Errors (e.g. duplicate slot name) bubble up.
     #[allow(clippy::too_many_arguments)]
     pub async fn add_submission(
         &self,
@@ -1258,14 +1244,16 @@ impl Db {
         coop_names: &str,
         yaml_file: &str,
         held_for: Option<&str>,
-    ) -> Result<i64, sqlx::Error> {
+        limit: i64,
+    ) -> Result<Option<i64>, sqlx::Error> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         let res = sqlx::query(
             "INSERT INTO submission (season, account_id, slot_name, game, is_custom, coop_names, yaml_file, held_for, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+             WHERE ?10 = 0 OR (SELECT COUNT(*) FROM submission WHERE season = ?1 AND account_id = ?2) < ?10",
         )
         .bind(season)
         .bind(account)
@@ -1276,9 +1264,13 @@ impl Db {
         .bind(yaml_file)
         .bind(held_for)
         .bind(now)
+        .bind(limit)
         .execute(&self.pool)
         .await?;
-        Ok(res.last_insert_rowid())
+        if res.rows_affected() == 0 {
+            return Ok(None);
+        }
+        Ok(Some(res.last_insert_rowid()))
     }
 
     pub async fn submissions(&self, season: i64) -> Result<Vec<SubmissionRow>, sqlx::Error> {
