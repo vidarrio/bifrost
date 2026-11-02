@@ -2313,8 +2313,8 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     g.set("DEBUG", false)?;
 
     // AutoTracker (memory interface): present but inert — AP packs still probe
-    // it (e.g. GetConnectionState). Reads return 0; connection state reads as 3
-    // (connected), since from the pack's view we are effectively connected.
+    // it (e.g. GetConnectionState). Reads return 0; only Archipelago reads as
+    // connected.
     let at = lua.create_table()?;
     for m in ["ReadU8", "ReadU16", "ReadU24", "ReadU32"] {
         at.set(m, lua.create_function(|_, _: MultiValue| Ok(0i64))?)?;
