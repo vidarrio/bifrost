@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- *Sign up for a season* on the home page now lists the seasons open for signup. Each
+  game on a season's page opens its own page, with notes for the other players and, for
+  its host, a way to replace the YAML without losing the signup.
 - A player can sign up with several games in a season: once you have one, the
   signup page offers *Add another game*. A season's moderators can limit it on the
   Options tab (0, the default, means no limit), and a player can claim more than one

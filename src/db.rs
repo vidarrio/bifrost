@@ -95,6 +95,8 @@ pub struct SubmissionRow {
     /// Why a held submission can't go ahead (its check failed after approval,
     /// or the apworld was rejected).
     pub held_err: Option<String>,
+    /// Shared notes for the season's other players.
+    pub notes: String,
 }
 
 impl SubmissionRow {
@@ -1276,13 +1278,81 @@ impl Db {
     pub async fn submissions(&self, season: i64) -> Result<Vec<SubmissionRow>, sqlx::Error> {
         sqlx::query_as::<_, SubmissionRow>(
             "SELECT s.id, s.account_id, a.username, s.slot_name, s.game, s.is_custom,
-                    s.coop_names, s.yaml_file, s.held_for, s.held_err
+                    s.coop_names, s.yaml_file, s.held_for, s.held_err, s.notes
              FROM submission s JOIN account a ON a.id = s.account_id
              WHERE s.season = ? ORDER BY s.created_at",
         )
         .bind(season)
         .fetch_all(&self.pool)
         .await
+    }
+
+    /// One game of a season's signups.
+    pub async fn submission(&self, season: i64, id: i64) -> Option<SubmissionRow> {
+        sqlx::query_as::<_, SubmissionRow>(
+            "SELECT s.id, s.account_id, a.username, s.slot_name, s.game, s.is_custom,
+                    s.coop_names, s.yaml_file, s.held_for, s.held_err, s.notes
+             FROM submission s JOIN account a ON a.id = s.account_id
+             WHERE s.id = ? AND s.season = ?",
+        )
+        .bind(id)
+        .bind(season)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten()
+    }
+
+    /// Set a game's notes, for its host, until the season generates.
+    pub async fn set_submission_notes(
+        &self,
+        season: i64,
+        id: i64,
+        account: i64,
+        notes: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let res = sqlx::query(
+            "UPDATE submission SET notes = ?1
+             WHERE id = ?2 AND season = ?3 AND account_id = ?4
+               AND (SELECT state FROM season WHERE id = ?3) IN ('draft', 'signup')",
+        )
+        .bind(notes)
+        .bind(id)
+        .bind(season)
+        .bind(account)
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Point a game at a new YAML, for its host, while signups are open. It
+    /// keeps everything else, and is no longer held: the new file passed its
+    /// check. Refused (false) if it isn't theirs or signups have closed.
+    pub async fn replace_submission(
+        &self,
+        season: i64,
+        id: i64,
+        account: i64,
+        slot_name: &str,
+        game: &str,
+        yaml_file: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let res = sqlx::query(
+            "UPDATE submission
+             SET slot_name = ?1, is_custom = is_custom AND game = ?2, game = ?2, yaml_file = ?3,
+                 held_for = NULL, held_err = NULL
+             WHERE id = ?4 AND season = ?5 AND account_id = ?6
+               AND (SELECT state FROM season WHERE id = ?5) = 'signup'",
+        )
+        .bind(slot_name)
+        .bind(game)
+        .bind(yaml_file)
+        .bind(id)
+        .bind(season)
+        .bind(account)
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
     }
 
     /// How many games this player has signed up with in a season.

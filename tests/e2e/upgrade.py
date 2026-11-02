@@ -32,6 +32,7 @@ def to_baseline(srv):
         db.execute("ALTER TABLE season DROP COLUMN mine_daily_hints")
         db.execute("ALTER TABLE mine_result DROP COLUMN earned")
         db.execute("ALTER TABLE season DROP COLUMN max_games")
+        db.execute("ALTER TABLE submission DROP COLUMN notes")
     stamp(srv, schema=1)
 
 

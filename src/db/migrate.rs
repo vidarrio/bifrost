@@ -27,6 +27,8 @@ const STEPS: &[&str] = &[
      ALTER TABLE mine_result ADD COLUMN earned INTEGER NOT NULL DEFAULT 0",
     // 3: how many games a player may sign up with in a season (0 = no limit).
     "ALTER TABLE season ADD COLUMN max_games INTEGER NOT NULL DEFAULT 0",
+    // 4: a game's notes for the season's other players.
+    "ALTER TABLE submission ADD COLUMN notes TEXT NOT NULL DEFAULT ''",
 ];
 
 /// The schema version this build writes.

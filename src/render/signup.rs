@@ -27,6 +27,7 @@ pub(super) fn catalog_label(w: &crate::db::CatalogWorld) -> String {
 }
 
 pub fn signup_page(
+    season: &str,
     subs: &[SubmissionRow],
     me: &str,
     is_admin: bool,
@@ -35,7 +36,10 @@ pub fn signup_page(
     worlds: &SignupWorlds,
 ) -> Html<String> {
     let mut b = page_head(Some(me));
-    b.push_str(r#"<h1>Season signup</h1><div class="crumb"><a href="/">← Bifrost</a></div>"#);
+    b.push_str(&format!(
+        r#"<h1>{}</h1><div class="crumb"><a href="/signups">← Seasons open for signup</a></div>"#,
+        esc(season)
+    ));
     if !open {
         b.push_str(
             r#"<div class="banner bad">Signups are closed right now. They'll open again before the next season.</div>"#,
@@ -241,6 +245,82 @@ pub fn signup_page(
     b.push_str(wizard_close);
 
     b.push_str(&roster(subs, me, is_admin));
+    b.push_str("</main></body></html>");
+    Html(b)
+}
+
+/// The seasons open for signup, as cards leading to each season's page.
+pub fn signups_list(seasons: &[(i64, String, Vec<SubmissionRow>)]) -> Html<String> {
+    let mut b = page_head(None);
+    b.push_str(
+        r#"<h1>Sign up for a season</h1><div class="crumb"><a href="/">← Bifrost</a></div>"#,
+    );
+    if seasons.is_empty() {
+        b.push_str(r#"<div class="empty">No season is open for signup right now.</div>"#);
+    } else {
+        b.push_str(r#"<div class="grid">"#);
+        for (id, name, subs) in seasons {
+            let players = subs
+                .iter()
+                .map(|s| s.account_id)
+                .collect::<std::collections::HashSet<_>>()
+                .len();
+            b.push_str(&format!(
+                r#"<div class="slot idle stretch"><div class="game"><a class="cover" href="/s/{id}/signup">{}</a></div>
+<div class="meta">{} game(s), {players} player(s)</div></div>"#,
+                esc(name),
+                subs.len(),
+            ));
+        }
+        b.push_str("</div>");
+    }
+    b.push_str("</main></body></html>");
+    Html(b)
+}
+
+/// A game before the season generates. Anyone signed in can read it; the forms
+/// are for its host.
+pub fn signup_game_page(
+    s: &SubmissionRow,
+    edit_notes: bool,
+    replace: bool,
+    max_notes: usize,
+) -> Html<String> {
+    let mut b = page_head(None);
+    b.push_str(&format!(
+        r#"<h1>{}</h1><div class="crumb"><a href="signup">← season</a></div>
+<div class="meta">{} · by {}</div>"#,
+        esc(&s.slot_name),
+        esc(&s.game),
+        esc(&s.username),
+    ));
+    if !s.coop_names.is_empty() {
+        b.push_str(&format!(
+            r#"<div class="meta">+ {}</div>"#,
+            esc(&s.coop_names)
+        ));
+    }
+    b.push_str("<h2>Notes</h2>");
+    if edit_notes {
+        b.push_str(&format!(
+            r#"<p class="empty">For the season's other players, shown on this game's card.</p>
+<form class="signup" method="post" action="signup/game/{}/notes"><textarea name="notes" rows="5" maxlength="{max_notes}">{}</textarea><button type="submit">Save notes</button></form>"#,
+            s.id,
+            esc(&s.notes),
+        ));
+    } else if s.notes.is_empty() {
+        b.push_str(r#"<div class="empty">No notes.</div>"#);
+    } else {
+        b.push_str(&format!(r#"<div class="notes">{}</div>"#, esc(&s.notes)));
+    }
+    if replace {
+        b.push_str(&format!(
+            r#"<h2>Replace the YAML</h2>
+<p class="empty">The new file is checked like a new signup. To rename your slot, change <code>name:</code> in it. A custom game's world has to be installed already.</p>
+<form class="signup" method="post" action="signup/game/{}/yaml" enctype="multipart/form-data"><input type="file" name="yaml" accept=".yaml,.yml" required><button type="submit">Replace</button></form>"#,
+            s.id
+        ));
+    }
     b.push_str("</main></body></html>");
     Html(b)
 }

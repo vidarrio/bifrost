@@ -162,6 +162,8 @@ h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute
 .slot{background:var(--panel);border:1px solid var(--bd);border-left-width:4px;border-radius:10px;padding:11px 13px}
 .slot.goal{border-left-color:var(--ok)}.slot.playing{border-left-color:var(--accent)}.slot.idle{border-left-color:var(--bd)}
 .slot.released{border-left-color:var(--warn)}
+.slot.stretch{position:relative}.stretch .cover{color:inherit;text-decoration:none}.stretch .cover::after{content:"";position:absolute;inset:0}.stretch:hover{border-color:var(--accent)}.stretch form{position:relative;z-index:1}
+.notes{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;margin-top:6px}
 .slot .game{font-weight:600;font-size:14px}.slot .st{font-family:var(--mono);font-size:11px;color:var(--muted);float:right}
 .slot.goal .st{color:var(--ok)}
 .slot.released .st{color:var(--warn)}

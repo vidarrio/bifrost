@@ -55,8 +55,9 @@ service such as kanidm or Authentik), there is no Bifrost password. Use the
 
 ### Signing up for a season
 
-Open **Sign up for a season** from the home page while a season's signups are
-open. The wizard has three steps:
+Open **Sign up for a season** from the home page and pick a season from those
+open for signup. Its page shows the games so far and who's playing them. If you
+have no game there yet, the signup wizard is on the page too, with three steps:
 
 1. **Pick the game.** Choose one of:
    - a core (officially supported) game;
@@ -68,7 +69,11 @@ open. The wizard has three steps:
 3. **Confirm.** If several people share the game (co-op), list the others,
    comma-separated. They claim their own seat once the season is generated.
 
-You can replace or delete your signup until the season is generated.
+Each game on the season's page has a card that opens its own page, with notes
+from its host, such as "Limiting myself to no double jump". On your own game's
+page you can edit the notes until the season is generated, and replace the YAML
+while signups are open. A new YAML is checked like a new signup, and is also how
+you change your slot name. You can remove your signup from its card.
 
 You can play several games in a season. Once you have a signup, the page shows
 **Add another game** instead of the form. Each game needs its own YAML, with its own
