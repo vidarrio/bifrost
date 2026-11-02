@@ -255,27 +255,9 @@ pub(crate) async fn signup_game_yaml(
     let page = match replaced {
         Ok(true) => {
             let _ = tokio::fs::remove_file(&sub.yaml_file).await;
-            // Its world may have been decided while this was going on, with the
-            // old file: settle the new one now.
-            if let (Some(req), None) = (
-                &waiting,
-                match &waiting {
-                    Some(r) => st.db.world_request(ctx.id, &r.file).await,
-                    None => None,
-                },
-            ) {
-                if ctx.dirs().worlds.join(&req.file).is_file() {
-                    let (db, season, file) = (st.db.clone(), ctx.id, req.file.clone());
-                    tokio::spawn(async move { worlds::recheck_held(&db, season, &file).await });
-                } else {
-                    let why = format!(
-                        "{} was rejected: replace the YAML with an installed game's, or remove this signup",
-                        req.file
-                    );
-                    let _ = st.db.set_held_err(id, &yaml_path, &why).await;
-                }
+            if let Some(req) = &waiting {
+                worlds::settle_held(&st.db, ctx.id, id, &yaml_path, &req.file).await;
             }
-            let _ = tokio::fs::remove_file(&sub.yaml_file).await;
             if sub.account_id != me.id() {
                 tracing::info!(
                     "season {}: {} replaced the YAML of {} ({} → {})",
@@ -428,7 +410,8 @@ pub(crate) async fn signup_check(
 
 /// Write a signup's YAML to a new file of its own and return its path.
 async fn store_yaml(ctx: &scope::SeasonCtx, slot_name: &str, yaml: &[u8]) -> Option<String> {
-    let slug = slugify(slot_name);
+    // Names can be long, and file names can't.
+    let slug: String = slugify(slot_name).chars().take(64).collect();
     let uploads = ctx.dirs().submissions;
     let _ = tokio::fs::create_dir_all(&uploads).await;
     let nonce = &auth::new_token()[..16];
@@ -568,6 +551,9 @@ pub(crate) async fn signup_post(
         }
         // The game's page is where the rest happens: its invite links, notes and YAML.
         Ok(Some(id)) => {
+            if !held_for.is_empty() {
+                worlds::settle_held(&st.db, ctx.id, id, &yaml_path, &held_for).await;
+            }
             Redirect::to(&ctx.url(&format!("/signup/game/{id}?new=true"))).into_response()
         }
         Err(e) => {

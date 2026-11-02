@@ -256,6 +256,23 @@ pub async fn reject(db: &Db, season: Id, file: &str, by: &str) -> Result<(), Str
     Ok(())
 }
 
+/// A signup just stored as held for `file`: if its world was decided while that was
+/// going on, nothing else will look at it, so settle it now.
+pub async fn settle_held(db: &Db, season: Id, id: Id, yaml: &str, file: &str) {
+    if db.world_request(season, file).await.is_some() {
+        return;
+    }
+    if config::get().season(season).worlds.join(file).is_file() {
+        let (db, file) = (db.clone(), file.to_string());
+        tokio::spawn(async move { recheck_held(&db, season, &file).await });
+    } else {
+        let why = format!(
+            "{file} was rejected: replace the YAML with an installed game's, or remove this signup"
+        );
+        let _ = db.set_held_err(id, yaml, &why).await;
+    }
+}
+
 /// A signup is one game, so its file holds one player.
 pub const ONE_GAME_PER_FILE: &str = "That YAML holds several players. Sign up one game per file.";
 
@@ -411,6 +428,9 @@ pub async fn clear_pending(db: &Db, season: Id) {
     let _ = db.clear_world_requests(season).await;
 }
 
+/// The longest name or game a held signup goes by until its check reads the real one.
+const MAX_NAME: usize = 80;
+
 /// What a first look at a held YAML can tell without running its world: it's YAML,
 /// for one player, with a plain name, and for the game waiting for approval
 /// (`world_game`, empty if the manifest didn't say). Returns its slot name and game.
@@ -437,6 +457,11 @@ pub fn judge_first_look(
             "Couldn't find a top-level name: in that YAML. While its world waits for approval, \
              it has to be plain text, in quotes if it could read as something else.",
         )?;
+    if name.chars().count() > MAX_NAME {
+        return Err(format!(
+            "That name is too long: at most {MAX_NAME} characters."
+        ));
+    }
     if player.games.is_empty() {
         return Err("Couldn't find a game: in that YAML.".to_string());
     }
@@ -447,7 +472,7 @@ pub fn judge_first_look(
         ));
     }
     let game = if world_game.is_empty() {
-        player.games[0].clone()
+        player.games[0].chars().take(MAX_NAME).collect()
     } else {
         world_game.to_string()
     };
@@ -531,7 +556,9 @@ mod tests {
             Ok(("Sam".into(), "Bar".into())),
             "a manifest that names no game can't be compared"
         );
+        let long = "x".repeat(81);
         let cases = [
+            (one(Some(long.as_str()), &["Foo"]), "too long"),
             (one(None, &["Foo"]), "top-level name"),
             (one(Some("Sam"), &[]), "game:"),
             (one(Some("Sam"), &["Bar"]), "is for Bar"),

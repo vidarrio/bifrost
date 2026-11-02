@@ -61,6 +61,9 @@ pub async fn check_yaml(season: &config::SeasonDirs, yaml: &str) -> Result<Check
             yaml.len()
         ));
     }
+    if too_nested(yaml) {
+        return Err("that YAML is nested too deeply".into());
+    }
     if QUEUED.fetch_add(1, Ordering::SeqCst) >= MAX_QUEUED {
         QUEUED.fetch_sub(1, Ordering::SeqCst);
         return Err("the checker is busy — try again in a minute".into());
@@ -74,6 +77,27 @@ pub async fn check_yaml(season: &config::SeasonDirs, yaml: &str) -> Result<Check
     ap_adapter::check_yaml(season, yaml).await
 }
 
+/// Brackets nested deeper than any real options file, which YAML's parser shouldn't
+/// be asked to read.
+const MAX_NESTING: usize = 256;
+
+fn too_nested(yaml: &str) -> bool {
+    let mut depth = 0usize;
+    for b in yaml.bytes() {
+        match b {
+            b'[' | b'{' => {
+                depth += 1;
+                if depth > MAX_NESTING {
+                    return true;
+                }
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    false
+}
+
 /// A first look at a YAML whose world isn't approved, in turn with the checks.
 pub async fn first_look(
     season: &config::SeasonDirs,
@@ -84,6 +108,9 @@ pub async fn first_look(
             "file too large ({} bytes; max {MAX_YAML})",
             yaml.len()
         ));
+    }
+    if too_nested(yaml) {
+        return Err("that YAML is nested too deeply".into());
     }
     if QUEUED.fetch_add(1, Ordering::SeqCst) >= MAX_QUEUED {
         QUEUED.fetch_sub(1, Ordering::SeqCst);
@@ -188,4 +215,15 @@ pub fn error_page(msg: &str) -> Html<String> {
     ));
     body.push_str(FOOT);
     Html(body)
+}
+
+#[cfg(test)]
+mod nesting_tests {
+    use super::*;
+
+    #[test]
+    fn only_absurd_nesting_is_refused() {
+        assert!(!too_nested("a: [1, {b: [2]}]\nc: ]]]]\n"));
+        assert!(too_nested(&"[".repeat(MAX_NESTING + 1)));
+    }
 }
