@@ -1450,7 +1450,8 @@ impl Db {
 
     /// Point a game at a new YAML: its host's while signups are open, or a
     /// moderator's any time before generation. It keeps everything else, and is
-    /// no longer held: the new file passed its check. Refused (false) otherwise,
+    /// no longer held if the new file passed its check; `still_held` if its world is
+    /// still waiting, so it couldn't be checked yet. Refused (false) otherwise,
     /// or if its file is no longer `old_yaml` (a replace or removal got there first).
     #[allow(clippy::too_many_arguments)]
     pub async fn replace_submission(
@@ -1459,6 +1460,7 @@ impl Db {
         id: Id,
         account: i64,
         is_mod: bool,
+        still_held: bool,
         slot_name: &str,
         game: &str,
         old_yaml: &str,
@@ -1467,7 +1469,7 @@ impl Db {
         let res = sqlx::query(
             "UPDATE submission
              SET slot_name = ?1, is_custom = is_custom AND game = ?2, game = ?2, yaml_file = ?3,
-                 held_for = NULL, held_err = NULL
+                 held_for = CASE WHEN ?9 THEN held_for END, held_err = NULL
              WHERE id = ?4 AND season = ?5 AND yaml_file = ?7
                AND ((account_id = ?6 AND (SELECT state FROM season WHERE id = ?5) = 'signup')
                     OR (?8 AND (SELECT state FROM season WHERE id = ?5) IN ('draft', 'signup')))",
@@ -1480,6 +1482,7 @@ impl Db {
         .bind(account)
         .bind(old_yaml)
         .bind(is_mod)
+        .bind(still_held)
         .execute(&self.pool)
         .await?;
         Ok(res.rows_affected() > 0)

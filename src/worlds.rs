@@ -246,9 +246,12 @@ pub async fn reject(db: &Db, season: Id, file: &str, by: &str) -> Result<(), Str
         .await
         .ok_or("Nothing is waiting under that name.")?;
     let _ = tokio::fs::remove_file(config::get().season(season).pending.join(&req.file)).await;
-    let why = format!("{} was rejected by {by} — remove this signup", req.file);
-    for (id, _) in db.held_submissions(season, &req.file).await {
-        let _ = db.set_held_err(id, &why).await;
+    let why = format!(
+        "{} was rejected by {by}: replace the YAML with an installed game's, or remove this signup",
+        req.file
+    );
+    for (id, yaml) in db.held_submissions(season, &req.file).await {
+        let _ = db.set_held_err(id, &yaml, &why).await;
     }
     Ok(())
 }
@@ -280,14 +283,14 @@ pub async fn recheck_held(db: &Db, season: Id, file: &str) {
         };
         let res = match outcome {
             Ok((name, game)) => db
-                .release_submission(id, &name, &game)
+                .release_submission(id, &yaml_path, &name, &game)
                 .await
                 .map_err(|_| format!("the slot name {name} is already signed up")),
             Err(e) => Err(e),
         };
         if let Err(e) = res {
             tracing::info!("held signup {id} in season {season} still held: {e}");
-            let _ = db.set_held_err(id, &e).await;
+            let _ = db.set_held_err(id, &yaml_path, &e).await;
         }
     }
 }
@@ -408,32 +411,57 @@ pub async fn clear_pending(db: &Db, season: Id) {
     let _ = db.clear_world_requests(season).await;
 }
 
-/// Whether a YAML not yet checkable declares more than one top-level name.
-pub fn yaml_names_several(yaml: &str) -> bool {
-    yaml.lines().filter(|l| l.starts_with("name:")).count() > 1
-}
-
-/// The slot name and game a YAML declares at top level, read without AP
-/// (for signups held before their world can be checked). `None` where it
-/// isn't a plain value (e.g. a weighted `game:` map).
-pub fn yaml_name_game(yaml: &str) -> (Option<String>, Option<String>) {
-    let value = |key: &str| {
-        yaml.lines().find_map(|l| {
-            let v = l.strip_prefix(key)?.strip_prefix(':')?;
-            let v = match v.find(" #") {
-                Some(i) => &v[..i],
-                None => v,
-            }
-            .trim();
-            let v = v
-                .strip_prefix('"')
-                .and_then(|v| v.strip_suffix('"'))
-                .or_else(|| v.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
-                .unwrap_or(v);
-            (!v.is_empty()).then(|| v.chars().take(80).collect::<String>())
-        })
+/// What a held YAML can be checked for without running its world: it's YAML, for one
+/// player, with a usable name, and for the game waiting for approval (`world_game`,
+/// empty if the manifest didn't say). Returns its slot name and game. Options only
+/// the world's code understands wait for the check on approval.
+pub fn held_first_look(yaml: &str, world_game: &str) -> Result<(String, String), String> {
+    use serde::Deserialize;
+    use serde_yaml_ng::Value;
+    let mut players = Vec::new();
+    for doc in serde_yaml_ng::Deserializer::from_str(yaml) {
+        let value = Value::deserialize(doc).map_err(|e| format!("That isn't valid YAML: {e}"))?;
+        if !value.is_null() {
+            players.push(value);
+        }
+    }
+    if players.len() > 1 {
+        return Err(ONE_GAME_PER_FILE.to_string());
+    }
+    let player = players.first();
+    let name = player
+        .and_then(|p| p.get("name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .ok_or("Couldn't find a top-level name: in that YAML.")?;
+    // A templated name, like `Player{number}`, is only known once it's rolled.
+    if !name.contains('{') && name.chars().count() > 16 {
+        return Err(format!(
+            "The name '{name}' is too long: at most 16 characters."
+        ));
+    }
+    // `game:` is a name, or names with weights.
+    let games: Vec<String> = match player.and_then(|p| p.get("game")) {
+        Some(Value::String(g)) => vec![g.clone()],
+        Some(Value::Mapping(m)) => m
+            .keys()
+            .filter_map(|k| k.as_str().map(str::to_string))
+            .collect(),
+        _ => return Err("Couldn't find a game: in that YAML.".to_string()),
     };
-    (value("name"), value("game"))
+    if !world_game.is_empty() && !games.iter().any(|g| g == world_game) {
+        return Err(format!(
+            "That YAML is for {}, but the world waiting for approval is {world_game}.",
+            games.join(", ")
+        ));
+    }
+    let game = if world_game.is_empty() {
+        games.first().cloned().unwrap_or_else(|| "?".to_string())
+    } else {
+        world_game.to_string()
+    };
+    Ok((name.to_string(), game))
 }
 
 #[cfg(test)]
@@ -490,13 +518,35 @@ mod tests {
     }
 
     #[test]
-    fn yaml_name_and_game_are_read_at_top_level() {
-        let y = "# comment\nname: \"Robin\"  # me\ngame: Foo Quest\nFoo Quest:\n  name: nested\n";
+    fn a_held_yaml_gets_a_first_look() {
+        let look = |y: &str| held_first_look(y, "Foo");
         assert_eq!(
-            yaml_name_game(y),
-            (Some("Robin".into()), Some("Foo Quest".into()))
+            look("name: Sam # me\ngame: Foo\nFoo: {}\n"),
+            Ok(("Sam".into(), "Foo".into()))
         );
-        let y = "name: Sam\ngame:\n  A: 1\n  B: 1\n";
-        assert_eq!(yaml_name_game(y), (Some("Sam".into()), None));
+        assert_eq!(
+            look("---\n\"name\": 'Sam'\ngame: {Foo: 1, Bar: 0}\n"),
+            Ok(("Sam".into(), "Foo".into()))
+        );
+        assert!(look("name: Player{number}{number}{number}{number}\ngame: Foo\n").is_ok());
+        for (bad, why) in [
+            ("name: [unclosed\n", "valid YAML"),
+            ("game: Foo\n", "top-level name"),
+            ("name: Sam\n", "game:"),
+            ("name: seventeen letters\ngame: Foo\n", "too long"),
+            ("name: Sam\ngame: Bar\n", "is for Bar"),
+            (
+                "name: A\ngame: Foo\n---\n\"name\": B\ngame: Foo\n",
+                "several players",
+            ),
+        ] {
+            let e = look(bad).unwrap_err();
+            assert!(e.contains(why), "{bad}: {e}");
+        }
+        // A manifest that names no game can't be compared.
+        assert_eq!(
+            held_first_look("name: Sam\ngame: Bar\n", ""),
+            Ok(("Sam".into(), "Bar".into()))
+        );
     }
 }

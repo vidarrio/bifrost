@@ -643,11 +643,16 @@ async fn run_inner(
     if subs.is_empty() {
         return Err("no submissions to generate from".into());
     }
-    let held = subs.iter().filter(|s| s.held()).count();
-    if held > 0 {
+    let held: Vec<&str> = subs
+        .iter()
+        .filter(|s| s.held())
+        .map(|s| s.slot_name.as_str())
+        .collect();
+    if !held.is_empty() {
         return Err(format!(
-            "{held} signup(s) are held for an apworld that isn't approved yet, or failed their check \
-             after approval — approve, reject or remove them first"
+            "these signups are held, for an apworld that isn't approved yet or because they failed \
+             their check: {}. Approve or reject the apworld, replace the YAML or dismiss the signup",
+            held.join(", ")
         ));
     }
 

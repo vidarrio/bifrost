@@ -190,24 +190,43 @@ pub(crate) async fn signup_game_yaml(
         return refuse("No YAML uploaded.");
     };
     let yaml_str = String::from_utf8_lossy(&yaml).to_string();
-    let result = match checker::check_yaml(&ctx.dirs(), &yaml_str).await {
-        Ok(r) => r,
-        Err(e) => return refuse(&format!("Checker error: {e}")),
+    // Its world still waiting: it can't be checked yet, so it gets the first look
+    // and stays held. Otherwise it has to pass like a new signup.
+    let waiting = match &sub.held_for {
+        Some(world) => st.db.world_request(ctx.id, world).await,
+        None => None,
     };
-    if !result.ok {
-        return refuse(&format!(
-            "That YAML didn't pass: {}.",
-            result.errors.join("; ")
-        ));
-    }
-    if result.players.len() > 1 {
-        return refuse(worlds::ONE_GAME_PER_FILE);
-    }
-    let Some(p0) = result.players.first() else {
-        return refuse("Couldn't read a player from that YAML.");
+    let (slot_name, game) = if let Some(request) = &waiting {
+        if yaml.len() > checker::MAX_YAML {
+            return refuse("That YAML is too large.");
+        }
+        match worlds::held_first_look(&yaml_str, &request.game) {
+            Ok(found) => found,
+            Err(e) => return refuse(&e),
+        }
+    } else {
+        let result = match checker::check_yaml(&ctx.dirs(), &yaml_str).await {
+            Ok(r) => r,
+            Err(e) => return refuse(&format!("Checker error: {e}")),
+        };
+        if !result.ok {
+            return refuse(&format!(
+                "That YAML didn't pass: {}.",
+                result.errors.join("; ")
+            ));
+        }
+        if result.players.len() > 1 {
+            return refuse(worlds::ONE_GAME_PER_FILE);
+        }
+        let Some(p0) = result.players.first() else {
+            return refuse("Couldn't read a player from that YAML.");
+        };
+        (
+            p0.name.clone(),
+            p0.game.clone().unwrap_or_else(|| "?".into()),
+        )
     };
-    let game = p0.game.clone().unwrap_or_else(|| "?".into());
-    let Some(yaml_path) = store_yaml(&ctx, &p0.name, &yaml).await else {
+    let Some(yaml_path) = store_yaml(&ctx, &slot_name, &yaml).await else {
         return refuse("Couldn't store the YAML.");
     };
     let replaced = st
@@ -217,7 +236,8 @@ pub(crate) async fn signup_game_yaml(
             id,
             me.id(),
             is_mod,
-            &p0.name,
+            waiting.is_some(),
+            &slot_name,
             &game,
             &sub.yaml_file,
             &yaml_path,
@@ -233,13 +253,13 @@ pub(crate) async fn signup_game_yaml(
                     me.username(),
                     sub.username,
                     sub.slot_name,
-                    p0.name
+                    slot_name
                 );
             }
             return Redirect::to(&ctx.url(&format!("/signup/game/{id}"))).into_response();
         }
         Ok(false) => refuse(closed),
-        Err(e) if db::name_clash(&e) => refuse(&slot_taken(&p0.name)),
+        Err(e) if db::name_clash(&e) => refuse(&slot_taken(&slot_name)),
         Err(e) => {
             tracing::warn!("replacing a signup in season {}: {e}", ctx.id);
             refuse("Couldn't store the signup.")
@@ -444,21 +464,19 @@ pub(crate) async fn signup_post(
     let (slot_name, game) = if !held_for.is_empty() {
         // Its world waits for approval, so the YAML can't be checked yet: hold
         // the signup under the name it declares; it's checked on approval.
-        if st.db.world_request(ctx.id, &held_for).await.is_none() {
+        let Some(request) = st.db.world_request(ctx.id, &held_for).await else {
             return refuse("That apworld isn't waiting for approval any more — start over.");
-        }
+        };
         if yaml.len() > checker::MAX_YAML {
             return refuse("That YAML is too large.");
         }
         // A first look, so the player hears now; the check on approval decides.
-        if worlds::yaml_names_several(&yaml_str) {
-            return refuse(worlds::ONE_GAME_PER_FILE);
-        }
-        match worlds::yaml_name_game(&yaml_str) {
-            (Some(name), game) => (name, game.unwrap_or_else(|| "?".into())),
-            (None, _) => {
-                return refuse("Couldn't find a top-level name: in that YAML.");
+        match worlds::held_first_look(&yaml_str, &request.game) {
+            Ok((name, _)) if st.db.slot_name_taken(ctx.id, &name).await => {
+                return refuse(&slot_taken(&name));
             }
+            Ok(found) => found,
+            Err(e) => return refuse(&e),
         }
     } else {
         // Trust-but-verify: the wizard already checked, but re-roll server-side so a

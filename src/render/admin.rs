@@ -230,6 +230,26 @@ pub fn admin_page(
         season.state(),
         crate::db::State::Draft | crate::db::State::Signup
     );
+    let attention: Vec<&SubmissionRow> = subs.iter().filter(|s| s.held_err.is_some()).collect();
+    if !attention.is_empty() {
+        b.push_str(r#"<h2>Signups that need attention</h2><p class="warnnote">The season can't be generated until each is sorted out: replace the YAML on its page, or dismiss the signup.</p>"#);
+        for s in attention {
+            b.push_str(&format!(
+                r#"<div class="hintrow"><span><a href="signup/game/{}">{}</a> · by {} · <span style="color:var(--bad)">{}</span></span>{}</div>"#,
+                s.id,
+                esc(&s.slot_name),
+                esc(&s.username),
+                esc(s.held_err.as_deref().unwrap_or("")),
+                action_btn(
+                    "admin/delete-player",
+                    &[("id", &s.id.to_string())],
+                    "dismiss",
+                    true,
+                    &format!("Dismiss {}'s signup? Its YAML is deleted.", s.slot_name),
+                ),
+            ));
+        }
+    }
     b.push_str(r#"<h2>Signups</h2>"#);
     if subs.is_empty() {
         b.push_str(r#"<div class="empty">No signups.</div>"#);
@@ -287,6 +307,16 @@ pub fn admin_page(
                 String::new()
             } else {
                 format!(" · {}", esc(&r.game))
+            };
+            let waiting: Vec<String> = subs
+                .iter()
+                .filter(|s| s.held_for.as_deref() == Some(r.file.as_str()))
+                .map(|s| esc(&s.slot_name))
+                .collect();
+            let game = if waiting.is_empty() {
+                game
+            } else {
+                format!("{game} · signups waiting: {}", waiting.join(", "))
             };
             b.push_str(&format!(
                 r#"<div class="hintrow"><span>{}{game} <span class="statline">· sha256 {}… · uploaded by {} · {}</span></span><span>{} {}</span></div>"#,

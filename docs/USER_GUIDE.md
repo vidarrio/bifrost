@@ -104,9 +104,13 @@ slot name and one player in the file. A season's moderators can limit how many g
 player can sign up with.
 
 On some servers, uploading a world that isn't in the catalog makes it wait for
-a moderator's approval. Your signup then shows as *held*. It is checked
-automatically once the world is approved. If the world is rejected, the signup
-stays flagged and you'll need to pick something else.
+a moderator's approval. Your signup then shows as *held*. Its YAML can't be fully
+checked until then, as that would run the world's code, so at upload it's only checked
+for what can be read without it: valid YAML, one player, a free name, and the right
+game. You can replace it while it waits. It's checked properly once the world is
+approved. If that fails, or the world is rejected, the season's page says so: replace
+the YAML from your game's page, or remove the signup. A moderator can do either too,
+because the season can't be generated until it's sorted out.
 
 The **YAML checker** (`/check`) runs the same check without signing up. It's
 useful when you're tuning options. It checks against the worlds of the current
@@ -221,7 +225,9 @@ The season console has six tabs:
     Claims are kept; the game restarts.
   - **Moderators.** Add co-moderators (moderator accounts only).
 
-  Generation refuses while any signup is held for an unapproved world. A
+  Generation refuses while any signup is held, and names them. A signup that failed
+  its check is listed under **Signups that need attention**, to replace its YAML or
+  dismiss it. A
   warning shows when the server is short on memory for another live season.
 - **Signups & apworlds.** The roster with each signup's check result, the
   season's installed custom worlds and where each came from, and **apworlds

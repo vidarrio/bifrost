@@ -57,17 +57,34 @@ try:
     check("a held file with several players is refused", "several players" in r.text, r.text[-300:])
     r = post(bob, f"{S}/signup", files={"yaml": ("x.yaml", fixture("foo.yaml").replace(b"Pfoo", b"One") + second.replace(b"name:", b"\"name\":"))},
              data={"is_custom": "1", "pending_world": "foo.apworld"})
-    check("…one the first look misses is held", "held until" in r.text, r.text[-300:])
+    check("…however it's spelled", "several players" in r.text, r.text[-300:])
+    held = lambda y: post(bob, f"{S}/signup", files={"yaml": ("x.yaml", y)}, data={"is_custom": "1", "pending_world": "foo.apworld"})
+    r = held(b"name: [unclosed\n")
+    check("a held file has to be YAML", "valid YAML" in r.text, r.text[-300:])
+    r = held(b"name: Wrong\ngame: Bar Finder\nBar Finder: {}\n")
+    check("…for the world waiting", "the world waiting for approval is Foo Finder" in r.text, r.text[-300:])
+    r = held(fixture("foo.yaml"))
+    check("…with a free name", "already taken" in r.text, r.text[-300:])
+    # Only the world's code can tell this one fails.
+    bad = fixture("foo.yaml").replace(b"Pfoo", b"Bofoo") + b"requires:\n  version: 99.0.0\n"
+    r = held(bad)
+    check("what only the world can tell is held", "held until" in r.text, r.text[-300:])
+    badg = re.search(r'href="signup/game/([0-9a-z]+)">Bofoo<', get(bob, f"{S}/signup").text).group(1)
 
     page = get(alice, f"{S}/signup").text
     game = re.search(r'href="signup/game/([0-9a-z]+)">Pfoo<', page).group(1)
     check("a held game's page says so", "waiting for foo.apworld" in get(alice, f"{S}/signup/game/{game}").text)
+    r = post(alice, f"{S}/signup/game/{game}/yaml", files={"yaml": ("foo.yaml", b"name: [unclosed\n")})
+    check("a held game's replacement gets the first look", "valid YAML" in r.text, r.text[-300:])
+    r = post(alice, f"{S}/signup/game/{game}/yaml", files={"yaml": ("foo.yaml", fixture("foo.yaml").replace(b"Pfoo", b"Pfoo3"))})
+    check("…and replaces it, still held", "<h1>Pfoo3</h1>" in r.text and "waiting for foo.apworld" in r.text, r.text[-400:])
     r = post(alice, f"{S}/signup/game/{game}/yaml", files={"yaml": ("foo.yaml", fixture("foo.yaml"))})
-    check("its YAML can't replace itself before the world is in", "didn't pass" in r.text, r.text[-300:])
+    check("…as often as needed", "<h1>Pfoo</h1>" in r.text, r.text[-400:])
     check("roster shows the held signup", "waiting for foo.apworld to be approved" in page)
     adm = get(root, f"{S}/admin").text
     check("admin page lists the request", "Apworlds waiting for approval" in adm and "Foo Finder" in adm)
     check("admin signup list marks it held", "held for foo.apworld" in adm)
+    check("the request lists who's waiting", "signups waiting: " in adm and "Pfoo" in adm.split("Apworlds waiting")[1].split("<h2")[0])
 
     post(root, f"{S}/admin/generate")
     msg = wait_for(lambda: (m := re.search(r"Failed[^<]*", get(root, f"{S}/admin").text)) and m.group(0), 30)
@@ -80,11 +97,17 @@ try:
     adm = get(root, f"{S}/admin").text
     check("approved world is installed with provenance", "approved by root" in adm and "Apworlds waiting" not in adm)
     released = wait_for(lambda: "waiting for foo.apworld" not in get(alice, f"{S}/signup").text, 120, 2)
-    held = wait_for(lambda: "several players" in (t := get(bob, f"{S}/signup").text) and t, 120, 2)
-    check("…and stays held on approval, saying why", held, get(bob, f"{S}/signup").text[-500:])
-    sub_id = re.search(r'name="id" value="([0-9a-z]+)"><button class="ghost" type="submit">Remove', held or "")
-    if sub_id:
-        post(bob, f"{S}/signup/delete", data={"id": sub_id.group(1)})
+    needs = wait_for(lambda: "needs attention" in (t := get(bob, f"{S}/signup").text) and t, 120, 2)
+    check("a failed check tells the player", needs and "Bofoo needs attention" in needs, get(bob, f"{S}/signup").text[-500:])
+    adm = get(root, f"{S}/admin").text
+    check("…and the moderators, who can dismiss it", "Signups that need attention" in adm and ">dismiss<" in adm)
+    post(root, f"{S}/admin/generate")
+    msg = wait_for(lambda: (m := re.search(r"Failed[^<]*", get(root, f"{S}/admin").text)) and "Bofoo" in m.group(0) and m.group(0), 30)
+    check("generating names it", msg, msg)
+    r = post(root, f"{S}/signup/game/{badg}/yaml", files={"yaml": ("x.yaml", fixture("foo.yaml").replace(b"Pfoo", b"Bofoo"))})
+    check("a moderator's good replacement releases it", "needs attention" not in r.text and "Held" not in r.text and "<h1>Bofoo</h1>" in r.text, r.text[-400:])
+    post(root, f"{S}/admin/delete-player", data={"id": badg})
+    check("dismissing removes it", "Bofoo" not in get(bob, f"{S}/signup").text)
     page = get(alice, f"{S}/signup").text
     check("held signup released after its check", released and "Pfoo" in page and "held" not in page.split("Signed up")[-1], page[-600:])
     r = post(alice, f"{S}/signup/check", files={"yaml": ("foo.yaml", fixture("foo.yaml").replace(b"Pfoo", b"Pfoo2"))}).json()
