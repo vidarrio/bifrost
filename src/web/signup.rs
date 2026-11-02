@@ -67,6 +67,13 @@ pub(crate) async fn signups_list(State(st): State<AppState>, me: auth::Me) -> Ht
 /// The most a game's notes can hold, in characters.
 const MAX_NOTES: usize = 2000;
 
+#[derive(Deserialize)]
+pub(crate) struct GameQuery {
+    /// Just signed up, so say so.
+    #[serde(default)]
+    new: bool,
+}
+
 /// A game before the season generates: who's in it and its notes, and for its
 /// host the notes form and replacing the YAML.
 pub(crate) async fn signup_game(
@@ -74,16 +81,28 @@ pub(crate) async fn signup_game(
     ctx: scope::SeasonCtx,
     me: auth::Me,
     Path(id): Path<i64>,
+    Query(q): Query<GameQuery>,
 ) -> Response {
     let Some(sub) = st.db.submission(ctx.id, id).await else {
         return Redirect::to(&ctx.url("/signup")).into_response();
     };
+    let is_mod = ctx.can_manage(&me);
     let is_host = sub.account_id == me.id();
     let state = ctx.state();
     let pre_gen = matches!(state, db::State::Draft | db::State::Signup);
     let seats = st.db.seats_of(id).await;
     let my_seat = seats.iter().find(|s| s.account_id == me.id()).cloned();
-    let replace = is_host && state.accepts_signups();
+    let replace = (is_host && state.accepts_signups()) || (is_mod && pre_gen);
+    let welcome = (q.new && is_host).then(|| match &sub.held_for {
+        Some(w) => format!(
+            "Signed up: {} — held until a moderator approves {w}; your YAML is checked then. If you're sharing this game, invite your co-op partners below.",
+            sub.slot_name
+        ),
+        None => format!(
+            "Signed up: {} — {}. If you're sharing this game, invite your co-op partners below.",
+            sub.slot_name, sub.game
+        ),
+    });
     let invites =
         (is_host && pre_gen).then(|| (format!("signup/game/{id}"), format!("/s/{}/seat/", ctx.id)));
     let links = if invites.is_some() {
@@ -97,8 +116,9 @@ pub(crate) async fn signup_game(
         my_seat: my_seat.as_ref().filter(|_| pre_gen),
         is_host,
         pre_gen,
-        edit_notes: pre_gen && (is_host || my_seat.is_some()),
+        edit_notes: is_mod || (pre_gen && (is_host || my_seat.is_some())),
         replace,
+        welcome,
         invite: invites
             .as_ref()
             .map(|(action, base)| render::invite_box(action, base, &links))
@@ -130,7 +150,11 @@ pub(crate) async fn signup_game_notes(
         )
         .into_response();
     }
-    match st.db.set_submission_notes(ctx.id, id, me.id(), notes).await {
+    match st
+        .db
+        .set_submission_notes(ctx.id, id, me.id(), ctx.can_manage(&me), notes)
+        .await
+    {
         Ok(true) => Redirect::to(&ctx.url(&format!("/signup/game/{id}"))).into_response(),
         _ => render::signup_result("You can't change these notes.", false).into_response(),
     }
@@ -150,7 +174,9 @@ pub(crate) async fn signup_game_yaml(
     let Some(sub) = st.db.submission(ctx.id, id).await else {
         return refuse(closed);
     };
-    if sub.account_id != me.id() || !ctx.state().accepts_signups() {
+    let is_mod = ctx.can_manage(&me);
+    let pre_gen = matches!(ctx.state(), db::State::Draft | db::State::Signup);
+    if !((sub.account_id == me.id() && ctx.state().accepts_signups()) || (is_mod && pre_gen)) {
         return refuse(closed);
     }
     let mut yaml: Option<Vec<u8>> = None;
@@ -191,6 +217,7 @@ pub(crate) async fn signup_game_yaml(
             ctx.id,
             id,
             me.id(),
+            is_mod,
             &p0.name,
             &game,
             &sub.yaml_file,
@@ -376,24 +403,23 @@ pub(crate) async fn signup_post(
     ctx: scope::SeasonCtx,
     me: auth::Me,
     mut mp: Multipart,
-) -> Html<String> {
+) -> Response {
+    let refuse = |text: &str, _: bool| render::signup_result(text, false).into_response();
     let my_id = me.id();
     let (_me, _) = ctx.ident(&me);
     if !ctx.state().accepts_signups() {
-        return render::signup_result("Signups are closed right now.", false);
+        return refuse("Signups are closed right now.", false);
     }
     if let Some(e) = at_games_limit(&st, &ctx, my_id).await {
-        return render::signup_result(&e, false);
+        return refuse(&e, false);
     }
     let mut yaml: Option<Vec<u8>> = None;
     let mut is_custom = false;
-    let mut coop = false;
     let mut pending_world = String::new();
     while let Ok(Some(field)) = mp.next_field().await {
         match field.name().unwrap_or("") {
             "yaml" => yaml = field.bytes().await.ok().map(|b| b.to_vec()),
             "is_custom" => is_custom = field.text().await.unwrap_or_default() == "1",
-            "coop" => coop = field.text().await.unwrap_or_default() == "1",
             "pending_world" => pending_world = field.text().await.unwrap_or_default(),
             _ => {
                 let _ = field.bytes().await;
@@ -402,7 +428,7 @@ pub(crate) async fn signup_post(
     }
 
     let Some(yaml) = yaml.filter(|b| !b.is_empty()) else {
-        return render::signup_result("No YAML uploaded.", false);
+        return refuse("No YAML uploaded.", false);
     };
     let yaml_str = String::from_utf8_lossy(&yaml).to_string();
     let held_for = pending_world.trim().to_string();
@@ -410,25 +436,22 @@ pub(crate) async fn signup_post(
         // Its world waits for approval, so the YAML can't be checked yet: hold
         // the signup under the name it declares; it's checked on approval.
         if st.db.world_request(ctx.id, &held_for).await.is_none() {
-            return render::signup_result(
+            return refuse(
                 "That apworld isn't waiting for approval any more — start over.",
                 false,
             );
         }
         if yaml.len() > checker::MAX_YAML {
-            return render::signup_result("That YAML is too large.", false);
+            return refuse("That YAML is too large.", false);
         }
         // A first look, so the player hears now; the check on approval decides.
         if worlds::yaml_names_several(&yaml_str) {
-            return render::signup_result(worlds::ONE_GAME_PER_FILE, false);
+            return refuse(worlds::ONE_GAME_PER_FILE, false);
         }
         match worlds::yaml_name_game(&yaml_str) {
             (Some(name), game) => (name, game.unwrap_or_else(|| "?".into())),
             (None, _) => {
-                return render::signup_result(
-                    "Couldn't find a top-level name: in that YAML.",
-                    false,
-                );
+                return refuse("Couldn't find a top-level name: in that YAML.", false);
             }
         }
     } else {
@@ -437,13 +460,13 @@ pub(crate) async fn signup_post(
         // installed by now, so everything must pass.
         let result = match checker::check_yaml(&ctx.dirs(), &yaml_str).await {
             Ok(r) => r,
-            Err(e) => return render::signup_result(&format!("Checker error: {e}"), false),
+            Err(e) => return refuse(&format!("Checker error: {e}"), false),
         };
         let Some(p0) = result.players.first() else {
-            return render::signup_result("Couldn't read a player from that YAML.", false);
+            return refuse("Couldn't read a player from that YAML.", false);
         };
         if !result.ok {
-            return render::signup_result(
+            return refuse(
                 &format!(
                     "That YAML didn't pass: {}. Custom game? Install its apworld in step 1 first.",
                     result.errors.join("; ")
@@ -453,7 +476,7 @@ pub(crate) async fn signup_post(
         }
         // Every document in a file becomes a slot, but a signup counts as one game.
         if result.players.len() > 1 {
-            return render::signup_result(worlds::ONE_GAME_PER_FILE, false);
+            return refuse(worlds::ONE_GAME_PER_FILE, false);
         }
         (
             p0.name.clone(),
@@ -464,7 +487,7 @@ pub(crate) async fn signup_post(
     // A file of its own, never another signup's: names that slugify alike
     // (`Ann B`, `Ann-B`) or a refused duplicate must not touch an existing one.
     let Some(yaml_path) = store_yaml(&ctx, &slot_name, &yaml).await else {
-        return render::signup_result("Couldn't store the YAML.", false);
+        return refuse("Couldn't store the YAML.", false);
     };
     match st
         .db
@@ -483,33 +506,19 @@ pub(crate) async fn signup_post(
     {
         Ok(None) => {
             let _ = tokio::fs::remove_file(&yaml_path).await;
-            render::signup_result(&limit_message(ctx.row.max_games), false)
+            refuse(&limit_message(ctx.row.max_games), false)
         }
+        // The game's page is where the rest happens: its invite links, notes and YAML.
         Ok(Some(id)) => {
-            let text = if held_for.is_empty() {
-                format!("Signed up: {slot_name} — {game}.")
-            } else {
-                format!(
-                    "Signed up: {slot_name} — held until a moderator approves {held_for}; your YAML is checked then."
-                )
-            };
-            if coop {
-                let _ = st
-                    .db
-                    .add_seat_link(ctx.id, &auth::new_token(), Some(id), None, my_id)
-                    .await;
-                render::signup_coop_result(&text, id)
-            } else {
-                render::signup_result(&text, true)
-            }
+            Redirect::to(&ctx.url(&format!("/signup/game/{id}?new=true"))).into_response()
         }
         Err(e) => {
             let _ = tokio::fs::remove_file(&yaml_path).await;
             if db::name_clash(&e) {
-                render::signup_result(&slot_taken(&slot_name), false)
+                refuse(&slot_taken(&slot_name), false)
             } else {
                 tracing::warn!("storing a signup in season {}: {e}", ctx.id);
-                render::signup_result("Couldn't store the signup.", false)
+                refuse("Couldn't store the signup.", false)
             }
         }
     }
@@ -598,6 +607,16 @@ pub(crate) async fn signup_seat_remove(
     Form(f): Form<SeatForm>,
 ) -> Redirect {
     let _ = st.db.remove_seat(ctx.id, f.seat, me.id()).await;
+    Redirect::to(&ctx.url(&format!("/signup/game/{id}")))
+}
+
+pub(crate) async fn signup_seat_leave(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Path(id): Path<i64>,
+) -> Redirect {
+    let _ = st.db.leave_seat(ctx.id, id, me.id()).await;
     Redirect::to(&ctx.url(&format!("/signup/game/{id}")))
 }
 

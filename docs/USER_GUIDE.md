@@ -58,7 +58,7 @@ service such as kanidm or Authentik), there is no Bifrost password. Use the
 
 Open **Sign up for a season** from the home page and pick a season from those
 open for signup. Its page shows the games so far and who's playing them. If you
-have no game there yet, the signup wizard is on the page too, with three steps:
+have no game there yet, the signup wizard is on the page too, with two steps:
 
 1. **Pick the game.** Choose one of:
    - a core (officially supported) game;
@@ -67,8 +67,8 @@ have no game there yet, the signup wizard is on the page too, with three steps:
 2. **Upload your options YAML.** It is checked against the season's installed
    worlds with Archipelago's own code, and has to pass before you can
    continue. Errors are shown as Archipelago reports them.
-3. **Confirm.** If several people share the game (co-op), tick the box. Your
-   game's page then has an invite link for them.
+
+Signing up takes you to your game's page, where you can invite co-op partners.
 
 Each game on the season's page has a card that opens its own page, with notes
 from its host, such as "Limiting myself to no double jump". On your own game's
@@ -78,6 +78,9 @@ you change your slot name. You can remove your signup from its card until the
 season is generated; that also removes your partners from the game. Replacing
 the YAML keeps them.
 
+A season's moderators can edit any game's notes at any time, and replace its YAML
+until the season is generated, for example if it breaks generation.
+
 ### Co-op partners
 
 On your game's page, **Create an invite link** for each partner, as many as you
@@ -86,8 +89,8 @@ saying who's inviting them to what. They pick a seat name, which has to be
 unique in the season, and claim the seat. Each link works once, and you can
 revoke an unused one.
 
-Before generation you can remove a partner, and partners can rename their seat
-and edit the game's notes with you. Once the season is live, seat names are
+Before generation you can remove a partner, and partners can leave, rename their
+seat and edit the game's notes with you. Once the season is live, seat names are
 locked and nobody can be removed, so that the logs stay consistent. Someone who
 stops playing keeps their seat while the others finish the game; if everyone on
 a game has gone, a moderator can use **Mark finished** on its page to release it.

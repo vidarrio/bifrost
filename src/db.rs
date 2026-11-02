@@ -1359,40 +1359,45 @@ impl Db {
         .flatten()
     }
 
-    /// Set a game's notes, for its host and partners, until the season generates.
+    /// Set a game's notes: its host and partners until the season generates, the
+    /// season's moderators at any time.
     pub async fn set_submission_notes(
         &self,
         season: i64,
         id: i64,
         account: i64,
+        is_mod: bool,
         notes: &str,
     ) -> Result<bool, sqlx::Error> {
         let res = sqlx::query(
             "UPDATE submission SET notes = ?1
              WHERE id = ?2 AND season = ?3
-               AND (account_id = ?4
-                    OR EXISTS (SELECT 1 FROM seat WHERE submission_id = ?2 AND account_id = ?4))
-               AND (SELECT state FROM season WHERE id = ?3) IN ('draft', 'signup')",
+               AND (?5
+                    OR ((account_id = ?4
+                         OR EXISTS (SELECT 1 FROM seat WHERE submission_id = ?2 AND account_id = ?4))
+                        AND (SELECT state FROM season WHERE id = ?3) IN ('draft', 'signup')))",
         )
         .bind(notes)
         .bind(id)
         .bind(season)
         .bind(account)
+        .bind(is_mod)
         .execute(&self.pool)
         .await?;
         Ok(res.rows_affected() > 0)
     }
 
-    /// Point a game at a new YAML, for its host, while signups are open. It
-    /// keeps everything else, and is no longer held: the new file passed its
-    /// check. Refused (false) if it isn't theirs, signups have closed, or its
-    /// file is no longer `old_yaml` (a replace or removal got there first).
+    /// Point a game at a new YAML: its host's while signups are open, or a
+    /// moderator's any time before generation. It keeps everything else, and is
+    /// no longer held: the new file passed its check. Refused (false) otherwise,
+    /// or if its file is no longer `old_yaml` (a replace or removal got there first).
     #[allow(clippy::too_many_arguments)]
     pub async fn replace_submission(
         &self,
         season: i64,
         id: i64,
         account: i64,
+        is_mod: bool,
         slot_name: &str,
         game: &str,
         old_yaml: &str,
@@ -1402,8 +1407,9 @@ impl Db {
             "UPDATE submission
              SET slot_name = ?1, is_custom = is_custom AND game = ?2, game = ?2, yaml_file = ?3,
                  held_for = NULL, held_err = NULL
-             WHERE id = ?4 AND season = ?5 AND account_id = ?6 AND yaml_file = ?7
-               AND (SELECT state FROM season WHERE id = ?5) = 'signup'",
+             WHERE id = ?4 AND season = ?5 AND yaml_file = ?7
+               AND ((account_id = ?6 AND (SELECT state FROM season WHERE id = ?5) = 'signup')
+                    OR (?8 AND (SELECT state FROM season WHERE id = ?5) IN ('draft', 'signup')))",
         )
         .bind(slot_name)
         .bind(game)
@@ -1412,6 +1418,7 @@ impl Db {
         .bind(season)
         .bind(account)
         .bind(old_yaml)
+        .bind(is_mod)
         .execute(&self.pool)
         .await?;
         Ok(res.rows_affected() > 0)
