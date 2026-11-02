@@ -1,5 +1,10 @@
 # Bifrost
 
+> [!WARNING]
+> Bifrost is in very early development. Expect breaking changes between versions,
+> possibly with no upgrade path for existing data. Read the
+> [changelog](CHANGELOG.md) before you update.
+
 [![CI](https://github.com/vidarrio/bifrost/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/vidarrio/bifrost/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush)
 [![Release](https://img.shields.io/github/v/release/vidarrio/bifrost?sort=semver)](https://github.com/vidarrio/bifrost/releases)
 [![License: MIT](https://img.shields.io/github/license/vidarrio/bifrost)](LICENSE)
@@ -44,7 +49,7 @@ an archive of past seasons.
   which carries small compatibility patches.
 - **Operations.** Nightly backups with retention, live load monitoring, and
   season bundles you can download and import on another instance.
-- **Painless updates.** A banner when a new Bifrost is out, a backup before
+- **Updates.** A banner when a new Bifrost is out, a backup before
   each upgrade with the command to go back, and `bifrost update` for the
   single-file build.
 
