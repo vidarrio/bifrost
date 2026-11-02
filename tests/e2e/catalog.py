@@ -51,6 +51,15 @@ try:
              data={"is_custom": "1", "pending_world": "nope.apworld"})
     check("held signup for an unknown pending world is refused", "isn't waiting for approval" in r.text)
 
+    # A signup is one game: refused at upload when it's plain, on approval otherwise.
+    second = b"\n---\nname: Two\ngame: Foo Finder\nFoo Finder: {}\n"
+    r = post(bob, f"{S}/signup", files={"yaml": ("x.yaml", fixture("foo.yaml").replace(b"Pfoo", b"One") + second)},
+             data={"is_custom": "1", "pending_world": "foo.apworld"})
+    check("a held file with several players is refused", "several players" in r.text, r.text[-300:])
+    r = post(bob, f"{S}/signup", files={"yaml": ("x.yaml", fixture("foo.yaml").replace(b"Pfoo", b"One") + second.replace(b"name:", b"\"name\":"))},
+             data={"is_custom": "1", "pending_world": "foo.apworld"})
+    check("…one the first look misses is held", "held until" in r.text, r.text[-300:])
+
     page = get(alice, f"{S}/signup").text
     check("roster shows the held signup", "waiting for foo.apworld to be approved" in page)
     adm = get(root, f"{S}/admin").text
@@ -68,9 +77,14 @@ try:
     adm = get(root, f"{S}/admin").text
     check("approved world is installed with provenance", "approved by root" in adm and "Apworlds waiting" not in adm)
     released = wait_for(lambda: "waiting for foo.apworld" not in get(alice, f"{S}/signup").text, 120, 2)
+    held = wait_for(lambda: "several players" in (t := get(bob, f"{S}/signup").text) and t, 120, 2)
+    check("…and stays held on approval, saying why", held, get(bob, f"{S}/signup").text[-500:])
+    sub_id = re.search(r'name="id" value="(\d+)"><button class="ghost" type="submit">Remove', held or "")
+    if sub_id:
+        post(bob, f"{S}/signup/delete", data={"id": sub_id.group(1)})
     page = get(alice, f"{S}/signup").text
     check("held signup released after its check", released and "Pfoo" in page and "held" not in page.split("Signed up")[-1], page[-600:])
-    r = post(alice, f"{S}/signup/check", files={"yaml": ("foo.yaml", fixture("foo.yaml"))}).json()
+    r = post(alice, f"{S}/signup/check", files={"yaml": ("foo.yaml", fixture("foo.yaml").replace(b"Pfoo", b"Pfoo2"))}).json()
     check("approved world now checks", r.get("ok"), r)
 
     j = upload(bob, "foo.apworld", fixture("foo-v2.apworld"))

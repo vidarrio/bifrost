@@ -56,7 +56,7 @@ pub fn signup_page(
         return Html(b);
     }
     let limit_note = if max_games > 0 {
-        format!(" This season allows {max_games} per player.")
+        format!(" This season allows {max_games} game(s) per player.")
     } else {
         String::new()
     };

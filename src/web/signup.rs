@@ -39,11 +39,6 @@ pub(crate) async fn signup_get(
     render::signup_page(&subs, &me, is_admin, open, ctx.row.max_games, &worlds)
 }
 
-/// Step 1 of signup: put a custom world in the season — a catalog pick
-/// (`catalog` = its hash) or an uploaded `.apworld` — so step 2 can check a
-/// YAML against it. An upload may instead wait for approval (`pending`), in
-/// which case the YAML is held rather than checked. Returns JSON for the
-/// wizard.
 /// Whether this player already has as many games as the season allows. An early
 /// answer, so a refused player installs nothing and spends no check; the insert
 /// in `add_submission` is what holds the limit.
@@ -56,6 +51,11 @@ fn limit_message(limit: i64) -> String {
     format!("You've reached this season's limit of {limit} game(s) per player.")
 }
 
+/// Step 1 of signup: put a custom world in the season — a catalog pick
+/// (`catalog` = its hash) or an uploaded `.apworld` — so step 2 can check a
+/// YAML against it. An upload may instead wait for approval (`pending`), in
+/// which case the YAML is held rather than checked. Returns JSON for the
+/// wizard.
 pub(crate) async fn signup_apworld(
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
@@ -171,7 +171,7 @@ pub(crate) async fn signup_check(
 
 fn slot_taken(name: &str) -> String {
     format!(
-        "The slot name '{name}' is already taken in this season. Each game needs its own: change name: in the YAML and try again."
+        "The slot name '{name}' is already taken in this season. Each game needs its own: change name: in the YAML and try again. To replace your own signup, remove it first."
     )
 }
 
@@ -221,6 +221,10 @@ pub(crate) async fn signup_post(
         }
         if yaml.len() > checker::MAX_YAML {
             return render::signup_result("That YAML is too large.", false);
+        }
+        // A first look, so the player hears now; the check on approval decides.
+        if worlds::yaml_names_several(&yaml_str) {
+            return render::signup_result(worlds::ONE_GAME_PER_FILE, false);
         }
         match worlds::yaml_name_game(&yaml_str) {
             (Some(name), game) => (name, game.unwrap_or_else(|| "?".into())),
@@ -321,9 +325,16 @@ pub(crate) async fn signup_post(
             true,
         ),
         Ok(Some(_)) => render::signup_result(&format!("Signed up: {slot_name} — {game}."), true),
-        Err(_) => {
+        Err(e) => {
             let _ = tokio::fs::remove_file(&yaml_path).await;
-            render::signup_result(&slot_taken(&slot_name), false)
+            if e.as_database_error()
+                .is_some_and(|d| d.is_unique_violation())
+            {
+                render::signup_result(&slot_taken(&slot_name), false)
+            } else {
+                tracing::warn!("storing a signup in season {}: {e}", ctx.id);
+                render::signup_result("Couldn't store the signup.", false)
+            }
         }
     }
 }

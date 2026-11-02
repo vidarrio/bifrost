@@ -1285,8 +1285,6 @@ impl Db {
         .await
     }
 
-    /// Delete a submission (its own submitter, or an admin). Returns the deleted
-    /// row's YAML path so the caller can clean it up.
     /// How many games this player has signed up with in a season.
     pub async fn games_of(&self, season: i64, account: i64) -> i64 {
         sqlx::query_scalar("SELECT COUNT(*) FROM submission WHERE season = ? AND account_id = ?")
@@ -1297,6 +1295,8 @@ impl Db {
             .unwrap_or(0)
     }
 
+    /// Delete a submission (its own submitter, or an admin). Returns the deleted
+    /// row's YAML path so the caller can clean it up.
     pub async fn delete_submission(
         &self,
         season: i64,
