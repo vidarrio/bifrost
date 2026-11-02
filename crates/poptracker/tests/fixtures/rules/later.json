@@ -1,0 +1,186 @@
+[
+  {
+    "name": "Adopted",
+    "parent": "@Blocked",
+    "sections": [
+      {
+        "name": "S"
+      }
+    ]
+  },
+  {
+    "name": "AdoptedOpen",
+    "parent": "Container",
+    "sections": [
+      {
+        "name": "S"
+      }
+    ]
+  },
+  {
+    "name": "AdoptedJoin",
+    "parent": "@Blocked",
+    "access_rules": [
+      "have"
+    ],
+    "sections": [
+      {
+        "name": "S"
+      }
+    ]
+  },
+  {
+    "name": "AdoptedByEnd",
+    "parent": "ter/Inner",
+    "access_rules": [
+      "miss"
+    ],
+    "sections": [
+      {
+        "name": "S"
+      }
+    ]
+  },
+  {
+    "name": "NotYet",
+    "parent": "SameFile",
+    "sections": [
+      {
+        "name": "S"
+      }
+    ]
+  },
+  {
+    "name": "SameFile",
+    "access_rules": [
+      "miss"
+    ]
+  },
+  {
+    "name": "Nested",
+    "access_rules": [
+      "have"
+    ],
+    "children": [
+      {
+        "name": "Other",
+        "parent": "@Blocked",
+        "sections": [
+          {
+            "name": "S"
+          }
+        ]
+      },
+      {
+        "name": "Unknown",
+        "parent": "Nowhere",
+        "sections": [
+          {
+            "name": "S"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Marked",
+    "sections": [
+      {
+        "name": "S"
+      }
+    ],
+    "map_locations": [
+      {
+        "map": "m",
+        "x": 1,
+        "y": 1
+      },
+      {
+        "map": "m",
+        "x": 2,
+        "y": 2,
+        "restrict_visibility_rules": [
+          "have"
+        ]
+      },
+      {
+        "map": "m",
+        "x": 3,
+        "y": 3,
+        "restrict_visibility_rules": [
+          "miss"
+        ]
+      },
+      {
+        "map": "m",
+        "x": 4,
+        "y": 4,
+        "force_invisibility_rules": [
+          "have"
+        ]
+      },
+      {
+        "map": "m",
+        "x": 5,
+        "y": 5,
+        "force_invisibility_rules": [
+          "miss"
+        ]
+      },
+      {
+        "map": "m",
+        "x": 6,
+        "y": 6,
+        "restrict_visibility_rules": "have",
+        "force_invisibility_rules": "miss"
+      },
+      {
+        "map": "m",
+        "x": 7,
+        "y": 7,
+        "restrict_visibility_rules": [
+          "@Have"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "HiddenParentChild",
+    "parent": "VisLater",
+    "sections": [
+      {
+        "name": "S"
+      }
+    ]
+  },
+  {
+    "name": "AdoptedTree",
+    "parent": "@Blocked",
+    "children": [
+      {
+        "name": "Kid",
+        "sections": [
+          {
+            "name": "S"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "MarkedEmpty",
+    "sections": [
+      {
+        "name": "S"
+      }
+    ],
+    "map_locations": [
+      {
+        "map": "m",
+        "x": 8,
+        "y": 8,
+        "force_invisibility_rules": ""
+      }
+    ]
+  }
+]

@@ -472,6 +472,10 @@ struct MapLoc {
     y: f64,
     size: Option<f64>,
     shape: Option<String>,
+    /// `restrict_visibility_rules`: on this map, also needs these.
+    restrict: Rules,
+    /// `force_invisibility_rules`: on this map, hidden if these are met.
+    force_hidden: Rules,
 }
 #[derive(Clone)]
 struct SectionDef {
@@ -1004,6 +1008,8 @@ struct Eng {
     provider_depth: u32,
     maps: Vec<MapDef>,
     nodes: Rc<Vec<LocNode>>,
+    /// How many locations there were before the file being added.
+    locations_before: usize,
     /// What's settled of the rules (see `settle_accessibility`), by location or
     /// `location/section` id, and whether a change has made it stale.
     accessibility: HashMap<String, Level>,
@@ -1505,12 +1511,8 @@ impl Session {
         if enforce_vis {
             settle_visibility(&self.lua, &self.eng);
         }
-        if self.budget.get() == 0 {
-            note_error(
-                &self.eng,
-                "the pack's rules ran out of instruction budget, so some may read as unmet",
-            );
-        }
+        // Marker rules below keep function results for this pass, as settling does.
+        self.eng.borrow_mut().updating_cache = true;
         // After settling: a rule function may have added locations.
         let nodes = self.eng.borrow().nodes.clone();
         let level_of = |id: &str| {
@@ -1597,6 +1599,16 @@ impl Session {
             // Location is "Done" (grey) when it has sections and every one is checked.
             let loc_checked = !sections.is_empty() && sections.iter().all(|s| s.checked);
             for ml in &n.map_locations {
+                // A map location's own rules, as PopTracker's `isVisible` has them.
+                if enforce_vis && self.budget.get() != 0 {
+                    let met = |rules: &Rules| {
+                        resolve_rules(&self.lua, &self.eng, rules, true, false) != LEVEL_NONE
+                    };
+                    if (!ml.force_hidden.is_empty() && met(&ml.force_hidden)) || !met(&ml.restrict)
+                    {
+                        continue;
+                    }
+                }
                 out.markers.push(Marker {
                     map: ml.map.clone(),
                     x: ml.x,
@@ -1624,6 +1636,17 @@ impl Session {
                 out.layout = Some(resolve_layout(&layouts, n, 0));
                 break;
             }
+        }
+        {
+            let mut e = self.eng.borrow_mut();
+            e.updating_cache = false;
+            e.indirect_codes.clear();
+        }
+        if self.budget.get() == 0 {
+            note_error(
+                &self.eng,
+                "the pack's rules ran out of instruction budget, so some may read as unmet",
+            );
         }
         // Last: evaluating the rules above runs pack code too.
         {
@@ -1838,6 +1861,10 @@ fn run_rule_function(lua: &Lua, eng: &E, code: &str) -> i64 {
     let Ok(func) = lua.globals().get::<Function>(name) else {
         return 0;
     };
+    // A host function as a rule's runs no Lua instructions, so count the calls too.
+    if !count_custom_call(eng) {
+        return 0;
+    }
     let args =
         MultiValue::from_iter(parts.filter_map(|a| lua.create_string(a).ok().map(Value::String)));
     match func.call::<Value>(args) {
@@ -2372,6 +2399,15 @@ fn parse_rules(eng: &E, node: &serde_json::Value, field: &str, parent: &Rules) -
     out
 }
 
+/// A map location's own rules. Unlike a location's, an empty string is a rule, one
+/// that's always met.
+fn map_location_rules(eng: &E, m: &serde_json::Value, field: &str) -> Rules {
+    match m.get(field) {
+        Some(serde_json::Value::String(s)) => vec![vec![s.clone()]],
+        _ => parse_rules(eng, m, field, &Vec::new()),
+    }
+}
+
 /// Flatten the location tree into [`LocNode`]s, accumulating the parent chain's
 /// access-rule groups so a node's effective accessibility includes its ancestors.
 fn flatten_locations(
@@ -2395,6 +2431,30 @@ fn flatten_locations(
         format!("{prefix}/{name}")
     };
 
+    // `parent` inherits from a location added by an earlier file, in place of the
+    // one this is nested in: by id, else the end of an id, as in PopTracker.
+    let named_parent = node
+        .get("parent")
+        .and_then(|v| v.as_str())
+        .filter(|p| !p.is_empty())
+        .and_then(|p| {
+            let p = p.strip_prefix('@').unwrap_or(p);
+            let e = eng.borrow();
+            let earlier = &e.nodes[..e.locations_before.min(e.nodes.len())];
+            earlier
+                .iter()
+                .find(|n| n.name == p)
+                .or_else(|| {
+                    earlier
+                        .iter()
+                        .find(|n| n.name.len() > p.len() && n.name.ends_with(p))
+                })
+                .map(|n| (n.rules.clone(), n.vis.clone()))
+        });
+    let (parent_rules, parent_vis) = match &named_parent {
+        Some((r, v)) => (r, v),
+        None => (parent_rules, parent_vis),
+    };
     let rules = parse_rules(eng, node, "access_rules", parent_rules);
     let vis = parse_rules(eng, node, "visibility_rules", parent_vis);
     let scoutable_glitched = node
@@ -2414,6 +2474,8 @@ fn flatten_locations(
                         y: num(m.get("y")?)?,
                         size: m.get("size").and_then(num),
                         shape: m.get("shape").and_then(|v| v.as_str().map(String::from)),
+                        restrict: map_location_rules(eng, m, "restrict_visibility_rules"),
+                        force_hidden: map_location_rules(eng, m, "force_invisibility_rules"),
                     })
                 })
                 .collect()
@@ -2662,7 +2724,11 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                 let Ok(json) = parse_pack_json(&txt) else {
                     return Ok(false);
                 };
-                let scoutable = eng2.borrow().scoutable_default;
+                let scoutable = {
+                    let mut e = eng2.borrow_mut();
+                    e.locations_before = e.nodes.len();
+                    e.scoutable_default
+                };
                 flatten_locations(&eng2, &json, "", &Vec::new(), &Vec::new(), scoutable);
                 Ok(true)
             })?,

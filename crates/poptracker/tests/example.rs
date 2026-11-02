@@ -703,6 +703,35 @@ fn rules_resolve_as_poptracker_does() {
     ] {
         assert_eq!(level(loc, "S"), want, "{loc}");
     }
+    // `parent` inherits from an earlier file's location, not this one's.
+    assert_eq!(level("Adopted", "S"), "none");
+    assert_eq!(level("AdoptedOpen", "S"), "reachable");
+    assert_eq!(
+        level("AdoptedJoin", "S"),
+        "none",
+        "its parent's rule and its own"
+    );
+    assert_eq!(level("AdoptedByEnd", "S"), "none", "have and miss");
+    assert_eq!(
+        level("NotYet", "S"),
+        "reachable",
+        "the same file isn't searched"
+    );
+    assert_eq!(
+        level("Nested/Other", "S"),
+        "none",
+        "in place of the one it's in"
+    );
+    assert_eq!(
+        level("AdoptedTree/Kid", "S"),
+        "none",
+        "children inherit it too"
+    );
+    assert_eq!(
+        level("Nested/Unknown", "S"),
+        "reachable",
+        "not found: the one it's in"
+    );
     assert_eq!(level("Parent/ChildSection", "Own"), "none");
     assert_eq!(level("Parent/ChildSection", "Plain"), "reachable");
     // Same id: each keeps its own level, under its own name, and `id[1]` finds it.
@@ -753,6 +782,22 @@ fn visibility_rules_settle_whatever_the_order() {
     );
     assert!(shown("VisShown"));
     assert!(shown("RefNowhere"), "a ref to nothing has no rules to fail");
+    let mut marks: Vec<i64> = st
+        .markers
+        .iter()
+        .filter(|m| m.location == "Marked")
+        .map(|m| m.x as i64)
+        .collect();
+    marks.sort();
+    assert_eq!(marks, [1, 2, 5, 6, 7], "each map location's own rules");
+    assert!(
+        !shown("HiddenParentChild"),
+        "a parent's visibility rules inherit"
+    );
+    assert!(
+        !st.markers.iter().any(|m| m.location == "MarkedEmpty"),
+        "an empty string is a rule that's met"
+    );
 }
 
 #[test]
@@ -953,5 +998,45 @@ fn a_map_added_again_replaces_its_name() {
             ("M".to_string(), "b.png".to_string()),
             ("N".to_string(), "n.png".to_string())
         ]
+    );
+}
+
+#[test]
+fn marker_rules_wait_for_the_valid_locations() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rules");
+    let s = Session::new(&Pack::load(dir).unwrap()).unwrap();
+    s.on_clear(&serde_json::json!({})).unwrap();
+    let st = s.state();
+    let marks = st.markers.iter().filter(|m| m.location == "Marked").count();
+    assert_eq!(
+        marks, 7,
+        "all of them, until the slot's locations are known"
+    );
+}
+
+#[test]
+fn running_out_of_budget_in_a_marker_rule_is_noted() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(tmp.path().join("scripts")).unwrap();
+    std::fs::write(
+        tmp.path().join("l.json"),
+        r#"[{"name": "L", "sections": [{"name": "S"}], "map_locations": [
+            {"map": "m", "x": 1, "y": 1, "restrict_visibility_rules": ["$spin"]}]}]"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("scripts/init.lua"),
+        "Tracker:AddLocations('l.json')\nfunction spin() while true do end end",
+    )
+    .unwrap();
+    let s = Session::new(&Pack::load(tmp.path()).unwrap()).unwrap();
+    s.set_valid_locations(&[1]);
+    let st = s.state();
+    assert!(
+        st.pack_errors
+            .iter()
+            .any(|e| e.contains("instruction budget")),
+        "{:?}",
+        st.pack_errors
     );
 }

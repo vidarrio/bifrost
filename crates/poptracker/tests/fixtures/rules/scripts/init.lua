@@ -1,5 +1,6 @@
 Tracker:AddItems("items.json")
 Tracker:AddLocations("locations.json")
+Tracker:AddLocations("later.json")
 Tracker:FindObjectForCode("have").Active = true
 Tracker:FindObjectForCode("three").AcquiredCount = 3
 
