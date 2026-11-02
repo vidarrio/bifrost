@@ -80,7 +80,7 @@ pub(super) const GAME_STYLE: &str = r#"<style>
 .ptview{position:relative;overflow:hidden;width:fit-content;max-width:100%;border-radius:4px;touch-action:none}
 .ptstage{position:relative;transform-origin:0 0}
 .ptview img,.ptmapwrap img{display:block;max-width:100%;height:auto;user-select:none;-webkit-user-drag:none}
-.ptmk{position:absolute;border:1px solid rgba(0,0,0,.65);box-sizing:border-box;border-radius:2px}
+.ptmk{position:absolute;box-sizing:border-box;border-radius:2px}
 .ptmk.d{transform:rotate(45deg)}
 .ptform{margin:10px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .ptform input[type=file]{color:var(--muted);font-size:12.5px;max-width:100%}
@@ -105,7 +105,11 @@ pub(super) const GAME_STYLE: &str = r#"<style>
 .ptcell{position:relative;display:inline-flex;width:34px;height:34px;align-items:center;justify-content:center}
 .ptcell.empty{visibility:hidden}
 .ptitem{width:100%;height:100%;object-fit:contain;image-rendering:pixelated}
-.ptitem.ptoff{opacity:.25;filter:grayscale(.7)}
+.ptover{position:absolute;inset:0;pointer-events:none}
+.ptin{position:absolute;border-radius:inherit}
+.ptmk.trap,.ptmk.trap .ptin{clip-path:polygon(25% 0,75% 0,100% 100%,0 100%)}
+.ptmk.tri,.ptmk.tri .ptin{clip-path:polygon(50% 0,100% 100%,0 100%)}
+.ptmk.kite,.ptmk.kite .ptin{clip-path:polygon(50% 0,100% 100%,50% 70%,0 100%)}
 .ptov{position:absolute;right:1px;bottom:0;font-family:var(--mono);font-size:10px;font-weight:700;color:#fff;text-shadow:0 0 2px #000,0 0 2px #000,0 0 2px #000;pointer-events:none}
 </style>"#;
 
@@ -166,10 +170,12 @@ pub(super) const PT_JS: &str = r#"<script>
   return PT_HL[best];
  }
  function paintMarker(mk,k){
-  mk.style.background=markerBg(k); mk.title=markerTitle(k);
-  var hl=markerHighlight(k);
-  mk.style.outline=hl?('2px solid '+hl[0]):'';
-  if(hl) mk.title+='\nHinted: '+hl[1];
+  // The marker is its border, in the map's own pixels so it scales with the map, and
+  // the colour sits inside it. A hint shows as the border, made wide enough to see.
+  var inner=mk.firstChild, hl=markerHighlight(k), inset=hl?Math.max(mk._inset,8):mk._inset;
+  inner.style.background=markerBg(k); inner.style.inset=inset+'%';
+  mk.style.background=hl?hl[0]:'rgba(0,0,0,.65)';
+  mk.title=markerTitle(k); if(hl) mk.title+='\nHinted: '+hl[1];
  }
  function markerBg(k){
   var secs=(k.sections||[]);
@@ -211,10 +217,18 @@ pub(super) const PT_JS: &str = r#"<script>
   view.appendChild(stage); wrap.appendChild(view);
   var img=document.createElement('img'); img.loading='lazy'; img.draggable=false;
   img.src=assetUrl(m.img); stage.appendChild(img);
-  var sz=m.location_size||16; var spans=[];
+  var sz=m.location_size||65; var spans=[];
   (st.markers||[]).filter(function(k){return k.map===mapName;}).forEach(function(k){
    var s=k.size||sz; var mk=document.createElement('span');
-   mk.className='ptmk'+(((k.shape||m.location_shape)==='diamond')?' d':'');
+   var shape=k.shape||m.location_shape;
+   mk.className='ptmk'+({diamond:' d',trapezoid:' trap',triangle:' tri',concave_kite:' kite'}[shape]||'');
+   var turn={east:90,south:180,west:270}[k.orientation||m.location_orientation];
+   if(turn&&(shape==='trapezoid'||shape==='triangle'||shape==='concave_kite')) mk.style.transform='rotate('+turn+'deg)';
+   // As PACKS.md has it: the border goes outside the size, at this many map pixels.
+   var edge=Number(k.border!=null?k.border:(m.location_border!=null?m.location_border:8));
+   if(!isFinite(edge)||edge<0) edge=8;
+   mk._edge=edge; mk._inset=edge/(s+2*edge)*100;
+   mk.appendChild(document.createElement('span')).className='ptin';
    mk.dataset.key=k.location+'@'+k.map; mk.dataset.loc=k.location;
    paintMarker(mk,k);
    mk._k=k; mk._s=s; spans.push(mk); stage.appendChild(mk);
@@ -223,8 +237,9 @@ pub(super) const PT_JS: &str = r#"<script>
   // with the responsive (max-width:100%) image on any screen width.
   function place(){ var W=img.naturalWidth||1, H=img.naturalHeight||1;
    spans.forEach(function(mk){ var k=mk._k, s=mk._s;
-    mk.style.left=((k.x-s/2)/W*100)+'%'; mk.style.top=((k.y-s/2)/H*100)+'%';
-    mk.style.width=(s/W*100)+'%'; mk.style.height=(s/H*100)+'%';
+    var e=mk._edge, t=s+2*e;
+    mk.style.left=((k.x-t/2)/W*100)+'%'; mk.style.top=((k.y-t/2)/H*100)+'%';
+    mk.style.width=(t/W*100)+'%'; mk.style.height=(t/H*100)+'%';
    });
   }
   if(img.complete && img.naturalWidth) place(); else img.addEventListener('load',place);
@@ -265,13 +280,39 @@ pub(super) const PT_JS: &str = r#"<script>
  }
  var itemsByCode={};
  function buildIndex(){ itemsByCode={}; (st.items||[]).forEach(function(it){ (it.codes||[]).forEach(function(c){ if(c) itemsByCode[(''+c).toLowerCase()]=it; }); }); }
+ // An item's image filters, as PopTracker defines them. The engine has reduced them
+ // to these kinds and numbers.
+ function cssFilter(fs){
+  return (fs||[]).map(function(f){
+   if(f.kind==='grey') return 'saturate(0) brightness(.67)';
+   if(f.kind==='saturation') return 'saturate('+Number(f.value)+')';
+   if(f.kind==='brightness') return 'brightness('+Number(f.value)+')';
+   return '';
+  }).join(' ');
+ }
+ function paintItem(im,it){
+  // Most polls change nothing, and rebuilt images can flicker.
+  var drawn=JSON.stringify([it.img,it.filters]);
+  if(im._drawn===drawn) return;
+  im._drawn=drawn;
+  if(it.img) im.src=assetUrl(it.img);
+  var cell=im.parentNode, fs=it.filters||[];
+  // In order, as PopTracker applies them: a filter after an overlay affects it too.
+  im.style.filter=cssFilter(fs.filter(function(f){return f.kind!=='overlay';}))||'';
+  cell.querySelectorAll('.ptover').forEach(function(o){o.remove();});
+  var last=im;
+  fs.forEach(function(f,i){ if(f.kind!=='overlay') return;
+   var o=document.createElement('img'); o.className='ptitem ptover'; o.alt=''; o.src=assetUrl(f.img);
+   o.style.filter=cssFilter((f.filters||[]).concat(fs.slice(i+1).filter(function(g){return g.kind!=='overlay';})))||'';
+   last.insertAdjacentElement('afterend',o); last=o; });
+ }
  function itemCell(code){
   var cell=document.createElement('span'); cell.className='ptcell';
   if(!code){ cell.classList.add('empty'); return cell; }
   var it=itemsByCode[(''+code).toLowerCase()];
   if(it&&it.img){
-   var im=document.createElement('img'); im.className='ptitem'+(it.active?'':' ptoff'); im.dataset.code=code; im.src=assetUrl(it.img); im.alt=it.name||code;
-   cell.title=it.name||code; cell.appendChild(im);
+   var im=document.createElement('img'); im.className='ptitem'; im.dataset.code=code; im.alt=it.name||code;
+   cell.title=it.name||code; cell.appendChild(im); paintItem(im,it);
    if(it.overlay){ var o=document.createElement('span'); o.className='ptov'; o.textContent=it.overlay; cell.appendChild(o); }
   }
   return cell;
@@ -335,8 +376,8 @@ pub(super) const PT_JS: &str = r#"<script>
  function update(){
   var mm={}; (st.markers||[]).forEach(function(k){mm[k.location+'@'+k.map]=k;});
   host.querySelectorAll('.ptmk').forEach(function(mk){ var k=mm[mk.dataset.key]; if(k){ paintMarker(mk,k); } });
-  host.querySelectorAll('.ptitem').forEach(function(im){ var it=itemsByCode[im.dataset.code]; if(!it) return;
-   im.className='ptitem'+(it.active?'':' ptoff'); if(it.img) im.src=assetUrl(it.img);
+  host.querySelectorAll('.ptitem:not(.ptover)').forEach(function(im){ var it=itemsByCode[(''+im.dataset.code).toLowerCase()]; if(!it) return;
+   paintItem(im,it);
    var ov=im.parentNode.querySelector('.ptov');
    if(it.overlay){ if(!ov){ ov=document.createElement('span'); ov.className='ptov'; im.parentNode.appendChild(ov); } ov.textContent=it.overlay; }
    else if(ov){ ov.remove(); }

@@ -382,6 +382,8 @@ pub struct ItemState {
     pub name: String,
     /// Current image to show (stage image for staged items), pack-relative.
     pub img: Option<String>,
+    /// What to draw it with.
+    pub filters: Vec<ImageFilter>,
     /// Small overlay text (e.g. a consumable's count), if any.
     pub overlay: Option<String>,
 }
@@ -394,6 +396,9 @@ pub struct MapInfo {
     pub location_size: Option<f64>,
     /// Default marker shape (rect/diamond/…); per-marker `shape` overrides.
     pub location_shape: Option<String>,
+    /// Its default marker orientation (north…) and border.
+    pub location_orientation: Option<String>,
+    pub location_border: Option<f64>,
 }
 #[derive(Debug, Serialize)]
 pub struct LocationState {
@@ -434,6 +439,8 @@ pub struct Marker {
     pub y: f64,
     pub size: Option<f64>,
     pub shape: Option<String>,
+    pub orientation: Option<String>,
+    pub border: Option<f64>,
     pub location: String,
     pub accessible: bool,
     /// The location's checks are all collected → render grey ("Done").
@@ -464,6 +471,8 @@ struct MapDef {
     img: String,
     location_size: Option<f64>,
     location_shape: Option<String>,
+    location_orientation: Option<String>,
+    location_border: Option<f64>,
 }
 #[derive(Clone)]
 struct MapLoc {
@@ -472,6 +481,8 @@ struct MapLoc {
     y: f64,
     size: Option<f64>,
     shape: Option<String>,
+    orientation: Option<String>,
+    border: Option<f64>,
     /// `restrict_visibility_rules`: on this map, also needs these.
     restrict: Rules,
     /// `force_invisibility_rules`: on this map, hidden if these are met.
@@ -506,7 +517,79 @@ struct LocNode {
 struct ItemStage {
     codes: Vec<String>,
     img: String,
+    disabled_img: String,
+    mods: Vec<ImageFilter>,
+    disabled_mods: Vec<ImageFilter>,
     inherit_codes: bool,
+}
+
+/// One of PopTracker's image filters, for the page to draw. Parsed here into a fixed
+/// set of kinds and numbers, as what a pack writes shouldn't reach the page's CSS.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum ImageFilter {
+    Grey,
+    Saturation {
+        value: f64,
+    },
+    Brightness {
+        value: f64,
+    },
+    /// Another of the pack's images drawn on top, with its own filters.
+    Overlay {
+        img: String,
+        filters: Vec<ImageFilter>,
+    },
+}
+
+/// How many filters an image may have; nothing real comes close.
+const MAX_IMAGE_FILTERS: usize = 16;
+
+/// PopTracker's image mods (`img_mods`): a comma-separated list of `name|arg|…`.
+/// `@disabled` means the pack's chosen filter. Anything else unknown is no filter,
+/// which is how packs write "none".
+fn parse_filters(mods: &str, disabled: &str) -> Vec<ImageFilter> {
+    mods.split(',')
+        .map(|m| m.trim_matches(' '))
+        .flat_map(|m| match m {
+            // Itself a list. Empty here, so it can't refer to itself.
+            "@disabled" | "@disable" => parse_filters(disabled, ""),
+            _ => parse_filter(m, disabled).into_iter().collect(),
+        })
+        .take(MAX_IMAGE_FILTERS)
+        .collect()
+}
+
+fn parse_filter(text: &str, disabled: &str) -> Option<ImageFilter> {
+    let mut parts = text.split('|');
+    let name = parts.next()?;
+    let args: Vec<&str> = parts.collect();
+    let fraction = |arg: Option<&&str>| {
+        arg.and_then(|a| a.parse::<f64>().ok())
+            .filter(|v| v.is_finite())
+            .map_or(0.5, |v| v.clamp(0.0, 255.0))
+    };
+    match name {
+        "grey" | "gray" | "disable" => Some(ImageFilter::Grey),
+        "saturation" => Some(ImageFilter::Saturation {
+            value: fraction(args.first()),
+        }),
+        "brightness" => Some(ImageFilter::Brightness {
+            value: fraction(args.first()),
+        }),
+        "greyscale" | "grayscale" => Some(ImageFilter::Saturation { value: 0.0 }),
+        "dim" => Some(ImageFilter::Brightness { value: 0.5 }),
+        "overlay" if !args.is_empty() => Some(ImageFilter::Overlay {
+            img: img_path(args[0]),
+            filters: args[1..]
+                .iter()
+                .flat_map(|f| parse_filters(f, disabled))
+                .filter(|f| !matches!(f, ImageFilter::Overlay { .. }))
+                .take(MAX_IMAGE_FILTERS)
+                .collect(),
+        }),
+        _ => None,
+    }
 }
 
 /// A JSON item, as PopTracker's `JsonItem` holds it. `active` and `stage` are its
@@ -521,6 +604,13 @@ struct JsonItem {
     codes_text: String,
     stages: Vec<ItemStage>,
     img: String,
+    disabled_img: String,
+    mods: Vec<ImageFilter>,
+    disabled_mods: Vec<ImageFilter>,
+    /// The filters of a pack's `Icon`, which is `path:mods`.
+    icon_mods: Vec<ImageFilter>,
+    /// Its `Icon`, as the pack wrote it.
+    icon_text: Option<String>,
     allow_disabled: bool,
     active: bool,
     stage: i64,
@@ -583,16 +673,27 @@ impl JsonItem {
         self.active as i64
     }
 
-    /// Its image now: a pack's override, or the current stage's, or its own.
-    fn image(&self) -> Option<String> {
+    /// Its image now, with its filters: a pack's override, else as PopTracker's
+    /// `getImage` and `getImageMods` choose by whether it's on. A toggle ignores its
+    /// stages. A blank falls back to any image it has, so the cell isn't empty.
+    fn image(&self) -> (Option<String>, Vec<ImageFilter>) {
         if let Some(icon) = &self.icon {
-            return (!icon.is_empty()).then(|| img_path(icon));
+            return (
+                (!icon.is_empty()).then(|| img_path(icon)),
+                self.icon_mods.clone(),
+            );
         }
-        let stage = self
-            .stages
-            .get(self.stage.max(0) as usize)
-            .map(|s| s.img.as_str());
-        stage
+        let on = self.state();
+        let stage = (self.kind != "toggle")
+            .then(|| self.stages.get(self.stage.max(0) as usize))
+            .flatten();
+        let (img, mods) = match stage {
+            Some(st) if on => (&st.img, &st.mods),
+            Some(st) => (&st.disabled_img, &st.disabled_mods),
+            None if on => (&self.img, &self.mods),
+            None => (&self.disabled_img, &self.disabled_mods),
+        };
+        let img = Some(img.as_str())
             .filter(|s| !s.is_empty())
             .or_else(|| Some(self.img.as_str()).filter(|s| !s.is_empty()))
             .or_else(|| {
@@ -601,7 +702,8 @@ impl JsonItem {
                     .map(|s| s.img.as_str())
                     .find(|s| !s.is_empty())
             })
-            .map(img_path)
+            .map(img_path);
+        (img, mods.clone())
     }
 }
 
@@ -614,14 +716,17 @@ fn split_codes(v: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
-fn read_stage(v: &serde_json::Value) -> ItemStage {
+fn read_stage(v: &serde_json::Value, disabled: &str) -> ItemStage {
+    let text = |k: &str| v.get(k).and_then(|i| i.as_str()).map(String::from);
+    let img = text("img").unwrap_or_default();
+    let mods = text("img_mods").unwrap_or_default();
+    let off_mods = text("disabled_img_mods").unwrap_or_else(|| format!("{mods},@disabled"));
     ItemStage {
         codes: split_codes(v.get("codes").unwrap_or(&serde_json::Value::Null)),
-        img: v
-            .get("img")
-            .and_then(|i| i.as_str())
-            .unwrap_or("")
-            .to_string(),
+        disabled_img: text("disabled_img").unwrap_or_else(|| img.clone()),
+        img,
+        mods: parse_filters(&mods, disabled),
+        disabled_mods: parse_filters(&off_mods, disabled),
         inherit_codes: v
             .get("inherit_codes")
             .and_then(|b| b.as_bool())
@@ -630,7 +735,7 @@ fn read_stage(v: &serde_json::Value) -> ItemStage {
 }
 
 /// PopTracker's `JsonItem::FromJSON`.
-fn read_item(v: &serde_json::Value) -> JsonItem {
+fn read_item(v: &serde_json::Value, disabled: &str) -> JsonItem {
     // As PopTracker's `int`, so sums and steps can't overflow.
     let int = |k: &str, d: i64| v.get(k).and_then(num).map_or(d, |n| n as i32 as i64);
     let flag = |k: &str, d: bool| v.get(k).and_then(|b| b.as_bool()).unwrap_or(d);
@@ -638,9 +743,27 @@ fn read_item(v: &serde_json::Value) -> JsonItem {
     let kind = text("type");
     let min = int("min_quantity", 0);
     let increment = int("increment", 1);
+    let mods = text("img_mods");
+    let off_mods = v
+        .get("disabled_img_mods")
+        .and_then(|t| t.as_str())
+        .map(String::from)
+        .unwrap_or_else(|| {
+            if mods.is_empty() {
+                "@disabled".to_string()
+            } else {
+                format!("{mods},@disabled")
+            }
+        });
     let mut item = JsonItem {
         name: text("name"),
         img: text("img"),
+        disabled_img: v
+            .get("disabled_img")
+            .and_then(|t| t.as_str())
+            .map_or_else(|| text("img"), String::from),
+        mods: parse_filters(&mods, disabled),
+        disabled_mods: parse_filters(&off_mods, disabled),
         allow_disabled: flag("allow_disabled", true),
         codes: split_codes(v.get("codes").unwrap_or(&serde_json::Value::Null)),
         min,
@@ -658,7 +781,7 @@ fn read_item(v: &serde_json::Value) -> JsonItem {
         _ => {}
     }
     if let Some(stages) = v.get("stages").and_then(|s| s.as_array()) {
-        item.stages = stages.iter().map(read_stage).collect();
+        item.stages = stages.iter().map(|st| read_stage(st, disabled)).collect();
     }
     if kind == "composite_toggle"
         && let Some(images) = v.get("images").and_then(|i| i.as_array())
@@ -670,7 +793,7 @@ fn read_item(v: &serde_json::Value) -> JsonItem {
                 .iter()
                 .find(|im| side(im, "left") == (n & 1 != 0) && side(im, "right") == (n & 2 != 0))
             {
-                let mut stage = read_stage(im);
+                let mut stage = read_stage(im, disabled);
                 stage.codes = Vec::new();
                 stage.inherit_codes = false;
                 item.stages.push(stage);
@@ -822,9 +945,9 @@ fn item_get(lua: &Lua, eng: &E, index: usize, key: &str) -> mlua::Result<Value> 
             "IgnoreUserInput" => return Ok(Value::Boolean(it.ignore_user_input)),
             "Type" => it.kind.clone(),
             "Name" => it.name.clone(),
-            "Icon" => match &it.icon {
+            "Icon" => match &it.icon_text {
                 Some(icon) => icon.clone(),
-                None => it.image().unwrap_or_default(),
+                None => it.image().0.unwrap_or_default(),
             },
             "BadgeText" => it.overlay.clone(),
             "BadgeTextColor" => it.overlay_color.clone(),
@@ -889,6 +1012,7 @@ fn item_set(lua: &Lua, eng: &E, index: usize, key: &str, v: Value) -> mlua::Resu
             if it.active != val {
                 it.active = val;
                 it.icon = None;
+                it.icon_text = None;
                 changed = true;
             }
         }
@@ -912,6 +1036,7 @@ fn item_set(lua: &Lua, eng: &E, index: usize, key: &str, v: Value) -> mlua::Resu
                 it.active = en;
                 it.stage = val;
                 it.icon = None;
+                it.icon_text = None;
                 changed = true;
             }
         }
@@ -944,9 +1069,16 @@ fn item_set(lua: &Lua, eng: &E, index: usize, key: &str, v: Value) -> mlua::Resu
             eng.borrow_mut().items[index].decrement = n;
         }
         "Icon" => {
-            // Nil clears it.
-            let icon = if v.is_nil() { String::new() } else { text(v)? };
-            eng.borrow_mut().items[index].icon = Some(icon);
+            // Nil clears it. An override is `path:mods`, unlike a plain `img`, whose
+            // paths may have a colon in them.
+            let written = if v.is_nil() { String::new() } else { text(v)? };
+            let (path, mods) = written.split_once(':').unwrap_or((&written, ""));
+            let mut e = eng.borrow_mut();
+            let filters = parse_filters(mods, &e.disabled_filter);
+            let it = &mut e.items[index];
+            it.icon = Some(path.to_string());
+            it.icon_mods = filters;
+            it.icon_text = Some(written);
         }
         "IgnoreUserInput" => {
             let on = truthy(&v);
@@ -979,6 +1111,8 @@ impl LocNode {
 struct Eng {
     variant: String,
     scoutable_default: bool,
+    /// What `@disabled` means in image mods: settings.json's `disabled_image_filter`.
+    disabled_filter: String,
     /// The instruction budget left (see `Session::charge`): settling stops at 0.
     budget: Rc<std::cell::Cell<u64>>,
     /// The next number for a location id seen before (see `flatten_locations`).
@@ -1136,11 +1270,20 @@ impl Session {
             dir: pack.dir.clone(),
             variant: pack.variant.clone(),
             scoutable_default: pack.scoutable_glitched,
+            disabled_filter: "grey".to_string(),
             budget: budget.clone(),
             ..Default::default()
         }));
         lua.load("__LOCOBJS = {}").exec()?;
         lua.load("__LUAITEMS = {}").exec()?;
+        // A variant's settings.json, or the pack's.
+        if let Some(filter) = read_pack_file(&eng, "settings.json")
+            .ok()
+            .and_then(|t| parse_pack_json(&t).ok())
+            .and_then(|j| j.get("disabled_image_filter")?.as_str().map(String::from))
+        {
+            eng.borrow_mut().disabled_filter = filter;
+        }
         install_host(&lua, &eng)?;
 
         budget.set(MAX_TICKS);
@@ -1476,6 +1619,7 @@ impl Session {
             let overlay = (it.kind == "consumable" && it.count > 0)
                 .then(|| it.count.to_string())
                 .or_else(|| (!it.overlay.is_empty()).then(|| it.overlay.clone()));
+            let (img, filters) = it.image();
             out.items.push(ItemState {
                 key: format!("__item{index}"),
                 kind: it.kind.clone(),
@@ -1484,7 +1628,8 @@ impl Session {
                 stage: it.stage,
                 codes: it.all_codes(),
                 name: it.name.clone(),
-                img: it.image(),
+                img,
+                filters,
                 overlay,
             });
         }
@@ -1498,6 +1643,8 @@ impl Session {
                 img: m.img,
                 location_size: m.location_size,
                 location_shape: m.location_shape,
+                location_orientation: m.location_orientation,
+                location_border: m.location_border,
             });
         }
 
@@ -1615,6 +1762,8 @@ impl Session {
                     y: ml.y,
                     size: ml.size,
                     shape: ml.shape.clone(),
+                    orientation: ml.orientation.clone(),
+                    border: ml.border,
                     location: n.display_name.clone(),
                     accessible: loc_access,
                     checked: loc_checked,
@@ -2474,6 +2623,10 @@ fn flatten_locations(
                         y: num(m.get("y")?)?,
                         size: m.get("size").and_then(num),
                         shape: m.get("shape").and_then(|v| v.as_str().map(String::from)),
+                        orientation: m
+                            .get("orientation")
+                            .and_then(|v| v.as_str().map(String::from)),
+                        border: m.get("border_thickness").and_then(num),
                         restrict: map_location_rules(eng, m, "restrict_visibility_rules"),
                         force_hidden: map_location_rules(eng, m, "force_invisibility_rules"),
                     })
@@ -2648,7 +2801,19 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     )?;
     img.set(
         "FromImageReference",
-        lua.create_function(|_, (_t, r, _mods): (Table, Value, MultiValue)| Ok(r))?,
+        lua.create_function(|lua, (_t, r, m): (Table, Value, Option<String>)| {
+            // A mod is added to the reference: `path:mod,mod`.
+            let (Value::String(r), Some(m)) = (&r, m.filter(|m| !m.is_empty())) else {
+                return Ok(r);
+            };
+            let r = r.to_string_lossy();
+            let joined = if r.contains(':') {
+                format!("{r},{m}")
+            } else {
+                format!("{r}:{m}")
+            };
+            lua.create_string(&joined).map(Value::String)
+        })?,
     )?;
     g.set("ImageReference", &img)?;
 
@@ -2670,7 +2835,8 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                 let objects: Table = lua.named_registry_value(ITEM_OBJECTS)?;
                 let methods: Table = lua.named_registry_value(ITEM_METHODS)?;
                 for item in json.as_array().map(Vec::as_slice).unwrap_or_default() {
-                    let item = read_item(item);
+                    let disabled = eng2.borrow().disabled_filter.clone();
+                    let item = read_item(item, &disabled);
                     let index = {
                         let mut e = eng2.borrow_mut();
                         let index = e.items.len();
@@ -2759,6 +2925,10 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                             .unwrap_or("")
                             .to_string(),
                         location_size: m.get("location_size").and_then(num),
+                        location_orientation: m
+                            .get("location_orientation")
+                            .and_then(|v| v.as_str().map(String::from)),
+                        location_border: m.get("location_border_thickness").and_then(num),
                         location_shape: m
                             .get("location_shape")
                             .and_then(|v| v.as_str().map(String::from)),
