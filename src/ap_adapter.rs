@@ -523,10 +523,9 @@ pub async fn generate(season: &SeasonDirs) -> Result<(), String> {
     Ok(())
 }
 
-/// Universal Tracker's view of one slot: its game, the location names in logic
+/// Universal Tracker's view of one slot: the location names in logic
 /// right now, and whether UT actually delivered a result.
 pub struct InLogic {
-    pub game: String,
     pub locations: Vec<String>,
     pub captured: bool,
 }
@@ -617,11 +616,6 @@ fn parse_inlogic(data: &str) -> Result<InLogic, String> {
         return Err(err.to_string());
     }
     Ok(InLogic {
-        game: v
-            .get("game")
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .to_string(),
         captured: v.get("captured").and_then(|x| x.as_bool()).unwrap_or(false),
         locations: v
             .get("in_logic")
@@ -694,7 +688,6 @@ mod tests {
             r#"{"slot":"A","game":"Hollow Knight","in_logic":["X","Y"],"count":2,"captured":true}"#,
         )
         .unwrap();
-        assert_eq!(r.game, "Hollow Knight");
         assert_eq!(r.locations, ["X", "Y"]);
         assert!(r.captured);
     }

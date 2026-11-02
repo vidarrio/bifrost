@@ -13,78 +13,9 @@
 //! with it. Per-season toggles and the journal cursor live on the row.
 
 use crate::id::Id;
-use sqlx::{FromRow, SqlitePool};
+use sqlx::FromRow;
 
 use super::Db;
-
-pub(super) async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        r#"CREATE TABLE IF NOT EXISTS season (
-             id TEXT PRIMARY KEY NOT NULL,
-             name TEXT NOT NULL,
-             state TEXT NOT NULL DEFAULT 'draft'
-                 CHECK (state IN ('draft', 'signup', 'generating', 'live', 'archived')),
-             created_by INTEGER REFERENCES account(id) ON DELETE SET NULL,
-             created_at INTEGER NOT NULL,
-             -- The AP seed name of the deployed world (set by generation).
-             seed TEXT,
-             live_at INTEGER,
-             archived_at INTEGER,
-             minesweeper_enabled INTEGER NOT NULL DEFAULT 0,
-             mc_enabled INTEGER NOT NULL DEFAULT 0,
-             -- Bonus hints a player can earn from minesweeper in any 24 hours (0 = no cap).
-             mine_daily_hints INTEGER NOT NULL DEFAULT 5,
-             -- How many games a player may sign up with (0 = no limit).
-             max_games INTEGER NOT NULL DEFAULT 0,
-             -- Pages after generation are for members; signups need a link.
-             private_live INTEGER NOT NULL DEFAULT 1,
-             private_signup INTEGER NOT NULL DEFAULT 0,
-             signup_token TEXT,
-             -- Where this season's AP-journal ingest resumes.
-             journal_cursor TEXT,
-             -- Frozen final standings (JSON), captured when archived.
-             summary TEXT,
-             -- The season's AP server passwords: connect (shown to players, may
-             -- be empty) and admin (generated; only Bifrost uses it).
-             ap_password TEXT NOT NULL DEFAULT '',
-             ap_admin_password TEXT NOT NULL DEFAULT '',
-             -- The port its managed AP server listens on: pinned at go-live,
-             -- held through restarts and re-rolls, released on archive.
-             ap_port INTEGER UNIQUE,
-             -- The Archipelago version that generated the current seed.
-             ap_version TEXT,
-             -- While generating: the state it started from (crash recovery).
-             gen_from TEXT
-           )"#,
-    )
-    .execute(pool)
-    .await?;
-    // A seed names one season (and its archive bundle); imports rely on it.
-    sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS season_seed ON season(seed)")
-        .execute(pool)
-        .await?;
-    // Who came through a private season's signup link.
-    sqlx::query(
-        r#"CREATE TABLE IF NOT EXISTS season_invited (
-             season TEXT NOT NULL REFERENCES season(id) ON DELETE CASCADE,
-             account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-             PRIMARY KEY (season, account_id)
-           )"#,
-    )
-    .execute(pool)
-    .await?;
-    // Co-moderators: besides its creator, who may run a season.
-    sqlx::query(
-        r#"CREATE TABLE IF NOT EXISTS season_mod (
-             season TEXT NOT NULL REFERENCES season(id) ON DELETE CASCADE,
-             account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-             PRIMARY KEY (season, account_id)
-           )"#,
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
@@ -338,7 +269,7 @@ impl Db {
     pub async fn season_mods(&self, id: Id) -> Vec<i64> {
         sqlx::query_scalar(
             "SELECT created_by FROM season WHERE id = ? AND created_by IS NOT NULL
-             UNION SELECT account_id FROM season_mod WHERE season = ?",
+             UNION SELECT account_id FROM season_mod WHERE season_id = ?",
         )
         .bind(id)
         .bind(id)
@@ -351,7 +282,7 @@ impl Db {
     pub async fn co_mods(&self, id: Id) -> Vec<(i64, String)> {
         sqlx::query_as(
             "SELECT a.id, a.username FROM season_mod m JOIN account a ON a.id = m.account_id
-             WHERE m.season = ? ORDER BY a.username COLLATE NOCASE",
+             WHERE m.season_id = ? ORDER BY a.username COLLATE NOCASE",
         )
         .bind(id)
         .fetch_all(&self.pool)
@@ -360,7 +291,7 @@ impl Db {
     }
 
     pub async fn add_co_mod(&self, id: Id, account: i64) -> Result<(), sqlx::Error> {
-        sqlx::query("INSERT OR IGNORE INTO season_mod (season, account_id) VALUES (?, ?)")
+        sqlx::query("INSERT OR IGNORE INTO season_mod (season_id, account_id) VALUES (?, ?)")
             .bind(id)
             .bind(account)
             .execute(&self.pool)
@@ -369,7 +300,7 @@ impl Db {
     }
 
     pub async fn remove_co_mod(&self, id: Id, account: i64) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM season_mod WHERE season = ? AND account_id = ?")
+        sqlx::query("DELETE FROM season_mod WHERE season_id = ? AND account_id = ?")
             .bind(id)
             .bind(account)
             .execute(&self.pool)
@@ -631,10 +562,10 @@ impl Db {
     /// Whether `account` plays in the season: a signup, a seat or a slot.
     pub async fn is_season_member(&self, season: Id, account: i64) -> bool {
         sqlx::query_scalar::<_, i64>(
-            "SELECT EXISTS(SELECT 1 FROM submission WHERE season = ?1 AND account_id = ?2)
-                 OR EXISTS(SELECT 1 FROM seat WHERE season = ?1 AND account_id = ?2)
-                 OR EXISTS(SELECT 1 FROM claim c JOIN bifrost_slot s ON s.id = c.bifrost_slot_id
-                           WHERE s.season = ?1 AND c.account_id = ?2)",
+            "SELECT EXISTS(SELECT 1 FROM submission WHERE season_id = ?1 AND account_id = ?2)
+                 OR EXISTS(SELECT 1 FROM seat WHERE season_id = ?1 AND account_id = ?2)
+                 OR EXISTS(SELECT 1 FROM claim c JOIN slot s ON s.id = c.slot_id
+                           WHERE s.season_id = ?1 AND c.account_id = ?2)",
         )
         .bind(season)
         .bind(account)
@@ -647,7 +578,7 @@ impl Db {
     /// Whether `account` came through the season's private signup link.
     pub async fn is_season_invited(&self, season: Id, account: i64) -> bool {
         sqlx::query_scalar::<_, i64>(
-            "SELECT EXISTS(SELECT 1 FROM season_invited WHERE season = ? AND account_id = ?)",
+            "SELECT EXISTS(SELECT 1 FROM season_invited WHERE season_id = ? AND account_id = ?)",
         )
         .bind(season)
         .bind(account)
@@ -658,7 +589,7 @@ impl Db {
     }
 
     pub async fn add_season_invited(&self, season: Id, account: i64) -> Result<(), sqlx::Error> {
-        sqlx::query("INSERT OR IGNORE INTO season_invited (season, account_id) VALUES (?, ?)")
+        sqlx::query("INSERT OR IGNORE INTO season_invited (season_id, account_id) VALUES (?, ?)")
             .bind(season)
             .bind(account)
             .execute(&self.pool)
@@ -781,15 +712,15 @@ impl Db {
             "inlogic",
             "hint_credit",
             "mine_result",
-            "bifrost_slot",
+            "slot",
         ] {
-            sqlx::query(&format!("DELETE FROM {table} WHERE season = ?"))
+            sqlx::query(&format!("DELETE FROM {table} WHERE season_id = ?"))
                 .bind(id)
                 .execute(&mut *tx)
                 .await?;
         }
         // Links made on the live game; a signup's stay with it.
-        sqlx::query("DELETE FROM seat_link WHERE season = ? AND submission_id IS NULL")
+        sqlx::query("DELETE FROM seat_link WHERE season_id = ? AND submission_id IS NULL")
             .bind(id)
             .execute(&mut *tx)
             .await?;
@@ -803,7 +734,7 @@ impl Db {
     /// results and hint credits belong to the season and are kept.
     pub async fn clear_seed_data(&self, id: Id) -> Result<(), sqlx::Error> {
         for table in ["activity", "hint_priority", "inlogic"] {
-            sqlx::query(&format!("DELETE FROM {table} WHERE season = ?"))
+            sqlx::query(&format!("DELETE FROM {table} WHERE season_id = ?"))
                 .bind(id)
                 .execute(&self.pool)
                 .await?;

@@ -4,7 +4,10 @@ start under the same version doesn't, and a database a newer Bifrost has
 migrated is refused rather than run on. CLI commands never back up or
 migrate, and refuse a database on another schema. A failed pre-upgrade
 backup stops the start only when the schema would change."""
+import contextlib
+import glob
 import os
+import shutil
 import sqlite3
 import sys
 import zipfile
@@ -16,7 +19,7 @@ ENV = {"BIFROST_BACKUP_HOUR": "off"}
 
 
 def stamp(srv, version=None, schema=None):
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+    with contextlib.closing(sqlite3.connect(os.path.join(srv.data, "bifrost.db"))) as db, db:
         if version is not None:
             db.execute("UPDATE setting SET value = ? WHERE key = 'bifrost_version'", (version,))
         if schema is not None:
@@ -59,6 +62,14 @@ srv = server()
 srv.start()
 srv.stop()
 check("a restart on the same version takes no backup", backups(srv) == [], backups(srv))
+snap = os.path.join(srv.data, "snap.db")
+shutil.copy(os.path.join(srv.data, "bifrost.db"), snap)
+with contextlib.closing(sqlite3.connect(snap)) as db, db:
+    tables = db.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]
+os.remove(snap)
+for f in glob.glob(snap + "-*"):
+    os.remove(f)
+check("a clean stop folds the write-ahead log into the database", tables > 15, tables)
 
 # Pretend an older Bifrost ran here last.
 stamp(srv, version="0.0.0-old")
@@ -78,7 +89,7 @@ try:
             snap = z.read("bifrost.db")
         path = os.path.join(srv.data, "snap.db")
         open(path, "wb").write(snap)
-        with sqlite3.connect(path) as db:
+        with contextlib.closing(sqlite3.connect(path)) as db, db:
             old = db.execute("SELECT value FROM setting WHERE key = 'bifrost_version'").fetchone()[0]
         os.remove(path)
         check("the backup holds the database as the old version left it", old == "0.0.0-old", old)
@@ -115,9 +126,14 @@ check("and the database is left alone", stamp(srv) == (schema + 1, "99.0.0"), st
 
 # Numeric season ids, from before 0.3.0, have no upgrade: not from a release (0.1
 # has no schema version, 0.2 has 2), or from a build between releases.
+def remove_db():
+    for f in glob.glob(os.path.join(srv.data, "bifrost.db*")):
+        os.remove(f)
+
+
 for old in (0, 2, 6):
-    os.remove(os.path.join(srv.data, "bifrost.db"))
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+    remove_db()
+    with contextlib.closing(sqlite3.connect(os.path.join(srv.data, "bifrost.db"))) as db, db:
         db.execute("CREATE TABLE season (id INTEGER PRIMARY KEY, name TEXT)")
         db.execute(f"PRAGMA user_version = {old}")
     srv = server()
@@ -125,7 +141,7 @@ for old in (0, 2, 6):
     check("saying so", "before 0.3.0" in srv.logtext(), srv.logtext()[-800:])
     r = srv.cli("auth", "status")
     check("commands refuse it too", r.returncode == 1 and "before 0.3.0" in r.stderr, (r.returncode, r.stderr))
-os.remove(os.path.join(srv.data, "bifrost.db"))
+remove_db()
 
 # `bifrost update` is for the single-file build (see bundle.py); this one has
 # no bundled runtime.

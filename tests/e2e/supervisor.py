@@ -275,7 +275,7 @@ try:
     # A slot with no player: a moderator assigns it.
     with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
         free = "abcdefghjkmnpqrs"
-        db.execute("INSERT INTO bifrost_slot (id, season, game_id, name, ap_slot, game) SELECT ?, season, game_id, 'Free', ap_slot, game FROM bifrost_slot WHERE game_id = ? LIMIT 1", (free, ap))
+        db.execute("INSERT INTO slot (id, season_id, game_id, name, ap_slot, game) SELECT ?, season_id, game_id, 'Free', ap_slot, game FROM slot WHERE game_id = ? LIMIT 1", (free, ap))
     post(bob, f"/s/{sid}/claim", data=dict(slot_id=free, op="assign", account="bob"))
     check("a player can't assign an empty slot", "unclaimed" in get(root, f"/s/{sid}/claim").text)
     r = post(root, f"/s/{sid}/claim", data=dict(slot_id=free, op="assign", account="nobody"))

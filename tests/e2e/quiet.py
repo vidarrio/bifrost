@@ -47,11 +47,11 @@ try:
     import sqlite3
     def credits():
         with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
-            row = c.execute("SELECT credits FROM hint_credit WHERE season = ?", (sid,)).fetchone()
+            row = c.execute("SELECT credits FROM hint_credit WHERE season_id = ?", (sid,)).fetchone()
             return row[0] if row else 0
     with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
         acct = c.execute("SELECT id FROM account WHERE username = 'root'").fetchone()[0]
-        c.execute("INSERT INTO hint_credit (season, account_id, credits) VALUES (?, ?, 1)", (sid, acct))
+        c.execute("INSERT INTO hint_credit (season_id, account_id, credits) VALUES (?, ?, 1)", (sid, acct))
     j = post(root, f"/s/{sid}/hint", data=dict(slot_id=ids[0], item="Everything")).json()
     check("a bonus hint for a non-item is refused", not j.get("ok") and "exact item name" in j.get("message", ""), j)
     check("…and keeps the credit", credits() == 1)
@@ -67,7 +67,7 @@ try:
     def inlogic_rows():
         import sqlite3
         with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
-            return c.execute("SELECT count(*) FROM inlogic WHERE season = ?", (sid,)).fetchone()[0]
+            return c.execute("SELECT count(*) FROM inlogic WHERE season_id = ?", (sid,)).fetchone()[0]
     check("in-logic tracker ran", wait_for(lambda: inlogic_rows() >= 2, 120, 3))
 
     # A real player: AP's own client library, no Bifrost tag.
@@ -128,7 +128,7 @@ asyncio.run(main())
 '''])
     time.sleep(2)
     with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
-        c.execute("UPDATE hint_credit SET credits = 1 WHERE season = ?", (sid,))
+        c.execute("UPDATE hint_credit SET credits = 1 WHERE season_id = ?", (sid,))
     j = post(root, f"/s/{sid}/hint", data=dict(slot_id=ids[0], item="Map Height")).json()
     spam.wait(30)
     check("…even while another player sends !players", j.get("ok") and credits() == 0, j)

@@ -56,11 +56,11 @@ try:
     check("someone joined mid-season", "Late" in get(mod, f"/s/{sid}/claim").text)
 
     with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
-        db.execute("INSERT INTO world_request (season, file, sha256, uploaded_by, uploaded_at) VALUES (?, 'y.apworld', 'x', 'ann', 0)", (sid,))
+        db.execute("INSERT INTO world_request (season_id, file, sha256, uploaded_by, uploaded_at) VALUES (?, 'y.apworld', 'x', 'ann', 0)", (sid,))
     r = post(mod, f"/s/{sid}/admin/worlds/approve", data=dict(name="y.apworld"))
     check("approving one is locked too", "locked" in r.text and not os.path.exists(apworld.replace("x.apworld", "y.apworld")), r.text[-200:])
     with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
-        db.execute("DELETE FROM world_request WHERE season = ?", (sid,))
+        db.execute("DELETE FROM world_request WHERE season_id = ?", (sid,))
     open(apworld, "wb").close()
     r = post(mod, f"/s/{sid}/admin/delete-apworld", data=dict(name="x.apworld"))
     check("apworlds are locked once live", os.path.exists(apworld) and "locked" in r.text, r.text[-200:])

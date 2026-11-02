@@ -1,6 +1,6 @@
 //! Schema versions. A database records its version in SQLite's
 //! `user_version`: 0 is a fresh file, 1 is the baseline
-//! ([`super::baseline`]), and each entry of [`STEPS`] adds one. Opening the
+//! (`schema.sql`), and each entry of [`STEPS`] adds one. Opening the
 //! database runs the steps it hasn't had yet, each in its own transaction,
 //! and refuses a database that a newer Bifrost has already moved past.
 //!
@@ -21,6 +21,9 @@ use super::Db;
 /// doesn't cascade into them; the references are checked before the step
 /// commits.
 const STEPS: &[&str] = &[];
+
+/// The schema at version 1.
+const BASELINE: &str = include_str!("schema.sql");
 
 /// The schema version this build writes.
 pub const SCHEMA_VERSION: i64 = 1 + STEPS.len() as i64;
@@ -116,9 +119,27 @@ async fn apply(pool: &SqlitePool, steps: &[&str]) -> Result<(), sqlx::Error> {
         )));
     }
     if at == 0 {
-        super::baseline(pool).await?;
-        sqlx::query("PRAGMA user_version = 1").execute(pool).await?;
-        at = 1;
+        // All of it or none of it, and only one process does it: two starting at once
+        // both see an empty file, so look again once holding the write lock.
+        let mut conn = pool.acquire().await?;
+        sqlx::raw_sql("BEGIN IMMEDIATE").execute(&mut *conn).await?;
+        let res: Result<(), sqlx::Error> = async {
+            let again: i64 = sqlx::query_scalar("PRAGMA user_version")
+                .fetch_one(&mut *conn)
+                .await?;
+            if again == 0 {
+                sqlx::raw_sql(BASELINE).execute(&mut *conn).await?;
+                sqlx::raw_sql("PRAGMA user_version = 1")
+                    .execute(&mut *conn)
+                    .await?;
+            }
+            Ok(())
+        }
+        .await;
+        let end = if res.is_ok() { "COMMIT" } else { "ROLLBACK" };
+        sqlx::raw_sql(end).execute(&mut *conn).await?;
+        res?;
+        at = user_version(pool).await?;
     }
     for (i, sql) in steps.iter().enumerate().skip(at as usize - 1) {
         let to = i as i64 + 2;
@@ -194,6 +215,50 @@ mod tests {
         // Opening it again changes nothing.
         db.migrate().await.unwrap();
         assert_eq!(db.stamp().await.unwrap(), stamp);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn the_schema_keeps_its_conventions() {
+        let (dir, db) = fresh("conventions").await;
+        db.migrate().await.unwrap();
+        let tables: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT name, strict FROM pragma_table_list
+             WHERE schema = 'main' AND type = 'table' AND name NOT LIKE 'sqlite_%'",
+        )
+        .fetch_all(&db.pool)
+        .await
+        .unwrap();
+        assert!(tables.len() > 15);
+        for (table, strict) in &tables {
+            assert_eq!(*strict, 1, "{table} isn't STRICT");
+            // Every reference has an index to find its rows by when its parent goes.
+            let keys: Vec<String> = sqlx::query_scalar(&format!(
+                "SELECT \"from\" FROM pragma_foreign_key_list('{table}')"
+            ))
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+            for key in keys {
+                // An index on it first, or it's the rowid.
+                let covered: i64 = sqlx::query_scalar(&format!(
+                    "SELECT (SELECT COUNT(*) FROM pragma_index_list('{table}') l
+                             JOIN pragma_index_info(l.name) i ON i.seqno = 0 AND i.name = ?1)
+                          + (SELECT COUNT(*) FROM pragma_table_info('{table}')
+                             WHERE name = ?1 AND pk = 1 AND type = 'INTEGER')"
+                ))
+                .bind(&key)
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+                assert!(covered > 0, "{table}.{key} has no index");
+            }
+        }
+        let wal: String = sqlx::query_scalar("PRAGMA journal_mode")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(wal, "wal");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
