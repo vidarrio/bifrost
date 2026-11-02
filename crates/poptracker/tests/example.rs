@@ -868,3 +868,44 @@ fn custom_item_calls_are_bounded() {
     let _ = Session::new(&Pack::load(tmp.path()).unwrap());
     assert!(started.elapsed().as_secs() < 60, "{:?}", started.elapsed());
 }
+
+#[test]
+fn data_storage_is_replayed_from_a_copy() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/storage");
+    let s = Session::new(&Pack::load(dir).unwrap()).unwrap();
+    s.set_valid_locations(&[1, 2, 3]);
+    s.set_checked_locations(&[2]);
+    s.on_clear(&serde_json::json!({})).unwrap();
+    s.on_item(0, 100, "Thing", 7).unwrap();
+    s.replay_storage(|key| match key {
+        "got" => Some(serde_json::json!({"n": 4})),
+        "watched" => Some(serde_json::json!(5)),
+        "second" => Some(serde_json::json!("asked by a handler")),
+        _ => None,
+    })
+    .unwrap();
+    let st = s.state();
+    assert_eq!(st.pack_error_count, 0, "{:?}", st.pack_errors);
+    let active = |code: &str| {
+        st.items
+            .iter()
+            .find(|i| i.codes.iter().any(|c| c == code))
+            .unwrap()
+            .active
+    };
+    for code in [
+        "retrieved",
+        "notified",
+        "missing_nil",
+        "chained",
+        "locations",
+        "sender",
+    ] {
+        assert!(active(code), "{code}");
+    }
+    assert_eq!(
+        st.locations[0].sections[0].highlight, 3,
+        "a pack's highlight shows"
+    );
+    assert_eq!(st.locations[0].sections[1].highlight, 0);
+}

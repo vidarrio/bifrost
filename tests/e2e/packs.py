@@ -15,7 +15,9 @@ import requests
 from lib import BIN, Server, check, descendants, get, post, summary, wait_for
 
 YAML = b"name: Ann\ngame: ChecksFinder\nChecksFinder: {}\n"
-ITEMS = '[{"name":"Key","type":"toggle","img":"x.png","codes":"key"}]'
+ITEMS = """[{"name":"Key","type":"toggle","img":"x.png","codes":"key"},
+{"name":"Own hints","type":"toggle","img":"x.png","codes":"own_hints"},
+{"name":"Leak","type":"toggle","img":"x.png","codes":"leak"}]"""
 LOCATIONS = '[{"name":"Door","access_rules":["key"],"sections":[{"name":"S","item_count":1}]}]'
 LOAD = """
 Tracker:AddItems("items.json")
@@ -27,6 +29,15 @@ Archipelago:AddClearHandler("clear", function(data)
   print(string.rep("noise", 1000))
   Tracker:FindObjectForCode("key").Active = data.player_name == "Ann"
     and Archipelago:GetPlayerGame(1) == "ChecksFinder"
+  Archipelago:Get({"_read_hints_0_1", "_read_hints_0_2", "_read_race_mode"})
+end)
+-- Its own hints come back as a list, however empty; the server's other keys as nothing.
+Archipelago:AddRetrievedHandler("hints", function(key, value)
+  if key == "_read_hints_0_1" and type(value) == "table" then
+    Tracker:FindObjectForCode("own_hints").Active = true
+  elseif key ~= "_read_hints_0_1" and value ~= nil then
+    Tracker:FindObjectForCode("leak").Active = true
+  end
 end)
 """
 SPIN = "while true do pcall(function() while true do end end) end"
@@ -99,6 +110,8 @@ try:
     check("a good pack uploads", "Pack rejected" not in r.text, r.text[:300])
     d = wait_for(lambda: tracked(root), 60, 2)
     check("it tracks, with the slot data and players, whatever it prints", d, state(root))
+    held = {c for i in (d or {}).get("state", {}).get("items", []) if i["active"] for c in i["codes"]}
+    check("it reads its own hints, and no one else's", "own_hints" in held and "leak" not in held, held)
     t = time.time()
     polls = [state(root) for _ in range(30)]
     check("polls of an unchanged slot share one result", all("state" in p for p in polls) and time.time() - t < 3, time.time() - t)

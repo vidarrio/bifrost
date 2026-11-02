@@ -1,0 +1,38 @@
+[
+  {
+    "name": "retrieved",
+    "type": "toggle",
+    "img": "x.png",
+    "codes": "retrieved"
+  },
+  {
+    "name": "notified",
+    "type": "toggle",
+    "img": "x.png",
+    "codes": "notified"
+  },
+  {
+    "name": "missing_nil",
+    "type": "toggle",
+    "img": "x.png",
+    "codes": "missing_nil"
+  },
+  {
+    "name": "chained",
+    "type": "toggle",
+    "img": "x.png",
+    "codes": "chained"
+  },
+  {
+    "name": "locations",
+    "type": "toggle",
+    "img": "x.png",
+    "codes": "locations"
+  },
+  {
+    "name": "sender",
+    "type": "toggle",
+    "img": "x.png",
+    "codes": "sender"
+  }
+]

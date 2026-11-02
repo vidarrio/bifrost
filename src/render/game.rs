@@ -158,6 +158,19 @@ pub(super) const PT_JS: &str = r#"<script>
  //   one remaining state   -> that solid color
  //   two remaining states  -> diagonal split, bottom-left to top-right
  //   three or more states  -> solid orange "partial"
+ // A hint's highlight on what's left of a marker: PopTracker's values, priority
+ // first. -1 avoid, 1 no priority, 2 unspecified, 3 priority.
+ var PT_HL={3:['#ffd700','priority'],'-1':['#ff4040','avoid'],1:['#909090','no priority'],2:['#40e0ff','hinted']};
+ function markerHighlight(k){
+  var best=0; (k.sections||[]).forEach(function(s){ if(!s.checked&&s.highlight&&(best===0||s.highlight===3||(best!==3&&s.highlight>best))) best=s.highlight; });
+  return PT_HL[best];
+ }
+ function paintMarker(mk,k){
+  mk.style.background=markerBg(k); mk.title=markerTitle(k);
+  var hl=markerHighlight(k);
+  mk.style.outline=hl?('2px solid '+hl[0]):'';
+  if(hl) mk.title+='\nHinted: '+hl[1];
+ }
  function markerBg(k){
   var secs=(k.sections||[]);
   if(!secs.length){ return k.checked?PT_COL.done:(k.accessible?PT_COL.reachable:PT_COL.none); }
@@ -204,7 +217,7 @@ pub(super) const PT_JS: &str = r#"<script>
    mk.className='ptmk'+(((k.shape||m.location_shape)==='diamond')?' d':'');
    mk.dataset.key=k.location+'@'+k.map; mk.dataset.loc=k.location;
    mk.title=markerTitle(k);
-   mk.style.background=markerBg(k);
+   paintMarker(mk,k);
    mk._k=k; mk._s=s; spans.push(mk); stage.appendChild(mk);
   });
   // Position markers as PERCENTAGES of the image's natural size, so they scale
@@ -322,7 +335,7 @@ pub(super) const PT_JS: &str = r#"<script>
  }
  function update(){
   var mm={}; (st.markers||[]).forEach(function(k){mm[k.location+'@'+k.map]=k;});
-  host.querySelectorAll('.ptmk').forEach(function(mk){ var k=mm[mk.dataset.key]; if(k){ mk.style.background=markerBg(k); mk.title=markerTitle(k); } });
+  host.querySelectorAll('.ptmk').forEach(function(mk){ var k=mm[mk.dataset.key]; if(k){ paintMarker(mk,k); } });
   host.querySelectorAll('.ptitem').forEach(function(im){ var it=itemsByCode[im.dataset.code]; if(!it) return;
    im.className='ptitem'+(it.active?'':' ptoff'); if(it.img) im.src=assetUrl(it.img);
    var ov=im.parentNode.querySelector('.ptov');

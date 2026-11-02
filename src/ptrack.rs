@@ -159,11 +159,15 @@ impl<'a> Connect<'a> {
 /// Everything fed to a pack to compute its state.
 #[derive(Serialize)]
 pub struct Feed<'a> {
-    pub items: &'a [(i64, String)],
+    /// The items received: id, name, and the slot that sent it.
+    pub items: &'a [(i64, String, i64)],
     pub checked: &'a [i64],
     pub valid_locations: &'a [i64],
     pub player: i64,
     pub connect: Connect<'a>,
+    /// This slot's hints, and the season's data storage.
+    pub hints: &'a [serde_json::Value],
+    pub stored: &'a serde_json::Map<String, serde_json::Value>,
 }
 
 /// The tracker state for a slot from its installed pack + what's fed to it, as
@@ -456,11 +460,13 @@ struct WorkerRequest {
 
 #[derive(Deserialize)]
 struct WorkerFeed {
-    items: Vec<(i64, String)>,
+    items: Vec<(i64, String, i64)>,
     checked: Vec<i64>,
     valid_locations: Vec<i64>,
     player: i64,
     connect: WorkerConnect,
+    hints: Vec<serde_json::Value>,
+    stored: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -655,11 +661,12 @@ fn worker_reply(request: &Path) -> Result<serde_json::Value, String> {
     if !feed.valid_locations.is_empty() {
         session.set_valid_locations(&feed.valid_locations);
     }
+    session.set_checked_locations(&feed.checked);
     let slot_data = clear_data(feed.connect.slot_data.as_ref());
     session.on_clear(&slot_data).map_err(|e| e.to_string())?;
-    for (i, (id, name)) in feed.items.iter().enumerate() {
+    for (i, (id, name, sender)) in feed.items.iter().enumerate() {
         session
-            .on_item(i as i64, *id, name, feed.player)
+            .on_item(i as i64, *id, name, *sender)
             .map_err(|e| e.to_string())?;
     }
     // Feed checked locations so the pack's `onLocation` marks sections done
@@ -667,6 +674,18 @@ fn worker_reply(request: &Path) -> Result<serde_json::Value, String> {
     for id in &feed.checked {
         session.on_location(*id, "").map_err(|e| e.to_string())?;
     }
+    // What the pack asks of the server. Only its own slot's hints: other `_read_`
+    // keys, the server's own, read as nothing.
+    let own_hints = format!("_read_hints_0_{}", feed.player);
+    session
+        .replay_storage(|key| {
+            if key == own_hints {
+                Some(serde_json::Value::Array(feed.hints.clone()))
+            } else {
+                feed.stored.get(key).cloned()
+            }
+        })
+        .map_err(|e| e.to_string())?;
     serde_json::to_value(session.state()).map_err(|e| e.to_string())
 }
 

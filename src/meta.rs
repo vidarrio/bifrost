@@ -20,12 +20,25 @@ pub struct SlotCounts {
     /// Location ids this slot has checked (for the PopTracker "Done"/grey state).
     #[serde(default)]
     pub checked: Vec<i64>,
+    /// The slot's hints, as AP gives them to clients (for its PopTracker pack).
+    #[serde(default)]
+    pub hints: Vec<serde_json::Value>,
+}
+
+/// What's read from the season's save: each slot's state, and the data storage.
+#[derive(Debug, Default, Deserialize)]
+pub struct SaveState {
+    /// Slots by stringified number.
+    #[serde(default)]
+    pub slots: HashMap<String, SlotCounts>,
+    #[serde(default)]
+    pub stored: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Read every slot's true sent/received totals from the season's save
 /// (blocks on a Python subprocess). Returns an empty map before the server has
 /// written a save.
-pub async fn load_counts(season: i64) -> Result<HashMap<i64, SlotCounts>, String> {
+pub async fn load_counts(season: i64) -> Result<SaveState, String> {
     ap_adapter::load_counts(&config::get().season(season)).await
 }
 

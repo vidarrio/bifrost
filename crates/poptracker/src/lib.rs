@@ -36,7 +36,7 @@
 use mlua::{Function, Lua, LuaOptions, MultiValue, StdLib, Table, Value};
 use serde::Serialize;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -420,6 +420,9 @@ pub struct SectionState {
     /// `{..}` rules), or `none` (red, blocked). Bracket-free rules only ever
     /// yield `reachable`/`none`, matching the old boolean behavior.
     pub level: String,
+    /// The highlight a pack set on it from a hint, as PopTracker's `Highlight`:
+    /// -1 avoid, 0 none, 1 no priority, 2 unspecified, 3 priority.
+    pub highlight: i64,
     /// All of this section's chests have been checked (AvailableChestCount <= 0).
     pub checked: bool,
 }
@@ -968,6 +971,10 @@ struct Eng {
     code_items: HashMap<String, Vec<usize>>,
     /// Which of them are composite toggles.
     composites: Vec<usize>,
+    /// Data storage keys a pack has asked for and not been answered on, with
+    /// whether by `SetNotify`, and those it has been (`replay_storage`).
+    storage_asked: BTreeSet<(String, bool)>,
+    storage_answered: HashSet<(String, bool)>,
     /// Calls to custom items' functions in this operation (see `count_custom_call`).
     custom_calls: u64,
     /// How deep custom items' `ProvidesCodeFunc`s have nested.
@@ -1027,6 +1034,12 @@ const ITEM_METHODS: &str = "bifrost.item_methods";
 /// each that says which item it is.
 const ITEM_OBJECTS: &str = "bifrost.item_objects";
 const ITEM_INDEX: &str = "__item";
+
+/// How much of the data storage a pack can ask for, and how many times the answers
+/// may lead it to ask for more.
+const MAX_STORAGE_KEY: usize = 1024;
+const MAX_STORAGE_KEYS: usize = 65536;
+const MAX_STORAGE_ROUNDS: usize = 8;
 
 /// How many calls to custom items' functions one operation may make. Ample: real
 /// packs have few such items, and their counts are kept while rules settle.
@@ -1233,6 +1246,69 @@ impl Session {
         Ok(())
     }
 
+    /// Answer what the pack has asked of the data storage from `read`, as the server
+    /// would after a connect: `Get` through its Retrieved handlers, and `SetNotify`
+    /// through its SetReply ones, with the value as it stands. Handlers may ask for
+    /// more; that's answered too, a few times over.
+    pub fn replay_storage(&self, read: impl Fn(&str) -> Option<serde_json::Value>) -> Result<()> {
+        for _ in 0..MAX_STORAGE_ROUNDS {
+            let asked = std::mem::take(&mut self.eng.borrow_mut().storage_asked);
+            let fresh: Vec<(String, bool)> = {
+                let mut e = self.eng.borrow_mut();
+                asked
+                    .into_iter()
+                    .filter(|k| e.storage_answered.insert(k.clone()))
+                    .collect()
+            };
+            if fresh.is_empty() {
+                break;
+            }
+            for (key, notify) in fresh {
+                self.charge();
+                let value = match read(&key) {
+                    Some(v) => json_to_lua(&self.lua, &v)?,
+                    None => Value::Nil,
+                };
+                let handlers = if notify {
+                    self.eng.borrow().setr_h.clone()
+                } else {
+                    self.eng.borrow().retr_h.clone()
+                };
+                for h in handlers {
+                    let args = (key.as_str(), value.clone(), Value::Nil);
+                    self.guard(h.call::<()>(args))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The locations this slot has checked, as `Archipelago.CheckedLocations`, with
+    /// the rest of the valid ones as `MissingLocations`. Call before feeding state.
+    pub fn set_checked_locations(&self, checked: &[i64]) {
+        let done: HashSet<i64> = checked.iter().copied().collect();
+        let mut missing: Vec<i64> = {
+            let e = self.eng.borrow();
+            e.valid_locations
+                .iter()
+                .flatten()
+                .filter(|id| !done.contains(id))
+                .copied()
+                .collect()
+        };
+        missing.sort_unstable();
+        if let Ok(ap) = self.lua.globals().get::<Table>("Archipelago") {
+            for (field, list) in [
+                ("CheckedLocations", checked),
+                ("MissingLocations", &missing),
+            ] {
+                if let Ok(t) = self.lua.create_sequence_from(list.iter().copied()) {
+                    let _ = ap.set(field, t);
+                }
+            }
+        }
+    }
+
     /// Snapshot the current tracker state (items + location accessibility).
     pub fn state(&self) -> TrackerState {
         self.charge();
@@ -1362,6 +1438,11 @@ impl Session {
                         cleared: avail.map_or(0, |a| item_count.saturating_sub(a).max(0)),
                         accessible: lvl >= LEVEL_NORMAL,
                         level: level_name(lvl).to_string(),
+                        highlight: locobjs
+                            .as_ref()
+                            .and_then(|o| o.raw_get::<Table>(key.as_str()).ok())
+                            .and_then(|t| t.raw_get::<Option<i64>>("Highlight").ok().flatten())
+                            .unwrap_or(0),
                         // Nothing left to collect, its hosted items included.
                         checked: avail.map_or(item_count <= 0, |a| a <= 0)
                             && all_held(&self.lua, &self.eng, hosted),
@@ -2342,10 +2423,10 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     let hl = lua.create_table()?;
     for (k, v) in [
         ("None", 0),
-        ("Avoid", 1),
-        ("NoPriority", 2),
-        ("Unspecified", 3),
-        ("Priority", 4),
+        ("Avoid", -1),
+        ("NoPriority", 1),
+        ("Unspecified", 2),
+        ("Priority", 3),
     ] {
         hl.set(k, v)?;
     }
@@ -2954,9 +3035,27 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     handler!("AddLocationHandler", loc_h);
     handler!("AddRetrievedHandler", retr_h);
     handler!("AddSetReplyHandler", setr_h);
+    // What a pack asks of the data storage, to answer from a copy of it (see
+    // `Session::replay_storage`). Nothing here can write to it.
+    for (method, notify) in [("Get", false), ("SetNotify", true)] {
+        let eng2 = eng.clone();
+        ap.set(
+            method,
+            lua.create_function(move |_, (_t, keys): (Value, Value)| {
+                let Value::Table(keys) = keys else {
+                    return Ok(false);
+                };
+                let mut e = eng2.borrow_mut();
+                for key in keys.sequence_values::<String>().flatten() {
+                    if key.len() <= MAX_STORAGE_KEY && e.storage_asked.len() < MAX_STORAGE_KEYS {
+                        e.storage_asked.insert((key, notify));
+                    }
+                }
+                Ok(true)
+            })?,
+        )?;
+    }
     for noop in [
-        "SetNotify",
-        "Get",
         "LocationChecks",
         "LocationScouts",
         "HintItem",

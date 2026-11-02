@@ -15,7 +15,6 @@
 //! Custom (uploaded) apworlds only run when the sandbox is strong enough
 //! ([`check_worlds`]); worlds shipped with Bifrost are recognised by hash.
 
-use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -27,7 +26,7 @@ use sha2::{Digest, Sha256};
 use crate::apinstall::{self, Install};
 use crate::checker::CheckResult;
 use crate::config::{self, SeasonDirs};
-use crate::meta::{Meta, SlotCounts};
+use crate::meta::{Meta, SaveState};
 use crate::sandbox::{self, Job};
 
 const CHECK_TIMEOUT: Duration = Duration::from_secs(180);
@@ -448,7 +447,7 @@ pub async fn decode_meta(season: &SeasonDirs, seed_zip: &Path) -> Result<Meta, S
 
 /// Every slot's authoritative sent/received state from the server's save.
 /// Empty before the server has written one.
-pub async fn load_counts(season: &SeasonDirs) -> Result<HashMap<i64, SlotCounts>, String> {
+pub async fn load_counts(season: &SeasonDirs) -> Result<SaveState, String> {
     let save = season.current_save();
     let out = run_helper(
         "bifrost_counts.py",
@@ -459,13 +458,7 @@ pub async fn load_counts(season: &SeasonDirs) -> Result<HashMap<i64, SlotCounts>
     )
     .await
     .map_err(|e| format!("counts: {e}"))?;
-    // Keys are stringified slot numbers; collect into an i64-keyed map.
-    let raw: HashMap<String, SlotCounts> =
-        last_json_line(&out.stdout, "{}").map_err(|e| format!("parse counts: {e}"))?;
-    Ok(raw
-        .into_iter()
-        .filter_map(|(k, v)| k.parse::<i64>().ok().map(|n| (n, v)))
-        .collect())
+    last_json_line(&out.stdout, "{}").map_err(|e| format!("parse counts: {e}"))
 }
 
 /// Roll the season's staged `Players/` into `output/AP_<seed>.zip`.
@@ -648,7 +641,7 @@ mod tests {
 
     #[test]
     fn empty_stdout_uses_the_fallback() {
-        let v: HashMap<String, u32> = last_json_line(b"\n", "{}").unwrap();
+        let v: std::collections::HashMap<String, u32> = last_json_line(b"\n", "{}").unwrap();
         assert!(v.is_empty());
         assert!(last_json_line::<serde_json::Value>(b"", "").is_err());
     }
