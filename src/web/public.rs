@@ -57,6 +57,11 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
             })
             .cloned(),
     };
+    // The board and minesweeper cards need a season. If there is one but this viewer
+    // can't see any, they'd only lead to a refusal; a visitor who can still sign in
+    // may turn out to be a member.
+    let can_sign_in = me.principal().is_none() && st.auth.mode == auth::AuthMode::Native;
+    let season_cards = default.is_some() || can_sign_in || st.db.default_season().await.is_none();
     let season_base = default
         .as_ref()
         .map(|d| format!("/s/{}", d.id))
@@ -103,8 +108,17 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
             (s.name, addr)
         })
         .collect();
+    let mut landing = LANDING.to_string();
+    if !season_cards {
+        while let (Some(i), Some(j)) = (
+            landing.find("<!--SEASONCARD-->"),
+            landing.find("<!--/SEASONCARD-->"),
+        ) {
+            landing.replace_range(i..j + "<!--/SEASONCARD-->".len(), "");
+        }
+    }
     Html(
-        LANDING
+        landing
             // Constant first, so no data inserted below can be read as it.
             .replace("<!--IDENTITYJS-->", render::IDENTITY_JS)
             .replace("<!--SEASONBASE-->", &season_base)

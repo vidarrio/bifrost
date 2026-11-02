@@ -105,7 +105,8 @@ automatically once the world is approved. If the world is rejected, the signup
 stays flagged and you'll need to pick something else.
 
 The **YAML checker** (`/check`) runs the same check without signing up. It's
-useful when you're tuning options.
+useful when you're tuning options. It checks against the worlds of the current
+season if you can see that season, and otherwise against the core worlds only.
 
 ### After generation: your slot
 
@@ -696,19 +697,21 @@ and `/season` belong in the rule below. Once they're covered, set `season_pages 
 true` under `[forward_auth]` (`BIFROST_FWD_SEASON_PAGES`). Only then does Bifrost
 believe identity headers on those pages; with it set and the paths not covered,
 anyone could claim to be anyone there. Without it, nobody can read a private
-season's pages, or any season's before generation, and those paths need no sign-in
-on open seasons. The home page never sees an identity under forward auth, so it
-lists only seasons open to anyone.
+season's pages, or any season's before generation, sysadmins included, and since
+new seasons are private that means every new season once it's generated. Open
+seasons' pages work without it, as long as the proxy lets those paths through. The
+home page never sees an identity under forward auth, so it lists only seasons open
+to anyone, and a season's `/s/<id>/check` needs a sign-in the proxy can't give it.
 
 The proxy must run forward-auth on every signed-in path. That includes the
 season-scoped forms under `/s/<id>/`, not only the plain prefixes. Otherwise a
 client can send its own identity headers through the proxy. The signed-in
 prefixes are `/admin`, `/board`, `/log`, `/season`, `/claim`, `/hint`, `/signup`, `/seat`, `/game`, `/prioritize`,
 `/minesweeper`, `/api` and `/mc`. Everything else is public. A Traefik rule
-for the season forms looks like:
+covering both forms looks like:
 
 ```
-PathRegexp(`^/s/[^/]*/+(admin|board|log|season|claim|hint|signup|seat|game|prioritize|minesweeper|api|mc)`)
+PathRegexp(`^(/s/[^/]*/+|/)(admin|board|log|season|claim|hint|signup|seat|game|prioritize|minesweeper|api|mc)`)
 ```
 
 Match any season id there, not just digits, so that no spelling of a season

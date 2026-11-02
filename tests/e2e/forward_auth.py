@@ -16,7 +16,7 @@ ADMIN = {"x-auth-request-user": "alice", "x-auth-request-groups": "adm"}
 
 
 def server(tag_env, fresh=False):
-    return Server("fwdauth", port=18195, ap_ports="39202-39204", fresh=fresh, extra_env={**ENV, **tag_env})
+    return Server("fwdauth", port=18194, ap_ports="39202-39204", fresh=fresh, extra_env={**ENV, **tag_env})
 
 
 def status(srv, path, headers=None):

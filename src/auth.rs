@@ -1007,7 +1007,7 @@ mod tests {
         let guide = include_str!("../docs/USER_GUIDE.md");
         let rule = guide
             .lines()
-            .find(|l| l.starts_with("PathRegexp(`^/s/"))
+            .find(|l| l.starts_with("PathRegexp(`^(/s/"))
             .expect("the guide's season rule");
         let alts = rule
             .split_once('(')

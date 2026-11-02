@@ -200,8 +200,14 @@ pub async fn can_view(st: &AppState, row: &SeasonRow, mods: &[i64], me: &crate::
 /// A season you can't see: sign in if you haven't, else it isn't there.
 fn refused(st: &AppState, parts: &Parts, me: &crate::auth::Me) -> Response {
     if me.principal().is_none() {
-        if parts.method != axum::http::Method::GET || st.auth.mode != crate::auth::AuthMode::Native
-        {
+        if st.auth.mode != crate::auth::AuthMode::Native {
+            return (
+                StatusCode::UNAUTHORIZED,
+                "Sign in required. If you did, this server's operator needs to cover this page in the proxy and set season_pages: see the user guide.",
+            )
+                .into_response();
+        }
+        if parts.method != axum::http::Method::GET {
             return (StatusCode::UNAUTHORIZED, "Sign in required.").into_response();
         }
         let original = parts
