@@ -488,7 +488,7 @@ when a newer release is out (see [Configuration](#configuration)).
 **What an update does.** Updating means stopping Bifrost, swapping the image
 or file, and starting it again. Unless the changelog says otherwise, everything
 else carries over. Bifrost is in very early development, so a version can break
-things or have no upgrade path for existing data: read the changelog first.
+things: read the changelog first.
 
 - **The data directory and database.** On its first start the new version
   takes a pre-upgrade backup and then upgrades the database (see
