@@ -84,7 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it before the paths are covered: those pages would believe identity headers sent by
   anyone. See the user guide.
 - Connection details moved from the home page to each season's live board, with its own
-  address and, for its players and moderators, its connect password. The instance's
+  address and, for its players, moderators and sysadmins, its connect password. The instance's
   password note setting is gone.
 - Players no longer claim or unclaim slots. Moderators assign slots in seasons with no
   signups. A signup can't be removed once its season is generated, and nobody is removed

@@ -70,7 +70,28 @@ pub(super) fn card_progress(sent: u64, world_size: u32) -> String {
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+/// The board's connection details: the season's address and connect password.
+pub fn connect_line(live: bool, addr: Option<&str>, password: &str, may_join: bool) -> String {
+    if !live {
+        return String::new();
+    }
+    let mut out = format!(
+        r#" · AP server <b class="mono">{}</b>"#,
+        esc(addr.unwrap_or("ask an admin"))
+    );
+    if !password.is_empty() {
+        if may_join {
+            out.push_str(&format!(
+                r#" · password <b class="mono">{}</b>"#,
+                esc(password)
+            ));
+        } else {
+            out.push_str(" · the password is for this season's players");
+        }
+    }
+    out
+}
+
 pub fn board_page(
     snap: &BoardSnapshot,
     slots: &[SlotRow],
@@ -78,20 +99,10 @@ pub fn board_page(
     mc_addr: Option<&str>,
     activity: &[crate::db::ActivityRow],
     inlogic: &std::collections::HashMap<i64, i64>,
-    connect: Option<&str>,
-    password: &str,
+    connect: &str,
 ) -> Html<String> {
     let mut out = page_head(None);
     out.push_str(BOARD_STYLE);
-    let mut connect = connect
-        .map(|a| format!(r#" · AP server <b class="mono">{}</b>"#, esc(a)))
-        .unwrap_or_default();
-    if !password.is_empty() {
-        connect.push_str(&format!(
-            r#" · password <b class="mono">{}</b>"#,
-            esc(password)
-        ));
-    }
     out.push_str(&format!(
         r#"<h1>Live board</h1><div class="crumb"><a href="/">← Bifrost</a> · <span id="connline">{}</span>{connect}</div>"#,
         conn_line(snap)

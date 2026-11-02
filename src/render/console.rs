@@ -330,7 +330,7 @@ pub fn settings_page(
 ) -> Html<String> {
     let mut body = console_nav("/admin/settings", true);
     if saved {
-        body.push_str(r#"<div class="banner ok">Saved — the home page shows it now.</div>"#);
+        body.push_str(r#"<div class="banner ok">Saved.</div>"#);
     }
     let ports = if status.managed {
         let (a, b) = status.ports;
@@ -374,7 +374,7 @@ pub fn settings_page(
         .collect::<Vec<_>>()
         .join("\n");
     body.push_str(&format!(
-        r#"<h2>Home page</h2>
+        r#"<h2>Connections and home page</h2>
 <style>.authform{{max-width:560px}}.authform textarea{{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:7px 9px;font:13px/1.5 var(--mono);min-height:110px}}</style>
 <form class="authform" method="post" action="/admin/settings">
 <label>Connect host — what players' AP clients connect to; each live season adds its port<input type="text" name="domain" value="{}" placeholder="ap.example.org" maxlength="253"></label>

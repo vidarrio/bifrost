@@ -73,7 +73,7 @@ pub fn landing_connect(live: &[(i64, String)]) -> String {
     }
     for (id, name) in live {
         out.push_str(&format!(
-            r#"<div class="pw"><a href="/s/{id}/board">{}</a>: address and password on its live board</div>"#,
+            r#"<div class="pw"><a href="/s/{id}/board">{}</a>: connection details on its live board</div>"#,
             esc(name)
         ));
     }

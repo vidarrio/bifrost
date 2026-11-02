@@ -118,7 +118,9 @@ moderator assigns each slot to an account from the **Slots** page.
 ### Connecting
 
 Each live season's board shows its address (`host:port`) and, if one is set, its
-connect password. The password only shows to the season's players and moderators.
+connect password. The password only shows to the season's players, its moderators
+and sysadmins. Under forward auth that needs `season_pages`: without it the board
+has no identity, so it says who the password is for and doesn't show it.
 In your game's Archipelago client, connect to that address using your slot name.
 
 If your game needs a patch or output file (a ROM patch, a mod file, a save to
@@ -463,7 +465,7 @@ The log prints a one-time `/setup?token=…` link. Open it to create the first
 sysadmin. Then:
 
 1. **Console → Settings**: set the **connect host** players use. Optionally
-   set a password note, a home link for the header pill, and Discord servers
+   set a home link for the header pill, and Discord servers
    for the home page.
 2. **Console → Users & links**: mint invites.
 3. **Console → Seasons**: create a season and open its signups. Or hand that

@@ -240,11 +240,15 @@ try:
     check("a player sees the address and password on the board", re.search(r"ap\.example\.org:\d+", page) and "sesame-1" in page, page[:800])
     check("so does a partner", "sesame-1" in get(cat, f"/s/{sid}/board").text)
     home = get(bob, "/").text
-    check("the home page points there instead", f'/s/{sid}/board' in home and "sesame-1" not in home and not re.search(r"ap\.example\.org:\d+", home))
+    check("the home page points there instead", f'<a href="/s/{sid}/board">Super</a>' in home and "sesame-1" not in home and not re.search(r"ap\.example\.org:\d+", home))
     post(root, f"/s/{sid}/admin/privacy", data=dict(what="live", private="0"))
     page = get(stranger, f"/s/{sid}/board").text
     check("on an open season others see the address, not the password", re.search(r"ap\.example\.org:\d+", page) and "sesame-1" not in page, page[:800])
+    check("…told who it's for", "for this season's players" in page)
     check("…nor does an anonymous visitor", "sesame-1" not in get(srv.session(), f"/s/{sid}/board").text)
+    check("…or on the live updates", "sesame-1" not in get(stranger, f"/s/{sid}/board/fragment").text)
+    check("…or a moderator of other seasons", "sesame-1" not in get(other_mod, f"/s/{sid}/board").text)
+    check("the season's moderators do", "sesame-1" in get(root, f"/s/{sid}/board").text)
     post(root, f"/s/{sid}/admin/privacy", data=dict(what="live", private="1"))
     # A slot with no player: a moderator assigns it.
     with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
