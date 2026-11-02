@@ -52,8 +52,11 @@ pub(crate) async fn signup_get(
 pub(crate) async fn signups_list(State(st): State<AppState>, me: auth::Me) -> Html<String> {
     let mut open = Vec::new();
     for s in st.db.seasons().await {
+        if !s.state().accepts_signups() {
+            continue;
+        }
         let mods = st.db.season_mods(s.id).await;
-        if s.state().accepts_signups() && scope::can_view(&st, &s, &mods, &me).await {
+        if scope::can_view(&st, &s, &mods, &me).await {
             let subs = st.db.submissions(s.id).await.unwrap_or_default();
             open.push((s.id, s.name, subs));
         }

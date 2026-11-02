@@ -18,9 +18,10 @@ This guide has a part for each role:
 | **Moderator** | Everything a user can, plus create seasons and run the ones they created or co-moderate. |
 | **Sysadmin** | Everything, on every season, plus users, invites, the apworld catalog, Archipelago versions, backups and instance settings. |
 
-Some pages are public: the home page, the live board, the activity log, the
-YAML checker and past-season summaries. Everything else needs you to be
-signed in.
+The home page and the YAML checker are public. A season before generation is for
+signed-in users. After generation, a new season's board, log and pages are for its
+players, its moderators and sysadmins, unless a moderator opens them to anyone.
+Everything else needs you to be signed in.
 
 ### Seasons
 
@@ -233,7 +234,7 @@ The season console has six tabs:
   anyone. Its signups are open to any signed-in user, and you can make them private:
   only people with the link shown there can reach them. Non-members don't see a
   private season on the home page or in past seasons. Seasons from before this
-  setting stay open until you change them.
+  setting stay open until you change them, and so do imported seasons.
   Turn the season's minesweeper and the common game on or off,
   and set how many bonus hints a player can earn from minesweeper in any
   24 hours (5 by default; 0 means no limit). Also set how many games a player
@@ -691,9 +692,13 @@ Configure it under `[forward_auth]`:
 - `sign_in_url` / `sign_out_url` are used for the header's links.
 
 Private seasons need the proxy's identity on their pages too, so `/board`, `/log`
-and `/season` belong in the rule below. With those covered, those pages need a
-sign-in on every season. The home page never sees an identity under forward auth,
-so it lists only seasons open to anyone.
+and `/season` belong in the rule below. Once they're covered, set `season_pages =
+true` under `[forward_auth]` (`BIFROST_FWD_SEASON_PAGES`). Only then does Bifrost
+believe identity headers on those pages; with it set and the paths not covered,
+anyone could claim to be anyone there. Without it, nobody can read a private
+season's pages, or any season's before generation, and those paths need no sign-in
+on open seasons. The home page never sees an identity under forward auth, so it
+lists only seasons open to anyone.
 
 The proxy must run forward-auth on every signed-in path. That includes the
 season-scoped forms under `/s/<id>/`, not only the plain prefixes. Otherwise a

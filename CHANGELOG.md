@@ -75,9 +75,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- If you use forward auth, add `/seat`, `/board`, `/log` and `/season` to your proxy's
-  signed-in paths, as in the user guide's rule. Do this when you upgrade: without it,
-  private seasons' pages can't tell who's asking.
+- If you use forward auth, add `/seat` to your proxy's signed-in paths when you upgrade.
+  To reach private seasons' pages, also add `/board`, `/log` and `/season`, then set
+  `season_pages = true`. Don't set it before the paths are covered: those pages would
+  believe identity headers sent by anyone. See the user guide.
 - Players no longer claim or unclaim slots. Moderators assign slots in seasons with no
   signups. A signup can't be removed once its season is generated, and nobody is removed
   from a seat after that.

@@ -421,6 +421,7 @@ const FILE_KEYS: &[(&str, &str, &str)] = &[
     ),
     ("forward_auth", "groups_header", "BIFROST_FWD_GROUPS_HEADER"),
     ("forward_auth", "role_groups", "BIFROST_FWD_ROLE_GROUPS"),
+    ("forward_auth", "season_pages", "BIFROST_FWD_SEASON_PAGES"),
     ("forward_auth", "sign_in_url", "BIFROST_FWD_SIGN_IN_URL"),
     ("forward_auth", "sign_out_url", "BIFROST_FWD_SIGN_OUT_URL"),
     ("minecraft", "address", "BIFROST_MC_ADDR"),
@@ -550,6 +551,7 @@ pub const EXAMPLE: &str = r#"# $BIFROST_DATA/config.toml — every setting here 
 # secret_header = "x-bifrost-proxy"  # BIFROST_FWD_SECRET_HEADER
 # secret = ""                        # BIFROST_FWD_SECRET (secret)
 # role_groups = ["sysadmin=archipelago_admins", "moderator=archipelago_moderators", "user=archipelago_users"]  # BIFROST_FWD_ROLE_GROUPS
+# season_pages = false              # BIFROST_FWD_SEASON_PAGES: only once the proxy covers /board, /log, /season
 # sign_in_url = "/oauth2/sign_in"    # BIFROST_FWD_SIGN_IN_URL
 # sign_out_url = "/oauth2/sign_out"  # BIFROST_FWD_SIGN_OUT_URL
 

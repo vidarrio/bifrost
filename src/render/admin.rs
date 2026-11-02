@@ -500,7 +500,12 @@ pub fn admin_page(
             action_btn("admin/privacy", &[("what", "live"), ("private", "1")], "Make private", false, "")
         },
     ));
+    let signup_stage = matches!(
+        season.state(),
+        crate::db::State::Draft | crate::db::State::Signup
+    );
     match (&season.private_signup, &season.signup_token) {
+        _ if !signup_stage => {}
         (true, Some(t)) => {
             let link = format!("/s/{}/signup/join/{}", season.id, esc(t));
             b.push_str(&format!(

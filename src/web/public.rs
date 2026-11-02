@@ -42,11 +42,25 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
     // seasons: AP slot names from the default season's live board, the people
     // (incl. co-op) from the DB. Before its seed exists, the section shows the
     // season's sign-up queue, filling in live as people register.
-    let default = st
-        .db
-        .default_season()
-        .await
-        .filter(|d| seen.iter().any(|s| s.id == d.id));
+    // The season the page is about: the default, or if this viewer can't see that,
+    // the one of theirs that's furthest along.
+    let default = match st.db.default_season().await {
+        Some(d) if seen.iter().any(|s| s.id == d.id) => Some(d),
+        _ => seen
+            .iter()
+            .filter(|s| s.state() != db::State::Archived)
+            .min_by_key(|s| match s.state() {
+                db::State::Live => 0,
+                db::State::Generating => 1,
+                db::State::Signup => 2,
+                _ => 3,
+            })
+            .cloned(),
+    };
+    let season_base = default
+        .as_ref()
+        .map(|d| format!("/s/{}", d.id))
+        .unwrap_or_default();
     let (label, roster) = match default {
         Some(season) if season.state() != db::State::Archived => {
             let slots = st.db.slots(season.id).await.unwrap_or_default();
@@ -93,6 +107,7 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
         LANDING
             // Constant first, so no data inserted below can be read as it.
             .replace("<!--IDENTITYJS-->", render::IDENTITY_JS)
+            .replace("<!--SEASONBASE-->", &season_base)
             .replace("<!--SEASONLABEL-->", &render::escape(&label))
             .replace("<!--ROSTER-->", &roster)
             .replace("<!--PASTSEASONS-->", &past_html)

@@ -15,11 +15,15 @@ pub(crate) async fn seasons_page(
     name: &str,
     err: Option<&str>,
 ) -> Response {
-    let seasons = st.db.seasons().await;
-    let mut manage = Vec::with_capacity(seasons.len());
-    for s in &seasons {
+    let mut seasons = Vec::new();
+    let mut manage = Vec::new();
+    for s in st.db.seasons().await {
         let mods = st.db.season_mods(s.id).await;
-        manage.push(me.can(auth::Action::ManageSeason { mods: &mods }));
+        // A moderator doesn't see the private seasons they aren't in.
+        if scope::can_view(st, &s, &mods, me).await {
+            manage.push(me.can(auth::Action::ManageSeason { mods: &mods }));
+            seasons.push(s);
+        }
     }
     render::seasons_page(
         &seasons,

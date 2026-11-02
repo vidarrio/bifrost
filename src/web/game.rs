@@ -227,7 +227,7 @@ pub(crate) async fn pt_asset(
             .ok()
             .flatten();
     let cache = if q.v.is_some() {
-        "public, max-age=31536000, immutable"
+        "private, max-age=31536000, immutable"
     } else {
         "no-cache"
     };

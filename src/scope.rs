@@ -95,9 +95,20 @@ fn canonical(path: &str) -> bool {
         && rest.split('/').all(|s| !matches!(s, "" | "." | ".."))
 }
 
+/// The season id of a bare `/s/{id}` or `/s/{id}/`.
+fn bare_season(path: &str) -> Option<&str> {
+    let id = path.strip_prefix("/s/")?;
+    let id = id.strip_suffix('/').unwrap_or(id);
+    (!id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())).then_some(id)
+}
+
 pub async fn rewrite(mut req: Request, next: Next) -> Response {
     if !canonical(req.uri().path()) {
         return (StatusCode::BAD_REQUEST, "Bad path").into_response();
+    }
+    // Its own URL, so a forward-auth proxy's path rule sees the board as the board.
+    if let Some(id) = bare_season(req.uri().path()) {
+        return axum::response::Redirect::to(&format!("/s/{id}/board")).into_response();
     }
     // Keep the URL as requested (e.g. for the post-login redirect).
     let original = axum::extract::OriginalUri(req.uri().clone());
@@ -158,19 +169,18 @@ impl SeasonCtx {
     }
 }
 
-/// Routes that decide for themselves: the public YAML checker, moderators'
-/// pages, and the links that are how someone gets in.
+/// Routes that decide for themselves: season admins' pages, and the links that
+/// are how someone gets in.
 fn gate_exempt(path: &str) -> bool {
-    path == "/check"
-        || path == "/admin"
+    path == "/admin"
         || path.starts_with("/admin/")
         || path.starts_with("/seat/")
         || path.starts_with("/signup/join/")
 }
 
-/// Whether someone can see a season at its current stage. Signups are open to
-/// any signed-in user unless private; pages after generation are open unless
-/// private, when they're for members. Moderators and admins always can.
+/// Whether someone can see a season at its current stage. Before generation it's
+/// for any signed-in user, unless signups are private; after, it's open unless
+/// private, when it's for members. The season's moderators and sysadmins always can.
 pub async fn can_view(st: &AppState, row: &SeasonRow, mods: &[i64], me: &crate::auth::Me) -> bool {
     if me.can(crate::auth::Action::ManageSeason { mods }) {
         return true;
@@ -178,10 +188,10 @@ pub async fn can_view(st: &AppState, row: &SeasonRow, mods: &[i64], me: &crate::
     let account = me.id();
     match row.state() {
         State::Draft | State::Signup => {
-            !row.private_signup
-                || (account != 0
-                    && (st.db.is_season_member(row.id, account).await
-                        || st.db.is_season_invited(row.id, account).await))
+            account != 0
+                && (!row.private_signup
+                    || st.db.is_season_member(row.id, account).await
+                    || st.db.is_season_invited(row.id, account).await)
         }
         _ => !row.private_live || (account != 0 && st.db.is_season_member(row.id, account).await),
     }
@@ -263,8 +273,21 @@ impl axum::extract::OptionalFromRequestParts<AppState> for SeasonCtx {
         parts: &mut Parts,
         st: &AppState,
     ) -> Result<Option<Self>, Response> {
-        if parts.extensions.get::<Selected>().is_none() && st.db.default_season().await.is_none() {
-            return Ok(None);
+        if parts.extensions.get::<Selected>().is_none() {
+            // An unscoped page with a fallback (the YAML checker) doesn't answer
+            // for a default season its visitor can't see.
+            let Some(row) = st.db.default_season().await else {
+                return Ok(None);
+            };
+            let me = parts
+                .extensions
+                .get::<crate::auth::Me>()
+                .cloned()
+                .unwrap_or_default();
+            let mods = st.db.season_mods(row.id).await;
+            if !can_view(st, &row, &mods, &me).await {
+                return Ok(None);
+            }
         }
         <SeasonCtx as FromRequestParts<AppState>>::from_request_parts(parts, st)
             .await
@@ -305,6 +328,9 @@ mod tests {
         for (path, status) in [
             ("/board", 200),
             ("/s/1/admin", 200),
+            ("/s/1", 303),
+            ("/s/1/", 303),
+            ("/s/01", 303),
             ("/s/1/../admin", 400),
             ("/%61dmin", 400),
             ("//", 400),
