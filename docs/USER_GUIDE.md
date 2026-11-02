@@ -351,9 +351,8 @@ Both the image and the file carry build provenance from the release workflow;
 `gh attestation verify oci://ghcr.io/vidarrio/bifrost:<version> -R vidarrio/bifrost`)
 checks that they were built by this repository from the release's tag.
 
-Without `BIFROST_DATA`, it keeps its data in `~/.local/share/bifrost`, or in
-`/var/lib/bifrost` when run as root. Install `bubblewrap` on the host for the
-strong sandbox, which custom apworlds need.
+Without `BIFROST_DATA`, it keeps its data in `~/.local/share/bifrost`. Install
+`bubblewrap` on the host for the strong sandbox, which custom apworlds need.
 
 Put Bifrost behind a reverse proxy that terminates HTTPS. Session cookies are
 marked `Secure`. Add the proxy's address to `trusted_proxies` so per-client
@@ -504,6 +503,16 @@ documentation, but no new features or behaviour changes. Each release's notes
 are on the [releases page](https://github.com/vidarrio/bifrost/releases) and
 in the [changelog](../CHANGELOG.md). Sysadmins see a banner in the console
 when a newer release is out (see [Configuration](#configuration)).
+
+**Running as root.** Bifrost refuses to run as root, including its commands, so use
+`sudo -u bifrost env BIFROST_DATA=/var/lib/bifrost` for those. To run as root anyway,
+set `BIFROST_ALLOW_ROOT=1` in the environment (`config.toml` can't set it). Game code then
+runs as root, so only do this with worlds you trust: bubblewrap, if you have it, limits it,
+but what it writes in the season's folder is then root's, and Bifrost reads from there. The
+data directory is `/var/lib/bifrost` by default, and Bifrost won't start if another user
+could change it, anything in it, a folder above it or a link on the way to it. That doesn't
+tell you what's already there: don't `chown` a directory another user has had to root and
+run from it.
 
 **Permissions.** Bifrost keeps its data directory to its own user, as it holds password
 hashes, tokens, spoilers and Archipelago passwords. Each start, it tightens the directory

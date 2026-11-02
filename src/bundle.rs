@@ -203,7 +203,9 @@ fn extract(
                 .map_err(|e| format!("{}: {e}", out.display()))?;
             continue;
         }
-        let mut f = std::fs::File::create(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+        // A new file, so never through a link already at this path.
+        let mut f =
+            std::fs::File::create_new(&out).map_err(|e| format!("{}: {e}", out.display()))?;
         std::io::copy(&mut e, &mut f).map_err(|e| format!("{}: {e}", out.display()))?;
         if let Some(mode) = e.unix_mode() {
             let _ = std::fs::set_permissions(&out, std::fs::Permissions::from_mode(mode & 0o755));
@@ -247,7 +249,9 @@ pub fn prepare(data_dir: &Path) -> Result<Option<Runtime>, String> {
         );
         let partial = base.join(format!(".partial-{id}"));
         let _ = std::fs::remove_dir_all(&partial);
-        std::fs::create_dir_all(&partial).map_err(|e| format!("{}: {e}", partial.display()))?;
+        std::fs::create_dir_all(&base).map_err(|e| format!("{}: {e}", base.display()))?;
+        // New, so never a link someone left here.
+        std::fs::create_dir(&partial).map_err(|e| format!("{}: {e}", partial.display()))?;
         if let Err(e) = extract(&mut zip, &partial) {
             let _ = std::fs::remove_dir_all(&partial);
             return Err(e);
