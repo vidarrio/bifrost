@@ -346,24 +346,24 @@ mod tests {
             .unwrap();
         // Draft: notes yes, the YAML no.
         assert!(
-            db.set_submission_notes(season, id, host, "n")
+            db.set_submission_notes(season, id, host, false, "n")
                 .await
                 .unwrap()
         );
         assert!(
-            !db.set_submission_notes(season, id, other, "x")
+            !db.set_submission_notes(season, id, other, false, "x")
                 .await
                 .unwrap()
         );
         assert!(
-            !db.set_submission_notes(season + 1, id, host, "x")
+            !db.set_submission_notes(season + 1, id, host, false, "x")
                 .await
                 .unwrap()
         );
         let replace = |account, old: &'static str, game: &'static str, new: &'static str| {
             let db = &db;
             async move {
-                db.replace_submission(season, id, account, "New", game, old, new)
+                db.replace_submission(season, id, account, false, "New", game, old, new)
                     .await
                     .unwrap()
             }
@@ -400,14 +400,42 @@ mod tests {
             !db.submission(season, id).await.unwrap().is_custom,
             "another game"
         );
+        // A moderator can in a closed season too, and with notes at any stage.
+        db.transition(season, State::Draft, 1).await.unwrap();
+        assert!(
+            !replace(host, "/b.yaml", "Bar", "/m.yaml").await,
+            "signups are closed"
+        );
+        assert!(
+            db.replace_submission(season, id, other, true, "New", "Bar", "/b.yaml", "/m.yaml")
+                .await
+                .unwrap()
+        );
+        assert!(
+            db.replace_submission(season, id, other, true, "New", "Bar", "/m.yaml", "/b.yaml")
+                .await
+                .unwrap()
+        );
+        db.transition(season, State::Signup, 1).await.unwrap();
         // Once generating: neither.
         db.transition(season, State::Generating, 2).await.unwrap();
         assert!(
-            !db.set_submission_notes(season, id, host, "x")
+            !db.set_submission_notes(season, id, host, false, "x")
                 .await
                 .unwrap()
         );
         assert!(!replace(host, "/b.yaml", "Bar", "/c.yaml").await);
+        assert!(
+            !db.replace_submission(season, id, other, true, "New", "Bar", "/b.yaml", "/c.yaml")
+                .await
+                .unwrap(),
+            "not even a moderator once it's generating"
+        );
+        assert!(
+            db.set_submission_notes(season, id, other, true, "m")
+                .await
+                .unwrap()
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

@@ -138,11 +138,10 @@ pub fn signup_page(
         ));
     }
     b.push_str(
-        &r#"<p class="empty">Three quick steps. We check everything against the server as you go, so the seed rolls clean when the season is generated.</p>
+        &r#"<p class="empty">Two quick steps. We check everything against the server as you go, so the seed rolls clean when the season is generated.</p>
 <ol class="stepper">
   <li data-step="1"><span class="n">1</span> Game</li>
   <li data-step="2"><span class="n">2</span> YAML</li>
-  <li data-step="3"><span class="n">3</span> Players</li>
 </ol>
 <form id="wiz" method="post" action="signup" enctype="multipart/form-data">
   <section class="wstep" data-step="1">
@@ -152,19 +151,13 @@ pub fn signup_page(
   </section>
   <section class="wstep" data-step="2" hidden>
     <h2>Options YAML</h2>
-    <p class="hint" id="yamlhint">Upload your options file. It's rolled against the installed worlds — it has to pass before you continue.</p>
+    <p class="hint" id="yamlhint">Upload your options file. It's rolled against the installed worlds — it has to pass before you can sign up.</p>
     <input type="file" name="yaml" id="yamlfile" accept=".yaml,.yml" required>
     <button type="button" id="checkbtn" class="back">Check it</button>
     <div id="checkmsg" class="inlinemsg"></div>
-    <div class="nav"><button type="button" class="back" data-goto="1">← Back</button><button type="button" id="tostep3" data-goto="3" disabled>Next →</button></div>
-  </section>
-  <section class="wstep" data-step="3" hidden>
-    <h2>Players</h2>
-    <div class="coopown">You: <b id="myname">your slot</b> <span class="by free">from your YAML — already in</span></div>
-    <label class="chk"><input type="checkbox" name="coop" value="1"> Sharing this game between people (co-op, e.g. Don't Starve Together). You'll get links to invite them.</label>
+    <div class="nav"><button type="button" class="back" data-goto="1">← Back</button><button type="submit" id="wizsubmit" disabled><!--SUBMIT--></button></div>
     <input type="hidden" name="is_custom" id="iscustom" value="">
     <input type="hidden" name="pending_world" id="pendingworld" value="">
-    <div class="nav"><button type="button" class="back" data-goto="2">← Back</button><button type="submit"><!--SUBMIT--></button></div>
   </section>
 </form>
 <script>
@@ -176,7 +169,7 @@ pub fn signup_page(
  }
  form.querySelectorAll('[data-goto]').forEach(function(btn){btn.addEventListener('click',function(){if(!btn.disabled)show(Number(btn.dataset.goto))})});
  var ready={core:true,catalog:false,custom:false},pending='',next1=document.getElementById('tostep2');
- var chkbtn=document.getElementById('checkbtn'),chkmsg=document.getElementById('checkmsg'),next2=document.getElementById('tostep3'),yamlfile=document.getElementById('yamlfile');
+ var chkbtn=document.getElementById('checkbtn'),chkmsg=document.getElementById('checkmsg'),next2=document.getElementById('wizsubmit'),yamlfile=document.getElementById('yamlfile');
  function gtype(){var r=form.querySelector('input[name=gtype]:checked');return r?r.value:'core';}
  function refresh1(){
    var t=gtype();
@@ -222,7 +215,7 @@ pub fn signup_page(
    var fd=new FormData();fd.append('yaml',f);
    fetch('signup/check',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(j){
      chkbtn.disabled=false;
-     if(j.ok){chkmsg.className='inlinemsg ok';chkmsg.textContent='✓ '+(j.name||'slot')+' — '+(j.game||'?')+' rolled cleanly.';var mn=document.getElementById('myname');if(mn&&j.name)mn.textContent=j.name;next2.disabled=false;}
+     if(j.ok){chkmsg.className='inlinemsg ok';chkmsg.textContent='✓ '+(j.name||'slot')+' — '+(j.game||'?')+' rolled cleanly.';next2.disabled=false;}
      else{next2.disabled=true;chkmsg.className='inlinemsg bad';chkmsg.textContent=(j.errors&&j.errors.length?j.errors.join('; '):(j.error||'Did not pass.'));}
    }).catch(function(){chkbtn.disabled=false;chkmsg.className='inlinemsg bad';chkmsg.textContent='Check failed (network).';});
  });
@@ -285,6 +278,8 @@ pub struct SignupGame<'a> {
     pub pre_gen: bool,
     pub edit_notes: bool,
     pub replace: bool,
+    /// Shown just after signing up.
+    pub welcome: Option<String>,
     /// The invite box, for the host.
     pub invite: String,
     pub max_notes: usize,
@@ -328,7 +323,7 @@ pub fn seat_page(host: &str, game: &str, season: &str, token: &str) -> Html<Stri
 }
 
 /// A game before the season generates. Anyone signed in can read it; the forms
-/// are for its host and partners.
+/// are for its host, partners and the season's moderators.
 pub fn signup_game_page(g: &SignupGame) -> Html<String> {
     let s = g.sub;
     let (edit_notes, replace, max_notes) = (g.edit_notes, g.replace, g.max_notes);
@@ -340,6 +335,9 @@ pub fn signup_game_page(g: &SignupGame) -> Html<String> {
         esc(&s.game),
         esc(&s.username),
     ));
+    if let Some(w) = &g.welcome {
+        b.push_str(&format!(r#"<div class="banner ok">{}</div>"#, esc(w)));
+    }
     if !s.coop_names.is_empty() {
         b.push_str(&format!(
             r#"<div class="meta">+ {}</div>"#,
@@ -369,14 +367,18 @@ pub fn signup_game_page(g: &SignupGame) -> Html<String> {
     }
     if let Some(seat) = g.my_seat {
         b.push_str(&format!(
-            r#"<form class="signup" method="post" action="signup/game/{}/seat/rename"><input type="hidden" name="seat" value="{}"><label>Your seat's name<input type="text" name="name" maxlength="16" value="{}" required></label><button type="submit">Rename</button></form>"#,
+            r#"<form class="signup" method="post" action="signup/game/{}/seat/rename"><input type="hidden" name="seat" value="{}"><label>Your seat's name<input type="text" name="name" maxlength="16" value="{}" required></label><button type="submit">Rename</button></form>
+<form method="post" action="signup/game/{}/seat/leave" onsubmit="return confirm('Leave this game?')"><button class="ghost" type="submit">Leave this game</button></form>"#,
             s.id,
             seat.id,
             esc(&seat.name),
+            s.id,
         ));
     }
     b.push_str(&g.invite);
     match (&s.held_for, &s.held_err) {
+        // Just signed up: the welcome has said this already.
+        (Some(_), None) if g.welcome.is_some() => {}
         (Some(_), Some(e)) => b.push_str(&format!(
             r#"<div class="banner bad">Held: {}</div>"#,
             esc(e)
@@ -403,23 +405,12 @@ pub fn signup_game_page(g: &SignupGame) -> Html<String> {
     if replace {
         b.push_str(&format!(
             r#"<h2>Replace the YAML</h2>
-<p class="empty">The new file is checked like a new signup. To rename your slot, change <code>name:</code> in it. A custom game's world has to be installed already.</p>
+<p class="empty">The new file is checked like a new signup. To rename the slot, change <code>name:</code> in it. A custom game's world has to be installed already.</p>
 <form class="signup" method="post" action="signup/game/{}/yaml" enctype="multipart/form-data"><input type="file" name="yaml" accept=".yaml,.yml" required><button type="submit">Replace</button></form>"#,
             s.id
         ));
     }
     b.push_str("</main></body></html>");
-    Html(b)
-}
-
-/// A co-op signup is done: its page has the invite links.
-pub fn signup_coop_result(text: &str, id: i64) -> Html<String> {
-    let mut b = page_head(None);
-    b.push_str(&format!(
-        r#"<h1>Signup</h1><div class="crumb"><a href="signup">← signup</a></div>
-<div class="banner ok">{}</div><p><a href="signup/game/{id}">Invite your co-op partners on your game's page →</a></p></main></body></html>"#,
-        esc(text)
-    ));
     Html(b)
 }
 

@@ -296,6 +296,25 @@ impl Db {
         }
     }
 
+    /// Leave a game you're a partner on, before generation.
+    pub async fn leave_seat(
+        &self,
+        season: i64,
+        submission: i64,
+        account: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let res = sqlx::query(
+            "DELETE FROM seat WHERE submission_id = ?1 AND season = ?2 AND account_id = ?3
+               AND (SELECT state FROM season WHERE id = ?2) IN ('draft', 'signup')",
+        )
+        .bind(submission)
+        .bind(season)
+        .bind(account)
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
     /// Remove a partner from a game, for its host, before generation.
     pub async fn remove_seat(
         &self,
@@ -444,9 +463,27 @@ mod tests {
             JoinOutcome::Joined
         );
         // Partners share the notes; strangers don't.
-        assert!(db.set_submission_notes(s, id, ann, "n").await.unwrap());
+        assert!(
+            db.set_submission_notes(s, id, ann, false, "n")
+                .await
+                .unwrap()
+        );
         let stranger = account(&db, "stranger").await;
-        assert!(!db.set_submission_notes(s, id, stranger, "x").await.unwrap());
+        assert!(
+            !db.set_submission_notes(s, id, stranger, false, "x")
+                .await
+                .unwrap()
+        );
+        // A partner can leave, and the name is free again.
+        assert!(!db.leave_seat(s, id, stranger).await.unwrap());
+        assert!(db.leave_seat(s, id, ann).await.unwrap());
+        assert!(!db.slot_name_taken(s, "Annie").await);
+        db.add_seat_link(s, "t3b", Some(id), None, host)
+            .await
+            .unwrap();
+        db.join_signup(s, "t3b", &sub, ann, "Annie").await.unwrap();
+        let seats = db.seats_of(id).await;
+        let seats = [seats[1].clone(), seats[0].clone()];
         // Only the host removes, and retracting takes the rest with it.
         assert!(!db.remove_seat(s, seats[1].id, ann).await.unwrap());
         assert!(db.remove_seat(s, seats[1].id, host).await.unwrap());
@@ -498,6 +535,7 @@ mod tests {
             JoinOutcome::LinkGone
         );
         assert!(!db.remove_seat(s, seat, host).await.unwrap());
+        assert!(!db.leave_seat(s, id, ann).await.unwrap(), "nor leaving");
         // A signup's unused link still works, for a mid-season join.
         assert_eq!(db.seat_links_of_slot(s, "Host").await, ["t2"]);
         assert_eq!(

@@ -17,10 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now need a sign-in.
 - Co-op partners join through one-use invite links from a game's host, before or after
   generation, and pick their own seat name. They can edit the game's notes and, before
-  generation, rename their seat.
+  generation, rename their seat or leave. Signing up takes you to your game's page.
 - *Sign up for a season* on the home page now lists the seasons open for signup. Each
   game on a season's page opens its own page, with notes for the other players and, for
-  its host, a way to replace the YAML without losing the signup.
+  its host, a way to replace the YAML without losing the signup. A season's moderators
+  can edit the notes and, until generation, replace the YAML.
 - A player can sign up with several games in a season: once you have one, the
   signup page offers *Add another game*. A season's moderators can limit it on the
   Options tab (0, the default, means no limit), and a player can claim more than one

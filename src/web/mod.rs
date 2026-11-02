@@ -133,6 +133,7 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         .route("/signup/game/{id}/revoke", post(signup_game_revoke))
         .route("/signup/game/{id}/seat/remove", post(signup_seat_remove))
         .route("/signup/game/{id}/seat/rename", post(signup_seat_rename))
+        .route("/signup/game/{id}/seat/leave", post(signup_seat_leave))
         .route("/game/{ap_slot}/invite", post(game_invite))
         .route("/game/{ap_slot}/revoke", post(game_revoke))
         .route("/signup/game/{id}", get(signup_game))

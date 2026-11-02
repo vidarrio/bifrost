@@ -263,7 +263,6 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .wstep{background:var(--panel);border:1px solid var(--bd);border-radius:14px;padding:20px 22px;max-width:520px}
 .wstep h2{margin:0 0 14px;color:var(--fg);font-size:16px;letter-spacing:0;text-transform:none}
 .wstep .hint{color:var(--muted);font-size:13px;margin:0 0 10px}
-.coopown{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--bd);border-radius:7px;padding:9px 11px;margin:0 0 12px;font-size:13px}.coopown b{color:var(--fg)}
 .choice{display:grid;gap:10px;margin-bottom:6px}
 .choice label{display:flex;gap:10px;align-items:flex-start;background:var(--bg);border:1px solid var(--bd);border-radius:9px;padding:11px 13px;cursor:pointer;font-size:14px}
 .choice label:has(input:checked){border-color:var(--accent)}
