@@ -433,7 +433,7 @@ pub fn slot_name_of_player(p: &crate::checker::PlayerResult) -> Result<String, S
     if !p.plain_name {
         return Err(
             "That YAML needs one plain top-level name: as text, in quotes if it could read \
-             as something else."
+             as something else, and not one its triggers can change."
                 .to_string(),
         );
     }
@@ -448,6 +448,9 @@ const MAX_GAME: usize = 80;
 /// the host's slot is found by, so the name has to be what it'll end up as.
 pub fn slot_name_of(name: &str) -> Result<String, String> {
     let name = name.trim();
+    if name.chars().any(char::is_control) {
+        return Err("That name has control characters in it.".to_string());
+    }
     if name.is_empty() {
         return Err("Couldn't find a top-level name: in that YAML.".to_string());
     }
@@ -576,6 +579,7 @@ mod tests {
             "Player{number}",
             "Sam%player%",
             "50%%",
+            "Ann\u{1f}",
             "{'A': 1, 'B': 1}",
             "seventeen letters",
             "Archipelago",

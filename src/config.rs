@@ -359,6 +359,14 @@ impl Config {
             let path = entry.path();
             if path != self.mc_whitelist_file() {
                 tighten(&path, 0o700);
+                continue;
+            }
+            // For a host's service; a restored backup would have it private.
+            if let Ok(meta) = std::fs::symlink_metadata(&path)
+                && meta.is_file()
+                && meta.uid() == me
+            {
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644));
             }
         }
     }

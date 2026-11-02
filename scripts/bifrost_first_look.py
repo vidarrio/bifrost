@@ -5,11 +5,11 @@ path as argv[1], prints a JSON result:
 
   {"players": [{"name": str|null, "games": [str]}], "error": str|null}
 
-`name` is null when it isn't plain text."""
+`name` is null when it isn't plain text, or its triggers can change it."""
 import json
 import sys
 
-import bifrost_ap  # noqa: F401  (pins AP paths; must precede AP imports)
+from bifrost_ap import name_can_change  # pins AP paths; must precede AP imports
 from Utils import parse_yamls
 
 MAX_GAMES = 100
@@ -42,7 +42,7 @@ def main() -> None:
             name = doc.get("name")
             out["players"].append(
                 {
-                    "name": name if isinstance(name, str) else None,
+                    "name": name if isinstance(name, str) and not name_can_change(doc) else None,
                     "games": games_of(doc.get("game")),
                 }
             )

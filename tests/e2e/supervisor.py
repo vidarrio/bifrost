@@ -88,6 +88,9 @@ try:
         y = b"name: " + bad + b"\ngame: ChecksFinder\nChecksFinder: {}\n"
         r = post(cat_early, f"/s/{sid}/signup", files={"yaml": ("y.yaml", y)})
         check(f"the name {bad.decode()} is refused", why in r.text, r.text[-300:])
+    y = b"name: Trig\ngame: ChecksFinder\nChecksFinder: {}\ntriggers:\n  - option_category: ChecksFinder\n    option_name: x\n    option_result: y\n    options:\n      null:\n        name: Other\n"
+    j = post(cat_early, f"/s/{sid}/signup/check", files={"yaml": ("y.yaml", y)}).json()
+    check("a name its triggers can change is refused", not j["ok"] and "triggers" in j.get("error", ""), j)
     j = post(cat_early, f"/s/{sid}/signup/check", files={"yaml": ("y.yaml", b"name: Player{number}\ngame: ChecksFinder\nChecksFinder: {}\n")}).json()
     check("…at the check step too", not j["ok"] and "placeholders" in j["error"], j)
     # Co-op: one-use links from the host, a name picked by the partner.
@@ -119,6 +122,9 @@ try:
     seat = re.search(r'name="seat" value="([0-9a-z]+)"', get(cat, url).text).group(1)
     post(cat, f"{url}/seat/rename", data=dict(seat=seat, name="Kitty"))
     check("a partner renames their seat", "Kitty" in get(bob, url).text)
+    r = post(cat, f"{url}/seat/rename", data=dict(seat=seat, name="KITTY"))
+    check("…and can keep it, or change its case", "KITTY" in get(bob, url).text, r.text[-300:])
+    post(cat, f"{url}/seat/rename", data=dict(seat=seat, name="Kitty"))
     r = post(cat, f"{url}/seat/rename", data=dict(seat=seat, name="Ann"))
     check("…but not to a name in use", "already taken" in r.text, r.text[-300:])
     r = post(dee, f"/s/{sid}/signup", files={"yaml": ("y.yaml", b"name: Kitty\ngame: ChecksFinder\nChecksFinder: {}\n")})
