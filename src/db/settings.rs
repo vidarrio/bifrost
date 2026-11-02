@@ -3,16 +3,8 @@
 //! the host players connect to.
 
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 
 use super::Db;
-
-pub(super) async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    sqlx::query("CREATE TABLE IF NOT EXISTS setting (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-        .execute(pool)
-        .await?;
-    Ok(())
-}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

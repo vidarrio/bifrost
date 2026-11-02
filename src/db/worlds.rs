@@ -4,40 +4,9 @@
 //! `seasons/<id>/pending/`); these tables hold what they are and who sent them.
 
 use crate::id::Id;
-use sqlx::{FromRow, SqlitePool};
+use sqlx::FromRow;
 
 use super::Db;
-
-pub(super) async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        r#"CREATE TABLE IF NOT EXISTS catalog_world (
-             sha256 TEXT PRIMARY KEY,
-             -- The name it installs as in a season's worlds/ (e.g. pokemon_crystal.apworld).
-             file TEXT NOT NULL,
-             game TEXT NOT NULL DEFAULT '',
-             version TEXT NOT NULL DEFAULT '',
-             note TEXT NOT NULL DEFAULT '',
-             added_by TEXT NOT NULL,
-             added_at INTEGER NOT NULL
-           )"#,
-    )
-    .execute(pool)
-    .await?;
-    sqlx::query(
-        r#"CREATE TABLE IF NOT EXISTS world_request (
-             season TEXT NOT NULL REFERENCES season(id) ON DELETE CASCADE,
-             file TEXT NOT NULL,
-             sha256 TEXT NOT NULL,
-             game TEXT NOT NULL DEFAULT '',
-             uploaded_by TEXT NOT NULL,
-             uploaded_at INTEGER NOT NULL,
-             PRIMARY KEY (season, file)
-           )"#,
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
-}
 
 #[derive(Debug, FromRow, Clone, PartialEq)]
 pub struct CatalogWorld {
@@ -115,7 +84,7 @@ impl Db {
     pub async fn world_requests(&self, season: Id) -> Vec<WorldRequest> {
         sqlx::query_as::<_, WorldRequest>(
             "SELECT file, sha256, game, uploaded_by, uploaded_at
-             FROM world_request WHERE season = ? ORDER BY uploaded_at",
+             FROM world_request WHERE season_id = ? ORDER BY uploaded_at",
         )
         .bind(season)
         .fetch_all(&self.pool)
@@ -126,7 +95,7 @@ impl Db {
     pub async fn world_request(&self, season: Id, file: &str) -> Option<WorldRequest> {
         sqlx::query_as::<_, WorldRequest>(
             "SELECT file, sha256, game, uploaded_by, uploaded_at
-             FROM world_request WHERE season = ? AND file = ?",
+             FROM world_request WHERE season_id = ? AND file = ?",
         )
         .bind(season)
         .bind(file)
@@ -138,7 +107,7 @@ impl Db {
 
     pub async fn add_world_request(&self, season: Id, r: &WorldRequest) -> Result<(), sqlx::Error> {
         sqlx::query(
-            "INSERT INTO world_request (season, file, sha256, game, uploaded_by, uploaded_at)
+            "INSERT INTO world_request (season_id, file, sha256, game, uploaded_by, uploaded_at)
              VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(season)
@@ -155,7 +124,7 @@ impl Db {
     /// Remove a request (approved or rejected), returning it.
     pub async fn take_world_request(&self, season: Id, file: &str) -> Option<WorldRequest> {
         let r = self.world_request(season, file).await?;
-        sqlx::query("DELETE FROM world_request WHERE season = ? AND file = ?")
+        sqlx::query("DELETE FROM world_request WHERE season_id = ? AND file = ?")
             .bind(season)
             .bind(file)
             .execute(&self.pool)
@@ -165,7 +134,7 @@ impl Db {
     }
 
     pub async fn clear_world_requests(&self, season: Id) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM world_request WHERE season = ?")
+        sqlx::query("DELETE FROM world_request WHERE season_id = ?")
             .bind(season)
             .execute(&self.pool)
             .await?;
@@ -175,7 +144,7 @@ impl Db {
     /// Submissions held for `file`: (id, YAML path).
     pub async fn held_submissions(&self, season: Id, file: &str) -> Vec<(Id, String)> {
         sqlx::query_as::<_, (Id, String)>(
-            "SELECT id, yaml_file FROM submission WHERE season = ? AND held_for = ?",
+            "SELECT id, yaml_file FROM submission WHERE season_id = ? AND held_for = ?",
         )
         .bind(season)
         .bind(file)
@@ -190,9 +159,9 @@ impl Db {
     pub async fn stale_holds(&self, season: Id) -> Vec<String> {
         sqlx::query_scalar(
             "SELECT DISTINCT held_for FROM submission s
-             WHERE season = ? AND held_for IS NOT NULL
+             WHERE season_id = ? AND held_for IS NOT NULL
                AND (held_err IS NULL OR held_err LIKE 'couldn''t be checked%')
-               AND NOT EXISTS (SELECT 1 FROM world_request w WHERE w.season = s.season AND w.file = s.held_for)",
+               AND NOT EXISTS (SELECT 1 FROM world_request w WHERE w.season_id = s.season_id AND w.file = s.held_for)",
         )
         .bind(season)
         .fetch_all(&self.pool)

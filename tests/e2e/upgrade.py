@@ -4,6 +4,7 @@ start under the same version doesn't, and a database a newer Bifrost has
 migrated is refused rather than run on. CLI commands never back up or
 migrate, and refuse a database on another schema. A failed pre-upgrade
 backup stops the start only when the schema would change."""
+import glob
 import os
 import sqlite3
 import sys
@@ -115,8 +116,13 @@ check("and the database is left alone", stamp(srv) == (schema + 1, "99.0.0"), st
 
 # Numeric season ids, from before 0.3.0, have no upgrade: not from a release (0.1
 # has no schema version, 0.2 has 2), or from a build between releases.
+def remove_db():
+    for f in glob.glob(os.path.join(srv.data, "bifrost.db*")):
+        os.remove(f)
+
+
 for old in (0, 2, 6):
-    os.remove(os.path.join(srv.data, "bifrost.db"))
+    remove_db()
     with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
         db.execute("CREATE TABLE season (id INTEGER PRIMARY KEY, name TEXT)")
         db.execute(f"PRAGMA user_version = {old}")
@@ -125,7 +131,7 @@ for old in (0, 2, 6):
     check("saying so", "before 0.3.0" in srv.logtext(), srv.logtext()[-800:])
     r = srv.cli("auth", "status")
     check("commands refuse it too", r.returncode == 1 and "before 0.3.0" in r.stderr, (r.returncode, r.stderr))
-os.remove(os.path.join(srv.data, "bifrost.db"))
+remove_db()
 
 # `bifrost update` is for the single-file build (see bundle.py); this one has
 # no bundled runtime.

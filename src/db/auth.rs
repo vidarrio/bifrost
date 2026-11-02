@@ -3,58 +3,10 @@
 //! community invites). Tokens are never stored — only their SHA-256 — so a
 //! leaked database can't be replayed as sessions or links.
 
-use sqlx::{FromRow, SqlitePool};
+use sqlx::FromRow;
 
 use super::Db;
 use crate::auth::{AuthMode, Principal, Role};
-
-pub(super) async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    // One row per person. `password_hash` is set for native accounts;
-    // `idp_subject` (the IdP's stable id) for IdP-provisioned ones.
-    sqlx::query(
-        r#"CREATE TABLE IF NOT EXISTS account (
-             id INTEGER PRIMARY KEY,
-             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-             password_hash TEXT,
-             idp_subject TEXT UNIQUE,
-             role TEXT NOT NULL DEFAULT 'user',
-             disabled INTEGER NOT NULL DEFAULT 0,
-             created_at INTEGER NOT NULL
-           )"#,
-    )
-    .execute(pool)
-    .await?;
-    sqlx::query(
-        r#"CREATE TABLE IF NOT EXISTS session (
-             token_hash TEXT PRIMARY KEY,
-             account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-             created_at INTEGER NOT NULL,
-             expires_at INTEGER NOT NULL
-           )"#,
-    )
-    .execute(pool)
-    .await?;
-    // kind: 'reset' (account_id set, single use), 'invite' (single use),
-    // 'community' (max_uses NULL = unlimited until expiry/revocation).
-    sqlx::query(
-        r#"CREATE TABLE IF NOT EXISTS auth_link (
-             id INTEGER PRIMARY KEY,
-             token_hash TEXT NOT NULL UNIQUE,
-             kind TEXT NOT NULL CHECK (kind IN ('reset', 'invite', 'community')),
-             account_id INTEGER REFERENCES account(id) ON DELETE CASCADE,
-             label TEXT NOT NULL DEFAULT '',
-             max_uses INTEGER,
-             uses INTEGER NOT NULL DEFAULT 0,
-             expires_at INTEGER NOT NULL,
-             revoked INTEGER NOT NULL DEFAULT 0,
-             created_by INTEGER,
-             created_at INTEGER NOT NULL
-           )"#,
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
-}
 
 #[derive(Debug, FromRow, Clone)]
 pub struct AccountRow {
@@ -856,7 +808,7 @@ mod tests {
             .unwrap();
         let s = db.create_season("S", None, 0).await.unwrap();
         sqlx::query(
-            "INSERT INTO bifrost_slot (id, season, game_id, name, ap_slot, game) VALUES (?, ?, ?, 'Slot', 1, 'G')",
+            "INSERT INTO slot (id, season_id, game_id, name, ap_slot, game) VALUES (?, ?, ?, 'Slot', 1, 'G')",
         )
         .bind(Id::new())
         .bind(s)

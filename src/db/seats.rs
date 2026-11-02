@@ -69,10 +69,10 @@ impl Db {
     /// what a failed attempt left, which the next one clears).
     pub async fn slot_name_taken(&self, season: Id, name: &str) -> bool {
         sqlx::query_scalar::<_, i64>(
-            "SELECT EXISTS(SELECT 1 FROM submission WHERE season = ?1 AND slot_name = ?2)
-                 OR EXISTS(SELECT 1 FROM seat WHERE season = ?1 AND name = ?2)
+            "SELECT EXISTS(SELECT 1 FROM submission WHERE season_id = ?1 AND slot_name = ?2)
+                 OR EXISTS(SELECT 1 FROM seat WHERE season_id = ?1 AND name = ?2)
                  OR ((SELECT state FROM season WHERE id = ?1) NOT IN ('draft', 'signup')
-                     AND EXISTS(SELECT 1 FROM bifrost_slot WHERE season = ?1 AND name = ?2))",
+                     AND EXISTS(SELECT 1 FROM slot WHERE season_id = ?1 AND name = ?2))",
         )
         .bind(season)
         .bind(name)
@@ -91,7 +91,7 @@ impl Db {
         created_by: i64,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
-            "INSERT INTO seat_link (token, season, submission_id, slot_name, created_by, created_at)
+            "INSERT INTO seat_link (token, season_id, submission_id, slot_name, created_by, created_at)
              VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(token)
@@ -107,7 +107,7 @@ impl Db {
 
     pub async fn seat_link(&self, season: Id, token: &str) -> Option<SeatLink> {
         sqlx::query_as(
-            "SELECT submission_id, slot_name FROM seat_link WHERE season = ? AND token = ?",
+            "SELECT submission_id, slot_name FROM seat_link WHERE season_id = ? AND token = ?",
         )
         .bind(season)
         .bind(token)
@@ -134,7 +134,7 @@ impl Db {
         sqlx::query_scalar(
             "SELECT l.token FROM seat_link l
              LEFT JOIN submission s ON s.id = l.submission_id
-             WHERE l.season = ?1 AND (l.slot_name = ?2 OR s.slot_name = ?2)
+             WHERE l.season_id = ?1 AND (l.slot_name = ?2 OR s.slot_name = ?2)
              ORDER BY l.created_at, l.token",
         )
         .bind(season)
@@ -146,7 +146,7 @@ impl Db {
 
     /// Revoke an unused link, given the links its host may revoke.
     pub async fn revoke_seat_link(&self, season: Id, token: &str) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM seat_link WHERE season = ? AND token = ?")
+        sqlx::query("DELETE FROM seat_link WHERE season_id = ? AND token = ?")
             .bind(season)
             .bind(token)
             .execute(&self.pool)
@@ -189,7 +189,7 @@ impl Db {
         }
         let mut tx = self.pool.begin().await?;
         let spent = sqlx::query(
-            "DELETE FROM seat_link WHERE token = ?1 AND season = ?2
+            "DELETE FROM seat_link WHERE token = ?1 AND season_id = ?2
                AND (SELECT state FROM season WHERE id = ?2) IN ('draft', 'signup')",
         )
         .bind(token)
@@ -200,7 +200,7 @@ impl Db {
             return Ok(JoinOutcome::LinkGone);
         }
         let added = sqlx::query(
-            "INSERT INTO seat (id, season, submission_id, account_id, name, created_at)
+            "INSERT INTO seat (id, season_id, submission_id, account_id, name, created_at)
              VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(Id::new())
@@ -239,7 +239,7 @@ impl Db {
         }
         let mut tx = self.pool.begin().await?;
         let spent = sqlx::query(
-            "DELETE FROM seat_link WHERE token = ?1 AND season = ?2
+            "DELETE FROM seat_link WHERE token = ?1 AND season_id = ?2
                AND (SELECT state FROM season WHERE id = ?2) = 'live'",
         )
         .bind(token)
@@ -251,7 +251,7 @@ impl Db {
         }
         let slot_id = Id::new();
         let slot = sqlx::query(
-            "INSERT INTO bifrost_slot (id, season, game_id, name, ap_slot, game, is_seat) VALUES (?, ?, ?, ?, ?, ?, 1)",
+            "INSERT INTO slot (id, season_id, game_id, name, ap_slot, game, is_seat) VALUES (?, ?, ?, ?, ?, ?, 1)",
         )
         .bind(slot_id)
         .bind(season)
@@ -266,7 +266,7 @@ impl Db {
             Err(e) if name_clash(&e) => return Ok(JoinOutcome::NameTaken),
             Err(e) => return Err(e),
         }
-        sqlx::query("INSERT INTO claim (bifrost_slot_id, account_id, claimed_at) VALUES (?, ?, ?)")
+        sqlx::query("INSERT INTO claim (slot_id, account_id, claimed_at) VALUES (?, ?, ?)")
             .bind(slot_id)
             .bind(account)
             .bind(now())
@@ -285,7 +285,7 @@ impl Db {
         name: &str,
     ) -> Result<JoinOutcome, sqlx::Error> {
         let res = sqlx::query(
-            "UPDATE seat SET name = ?1 WHERE id = ?2 AND season = ?3 AND account_id = ?4
+            "UPDATE seat SET name = ?1 WHERE id = ?2 AND season_id = ?3 AND account_id = ?4
                AND (SELECT state FROM season WHERE id = ?3) IN ('draft', 'signup')",
         )
         .bind(name)
@@ -310,7 +310,7 @@ impl Db {
         account: i64,
     ) -> Result<bool, sqlx::Error> {
         let res = sqlx::query(
-            "DELETE FROM seat WHERE submission_id = ?1 AND season = ?2 AND account_id = ?3
+            "DELETE FROM seat WHERE submission_id = ?1 AND season_id = ?2 AND account_id = ?3
                AND (SELECT state FROM season WHERE id = ?2) IN ('draft', 'signup')",
         )
         .bind(submission)
@@ -324,8 +324,8 @@ impl Db {
     /// Remove a partner from a game, for its host, before generation.
     pub async fn remove_seat(&self, season: Id, seat: Id, host: i64) -> Result<bool, sqlx::Error> {
         let res = sqlx::query(
-            "DELETE FROM seat WHERE id = ?1 AND season = ?2
-               AND submission_id IN (SELECT id FROM submission WHERE season = ?2 AND account_id = ?3)
+            "DELETE FROM seat WHERE id = ?1 AND season_id = ?2
+               AND submission_id IN (SELECT id FROM submission WHERE season_id = ?2 AND account_id = ?3)
                AND (SELECT state FROM season WHERE id = ?2) IN ('draft', 'signup')",
         )
         .bind(seat)
