@@ -164,6 +164,7 @@ h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute
 .slot.released{border-left-color:var(--warn)}
 .slot.stretch{position:relative}.stretch .cover{color:inherit;text-decoration:none}.stretch .cover::after{content:"";position:absolute;inset:0}.stretch:hover{border-color:var(--accent)}.stretch form,.stretch .notes{position:relative;z-index:1}.stretch .notes{max-height:7.5em;overflow:auto}
 .signup textarea{font-family:inherit}
+.crumb{overflow-wrap:anywhere}
 .notes{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;margin-top:6px}
 .slot .game{font-weight:600;font-size:14px}.slot .st{font-family:var(--mono);font-size:11px;color:var(--muted);float:right}
 .slot.goal .st{color:var(--ok)}

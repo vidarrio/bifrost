@@ -18,12 +18,10 @@ pub(super) async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 #[serde(default)]
 pub struct Instance {
     /// The host players' AP clients connect to (each live season adds its
-    /// port), e.g. `ap.example.org`. Empty: "ask an admin".
+    /// port), e.g. `ap.example.org`. Empty: boards say to ask an admin.
     pub domain: String,
     /// An optional "home" link in the header (e.g. the operator's homepage).
     pub home_url: String,
-    /// Shown under the connect address: where players get the password.
-    pub password_note: String,
     /// Community Discord servers listed on the home page.
     pub discords: Vec<Discord>,
 }
@@ -41,7 +39,6 @@ impl Default for Instance {
         Self {
             domain: String::new(),
             home_url: String::new(),
-            password_note: "Ask a moderator for the password.".into(),
             discords: vec![Discord {
                 name: "Archipelago".into(),
                 url: "https://discord.gg/archipelago".into(),
@@ -157,6 +154,13 @@ impl Db {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn settings_saved_with_the_old_password_note_still_load() {
+        let i: super::Instance =
+            serde_json::from_str(r#"{"domain":"x.example","password_note":"ask"}"#).unwrap();
+        assert_eq!(i.domain, "x.example");
+    }
+
     use super::*;
 
     #[tokio::test]

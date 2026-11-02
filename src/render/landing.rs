@@ -64,28 +64,17 @@ pub fn landing_roster(
     out
 }
 
-/// The home page's "Connect to" block: each live season's address (or "ask
-/// an admin" until the sysadmin sets the connect host), then the password note.
-pub fn landing_connect(live: &[(String, Option<String>)], password_note: &str) -> String {
-    let mut out = String::new();
+/// The home page's "Join" block: where each live season's connection details
+/// are (its own address and password, on its board).
+pub fn landing_connect(live: &[(i64, String)]) -> String {
+    let mut out = String::from(r#"<div class="lbl">Connect to</div>"#);
     if live.is_empty() {
-        out.push_str(r#"<div class="lbl">Connect to</div><div class="cs">no season is live</div>"#);
+        out.push_str(r#"<div class="cs">no season is live</div>"#);
     }
-    for (name, addr) in live {
-        let lbl = if live.len() == 1 {
-            "Connect to".to_string()
-        } else {
-            format!("{} — connect to", esc(name))
-        };
+    for (id, name) in live {
         out.push_str(&format!(
-            r#"<div class="lbl">{lbl}</div><div class="cs">{}</div>"#,
-            esc(addr.as_deref().unwrap_or("ask an admin"))
-        ));
-    }
-    if !password_note.trim().is_empty() {
-        out.push_str(&format!(
-            r#"<div class="pw" style="margin-top:8px">{}</div>"#,
-            esc(password_note)
+            r#"<div class="pw"><a href="/s/{id}/board">{}</a>: connection details on its live board</div>"#,
+            esc(name)
         ));
     }
     out

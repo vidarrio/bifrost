@@ -31,7 +31,11 @@ pub(crate) async fn live_priorities(
     prios
 }
 
-pub(crate) async fn board_view(State(st): State<AppState>, ctx: scope::SeasonCtx) -> Response {
+pub(crate) async fn board_view(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+) -> Response {
     // A finished season's board is its frozen summary.
     if ctx.state() == db::State::Archived {
         return Redirect::to(&ctx.url("/season")).into_response();
@@ -49,6 +53,22 @@ pub(crate) async fn board_view(State(st): State<AppState>, ctx: scope::SeasonCtx
     let connect = st
         .seasons
         .connect_address(&ctx.row, &st.db.instance().await.domain);
+    // Anyone who can see the board sees the address; on a season open to anyone,
+    // the password is still only for those playing it and those running it.
+    let password = if !ctx.state().is_live() {
+        String::new()
+    } else if config::get().ap_managed {
+        st.db.ap_passwords(season).await.0
+    } else {
+        ctx.rt.ap_cfg().map(|c| c.password).unwrap_or_default()
+    };
+    let may_join = ctx.can_manage(&me) || st.db.is_season_member(season, me.id()).await;
+    let connect = render::connect_line(
+        ctx.state().is_live(),
+        connect.as_deref(),
+        &password,
+        may_join,
+    );
     render::board_page(
         &snap,
         &slots,
@@ -56,7 +76,7 @@ pub(crate) async fn board_view(State(st): State<AppState>, ctx: scope::SeasonCtx
         addr.as_deref(),
         &acts,
         &inlogic,
-        connect.as_deref(),
+        &connect,
     )
     .into_response()
 }
