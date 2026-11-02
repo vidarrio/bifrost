@@ -46,6 +46,7 @@ pub fn rule_for(method: &Method, path: &str) -> Option<Rule> {
     match path {
         // Each check runs a sandboxed AP process loading every world.
         "/check" | "/signup/check" => r("check", 10, 10, false),
+        p if p.starts_with("/signup/game/") && p.ends_with("/yaml") => r("check", 10, 10, false),
         "/signup" => r("signup", 10, 10, false),
         "/signup/apworld" => r("upload", 10, 60, false),
         "/login" => r("login", 20, 10, true),
@@ -53,7 +54,6 @@ pub fn rule_for(method: &Method, path: &str) -> Option<Rule> {
         "/hint" => r("hint", 30, 10, false),
         "/minesweeper/new" => r("minesweeper", 60, 10, false),
         // Each upload unpacks a pack and runs its Lua in a worker.
-        p if p.starts_with("/signup/game/") && p.ends_with("/yaml") => r("check", 10, 10, false),
         p if p.starts_with("/game/") && p.ends_with("/poptracker") => r("pack", 20, 60, false),
         p if p.starts_with("/invite/") || p.starts_with("/reset/") => r("link", 10, 10, true),
         _ => None,

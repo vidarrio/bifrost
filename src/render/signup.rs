@@ -306,7 +306,7 @@ pub fn signup_game_page(
             esc(e)
         )),
         (Some(w), None) => b.push_str(&format!(
-            r#"<div class="banner ok">Held, waiting for {} to be approved. Its YAML can't be replaced until then, as it can't be checked yet.</div>"#,
+            r#"<div class="banner ok">Held, waiting for {} to be approved. A replacement has to pass its check, so until then it needs a game that's already installed.</div>"#,
             esc(w)
         )),
         _ => {}

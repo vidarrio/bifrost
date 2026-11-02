@@ -1391,11 +1391,13 @@ impl Db {
         if !is_admin && owner != account {
             return Ok(None);
         }
-        sqlx::query("DELETE FROM submission WHERE id = ?")
+        // Only the file read above: a replace that got in first keeps its signup.
+        let res = sqlx::query("DELETE FROM submission WHERE id = ? AND yaml_file = ?")
             .bind(id)
+            .bind(&yaml_file)
             .execute(&self.pool)
             .await?;
-        Ok(Some(yaml_file))
+        Ok((res.rows_affected() > 0).then_some(yaml_file))
     }
 
     /// Whether `account` claims any Bifrost slot mapping to `ap_slot` this season.
