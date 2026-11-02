@@ -378,12 +378,10 @@ pub fn settings_page(
 <style>.authform{{max-width:560px}}.authform textarea{{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:7px 9px;font:13px/1.5 var(--mono);min-height:110px}}</style>
 <form class="authform" method="post" action="/admin/settings">
 <label>Connect host — what players' AP clients connect to; each live season adds its port<input type="text" name="domain" value="{}" placeholder="ap.example.org" maxlength="253"></label>
-<label>Password note — shown under the connect address<input type="text" name="password_note" value="{}" maxlength="200"></label>
 <label>Home link (optional) — a "home" pill in the header<input type="url" name="home_url" value="{}" placeholder="https://example.org/"></label>
 <label>Discord servers — one per line: <span class="mono">Name | https://discord.gg/… | note</span><textarea name="discords" spellcheck="false">{}</textarea></label>
 <button type="submit">Save</button></form>"#,
         esc(&inst.domain),
-        esc(&inst.password_note),
         esc(&inst.home_url),
         esc(&discords),
     ));

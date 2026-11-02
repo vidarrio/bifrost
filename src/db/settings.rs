@@ -22,8 +22,6 @@ pub struct Instance {
     pub domain: String,
     /// An optional "home" link in the header (e.g. the operator's homepage).
     pub home_url: String,
-    /// Shown under the connect address: where players get the password.
-    pub password_note: String,
     /// Community Discord servers listed on the home page.
     pub discords: Vec<Discord>,
 }
@@ -41,7 +39,6 @@ impl Default for Instance {
         Self {
             domain: String::new(),
             home_url: String::new(),
-            password_note: "Ask a moderator for the password.".into(),
             discords: vec![Discord {
                 name: "Archipelago".into(),
                 url: "https://discord.gg/archipelago".into(),

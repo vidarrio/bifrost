@@ -117,9 +117,9 @@ moderator assigns each slot to an account from the **Slots** page.
 
 ### Connecting
 
-The home page lists each live season's address (`host:port`) and, if one is
-set, the connect password. In your game's Archipelago client, connect to that
-address using your slot name.
+Each live season's board shows its address (`host:port`) and, if one is set, its
+connect password. The password only shows to the season's players and moderators.
+In your game's Archipelago client, connect to that address using your slot name.
 
 If your game needs a patch or output file (a ROM patch, a mod file, a save to
 load), it's usually waiting on your slot's game page: see

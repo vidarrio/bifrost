@@ -70,6 +70,7 @@ pub(super) fn card_progress(sent: u64, world_size: u32) -> String {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn board_page(
     snap: &BoardSnapshot,
     slots: &[SlotRow],
@@ -78,12 +79,19 @@ pub fn board_page(
     activity: &[crate::db::ActivityRow],
     inlogic: &std::collections::HashMap<i64, i64>,
     connect: Option<&str>,
+    password: &str,
 ) -> Html<String> {
     let mut out = page_head(None);
     out.push_str(BOARD_STYLE);
-    let connect = connect
+    let mut connect = connect
         .map(|a| format!(r#" · AP server <b class="mono">{}</b>"#, esc(a)))
         .unwrap_or_default();
+    if !password.is_empty() {
+        connect.push_str(&format!(
+            r#" · password <b class="mono">{}</b>"#,
+            esc(password)
+        ));
+    }
     out.push_str(&format!(
         r#"<h1>Live board</h1><div class="crumb"><a href="/">← Bifrost</a> · <span id="connline">{}</span>{connect}</div>"#,
         conn_line(snap)

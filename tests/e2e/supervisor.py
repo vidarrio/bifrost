@@ -233,6 +233,19 @@ try:
     check("someone joins mid-season", "Late" in get(root, f"/s/{sid}/claim").text and r.status_code == 200, r.text[-300:])
     check("…and is on the game", "Late" in get(root, f"/s/{sid}/game/{ap}").text)
     check("…and its card", "Late" in get(root, f"/s/{sid}/signup").text)
+    # Connection details are on the season's own board.
+    post(root, "/admin/settings", data=dict(domain="ap.example.org", home_url="", discords=""))
+    post(root, f"/s/{sid}/admin/connect-password", data=dict(password="sesame-1"))
+    page = get(bob, f"/s/{sid}/board").text
+    check("a player sees the address and password on the board", re.search(r"ap\.example\.org:\d+", page) and "sesame-1" in page, page[:800])
+    check("so does a partner", "sesame-1" in get(cat, f"/s/{sid}/board").text)
+    home = get(bob, "/").text
+    check("the home page points there instead", f'/s/{sid}/board' in home and "sesame-1" not in home and not re.search(r"ap\.example\.org:\d+", home))
+    post(root, f"/s/{sid}/admin/privacy", data=dict(what="live", private="0"))
+    page = get(stranger, f"/s/{sid}/board").text
+    check("on an open season others see the address, not the password", re.search(r"ap\.example\.org:\d+", page) and "sesame-1" not in page, page[:800])
+    check("…nor does an anonymous visitor", "sesame-1" not in get(srv.session(), f"/s/{sid}/board").text)
+    post(root, f"/s/{sid}/admin/privacy", data=dict(what="live", private="1"))
     # A slot with no player: a moderator assigns it.
     with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
         free = db.execute("INSERT INTO bifrost_slot (season, name, ap_slot, game) VALUES (?, 'Free', ?, 'ChecksFinder')", (sid, ap)).lastrowid

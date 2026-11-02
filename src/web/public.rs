@@ -99,14 +99,10 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
     // Everything operator-specific comes from the instance settings; the AP
     // version from the install Bifrost actually runs.
     let inst = st.db.instance().await;
-    let live: Vec<(String, Option<String>)> = seen
+    let live: Vec<(i64, String)> = seen
         .iter()
         .filter(|s| s.state() == db::State::Live)
-        .cloned()
-        .map(|s| {
-            let addr = st.seasons.connect_address(&s, &inst.domain);
-            (s.name, addr)
-        })
+        .map(|s| (s.id, s.name.clone()))
         .collect();
     let mut landing = LANDING.to_string();
     if !season_cards {
@@ -125,10 +121,7 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
             .replace("<!--SEASONLABEL-->", &render::escape(&label))
             .replace("<!--ROSTER-->", &roster)
             .replace("<!--PASTSEASONS-->", &past_html)
-            .replace(
-                "<!--CONNECT-->",
-                &render::landing_connect(&live, &inst.password_note),
-            )
+            .replace("<!--CONNECT-->", &render::landing_connect(&live))
             .replace("<!--HOMEPILL-->", &render::home_pill(&inst.home_url))
             .replace("<!--TAG-->", &render::landing_tag(&inst.domain))
             .replace(

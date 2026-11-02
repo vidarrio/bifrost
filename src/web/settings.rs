@@ -185,8 +185,6 @@ pub(crate) struct SettingsForm {
     pub(crate) domain: String,
     #[serde(default)]
     pub(crate) home_url: String,
-    #[serde(default)]
-    pub(crate) password_note: String,
     /// One server per line: `Name | https://discord.gg/… | note`.
     #[serde(default)]
     pub(crate) discords: String,
@@ -212,7 +210,6 @@ pub(crate) async fn settings_save(
             let typed = db::Instance {
                 domain: f.domain.clone(),
                 home_url: f.home_url.clone(),
-                password_note: f.password_note.clone(),
                 discords: f
                     .discords
                     .lines()
@@ -252,7 +249,6 @@ pub(crate) fn parse_settings(f: &SettingsForm) -> Result<db::Instance, String> {
     if !home_url.is_empty() && !web_url(&home_url) {
         return Err("The home link must be an http(s) URL.".into());
     }
-    let password_note: String = f.password_note.trim().chars().take(200).collect();
     let mut discords = Vec::new();
     for (i, line) in f
         .discords
@@ -284,7 +280,6 @@ pub(crate) fn parse_settings(f: &SettingsForm) -> Result<db::Instance, String> {
     Ok(db::Instance {
         domain,
         home_url,
-        password_note,
         discords,
     })
 }

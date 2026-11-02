@@ -11,7 +11,7 @@ try:
     page = get(root, "/admin/seasons").text
     check("no hard-coded home link in the page header", "vidarr" not in page and 'id="homeslot"' in page)
     check("no home link by default", get(root, "/api/me").json().get("home") == "")
-    post(root, "/admin/settings", data=dict(domain="", home_url="https://home.example.org/", password_note="", discords=""))
+    post(root, "/admin/settings", data=dict(domain="", home_url="https://home.example.org/", discords=""))
     check("/api/me carries the configured home link", get(root, "/api/me").json().get("home") == "https://home.example.org/")
     check("landing shows it too", 'href="https://home.example.org/"' in get(root, "/").text)
     r = get(srv.session(), "/api/me")
