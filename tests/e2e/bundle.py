@@ -210,8 +210,10 @@ check("as root, won't follow another user's link to a data dir",
 r = as_root("mkdir -m 700 /real && ln -s /real /l; "
             "BIFROST_ALLOW_ROOT=1 BIFROST_DATA=/l /bifrost auth status; echo exit=$?; ls -A /real/runtime | wc -l")
 check("as root, its own link to the data dir works", "exit=0\n1\n" in r.stdout, r.stdout + r.stderr)
-r = as_root(f"mkdir -m 700 /d && {allow} >/dev/null 2>&1; {allow}; echo exit=$?")
-check("as root, its own data dir passes on the next start", "exit=0\n" in r.stdout, r.stdout + r.stderr)
+r = as_root(f"mkdir -m 700 /d && {allow} >/dev/null 2>&1; echo first=$?; {allow}; echo exit=$?")
+check("as root, its own data dir passes on the next start", "first=0\n" in r.stdout and "exit=0\n" in r.stdout, r.stdout + r.stderr)
+r = as_root("BIFROST_ALLOW_ROOT=1 BIFROST_DATA=/tmp/new/d /bifrost auth status; echo exit=$?; stat -c %a /tmp/new/d")
+check("as root, a new data dir under /tmp works", "exit=0\n700\n" in r.stdout, r.stdout + r.stderr)
 
 # A bare system: no Python, no bubblewrap.
 data = os.path.join(srv.data, "..", "bundle-bare")

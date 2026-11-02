@@ -421,8 +421,9 @@ fn check_held(
 }
 
 /// Nobody but `me` or root can change the way to `path` as written: each folder and
-/// link on it, then where each link leads. A part that doesn't exist yet ends it.
-fn check_way(path: &Path, me: u32, links_left: u32) -> Result<(), String> {
+/// link on it, then where each link leads. A part that doesn't exist yet ends it,
+/// unless all of it should exist by now.
+fn check_way(path: &Path, me: u32, links_left: u32, all_there: bool) -> Result<(), String> {
     use std::path::Component;
     let show = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
     let absolute = std::env::current_dir()
@@ -440,7 +441,7 @@ fn check_way(path: &Path, me: u32, links_left: u32) -> Result<(), String> {
         }
         let meta = match std::fs::symlink_metadata(&at) {
             Ok(meta) => meta,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && !all_there => return Ok(()),
             Err(e) => return Err(show(&at, e)),
         };
         check_held(&at, &meta, me, true)?;
@@ -451,7 +452,7 @@ fn check_way(path: &Path, me: u32, links_left: u32) -> Result<(), String> {
             let target = std::fs::read_link(&at).map_err(|e| show(&at, e))?;
             at.pop();
             let target = at.join(target);
-            check_way(&target, me, links_left - 1)?;
+            check_way(&target, me, links_left - 1, all_there)?;
             at = target.canonicalize().map_err(|e| show(&target, e))?;
         }
     }
@@ -465,14 +466,15 @@ fn check_way(path: &Path, me: u32, links_left: u32) -> Result<(), String> {
 fn root_data_dir(data_dir: &Path, me: u32) -> Result<PathBuf, String> {
     use std::os::unix::fs::DirBuilderExt;
     let show = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
-    check_way(data_dir, me, 40)?;
+    check_way(data_dir, me, 40, false)?;
     std::fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
         .create(data_dir)
         .map_err(|e| show(data_dir, e))?;
-    // Again: anything new could have been put there just before it was created.
-    check_way(data_dir, me, 40)?;
+    // Again, all of it now: what's held and in place here can't be swapped, even in
+    // a sticky folder, and something could have been put there before it was created.
+    check_way(data_dir, me, 40, true)?;
     let real = data_dir.canonicalize().map_err(|e| show(data_dir, e))?;
     for (i, dir) in real.ancestors().enumerate() {
         let meta = std::fs::symlink_metadata(dir).map_err(|e| show(dir, e))?;
@@ -949,6 +951,10 @@ trusted_proxies = ["10.0.0.1", "10.0.0.2"]
             set(&tmp, 0o1777);
             check(&data).unwrap();
             set(&tmp, 0o700);
+
+            // Once created, a part that's gone is an error.
+            assert!(check_way(&tmp.join("gone/x"), me, 40, false).is_ok());
+            assert!(check_way(&tmp.join("gone/x"), me, 40, true).is_err());
 
             // A way there others can change counts, wherever it leads.
             let open = tmp.join("open");
