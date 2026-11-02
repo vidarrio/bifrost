@@ -31,8 +31,20 @@ pub struct SaveState {
     /// Slots by stringified number.
     #[serde(default)]
     pub slots: HashMap<String, SlotCounts>,
+    /// Each value as JSON text of its own (see `stored_values`).
     #[serde(default)]
-    pub stored: serde_json::Map<String, serde_json::Value>,
+    pub stored: HashMap<String, String>,
+}
+
+impl SaveState {
+    /// The data storage's values that parse. Clients write them, and one this parser
+    /// refuses should cost that key alone.
+    pub fn stored_values(&self) -> serde_json::Map<String, serde_json::Value> {
+        self.stored
+            .iter()
+            .filter_map(|(k, text)| Some((k.clone(), serde_json::from_str(text).ok()?)))
+            .collect()
+    }
 }
 
 /// Read every slot's true sent/received totals from the season's save
@@ -132,4 +144,27 @@ impl Meta {
 pub async fn load(season: i64) -> Result<Meta, String> {
     let dirs = config::get().season(season);
     ap_adapter::decode_meta(&dirs, &dirs.current_zip()).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stored_value_that_wont_parse_costs_that_key_alone() {
+        let line = r#"{"slots": {"1": {"sent": 2}}, "stored": {
+            "good": "{\"a\": 1}",
+            "surrogate": "\"\\ud800\"",
+            "huge": "1"
+        }}"#;
+        let line = line.replace(
+            r#""huge": "1""#,
+            &format!(r#""huge": "1{}""#, "0".repeat(400)),
+        );
+        let save: SaveState = serde_json::from_str(&line).unwrap();
+        assert_eq!(save.slots["1"].sent, 2);
+        let values = save.stored_values();
+        assert_eq!(values.len(), 1, "{values:?}");
+        assert_eq!(values["good"]["a"], 1);
+    }
 }

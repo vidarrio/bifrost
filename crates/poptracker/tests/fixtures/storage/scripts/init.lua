@@ -7,7 +7,9 @@ assert(Highlight.Avoid == -1 and Highlight.None == 0 and Highlight.NoPriority ==
 
 Archipelago:AddClearHandler("clear", function()
   Archipelago:Get({"got", "nothing_there"})
-  Archipelago:SetNotify({"watched"})
+  Archipelago:SetNotify({"watched", "both", "notify_missing"})
+  Archipelago:Get({"both"})
+  assert(Tracker:FindObjectForCode("@Place/B").Highlight == Highlight.None, "starts at none")
   Archipelago:Get("not a table")
   if #Archipelago.CheckedLocations == 1 and Archipelago.CheckedLocations[1] == 2
     and #Archipelago.MissingLocations == 2 then
@@ -33,4 +35,5 @@ end)
 
 Archipelago:AddSetReplyHandler("watched", function(key, value, old)
   if key == "watched" and value == 5 and old == nil then on("notified") end
+  if key == "both" or key == "notify_missing" then error("told twice, or of nothing") end
 end)

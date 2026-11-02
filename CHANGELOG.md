@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - PopTracker packs can read their slot's hints and Archipelago's data storage, from
-  the season's save, updated every few seconds. Packs that track hints or a game's
+  the season's save, so as often as the server saves it (by default, every minute).
+  Packs that track hints or a game's
   own progress there now show them, and hinted locations are outlined on the map.
   Nothing a pack does can write to the server.
 

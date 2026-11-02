@@ -406,7 +406,7 @@ pub fn spawn(
                 match crate::meta::load_counts(season).await {
                     Ok(save) if !save.slots.is_empty() => {
                         if let Ok(mut b) = board.write() {
-                            b.stored = Arc::new(save.stored);
+                            b.stored = Arc::new(save.stored_values());
                             for (slot, c) in save.slots {
                                 let Ok(slot) = slot.parse::<i64>() else {
                                     continue;

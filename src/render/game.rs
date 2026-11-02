@@ -162,7 +162,7 @@ pub(super) const PT_JS: &str = r#"<script>
  // first. -1 avoid, 1 no priority, 2 unspecified, 3 priority.
  var PT_HL={3:['#ffd700','priority'],'-1':['#ff4040','avoid'],1:['#909090','no priority'],2:['#40e0ff','hinted']};
  function markerHighlight(k){
-  var best=0; (k.sections||[]).forEach(function(s){ if(!s.checked&&s.highlight&&(best===0||s.highlight===3||(best!==3&&s.highlight>best))) best=s.highlight; });
+  var best=0; (k.sections||[]).forEach(function(s){ if(!s.checked&&PT_HL[s.highlight]&&(best===0||s.highlight>best)) best=s.highlight; });
   return PT_HL[best];
  }
  function paintMarker(mk,k){
@@ -216,7 +216,6 @@ pub(super) const PT_JS: &str = r#"<script>
    var s=k.size||sz; var mk=document.createElement('span');
    mk.className='ptmk'+(((k.shape||m.location_shape)==='diamond')?' d':'');
    mk.dataset.key=k.location+'@'+k.map; mk.dataset.loc=k.location;
-   mk.title=markerTitle(k);
    paintMarker(mk,k);
    mk._k=k; mk._s=s; spans.push(mk); stage.appendChild(mk);
   });

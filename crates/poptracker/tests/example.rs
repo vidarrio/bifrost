@@ -880,6 +880,7 @@ fn data_storage_is_replayed_from_a_copy() {
     s.replay_storage(|key| match key {
         "got" => Some(serde_json::json!({"n": 4})),
         "watched" => Some(serde_json::json!(5)),
+        "both" => Some(serde_json::json!(6)),
         "second" => Some(serde_json::json!("asked by a handler")),
         _ => None,
     })

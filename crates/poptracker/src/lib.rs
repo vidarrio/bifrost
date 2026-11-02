@@ -1253,19 +1253,37 @@ impl Session {
     pub fn replay_storage(&self, read: impl Fn(&str) -> Option<serde_json::Value>) -> Result<()> {
         for _ in 0..MAX_STORAGE_ROUNDS {
             let asked = std::mem::take(&mut self.eng.borrow_mut().storage_asked);
-            let fresh: Vec<(String, bool)> = {
+            // A `Get` answers a key for good. A `SetNotify` alone is told only of a
+            // value that exists: the server sends nothing at connect, but a pack
+            // here can't see the changes that led to it.
+            let got: HashSet<String> = (asked.iter())
+                .filter(|(_, notify)| !notify)
+                .map(|(k, _)| k.clone())
+                .collect();
+            let mut fresh: Vec<(String, bool)> = Vec::new();
+            {
                 let mut e = self.eng.borrow_mut();
-                asked
-                    .into_iter()
-                    .filter(|k| e.storage_answered.insert(k.clone()))
-                    .collect()
-            };
+                for (key, notify) in asked {
+                    let told =
+                        got.contains(&key) || e.storage_answered.contains(&(key.clone(), false));
+                    if notify && told {
+                        continue;
+                    }
+                    if e.storage_answered.insert((key.clone(), notify)) {
+                        fresh.push((key, notify));
+                    }
+                }
+            }
             if fresh.is_empty() {
                 break;
             }
+            self.charge();
             for (key, notify) in fresh {
-                self.charge();
-                let value = match read(&key) {
+                let value = read(&key);
+                if notify && value.is_none() {
+                    continue;
+                }
+                let value = match value {
                     Some(v) => json_to_lua(&self.lua, &v)?,
                     None => Value::Nil,
                 };
@@ -2584,6 +2602,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                     if let Some(c) = count {
                         t.set("AvailableChestCount", c)?;
                         t.set("ChestCount", c)?;
+                        t.set("Highlight", 0)?;
                     }
                     t.set("Active", false)?;
                     t.set("FullID", id.as_str())?;

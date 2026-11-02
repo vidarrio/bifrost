@@ -2,8 +2,10 @@
 tracks, and one that never finishes or prints without end costs a time limit,
 not the server."""
 import io
+import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -12,7 +14,7 @@ import zipfile
 
 import requests
 
-from lib import BIN, Server, check, descendants, get, post, summary, wait_for
+from lib import AP_DIR as AP, BIN, DEV, REPO, Server, check, descendants, get, post, summary, wait_for
 
 YAML = b"name: Ann\ngame: ChecksFinder\nChecksFinder: {}\n"
 ITEMS = """[{"name":"Key","type":"toggle","img":"x.png","codes":"key"},
@@ -97,6 +99,33 @@ def scratch(srv):
     except FileNotFoundError:
         return []
 
+
+def helper_output(save):
+    """Run the save-reading helper on a save made here, under the bundled AP."""
+    d = tempfile.mkdtemp(dir=DEV)
+    script = (
+        "import pickle, sys, zlib; sys.path.insert(0, sys.argv[2]); "
+        "from NetUtils import Hint, HintStatus; "
+        "open(sys.argv[1], 'wb').write(zlib.compress(pickle.dumps(eval(sys.argv[3]))))"
+    )
+    path = os.path.join(d, "save")
+    py = os.path.join(AP, "venv/bin/python")
+    subprocess.run([py, "-c", script, path, AP, save], check=True, cwd=AP, capture_output=True)
+    env = dict(os.environ, BIFROST_AP_DIR=AP, BIFROST_SEASON_DIR=d, PYTHONPATH=os.path.join(REPO, "scripts"))
+    r = subprocess.run([py, "-P", os.path.join(REPO, "scripts/bifrost_counts.py"), path], capture_output=True, text=True, env=env, cwd=d, check=True)
+    shutil.rmtree(d, ignore_errors=True)
+    return r.stdout.strip().splitlines()[-1]
+
+
+hints = "{(0, 1): {Hint(1, 2, l, 6, False, str(l), 1, HintStatus.HINT_PRIORITY) for l in range(40)}}"
+save = "{'location_checks': {(0, 1): {5}}, 'received_items': {}, 'hints': %s, 'stored_data': {'ok': {'a': 1}, '_read_x': 1, 'nan': float('nan'), 'big': 'x' * 300000, 'surrogate': '\\ud800', '\\ud800': 1, 'huge': 10 ** 400}}" % hints
+line = helper_output(save)
+out = json.loads(line)
+check("the helper gives a slot's hints, in the server's form", out["slots"]["1"]["hints"][0]["class"] == "Hint" and out["slots"]["1"]["hints"][0]["status"] == 30, line[:300])
+check("…in a stable order", [h["location"] for h in out["slots"]["1"]["hints"]] == sorted(h["location"] for h in out["slots"]["1"]["hints"]))
+check("stored values are text of their own, without the server's keys or oversized ones", json.loads(out["stored"]["ok"]) == {"a": 1} and "_read_x" not in out["stored"] and "big" not in out["stored"] and "nan" not in out["stored"], sorted(out["stored"]))
+check("a key that can't be encoded is dropped", "\ud800" not in out["stored"])
+line.encode("utf-8")
 
 # A copy of the binary, to replace while it runs, as `bifrost update` does.
 work = tempfile.mkdtemp(prefix="bifrost-e2e-packs-")
