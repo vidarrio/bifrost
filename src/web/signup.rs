@@ -107,11 +107,11 @@ pub(crate) async fn signup_game(
             sub.slot_name, sub.game
         ),
     });
-    let saved = (match q.saved.as_str() {
+    let saved = match q.saved.as_str() {
         "notes" => Some("Notes saved.".to_string()),
         "yaml" => Some(format!("YAML replaced: {} — {}.", sub.slot_name, sub.game)),
         _ => None,
-    }) as Option<String>;
+    };
     let invites =
         (is_host && pre_gen).then(|| (format!("signup/game/{id}"), format!("/s/{}/seat/", ctx.id)));
     let links = if invites.is_some() {

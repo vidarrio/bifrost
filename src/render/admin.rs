@@ -659,6 +659,9 @@ pub fn admin_page(
                 "Delete this finished season and its bundle? This cannot be undone.",
             ));
         }
+        crate::db::State::Generating => {
+            b.push_str(r#"<p class="empty">Nothing to do here while it's generating.</p>"#);
+        }
         _ => {}
     }
 

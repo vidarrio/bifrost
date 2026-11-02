@@ -89,13 +89,11 @@ pub(crate) fn download_response(member: &str, data: Vec<u8>) -> Response {
     resp
 }
 
-/// Every route, behind the auth and rate-limit middleware and the baseline
-/// response headers. `main` wraps it in the season-URL rewrite.
 /// A page for a URL nothing answers, not the browser's own error. An API client
 /// only needs the status.
 async fn page_not_found(uri: axum::http::Uri) -> axum::response::Response {
     use axum::response::IntoResponse;
-    if uri.path().starts_with("/api") {
+    if uri.path() == "/api" || uri.path().starts_with("/api/") {
         return axum::http::StatusCode::NOT_FOUND.into_response();
     }
     (
@@ -105,6 +103,18 @@ async fn page_not_found(uri: axum::http::Uri) -> axum::response::Response {
         .into_response()
 }
 
+/// The same for a form's address opened as a page.
+async fn method_not_allowed() -> axum::response::Response {
+    use axum::response::IntoResponse;
+    (
+        axum::http::StatusCode::METHOD_NOT_ALLOWED,
+        render::notice("That address only works from its form.", false, "/"),
+    )
+        .into_response()
+}
+
+/// Every route, behind the auth and rate-limit middleware and the baseline
+/// response headers. `main` wraps it in the season-URL rewrite.
 pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net::Cidr>) -> Router {
     Router::new()
         .fallback(page_not_found)
@@ -209,6 +219,8 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         .route("/api/me", get(api_me))
         .merge(account::routes())
         // Rate-limit auth + expensive endpoints (inside auth: knows the account).
+        // After the routes: it only reaches those already added.
+        .method_not_allowed_fallback(method_not_allowed)
         .layer(axum::middleware::from_fn_with_state(
             Arc::new(ratelimit::Limiter::new(trusted_proxies)),
             ratelimit::middleware,
