@@ -217,7 +217,7 @@ pub(super) const PT_JS: &str = r#"<script>
   view.appendChild(stage); wrap.appendChild(view);
   var img=document.createElement('img'); img.loading='lazy'; img.draggable=false;
   img.src=assetUrl(m.img); stage.appendChild(img);
-  var sz=m.location_size||16; var spans=[];
+  var sz=m.location_size||65; var spans=[];
   (st.markers||[]).filter(function(k){return k.map===mapName;}).forEach(function(k){
    var s=k.size||sz; var mk=document.createElement('span');
    var shape=k.shape||m.location_shape;
