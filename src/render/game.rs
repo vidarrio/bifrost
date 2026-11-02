@@ -105,7 +105,10 @@ pub(super) const GAME_STYLE: &str = r#"<style>
 .ptcell{position:relative;display:inline-flex;width:34px;height:34px;align-items:center;justify-content:center}
 .ptcell.empty{visibility:hidden}
 .ptitem{width:100%;height:100%;object-fit:contain;image-rendering:pixelated}
-.ptitem.ptoff{opacity:.25;filter:grayscale(.7)}
+.ptover{position:absolute;inset:0;pointer-events:none}
+.ptmk.trap{clip-path:polygon(25% 0,75% 0,100% 100%,0 100%);border:0}
+.ptmk.tri{clip-path:polygon(50% 0,100% 100%,0 100%);border:0}
+.ptmk.kite{clip-path:polygon(50% 0,100% 100%,50% 70%,0 100%);border:0}
 .ptov{position:absolute;right:1px;bottom:0;font-family:var(--mono);font-size:10px;font-weight:700;color:#fff;text-shadow:0 0 2px #000,0 0 2px #000,0 0 2px #000;pointer-events:none}
 </style>"#;
 
@@ -214,7 +217,12 @@ pub(super) const PT_JS: &str = r#"<script>
   var sz=m.location_size||16; var spans=[];
   (st.markers||[]).filter(function(k){return k.map===mapName;}).forEach(function(k){
    var s=k.size||sz; var mk=document.createElement('span');
-   mk.className='ptmk'+(((k.shape||m.location_shape)==='diamond')?' d':'');
+   var shape=k.shape||m.location_shape;
+   mk.className='ptmk'+({diamond:' d',trapezoid:' trap',triangle:' tri',concave_kite:' kite'}[shape]||'');
+   var turn={east:90,south:180,west:270}[k.orientation||m.location_orientation];
+   if(turn&&shape!=='diamond'&&shape!=='rect') mk.style.transform='rotate('+turn+'deg)';
+   var edge=k.border!=null?k.border:m.location_border;
+   if(edge!=null&&isFinite(edge)&&edge>=0) mk.style.borderWidth=Math.min(Number(edge),8)+'px';
    mk.dataset.key=k.location+'@'+k.map; mk.dataset.loc=k.location;
    paintMarker(mk,k);
    mk._k=k; mk._s=s; spans.push(mk); stage.appendChild(mk);
@@ -265,13 +273,35 @@ pub(super) const PT_JS: &str = r#"<script>
  }
  var itemsByCode={};
  function buildIndex(){ itemsByCode={}; (st.items||[]).forEach(function(it){ (it.codes||[]).forEach(function(c){ if(c) itemsByCode[(''+c).toLowerCase()]=it; }); }); }
+ // An item's image filters, as PopTracker defines them. The engine has reduced them
+ // to these kinds and numbers.
+ function cssFilter(fs){
+  return (fs||[]).map(function(f){
+   if(f.kind==='grey') return 'saturate(0) brightness(.67)';
+   if(f.kind==='saturation') return 'saturate('+Number(f.value)+')';
+   if(f.kind==='brightness') return 'brightness('+Number(f.value)+')';
+   return '';
+  }).join(' ');
+ }
+ function paintItem(im,it){
+  if(it.img) im.src=assetUrl(it.img);
+  var cell=im.parentNode, fs=it.filters||[];
+  // In order, as PopTracker applies them: a filter after an overlay affects it too.
+  im.style.filter=cssFilter(fs.filter(function(f){return f.kind!=='overlay';}))||'';
+  cell.querySelectorAll('.ptover').forEach(function(o){o.remove();});
+  var last=im;
+  fs.forEach(function(f,i){ if(f.kind!=='overlay') return;
+   var o=document.createElement('img'); o.className='ptitem ptover'; o.alt=''; o.src=assetUrl(f.img);
+   o.style.filter=cssFilter((f.filters||[]).concat(fs.slice(i+1).filter(function(g){return g.kind!=='overlay';})))||'';
+   last.insertAdjacentElement('afterend',o); last=o; });
+ }
  function itemCell(code){
   var cell=document.createElement('span'); cell.className='ptcell';
   if(!code){ cell.classList.add('empty'); return cell; }
   var it=itemsByCode[(''+code).toLowerCase()];
   if(it&&it.img){
-   var im=document.createElement('img'); im.className='ptitem'+(it.active?'':' ptoff'); im.dataset.code=code; im.src=assetUrl(it.img); im.alt=it.name||code;
-   cell.title=it.name||code; cell.appendChild(im);
+   var im=document.createElement('img'); im.className='ptitem'; im.dataset.code=code; im.alt=it.name||code;
+   cell.title=it.name||code; cell.appendChild(im); paintItem(im,it);
    if(it.overlay){ var o=document.createElement('span'); o.className='ptov'; o.textContent=it.overlay; cell.appendChild(o); }
   }
   return cell;
@@ -336,7 +366,7 @@ pub(super) const PT_JS: &str = r#"<script>
   var mm={}; (st.markers||[]).forEach(function(k){mm[k.location+'@'+k.map]=k;});
   host.querySelectorAll('.ptmk').forEach(function(mk){ var k=mm[mk.dataset.key]; if(k){ paintMarker(mk,k); } });
   host.querySelectorAll('.ptitem').forEach(function(im){ var it=itemsByCode[im.dataset.code]; if(!it) return;
-   im.className='ptitem'+(it.active?'':' ptoff'); if(it.img) im.src=assetUrl(it.img);
+   paintItem(im,it);
    var ov=im.parentNode.querySelector('.ptov');
    if(it.overlay){ if(!ov){ ov=document.createElement('span'); ov.className='ptov'; im.parentNode.appendChild(ov); } ov.textContent=it.overlay; }
    else if(ov){ ov.remove(); }

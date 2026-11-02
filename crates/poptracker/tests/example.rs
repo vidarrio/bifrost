@@ -1040,3 +1040,44 @@ fn running_out_of_budget_in_a_marker_rule_is_noted() {
         st.pack_errors
     );
 }
+
+#[test]
+fn items_draw_with_their_filters() {
+    use poptracker::ImageFilter::{Brightness, Grey, Overlay, Saturation};
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/draw");
+    let s = Session::new(&Pack::load(dir).unwrap()).unwrap();
+    let st = s.state();
+    let item = |name: &str| st.items.iter().find(|i| i.name == name).unwrap();
+    let dim = || Brightness { value: 0.5 };
+    assert_eq!(item("Plain").img.as_deref(), Some("p.png"));
+    assert_eq!(item("Plain").filters, [dim()], "settings.json's @disabled");
+    assert_eq!(item("PlainOn").filters, [Brightness { value: 2.0 }]);
+    assert_eq!(item("OffImg").img.as_deref(), Some("off.png"));
+    assert_eq!(item("OffImg").filters, [], "an unknown mod is no filter");
+    assert_eq!(
+        item("Over").filters,
+        [
+            Overlay {
+                img: "o.png:x".into(),
+                filters: vec![Grey]
+            },
+            Saturation { value: 255.0 },
+            Saturation { value: 0.5 },
+        ],
+        "numbers within range or the default, and what's unknown dropped"
+    );
+    // Stage 1, off: its own disabled image, and @disabled from its default mods.
+    assert_eq!(item("Stages").img.as_deref(), Some("s1off.png"));
+    assert_eq!(item("Stages").filters, [dim()]);
+    assert_eq!(item("NotDisabled").img.as_deref(), Some("nd.png"));
+    assert_eq!(item("NotDisabled").filters, [], "always on");
+    assert_eq!(
+        item("ToggleStages").img.as_deref(),
+        Some("t.png"),
+        "a toggle ignores stages"
+    );
+    assert_eq!(item("Icon").img.as_deref(), Some("custom.png"));
+    assert_eq!(item("Icon").filters, [dim()]);
+    assert_eq!(st.maps[0].location_orientation.as_deref(), Some("east"));
+    assert_eq!(st.maps[0].location_border, Some(3.0));
+}

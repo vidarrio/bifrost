@@ -1,0 +1,76 @@
+[
+  {
+    "name": "Plain",
+    "type": "toggle",
+    "codes": "plain",
+    "img": "p.png"
+  },
+  {
+    "name": "PlainOn",
+    "type": "toggle",
+    "codes": "plain_on",
+    "img": "p.png",
+    "initial_active_state": true,
+    "img_mods": "brightness|2"
+  },
+  {
+    "name": "OffImg",
+    "type": "toggle",
+    "codes": "off_img",
+    "img": "on.png",
+    "disabled_img": "off.png",
+    "disabled_img_mods": "none"
+  },
+  {
+    "name": "Over",
+    "type": "toggle",
+    "codes": "over",
+    "img": "p.png",
+    "initial_active_state": true,
+    "img_mods": "overlay|o.png:x|grey,saturation|9000,saturation|nope,hack;}"
+  },
+  {
+    "name": "Stages",
+    "type": "progressive",
+    "codes": "stages",
+    "stages": [
+      {
+        "img": "s0.png",
+        "img_mods": "grey"
+      },
+      {
+        "img": "s1.png",
+        "disabled_img": "s1off.png"
+      }
+    ],
+    "initial_stage_idx": 1
+  },
+  {
+    "name": "NotDisabled",
+    "type": "progressive",
+    "allow_disabled": false,
+    "stages": [
+      {
+        "img": "nd.png",
+        "codes": "nd"
+      }
+    ]
+  },
+  {
+    "name": "ToggleStages",
+    "type": "toggle",
+    "codes": "toggle_stages",
+    "img": "t.png",
+    "stages": [
+      {
+        "img": "ignored.png"
+      }
+    ]
+  },
+  {
+    "name": "Icon",
+    "type": "toggle",
+    "codes": "icon",
+    "img": "p.png"
+  }
+]

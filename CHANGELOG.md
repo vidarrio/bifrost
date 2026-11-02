@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- PopTracker items draw with their packs' image filters, `disabled_img` and overlay
+  images, and maps draw trapezoid, triangle and kite markers with their orientation
+  and border, as packs ask.
 - PopTracker packs' watches on item codes run when those items change, so state a
   pack derives from other items keeps up.
 - PopTracker packs can read their slot's hints and Archipelago's data storage, from
