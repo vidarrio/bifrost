@@ -541,6 +541,11 @@ impl JsonItem {
         all
     }
 
+    /// PopTracker's `getState`: on, which `allow_disabled: false` always is.
+    fn state(&self) -> bool {
+        !self.allow_disabled || self.active
+    }
+
     /// PopTracker's `providesCodeImpl`, for a code it can provide.
     fn provides(&self, code: &str) -> i64 {
         if self.kind == "composite_toggle" {
@@ -617,7 +622,8 @@ fn read_stage(v: &serde_json::Value) -> ItemStage {
 
 /// PopTracker's `JsonItem::FromJSON`.
 fn read_item(v: &serde_json::Value) -> JsonItem {
-    let int = |k: &str, d: i64| v.get(k).and_then(num).map_or(d, |n| n as i64);
+    // As PopTracker's `int`, so sums and steps can't overflow.
+    let int = |k: &str, d: i64| v.get(k).and_then(num).map_or(d, |n| n as i32 as i64);
     let flag = |k: &str, d: bool| v.get(k).and_then(|b| b.as_bool()).unwrap_or(d);
     let text = |k: &str| v.get(k).and_then(|t| t.as_str()).unwrap_or("").to_string();
     let kind = text("type");
@@ -688,6 +694,13 @@ fn read_item(v: &serde_json::Value) -> JsonItem {
     item
 }
 
+/// How far one item's change may pass on through composites' links.
+const MAX_LINK_STEPS: usize = 256;
+
+/// The most of a pack's overlay text or icon path an item keeps: it's held outside
+/// Lua's memory cap, and nothing longer is ever shown.
+const MAX_ITEM_TEXT: usize = 4096;
+
 /// An item changed: rules must be looked at again, and a composite follows its
 /// parts and they it (PopTracker's links, without its events).
 fn item_changed(eng: &E, index: usize) {
@@ -695,28 +708,48 @@ fn item_changed(eng: &E, index: usize) {
     e.accessibility_stale = true;
     e.visibility_stale = true;
     e.provider_cache.clear();
-    if e.items[index].kind == "composite_toggle" {
-        let stage = e.items[index].stage;
-        let parts = e.items[index].parts.clone();
-        for (bit, code) in parts.iter().enumerate() {
-            let part = e.code_items.get(code).and_then(|l| l.first()).copied();
-            if let Some(part) = part.filter(|p| !is_linked_kind(&e.items[*p].kind)) {
-                e.items[part].active = stage & (1 << bit) != 0;
+    // A change may pass on, through a part shared by composites. Each step only
+    // follows a real change, and links can't go on for long in any sane pack.
+    let mut todo = vec![index];
+    let mut steps = 0;
+    while let Some(i) = todo.pop() {
+        steps += 1;
+        if steps > MAX_LINK_STEPS {
+            break;
+        }
+        if e.items[i].kind == "composite_toggle" {
+            let stage = e.items[i].stage;
+            let parts = e.items[i].parts.clone();
+            for (bit, code) in parts.iter().enumerate() {
+                let part = e.code_items.get(code).and_then(|l| l.first()).copied();
+                if let Some(part) = part.filter(|p| !is_linked_kind(&e.items[*p].kind)) {
+                    let on = stage & (1 << bit) != 0;
+                    let it = &mut e.items[part];
+                    if it.active != on {
+                        it.active = on;
+                        it.icon = None;
+                        todo.push(part);
+                    }
+                }
             }
         }
-        return;
-    }
-    for c in e.composites.clone() {
-        for bit in 0..2 {
-            let code = e.items[c].parts[bit].clone();
-            if e.code_items.get(&code).and_then(|l| l.first()) == Some(&index) {
-                let on = e.items[index].active;
-                let item = &mut e.items[c];
-                item.stage = if on {
-                    item.stage | (1 << bit)
-                } else {
-                    item.stage & !(1 << bit)
-                };
+        for c in e.composites.clone() {
+            for bit in 0..2 {
+                let code = e.items[c].parts[bit].clone();
+                if e.code_items.get(&code).and_then(|l| l.first()) == Some(&i) && c != i {
+                    let on = e.items[i].state();
+                    let it = &mut e.items[c];
+                    let stage = if on {
+                        it.stage | (1 << bit)
+                    } else {
+                        it.stage & !(1 << bit)
+                    };
+                    if it.stage != stage {
+                        it.stage = stage;
+                        it.icon = None;
+                        todo.push(c);
+                    }
+                }
             }
         }
     }
@@ -730,42 +763,53 @@ fn is_linked_kind(kind: &str) -> bool {
 /// A number from a pack, as `luaL_checknumber` takes one.
 fn lua_number(lua: &Lua, v: Value) -> mlua::Result<i64> {
     match lua.coerce_number(v)? {
-        Some(n) => Ok(n as i64),
+        Some(n) => Ok(n as i32 as i64),
         None => Err(mlua::Error::runtime("number expected")),
     }
 }
 
 /// `item.field`, from PopTracker's `JsonItem::Lua_Index`.
 fn item_get(lua: &Lua, eng: &E, index: usize, key: &str) -> mlua::Result<Value> {
-    let e = eng.borrow();
-    let Some(it) = e.items.get(index) else {
-        return Ok(Value::Nil);
+    // Copied out first: making a Lua string can run a pack's `__gc`, which may write
+    // to an item.
+    let text = {
+        let e = eng.borrow();
+        let Some(it) = e.items.get(index) else {
+            return Ok(Value::Nil);
+        };
+        match key {
+            "AcquiredCount" => return Ok(Value::Integer(it.count)),
+            "Active" => return Ok(Value::Boolean(it.active)),
+            "CurrentStage" => {
+                return Ok(Value::Integer(
+                    if it.kind == "progressive" && it.allow_disabled {
+                        if it.active { it.stage + 1 } else { 0 }
+                    } else {
+                        it.stage
+                    },
+                ));
+            }
+            "MinCount" => return Ok(Value::Integer(it.min)),
+            "MaxCount" => return Ok(Value::Integer(it.max)),
+            "Increment" => return Ok(Value::Integer(it.increment)),
+            "Decrement" => return Ok(Value::Integer(it.decrement)),
+            "IgnoreUserInput" => return Ok(Value::Boolean(it.ignore_user_input)),
+            "Type" => it.kind.clone(),
+            "Name" => it.name.clone(),
+            "Icon" => match &it.icon {
+                Some(icon) => icon.clone(),
+                None => it.image().unwrap_or_default(),
+            },
+            "BadgeText" => it.overlay.clone(),
+            "BadgeTextColor" => it.overlay_color.clone(),
+            "Owner" => String::new(),
+            _ => return Ok(Value::Nil),
+        }
     };
-    let text = |s: &str| lua.create_string(s).map(Value::String);
-    Ok(match key {
-        "AcquiredCount" => Value::Integer(it.count),
-        "Active" => Value::Boolean(it.active),
-        "CurrentStage" => Value::Integer(if it.kind == "progressive" && it.allow_disabled {
-            if it.active { it.stage + 1 } else { 0 }
-        } else {
-            it.stage
-        }),
-        "MinCount" => Value::Integer(it.min),
-        "MaxCount" => Value::Integer(it.max),
-        "Increment" => Value::Integer(it.increment),
-        "Decrement" => Value::Integer(it.decrement),
-        "Type" => text(&it.kind)?,
-        "Name" => text(&it.name)?,
-        "Owner" => Value::Table(lua.create_table()?),
-        "Icon" => match &it.icon {
-            Some(icon) => text(icon)?,
-            None => text(&it.image().unwrap_or_default())?,
-        },
-        "IgnoreUserInput" => Value::Boolean(it.ignore_user_input),
-        "BadgeText" => text(&it.overlay)?,
-        "BadgeTextColor" => text(&it.overlay_color)?,
-        _ => Value::Nil,
-    })
+    if key == "Owner" {
+        return lua.create_table().map(Value::Table);
+    }
+    lua.create_string(&text).map(Value::String)
 }
 
 /// `item.field = value`, from PopTracker's `JsonItem::Lua_NewIndex`; false if the
@@ -779,16 +823,14 @@ fn item_set(lua: &Lua, eng: &E, index: usize, key: &str, v: Value) -> mlua::Resu
         Value::Nil | Value::Boolean(false) => false,
         _ => true,
     };
-    let text = |v: Value| -> String {
-        v.as_string()
-            .and_then(|s| s.to_str().ok().map(|s| s.to_string()))
-            .or_else(|| {
-                lua.coerce_string(v)
-                    .ok()
-                    .flatten()
-                    .and_then(|s| s.to_str().ok().map(|s| s.to_string()))
-            })
-            .unwrap_or_default()
+    // As `luaL_checkstring`: a string or a number, and no more than is ever shown.
+    let text = |v: Value| -> mlua::Result<String> {
+        let s = lua
+            .coerce_string(v)?
+            .ok_or_else(|| mlua::Error::runtime("string expected"))?;
+        let bytes = s.as_bytes();
+        let bytes = &bytes[..bytes.len().min(MAX_ITEM_TEXT)];
+        Ok(String::from_utf8_lossy(bytes).into_owned())
     };
     let mut changed = false;
     match key {
@@ -867,14 +909,31 @@ fn item_set(lua: &Lua, eng: &E, index: usize, key: &str, v: Value) -> mlua::Resu
                 changed = true;
             }
         }
-        "Increment" => eng.borrow_mut().items[index].increment = lua_number(lua, v)?,
-        "Decrement" => eng.borrow_mut().items[index].decrement = lua_number(lua, v)?,
-        "Icon" => {
-            eng.borrow_mut().items[index].icon = Some(text(v));
+        "Increment" => {
+            let n = lua_number(lua, v)?;
+            eng.borrow_mut().items[index].increment = n;
         }
-        "IgnoreUserInput" => eng.borrow_mut().items[index].ignore_user_input = truthy(&v),
-        "BadgeText" => eng.borrow_mut().items[index].overlay = text(v),
-        "BadgeTextColor" => eng.borrow_mut().items[index].overlay_color = text(v),
+        "Decrement" => {
+            let n = lua_number(lua, v)?;
+            eng.borrow_mut().items[index].decrement = n;
+        }
+        "Icon" => {
+            // Nil clears it.
+            let icon = if v.is_nil() { String::new() } else { text(v)? };
+            eng.borrow_mut().items[index].icon = Some(icon);
+        }
+        "IgnoreUserInput" => {
+            let on = truthy(&v);
+            eng.borrow_mut().items[index].ignore_user_input = on;
+        }
+        "BadgeText" => {
+            let t = text(v)?;
+            eng.borrow_mut().items[index].overlay = t;
+        }
+        "BadgeTextColor" => {
+            let t = text(v)?;
+            eng.borrow_mut().items[index].overlay_color = t;
+        }
         _ => return Ok(false),
     }
     if changed {
@@ -1191,7 +1250,7 @@ impl Session {
             out.items.push(ItemState {
                 key: format!("__item{index}"),
                 kind: it.kind.clone(),
-                active: it.active || it.count > 0,
+                active: it.state() || it.count > 0,
                 count: it.count,
                 stage: it.stage,
                 codes: it.all_codes(),
@@ -1280,24 +1339,25 @@ impl Session {
                 })
                 .map(|(j, s)| {
                     // A `ref` shows the section it points to, count and level.
-                    let (key, item_count) = match real_section(&self.eng, index, j) {
+                    let (key, item_count, hosted) = match real_section(&self.eng, index, j) {
                         Some((a, b)) => (
                             format!("{}/{}", nodes[a].name, nodes[a].sections[b].name),
                             nodes[a].sections[b].item_count,
+                            nodes[a].sections[b].hosted.as_slice(),
                         ),
-                        None => (String::new(), s.item_count),
+                        None => (String::new(), s.item_count, &[][..]),
                     };
                     let avail = section_avail(&key);
                     let lvl = level_of(&key);
                     SectionState {
                         name: s.name.clone(),
                         item_count,
-                        cleared: avail.map_or(0, |a| (item_count - a).max(0)),
+                        cleared: avail.map_or(0, |a| item_count.saturating_sub(a).max(0)),
                         accessible: lvl >= LEVEL_NORMAL,
                         level: level_name(lvl).to_string(),
                         // Nothing left to collect, its hosted items included.
                         checked: avail.map_or(item_count <= 0, |a| a <= 0)
-                            && hosted_collected(&self.lua, &self.eng, &key),
+                            && all_held(&self.lua, &self.eng, hosted),
                     }
                 })
                 .collect();
@@ -1392,45 +1452,65 @@ fn read_pack_file(eng: &E, rel: &str) -> Result<String> {
 // ---- access-rule evaluation --------------------------------------------------
 
 fn provider_count(lua: &Lua, eng: &E, code: &str) -> i64 {
-    let code = code.to_lowercase(); // codes are case-insensitive
+    // JSON items' codes are case-insensitive; custom items get the code as written.
+    let lower = code.to_lowercase();
     let mut total: i64 = {
         let e = eng.borrow();
-        e.code_items.get(&code).map_or(0, |list| {
-            list.iter().map(|i| e.items[*i].provides(&code)).sum()
+        e.code_items.get(&lower).map_or(0, |list| {
+            list.iter().map(|i| e.items[*i].provides(&lower)).sum()
         })
     };
     // Custom items count too, as their own functions say. They may ask in turn.
     let Ok(custom) = lua.globals().get::<Table>("__LUAITEMS") else {
         return total;
     };
+    let budget = eng.borrow().budget.clone();
     if custom.raw_len() == 0 || eng.borrow().provider_depth >= MAX_LOOKUP_DEPTH {
         return total;
     }
     eng.borrow_mut().provider_depth += 1;
     for item in custom.sequence_values::<Table>().flatten() {
-        let Ok(Value::Function(can)) = item.raw_get::<Value>("CanProvideCodeFunc") else {
+        // Out of budget, a pack can't go on, and its functions could fan out.
+        if budget.get() == 0 {
+            break;
+        }
+        if !custom_can_provide(&item, code) {
             continue;
-        };
+        }
         let Ok(Value::Function(gives)) = item.raw_get::<Value>("ProvidesCodeFunc") else {
             continue;
         };
-        if can
-            .call::<Value>((&item, code.as_str()))
-            .is_ok_and(|v| !matches!(v, Value::Nil | Value::Boolean(false)))
-            && let Ok(n) = gives.call::<Value>((&item, code.as_str()))
-        {
-            total += match n {
-                Value::Boolean(b) => b as i64,
-                other => lua
-                    .coerce_number(other)
-                    .ok()
-                    .flatten()
-                    .map_or(0, |n| n as i64),
-            };
+        match gives.call::<Value>((&item, code)) {
+            Ok(Value::Boolean(b)) => total += b as i64,
+            Ok(n) => {
+                let n = lua.coerce_number(n).ok().flatten().unwrap_or(0.0);
+                total = total.saturating_add(n as i32 as i64);
+            }
+            Err(e) if is_memory_error(&e) => {
+                note_error(eng, &e.to_string());
+                budget.set(0);
+            }
+            Err(_) => {}
         }
     }
     eng.borrow_mut().provider_depth -= 1;
     total
+}
+
+/// PopTracker's `LuaItem::canProvideCode`: its `PotentialCodes` if it has them, else
+/// its `CanProvideCodeFunc`. One that fails accepts nothing.
+fn custom_can_provide(item: &Table, code: &str) -> bool {
+    if let Ok(Value::Table(list)) = item.raw_get::<Value>("PotentialCodes") {
+        return list
+            .sequence_values::<String>()
+            .flatten()
+            .any(|c| c == code);
+    }
+    let Ok(Value::Function(can)) = item.raw_get::<Value>("CanProvideCodeFunc") else {
+        return false;
+    };
+    can.call::<Value>((item, code))
+        .is_ok_and(|v| !matches!(v, Value::Nil | Value::Boolean(false)))
 }
 
 /// A bare numeric code in a rule (chiefly `visibility_rules`) is an AP location
@@ -1570,19 +1650,23 @@ fn find_location_cached(eng: &E, id: &str) -> Option<usize> {
     hit
 }
 
-/// Are the items a section (by its exact id) hosts all held?
+fn all_held(lua: &Lua, eng: &E, codes: &[String]) -> bool {
+    codes.iter().all(|code| provider_count(lua, eng, code) >= 1)
+}
+
+/// Are the items a section, by its exact id, hosts all held?
 fn hosted_collected(lua: &Lua, eng: &E, id: &str) -> bool {
     let hosted = {
         let e = eng.borrow();
-        id.rsplit_once('/').and_then(|(loc, sec)| {
-            let n = e.nodes.iter().find(|n| n.name == loc)?;
-            Some(n.sections.iter().find(|s| s.name == sec)?.hosted.clone())
-        })
+        e.nodes
+            .iter()
+            .find_map(|n| {
+                let section = id.strip_prefix(n.name.as_str())?.strip_prefix('/')?;
+                n.sections.iter().find(|s| s.name == section)
+            })
+            .map(|s| s.hosted.clone())
     };
-    hosted
-        .unwrap_or_default()
-        .iter()
-        .all(|code| provider_count(lua, eng, code) >= 1)
+    all_held(lua, eng, &hosted.unwrap_or_default())
 }
 
 /// The object `Tracker:FindObjectForCode("@…")` means: its id, and a chest count
@@ -2081,28 +2165,40 @@ fn flatten_locations(
         .and_then(|v| v.as_array())
         .map(|a| {
             a.iter()
-                .map(|s| SectionDef {
-                    name: s
-                        .get("name")
+                .map(|s| {
+                    // As written: a custom item may compare them exactly.
+                    let hosted: Vec<String> = s
+                        .get("hosted_item")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
-                        .to_string(),
-                    // A `ref` or a hosted item holds no chests of its own.
-                    item_count: s.get("item_count").and_then(|v| v.as_i64()).unwrap_or(
-                        if s.get("ref").is_some() || s.get("hosted_item").is_some() {
-                            0
-                        } else {
-                            1
-                        },
-                    ),
-                    rules: parse_rules(eng, s, "access_rules", &rules),
-                    vis: parse_rules(eng, s, "visibility_rules", &vis),
-                    reference: s.get("ref").and_then(|v| v.as_str()).map(String::from),
-                    hosted: split_codes(s.get("hosted_item").unwrap_or(&serde_json::Value::Null)),
-                    scoutable_glitched: s
-                        .get("inspectable_sequence_break")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(scoutable_glitched),
+                        .split(',')
+                        .map(|c| c.trim_matches(' ').to_string())
+                        .filter(|c| !c.is_empty())
+                        .collect();
+                    SectionDef {
+                        name: s
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        // A `ref` or a hosted item holds no chests of its own.
+                        item_count: s.get("item_count").and_then(num).map_or(
+                            if s.get("ref").is_some() || !hosted.is_empty() {
+                                0
+                            } else {
+                                1
+                            },
+                            |n| n as i32 as i64,
+                        ),
+                        rules: parse_rules(eng, s, "access_rules", &rules),
+                        vis: parse_rules(eng, s, "visibility_rules", &vis),
+                        reference: s.get("ref").and_then(|v| v.as_str()).map(String::from),
+                        hosted,
+                        scoutable_glitched: s
+                            .get("inspectable_sequence_break")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(scoutable_glitched),
+                    }
                 })
                 .collect()
         })
@@ -2271,7 +2367,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                         for (bit, code) in parts.iter().enumerate() {
                             if let Some(part) = e.code_items.get(code).and_then(|l| l.first())
                                 && *part != index
-                                && e.items[*part].active
+                                && e.items[*part].state()
                             {
                                 stage |= 1 << bit;
                             }
@@ -2390,10 +2486,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
                     let custom: Table = lua.globals().get("__LUAITEMS")?;
                     for item in custom.sequence_values::<Table>() {
                         let item = item?;
-                        if let Ok(Value::Function(f)) = item.get::<Value>("CanProvideCodeFunc")
-                            && f.call::<Value>((&item, code.as_str()))
-                                .is_ok_and(|v| !matches!(v, Value::Nil | Value::Boolean(false)))
-                        {
+                        if custom_can_provide(&item, &code) {
                             return Ok(Value::Table(item));
                         }
                     }
@@ -2683,8 +2776,17 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
         lua.set_named_registry_value(ITEM_METHODS, meta)?;
         lua.set_named_registry_value(ITEM_OBJECTS, lua.create_table()?)?;
     }
+    let eng2 = eng.clone();
+    let changed = lua.create_function(move |_, ()| {
+        let mut e = eng2.borrow_mut();
+        e.accessibility_stale = true;
+        e.visibility_stale = true;
+        e.provider_cache.clear();
+        Ok(())
+    })?;
     lua.load(
         r##"
+        local changed = ...
         local items = __LUAITEMS
         local function noop() end
         ScriptHost.CreateLuaItem = function()
@@ -2692,8 +2794,11 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
           item.Set = function(self, k, v)
             local old = self.ItemState[k]
             self.ItemState[k] = v
-            if old ~= v and type(self.PropertyChangedFunc) == "function" then
-              self:PropertyChangedFunc(k, v, old)
+            if old ~= v then
+              changed()
+              if type(self.PropertyChangedFunc) == "function" then
+                self:PropertyChangedFunc(k, v, old)
+              end
             end
           end
           item.Get = function(self, k) return self.ItemState[k] end
@@ -2709,7 +2814,7 @@ fn install_host(lua: &Lua, eng: &E) -> Result<()> {
     )
     .set_name("host")
     .set_mode(mlua::chunk::ChunkMode::Text)
-    .exec()?;
+    .call::<()>(changed)?;
 
     // `require`, as PopTracker has it (0.25.6+): modules come only from the pack.
     // "foo.baz" tries scripts/foo/baz.lua, scripts/foo/baz/init.lua, foo/baz.lua

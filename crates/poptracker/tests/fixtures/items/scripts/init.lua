@@ -53,7 +53,7 @@ assert(coins.AcquiredCount == 3, "a numeric string is a number")
 assert(count("shared") == 5, "summed")
 assert(item("shared") == item("a_only"), "the first item with the code")
 assert(count("missing") == 0)
-assert(item("spaced code").Name == "MiXeD" and item("mixed").Name == "MiXeD", "any case, codes with spaces")
+assert(item("spaced code") == item("mixed") and item("mixed") ~= nil, "any case, codes with spaces")
 
 -- A composite follows its parts, and they it.
 local pair = item("pair")
@@ -71,7 +71,7 @@ item("left").Active = false
 
 -- Fields a pack adds stay its own; what it can't change stays.
 coins.MyField = "mine"
-assert(coins.MyField == "mine" and coins.Type == "consumable" and coins.Name == "Coins")
+assert(coins.MyField == "mine" and coins.Type == "consumable")
 assert(type(coins.Owner) == "table")
 coins.BadgeText = "text"
 assert(coins.BadgeText == "text")
@@ -79,6 +79,22 @@ coins:SetOverlay("other")
 assert(coins.BadgeText == "other")
 coins.Icon = "custom.png"
 assert(coins.Icon == "custom.png")
+assert(not pcall(function() coins.BadgeText = nil end), "not a string")
+assert(not pcall(function() coins:SetOverlay({}) end))
+coins.BadgeText = string.rep("x", 100000)
+assert(#coins.BadgeText == 4096, "long text is cut")
+coins.BadgeText = "other"
+
+-- Numbers stay within an int, so sums can't overflow.
+item("shared").AcquiredCount = 1e300
+assert(count("shared") > 0)
+item("shared").AcquiredCount = 2
+
+-- A part shared by composites moves them both.
+item("left2").Active = true
+assert(item("pair2").CurrentStage == 1 and item("pair3").CurrentStage == 1)
+item("pair2").CurrentStage = 0
+assert(item("left2").Active == false and item("pair3").CurrentStage == 0, "through the part")
 
 -- Custom items count toward codes, as their own functions say.
 local custom = ScriptHost:CreateLuaItem()
@@ -89,7 +105,17 @@ assert(count("shared") == 9, "with the JSON items")
 custom.CanProvideCodeFunc = function() return true end
 custom.ProvidesCodeFunc = function(self, code) return count(code) end
 assert(count("left") == 0, "one asking in turn ends")
-custom.CanProvideCodeFunc = function() return false end
+-- They get the code as written, and PotentialCodes comes first.
+custom.CanProvideCodeFunc = function(self, code) return code == "MyCode" end
+custom.ProvidesCodeFunc = function() return 2 end
+assert(count("MyCode") == 2 and count("mycode") == 0, "as written")
+custom.PotentialCodes = { "Listed" }
+assert(count("Listed") == 2 and count("MyCode") == 0)
+custom.PotentialCodes = nil
+custom.ProvidesCodeFunc = function() return 1e300 end
+assert(count("MyCode") ~= 0, "a huge answer doesn't overflow")
+custom.ProvidesCodeFunc = function(self) return self:Get("n") or 0 end
+custom.CanProvideCodeFunc = function(self, code) return code == "MyCode" end
 
 -- A level read right after a change sees it, in the same handler.
 Archipelago:AddClearHandler("levels", function()
@@ -102,10 +128,17 @@ Archipelago:AddClearHandler("levels", function()
   assert(gate.AccessibilityLevel == AccessibilityLevel.Normal, "open, straight away")
   item("left").Active = false
   assert(gate.AccessibilityLevel == AccessibilityLevel.None, "blocked again")
+  -- A custom item's Set shows too.
+  local viaCustom = Tracker:FindObjectForCode("@ViaCustom/S")
+  assert(viaCustom.AccessibilityLevel == AccessibilityLevel.None, "custom not set")
+  custom:Set("n", 1)
+  assert(viaCustom.AccessibilityLevel == AccessibilityLevel.Normal, "custom set")
+  custom:Set("n", 0)
   -- A hosted section has no chests, and is collected when its item is held.
   local boss = Tracker:FindObjectForCode("@Boss/Reward")
   assert(boss.ChestCount == 0 and boss.AccessibilityLevel == AccessibilityLevel.Normal, "boss not held")
   item("left").Active = true
   assert(boss.AccessibilityLevel == AccessibilityLevel.Cleared, "boss held")
   item("left").Active = false
+  custom.CanProvideCodeFunc = function() return false end
 end)

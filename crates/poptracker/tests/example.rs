@@ -822,6 +822,7 @@ fn items_behave_as_in_poptracker() {
         "the count, over text"
     );
     assert!(item("always").active && item("starts").active);
+    assert!(item("nd").active, "allow_disabled false draws as on");
     let section = |loc: &str| {
         &st.locations
             .iter()
@@ -836,4 +837,9 @@ fn items_behave_as_in_poptracker() {
         "a hosted section isn't done until its item is held"
     );
     assert_eq!(section("Boss").item_count, 0);
+    assert_eq!(
+        section("EmptyHosted").item_count,
+        1,
+        "an empty list hosts nothing"
+    );
 }
