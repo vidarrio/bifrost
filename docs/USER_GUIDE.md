@@ -247,12 +247,23 @@ The season console has six tabs:
   and set how many bonus hints a player can earn from minesweeper in any
   24 hours (5 by default; 0 means no limit). Also set how many games a player
   can sign up with (0, the default, means no limit); signups already made stay.
-- **Archive & reset.**
-  - **Archive this season.** Finishes it: the server is stopped, a summary is
-    written for *Past seasons*, and the season's files are packed into a
-    bundle. The game must be connected (its board loaded) to archive.
-  - **Delete the season's players.** Removes all slots, claims and staged YAMLs
-    and keeps the signups, so you can start the round over.
+- **Archive.** What you can do depends on the stage. Destructive actions ask you
+  to type the season's name.
+  - **Before generation: delete this season.** Removes it and everything in it.
+  - **Live: archive this season.** Finishes it: the server is stopped, a summary is
+    written for *Past seasons*, and the season's files are packed into a bundle. The
+    game must be connected (its board loaded) to archive.
+  - **Live: cancel generation.** Stops the server and goes back to signups, as if the
+    season had never been generated. All game progress is lost, and anyone who joined
+    after generation needs a new invite link. Signups, YAMLs, notes, apworlds and
+    partners from before generation stay. A live season can't be deleted until it's
+    cancelled.
+    With an external Archipelago server, Bifrost can't stop it, so stop that server
+    yourself.
+  - **Archived: delete this season.** Sysadmins only. Removes it, its summary and its
+    bundle.
+
+A season's apworlds are locked once it's generated, as a re-roll needs them.
 
 On a game page, the season's admins also see **Mark finished**. It registers
 the player's goal (announcing it) and collects or releases their items

@@ -115,7 +115,7 @@ pub(super) fn season_load_line(season: &crate::db::SeasonRow) -> String {
 }
 
 /// The admin control centre: generate, open/close signups, manage the deployed
-/// players + apworlds, reset, and run server commands. Assumes the caller has
+/// players + apworlds, and run server commands. Assumes the caller has
 /// already confirmed the viewer is an admin.
 #[allow(clippy::too_many_arguments)]
 pub fn admin_page(
@@ -147,7 +147,7 @@ pub fn admin_page(
         season.state().as_str(),
     ));
     // Tabbed season console; the tab survives form posts via
-    // the URL hash (see <button type="button" class="gtab on" data-tab="tab-overview">Overview</button><button type="button" class="gtab" data-tab="tab-entries">Signups &amp; apworlds</button><button type="button" class="gtab" data-tab="tab-files">Player files</button><button type="button" class="gtab" data-tab="tab-conn">Connection</button><button type="button" class="gtab" data-tab="tab-options">Options</button><button type="button" class="gtab" data-tab="tab-archive">Archive &amp; reset</button>_JS).
+    // the URL hash (see <button type="button" class="gtab on" data-tab="tab-overview">Overview</button><button type="button" class="gtab" data-tab="tab-entries">Signups &amp; apworlds</button><button type="button" class="gtab" data-tab="tab-files">Player files</button><button type="button" class="gtab" data-tab="tab-conn">Connection</button><button type="button" class="gtab" data-tab="tab-options">Options</button><button type="button" class="gtab" data-tab="tab-archive">Archive</button>_JS).
     let conn = if connected { "connected" } else { "waiting" };
     let seed_txt = seed.filter(|s| !s.is_empty()).unwrap_or("—");
     let addr = connect
@@ -158,7 +158,7 @@ pub fn admin_page(
         esc(seed_txt)
     ));
     b.push_str(TABS_CSS);
-    b.push_str(r#"<div class="gtabs"><button type="button" class="gtab on" data-tab="tab-overview">Overview</button><button type="button" class="gtab" data-tab="tab-entries">Signups &amp; apworlds</button><button type="button" class="gtab" data-tab="tab-files">Player files</button><button type="button" class="gtab" data-tab="tab-conn">Connection</button><button type="button" class="gtab" data-tab="tab-options">Options</button><button type="button" class="gtab" data-tab="tab-archive">Archive &amp; reset</button></div>"#);
+    b.push_str(r#"<div class="gtabs"><button type="button" class="gtab on" data-tab="tab-overview">Overview</button><button type="button" class="gtab" data-tab="tab-entries">Signups &amp; apworlds</button><button type="button" class="gtab" data-tab="tab-files">Player files</button><button type="button" class="gtab" data-tab="tab-conn">Connection</button><button type="button" class="gtab" data-tab="tab-options">Options</button><button type="button" class="gtab" data-tab="tab-archive">Archive</button></div>"#);
 
     b.push_str(r#"<div class="gtabpanel" id="tab-overview">"#);
     // Signups
@@ -226,6 +226,10 @@ pub fn admin_page(
 
     b.push_str(r#"<div class="gtabpanel" id="tab-entries" hidden>"#);
     // Signups (the queue for the next season)
+    let pre_gen = matches!(
+        season.state(),
+        crate::db::State::Draft | crate::db::State::Signup
+    );
     b.push_str(r#"<h2>Signups</h2>"#);
     if subs.is_empty() {
         b.push_str(r#"<div class="empty">No signups.</div>"#);
@@ -248,26 +252,32 @@ pub fn admin_page(
                 esc(&s.slot_name),
                 esc(&s.game),
                 esc(&s.username),
-                action_btn(
-                    "admin/delete-player",
-                    &[("id", &s.id.to_string())],
-                    "delete",
-                    true,
-                    &format!("Delete {}'s signup?", s.slot_name)
-                )
+                if pre_gen {
+                    action_btn(
+                        "admin/delete-player",
+                        &[("id", &s.id.to_string())],
+                        "delete",
+                        true,
+                        &format!("Delete {}'s signup?", s.slot_name),
+                    )
+                } else {
+                    String::new()
+                }
             ));
         }
     }
-    b.push_str(&format!(
-        r#"<div class="btnrow">{}</div>"#,
-        action_btn(
-            "admin/clear",
-            &[("what", "signups")],
-            "Clear all signups",
-            true,
-            "Delete every signup and its uploaded files? (The current season's players stay.)"
-        )
-    ));
+    if pre_gen {
+        b.push_str(&format!(
+            r#"<div class="btnrow">{}</div>"#,
+            action_btn(
+                "admin/clear",
+                &[("what", "signups")],
+                "Clear all signups",
+                true,
+                "Delete every signup and its uploaded files?"
+            )
+        ));
+    }
 
     // Apworlds waiting for approval
     if !requests.is_empty() {
@@ -284,7 +294,11 @@ pub fn admin_page(
                 esc(&r.sha256[..12.min(r.sha256.len())]),
                 esc(&r.uploaded_by),
                 fmt_date(r.uploaded_at),
-                action_btn("admin/worlds/approve", &[("name", &r.file)], "approve", false, ""),
+                if pre_gen {
+                    action_btn("admin/worlds/approve", &[("name", &r.file)], "approve", false, "")
+                } else {
+                    String::new()
+                },
                 action_btn(
                     "admin/worlds/reject",
                     &[("name", &r.file)],
@@ -317,6 +331,7 @@ pub fn admin_page(
                 r#"<div class="hintrow"><span>{} <span class="statline">· {}</span></span><span>{to_catalog} {}</span></div>"#,
                 esc(&w.file),
                 esc(&w.detail),
+                if pre_gen {
                 action_btn(
                     "admin/delete-apworld",
                     &[("name", &w.file)],
@@ -324,19 +339,24 @@ pub fn admin_page(
                     true,
                     &format!("Delete {}?", w.file)
                 )
+                } else {
+                    String::new()
+                }
             ));
         }
     }
-    b.push_str(&format!(
-        r#"<div class="btnrow">{}</div>"#,
-        action_btn(
-            "admin/clear",
-            &[("what", "apworlds")],
-            "Clear all apworlds",
-            true,
-            "Delete every installed custom apworld?"
-        )
-    ));
+    if pre_gen {
+        b.push_str(&format!(
+            r#"<div class="btnrow">{}</div>"#,
+            action_btn(
+                "admin/clear",
+                &[("what", "apworlds")],
+                "Clear all apworlds",
+                true,
+                "Delete every installed custom apworld?"
+            )
+        ));
+    }
 
     b.push_str("</div>");
 
@@ -564,43 +584,43 @@ pub fn admin_page(
         ));
     }
 
-    // Maintenance + reset
-    b.push_str(r#"<h2>Maintenance</h2>"#);
-    b.push_str(&format!(
-        r#"<div class="btnrow">{}{}{}</div>"#,
-        action_btn(
-            "admin/clear",
-            &[("what", "players")],
-            "Clear current players",
-            true,
-            "Delete this season's players — all Bifrost slots, their claims, and the staged YAMLs? (Signups stay.)"
-        ),
-        action_btn(
-            "admin/clear",
-            &[("what", "save")],
-            "Clear session save",
-            true,
-            "Delete the running session's save? Progress resets on next server load."
-        ),
-        action_btn(
-            "admin/clear",
-            &[("what", "world")],
-            "Clear generated world",
-            true,
-            "Delete the generated world (current.zip + archives)?"
-        ),
-    ));
-    b.push_str(r#"<p class="warnnote">Full reset removes all apworlds, players, slots, the save, and the world, and closes signups — a clean slate for the next season. <b>Archive the season first</b>; past-season snapshots and minesweeper history are kept.</p>"#);
-    b.push_str(&format!(
-        r#"<div class="btnrow">{}</div>"#,
-        action_btn(
-            "admin/clear",
-            &[("what", "reset")],
-            "Full reset",
-            true,
-            "FULL RESET: wipe apworlds, players, slots, save, and world, and close signups. This cannot be undone. Continue?"
+    // What can end or undo this season depends on its stage.
+    let typed = |action: &str, label: &str, placeholder: &str, confirm: &str| {
+        format!(
+            r#"<form class="console" method="post" action="{action}" autocomplete="off" onsubmit="return confirm('{confirm}')"><input type="text" name="name" placeholder="{placeholder}" required><button class="danger" type="submit">{label}</button></form>"#,
+            placeholder = esc(placeholder),
         )
-    ));
+    };
+    match season.state() {
+        crate::db::State::Draft | crate::db::State::Signup => {
+            b.push_str(r#"<h2>Delete this season</h2><p class="warnnote">Removes the season and everything in it: signups, YAMLs, notes and apworlds. Type its name to confirm.</p>"#);
+            b.push_str(&typed(
+                "admin/season/delete",
+                "Delete this season",
+                &season.name,
+                "Delete this season and everything in it? This cannot be undone.",
+            ));
+        }
+        crate::db::State::Live => {
+            b.push_str(r#"<h2>Cancel generation</h2><p class="warnnote">Stops the server and goes back to signups, as if the season had never been generated. All game progress is lost, along with its seed, save and logs, and anyone who joined after generation needs a new invite link. Signups, YAMLs, notes, apworlds and partners from before generation stay. Type its name to confirm.</p>"#);
+            b.push_str(&typed(
+                "admin/cancel",
+                "Cancel generation",
+                &season.name,
+                "Cancel generation? All game progress is lost. This cannot be undone.",
+            ));
+        }
+        crate::db::State::Archived if sysadmin => {
+            b.push_str(r#"<h2>Delete this season</h2><p class="warnnote">Removes the finished season, its summary and its bundle. Download the bundle first to keep a copy. Type its name to confirm.</p>"#);
+            b.push_str(&typed(
+                "admin/season/delete",
+                "Delete this season",
+                &season.name,
+                "Delete this finished season and its bundle? This cannot be undone.",
+            ));
+        }
+        _ => {}
+    }
 
     b.push_str("</div>");
 

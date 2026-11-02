@@ -186,6 +186,12 @@ async fn main() {
         if season.state() != db::State::Archived {
             let _ = config::get().season(season.id).ensure();
         }
+        // A season before generation has no world. A crash partway through
+        // cancelling could leave one, spoiler included.
+        if matches!(season.state(), db::State::Draft | db::State::Signup) {
+            generate::clear_save(season.id).await;
+            generate::clear_world(season.id).await;
+        }
         if season.state() == db::State::Live {
             match apinstall::missing_pin(season.id) {
                 // Its version isn't here any more (an image upgrade replaced

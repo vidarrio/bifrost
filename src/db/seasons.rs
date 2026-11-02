@@ -745,6 +745,58 @@ impl Db {
         .unwrap_or(0)
     }
 
+    /// Delete a season and, through the cascades, everything of it: before
+    /// generation, or once archived if `archived_too`. False if it can't go.
+    pub async fn delete_season(&self, id: Id, archived_too: bool) -> Result<bool, sqlx::Error> {
+        let res = sqlx::query(
+            "DELETE FROM season WHERE id = ?1
+               AND (state IN ('draft', 'signup') OR (?2 AND state = 'archived'))",
+        )
+        .bind(id)
+        .bind(archived_too)
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Take a live season back to signups: its seed, port, slots and everything
+    /// played are gone, and its signups, notes and partners stay. All or nothing.
+    /// False if it isn't live.
+    pub async fn cancel_generation(&self, id: Id) -> Result<bool, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        let res = sqlx::query(
+            "UPDATE season SET state = 'signup', seed = NULL, live_at = NULL, ap_port = NULL,
+                    ap_version = NULL, journal_cursor = NULL
+             WHERE id = ? AND state = 'live'",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+        if res.rows_affected() == 0 {
+            return Ok(false);
+        }
+        for table in [
+            "activity",
+            "hint_priority",
+            "inlogic",
+            "hint_credit",
+            "mine_result",
+            "bifrost_slot",
+        ] {
+            sqlx::query(&format!("DELETE FROM {table} WHERE season = ?"))
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        // Links made on the live game; a signup's stay with it.
+        sqlx::query("DELETE FROM seat_link WHERE season = ? AND submission_id IS NULL")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
     /// Forget everything derived from the season's previous AP seed (before a
     /// re-roll deploys a new one): activity log + cursor, hint priorities and
     /// the in-logic cache. Slots/claims are remapped separately; minesweeper
@@ -764,6 +816,37 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn deleting_and_cancelling_follow_the_stage() {
+        let db = db().await;
+        let s = db.create_season("S", None, 0).await.unwrap();
+        assert!(!db.cancel_generation(s).await.unwrap(), "not live");
+        db.transition(s, State::Generating, 1).await.unwrap();
+        assert!(!db.delete_season(s, true).await.unwrap(), "generating");
+        db.seed_season(s, &[(1, "Ann".into(), "G".into())], &[])
+            .await
+            .unwrap();
+        db.transition(s, State::Live, 2).await.unwrap();
+        assert!(!db.delete_season(s, true).await.unwrap(), "live");
+        assert!(db.cancel_generation(s).await.unwrap());
+        let row = db.season(s).await.unwrap();
+        assert_eq!(row.state(), State::Signup);
+        assert!(row.seed.is_none() && row.ap_port.is_none());
+        assert!(db.slots(s).await.unwrap().is_empty());
+        assert!(!db.cancel_generation(s).await.unwrap(), "only once");
+        assert!(db.delete_season(s, false).await.unwrap());
+        assert!(db.season(s).await.is_none());
+        let t = db.create_season("T", None, 0).await.unwrap();
+        db.transition(t, State::Generating, 1).await.unwrap();
+        db.transition(t, State::Live, 2).await.unwrap();
+        db.transition(t, State::Archived, 3).await.unwrap();
+        assert!(
+            !db.delete_season(t, false).await.unwrap(),
+            "needs a sysadmin"
+        );
+        assert!(db.delete_season(t, true).await.unwrap());
+    }
 
     #[test]
     fn lifecycle_rules() {

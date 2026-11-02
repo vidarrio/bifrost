@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A season's moderators can delete it before generation, and cancel a live one back to
+  signups, keeping its signups, notes and partners. Sysadmins can delete an archived
+  season. Each asks you to type the season's name.
 - A warning in the README and the user guide that Bifrost is in very early development,
   so read the changelog before updating and expect breaking changes.
 - The minesweeper on the home page is for any account, whether or not they play in a
@@ -82,6 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A season's apworlds are locked once it's generated.
 - If you use forward auth, add `/seat` to your proxy's signed-in paths when you upgrade.
   To reach private seasons' pages, also add `/board`, `/log` and `/season`, then set
   `season_pages = true`. Until you do, nobody can read a private season's pages or any
@@ -97,6 +101,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The season buttons for clearing players, the save or the world, and the full reset:
+  they could leave a running season broken. Cancel generation and deleting replace them.
 - Upgrading from 0.2 or earlier. Seasons, games, slots and seats now have generated ids,
   in URLs and in the database and data directory, so old URLs stop working and older data
   can't be carried over: start with an empty data directory. This is a one-time break;

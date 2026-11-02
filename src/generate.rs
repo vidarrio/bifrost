@@ -21,7 +21,7 @@ const COMMON_APWORLD: &str = "minecraft.apworld";
 const COMMON_YAML: &str = "Commons.yaml";
 /// The Universal Tracker apworld, shipped in the runtime's `vendor/` and staged
 /// into the season's `worlds/` on every deploy so the in-logic feature always
-/// has it even after a reset clears the custom worlds. No YAML references it,
+/// has it even after clearing the custom worlds. No YAML references it,
 /// so it's inert during generation.
 const TRACKER_APWORLD: &str = "tracker.apworld";
 /// The AP slot name the common-game YAML declares — used to tag its Bifrost
@@ -294,7 +294,7 @@ pub async fn clear_apworlds(season: Id) -> Result<(), String> {
 
 /// Stage the Universal Tracker apworld into the season's worlds/ from the
 /// runtime's vendored copy. Called on every deploy so the in-logic feature
-/// survives a season reset (which clears the custom worlds). Non-fatal: if the
+/// survives clearing the custom worlds. Non-fatal: if the
 /// vendored copy is missing, the season still generates — UT in-logic just
 /// won't update.
 async fn stage_tracker_apworld(season: Id) {
@@ -316,6 +316,19 @@ async fn stage_tracker_apworld(season: Id) {
 /// Remove every staged player YAML from the season's Players/.
 pub async fn clear_player_yamls(season: Id) -> Result<(), String> {
     clear_ext(&config::get().season(season).players, "yaml").await
+}
+
+/// Delete a season's logs, so a cancelled run's don't end up in its bundle.
+pub async fn clear_logs(season: Id) {
+    let dirs = config::get().season(season);
+    if let Err(e) = tokio::fs::remove_dir_all(&dirs.logs).await
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!("season {season}: clearing its logs: {e}");
+    }
+    if let Err(e) = dirs.ensure() {
+        tracing::warn!("season {season}: its directories: {e}");
+    }
 }
 
 /// Delete the running session's save (a fresh start on the next server load).

@@ -335,16 +335,6 @@ impl Db {
         .await?;
         Ok(res.rows_affected() > 0)
     }
-
-    /// Drop the unused links of a season's live games, when its players are
-    /// deleted. A signup's links stay with the signup.
-    pub async fn clear_seat_links(&self, season: Id) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM seat_link WHERE season = ? AND submission_id IS NULL")
-            .bind(season)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
