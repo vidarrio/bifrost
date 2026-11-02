@@ -785,3 +785,86 @@ fn rule_alternatives_are_capped() {
         st.pack_errors
     );
 }
+
+#[test]
+fn items_behave_as_in_poptracker() {
+    // The fixture's init.lua and clear handler assert the item model, worked out
+    // from PopTracker's `JsonItem`; here, what shows from outside.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/items");
+    let s = Session::new(&Pack::load(dir).unwrap()).unwrap();
+    s.on_clear(&serde_json::json!({})).unwrap();
+    let st = s.state();
+    assert_eq!(st.pack_error_count, 0, "{:?}", st.pack_errors);
+    let item = |code: &str| {
+        st.items
+            .iter()
+            .find(|i| i.codes.iter().any(|c| c == code))
+            .unwrap_or_else(|| panic!("no item {code}"))
+    };
+    assert_eq!(
+        item("s0").img.as_deref(),
+        Some("s0.png"),
+        "the stage's image"
+    );
+    assert_eq!(
+        item("pair").img.as_deref(),
+        Some("r.png"),
+        "the handler left only the right part on"
+    );
+    assert_eq!(
+        item("coins").img.as_deref(),
+        Some("custom.png"),
+        "the pack's icon"
+    );
+    assert_eq!(
+        item("coins").overlay.as_deref(),
+        Some("3"),
+        "the count, over text"
+    );
+    assert!(item("always").active && item("starts").active);
+    assert!(item("nd").active, "allow_disabled false draws as on");
+    let section = |loc: &str| {
+        &st.locations
+            .iter()
+            .find(|l| l.name == loc)
+            .unwrap()
+            .sections[0]
+    };
+    assert_eq!(section("Both").level, "reachable", "shared codes add up");
+    assert_eq!(section("AnyCase").level, "none");
+    assert!(
+        !section("Boss").checked,
+        "a hosted section isn't done until its item is held"
+    );
+    assert_eq!(section("Boss").item_count, 0);
+    assert_eq!(
+        section("EmptyHosted").item_count,
+        1,
+        "an empty list hosts nothing"
+    );
+    assert!(section("HostedCustom").checked, "hosted codes as written");
+}
+
+#[test]
+fn custom_item_calls_are_bounded() {
+    // Host functions as callbacks run no Lua instructions, so only the count of
+    // calls stops them. Without it this would fan out for good.
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(tmp.path().join("scripts")).unwrap();
+    std::fs::write(
+        tmp.path().join("scripts/init.lua"),
+        r#"
+        for i = 1, 30 do
+          local c = ScriptHost:CreateLuaItem()
+          c.CanProvideCodeFunc = Tracker.ProviderCountForCode
+          c.ProvidesCodeFunc = Tracker.ProviderCountForCode
+        end
+        print(Tracker:ProviderCountForCode("x"))
+        Archipelago:AddClearHandler("c", function() end)
+        "#,
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    let _ = Session::new(&Pack::load(tmp.path()).unwrap());
+    assert!(started.elapsed().as_secs() < 60, "{:?}", started.elapsed());
+}

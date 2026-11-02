@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- PopTracker items behave as in PopTracker: their starting stage, `allow_disabled`,
+  `inherit_codes`, `static` and `composite_toggle` items, several items sharing a
+  code, custom items counting toward rules, sections that host an item, and counts
+  and stages kept within their limits.
 - PopTracker access rules work as they do in PopTracker: `{}` inspect rules,
   `^$` levels, `[optional]` references, `@location/section` references including
   locations that aren't drawn, section `ref`, locations with the same name, nested
