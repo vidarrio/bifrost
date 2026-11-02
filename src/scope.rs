@@ -158,6 +158,61 @@ impl SeasonCtx {
     }
 }
 
+/// Routes that decide for themselves: the public YAML checker, moderators'
+/// pages, and the links that are how someone gets in.
+fn gate_exempt(path: &str) -> bool {
+    path == "/check"
+        || path == "/admin"
+        || path.starts_with("/admin/")
+        || path.starts_with("/seat/")
+        || path.starts_with("/signup/join/")
+}
+
+/// Whether someone can see a season at its current stage. Signups are open to
+/// any signed-in user unless private; pages after generation are open unless
+/// private, when they're for members. Moderators and admins always can.
+pub async fn can_view(st: &AppState, row: &SeasonRow, mods: &[i64], me: &crate::auth::Me) -> bool {
+    if me.can(crate::auth::Action::ManageSeason { mods }) {
+        return true;
+    }
+    let account = me.id();
+    match row.state() {
+        State::Draft | State::Signup => {
+            !row.private_signup
+                || (account != 0
+                    && (st.db.is_season_member(row.id, account).await
+                        || st.db.is_season_invited(row.id, account).await))
+        }
+        _ => !row.private_live || (account != 0 && st.db.is_season_member(row.id, account).await),
+    }
+}
+
+/// A season you can't see: sign in if you haven't, else it isn't there.
+fn refused(st: &AppState, parts: &Parts, me: &crate::auth::Me) -> Response {
+    if me.principal().is_none() {
+        if parts.method != axum::http::Method::GET || st.auth.mode != crate::auth::AuthMode::Native
+        {
+            return (StatusCode::UNAUTHORIZED, "Sign in required.").into_response();
+        }
+        let original = parts
+            .extensions
+            .get::<axum::extract::OriginalUri>()
+            .map(|o| o.0.clone())
+            .unwrap_or_else(|| parts.uri.clone());
+        let rd = original
+            .path_and_query()
+            .map(|pq| pq.as_str())
+            .unwrap_or("/");
+        return axum::response::Redirect::to(&format!("/login?rd={}", crate::auth::pct(rd)))
+            .into_response();
+    }
+    (
+        StatusCode::NOT_FOUND,
+        crate::render::notice("No such season.", false, "/"),
+    )
+        .into_response()
+}
+
 impl FromRequestParts<AppState> for SeasonCtx {
     type Rejection = Response;
 
@@ -179,12 +234,21 @@ impl FromRequestParts<AppState> for SeasonCtx {
                 .into_response()
             })?,
         };
+        let mods = st.db.season_mods(row.id).await;
+        let me = parts
+            .extensions
+            .get::<crate::auth::Me>()
+            .cloned()
+            .unwrap_or_default();
+        if !gate_exempt(parts.uri.path()) && !can_view(st, &row, &mods, &me).await {
+            return Err(refused(st, parts, &me));
+        }
         let id = row.id;
         let _ = BASE.try_with(|b| *b.borrow_mut() = format!("/s/{id}"));
         Ok(SeasonCtx {
             id,
             rt: st.seasons.get(id),
-            mods: st.db.season_mods(id).await,
+            mods,
             row,
         })
     }

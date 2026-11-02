@@ -49,10 +49,11 @@ pub(crate) async fn signup_get(
 }
 
 /// The seasons open for signup, each leading to its own page.
-pub(crate) async fn signups_list(State(st): State<AppState>, _me: auth::Me) -> Html<String> {
+pub(crate) async fn signups_list(State(st): State<AppState>, me: auth::Me) -> Html<String> {
     let mut open = Vec::new();
     for s in st.db.seasons().await {
-        if s.state().accepts_signups() {
+        let mods = st.db.season_mods(s.id).await;
+        if s.state().accepts_signups() && scope::can_view(&st, &s, &mods, &me).await {
             let subs = st.db.submissions(s.id).await.unwrap_or_default();
             open.push((s.id, s.name, subs));
         }
@@ -737,4 +738,27 @@ pub(crate) async fn seat_post(
             refuse("Couldn't add you to the game.")
         }
     }
+}
+
+/// A private season's signup link: it lets you in, and on to its signup page.
+pub(crate) async fn signup_join(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Path(token): Path<String>,
+) -> Response {
+    let valid = ctx.row.private_signup
+        && matches!(ctx.state(), db::State::Draft | db::State::Signup)
+        && ctx.row.signup_token.as_deref() == Some(token.as_str());
+    if !valid {
+        return render::signup_result(
+            "This signup link isn't valid any more. Ask for a new one.",
+            false,
+        )
+        .into_response();
+    }
+    if st.db.add_season_invited(ctx.id, me.id()).await.is_err() {
+        return render::signup_result("Couldn't open the season's signup.", false).into_response();
+    }
+    Redirect::to(&ctx.url("/signup")).into_response()
 }

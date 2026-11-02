@@ -61,6 +61,16 @@ const STEPS: &[&str] = &[
      CREATE TRIGGER submission_name_update BEFORE UPDATE OF slot_name ON submission
      WHEN EXISTS (SELECT 1 FROM seat WHERE season = NEW.season AND name = NEW.slot_name)
      BEGIN SELECT RAISE(ABORT, 'slot name taken'); END",
+    // 6: who can see a season. Existing seasons stay as they were; new ones
+    // start with members-only pages after generation (`create_season`).
+    "ALTER TABLE season ADD COLUMN private_live INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE season ADD COLUMN private_signup INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE season ADD COLUMN signup_token TEXT;
+     CREATE TABLE season_invited (
+         season INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
+         account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+         PRIMARY KEY (season, account_id)
+     )",
 ];
 
 /// The schema version this build writes.

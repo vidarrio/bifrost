@@ -228,7 +228,13 @@ The season console has six tabs:
 - **Connection.** The season's address, its **connect password** (changing it
   restarts the server), and a **server console** for Archipelago server
   commands, such as `/send`, with auto-completion.
-- **Options.** Turn the season's minesweeper and the common game on or off,
+- **Options.** Choose who can see the season. A new season's pages after
+  generation are for its players, moderators and admins, and you can open them to
+  anyone. Its signups are open to any signed-in user, and you can make them private:
+  only people with the link shown there can reach them. Non-members don't see a
+  private season on the home page or in past seasons. Seasons from before this
+  setting stay open until you change them.
+  Turn the season's minesweeper and the common game on or off,
   and set how many bonus hints a player can earn from minesweeper in any
   24 hours (5 by default; 0 means no limit). Also set how many games a player
   can sign up with (0, the default, means no limit); signups already made stay.
@@ -684,15 +690,20 @@ Configure it under `[forward_auth]`:
   groups are refused. Without it, roles are assigned in the console.
 - `sign_in_url` / `sign_out_url` are used for the header's links.
 
+Private seasons need the proxy's identity on their pages too, so `/board`, `/log`
+and `/season` belong in the rule below. With those covered, those pages need a
+sign-in on every season. The home page never sees an identity under forward auth,
+so it lists only seasons open to anyone.
+
 The proxy must run forward-auth on every signed-in path. That includes the
 season-scoped forms under `/s/<id>/`, not only the plain prefixes. Otherwise a
 client can send its own identity headers through the proxy. The signed-in
-prefixes are `/admin`, `/claim`, `/hint`, `/signup`, `/seat`, `/game`, `/prioritize`,
+prefixes are `/admin`, `/board`, `/log`, `/season`, `/claim`, `/hint`, `/signup`, `/seat`, `/game`, `/prioritize`,
 `/minesweeper`, `/api` and `/mc`. Everything else is public. A Traefik rule
 for the season forms looks like:
 
 ```
-PathRegexp(`^/s/[^/]*/+(admin|claim|hint|signup|seat|game|prioritize|minesweeper|api|mc)`)
+PathRegexp(`^/s/[^/]*/+(admin|board|log|season|claim|hint|signup|seat|game|prioritize|minesweeper|api|mc)`)
 ```
 
 Match any season id there, not just digits, so that no spelling of a season

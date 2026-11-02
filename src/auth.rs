@@ -772,6 +772,8 @@ pub fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Tier {
+    /// Public, but a signed-in identity is read when there is one.
+    Optional,
     Public,
     LoggedIn,
     /// Season administration: moderators and up (handlers then check that the
@@ -790,6 +792,8 @@ const SYSADMIN_PREFIXES: &[&str] = &[
     "/admin/catalog",
 ];
 const ADMIN_PREFIXES: &[&str] = &["/admin"];
+/// Public, unless the season is private (`scope`): identity counts if present.
+const OPTIONAL_PREFIXES: &[&str] = &["/board", "/log", "/season"];
 const LOGGED_IN_PREFIXES: &[&str] = &[
     "/claim",
     "/hint",
@@ -809,6 +813,12 @@ pub fn tier(path: &str) -> Tier {
         Tier::Admin
     } else if LOGGED_IN_PREFIXES.iter().any(|p| path.starts_with(p)) {
         Tier::LoggedIn
+    } else if OPTIONAL_PREFIXES.iter().any(|p| {
+        // Whole segments: `/log` isn't `/login`.
+        path.strip_prefix(p)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    }) {
+        Tier::Optional
     } else {
         Tier::Public
     }
@@ -866,7 +876,7 @@ pub async fn middleware(State(auth): State<Auth>, mut req: Request, next: Next) 
     };
 
     match (tier, &principal) {
-        (Tier::Public, _) => {}
+        (Tier::Public | Tier::Optional, _) => {}
         (_, None) if req.uri().path().starts_with("/api") => {
             return api_unauthenticated(&auth).await;
         }
@@ -1022,6 +1032,9 @@ mod tests {
         assert_eq!(tier("/admin/settings"), Tier::Sysadmin);
         assert_eq!(tier("/admin/catalog"), Tier::Sysadmin);
         assert_eq!(tier("/admin/worlds/approve"), Tier::Admin);
+        for p in ["/board", "/board/fragment", "/log", "/season"] {
+            assert_eq!(tier(p), Tier::Optional, "{p}");
+        }
         for p in [
             "/claim",
             "/hint",
@@ -1041,11 +1054,7 @@ mod tests {
         }
         for p in [
             "/",
-            "/board",
-            "/board/fragment",
             "/check",
-            "/log",
-            "/season/1",
             "/health",
             "/favicon.svg",
             "/login",
