@@ -52,6 +52,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Bifrost refuses to run as root, commands included, unless `BIFROST_ALLOW_ROOT=1` is set
+  in the environment. If you run it as root, switch to its own user, and `chown` its data
+  directory to that user first.
+- Run as root, a bundle won't unpack or use its runtime if another user could change the
+  data directory, `runtime` in it, or a folder above it. For any user, unpacking no longer
+  writes through a link left at the paths it creates.
 - PopTracker packs' Lua runs in a sandboxed process of its own, stopped after
   30 seconds (`pack_timeout_secs`), so a pack can't tie up the server. Each
   slot computes its tracker once at a time, at most four run at once, and

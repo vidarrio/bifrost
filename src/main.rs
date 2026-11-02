@@ -88,6 +88,17 @@ async fn main() {
         std::process::exit(code);
     }
 
+    // Before anything reads the data dir: see `config::root_refused`.
+    // SAFETY: geteuid only reads this process's user id.
+    let euid = unsafe { libc::geteuid() };
+    if config::root_refused(euid, std::env::var_os("BIFROST_ALLOW_ROOT").as_deref()) {
+        eprintln!(
+            "bifrost: refusing to run as root. Run it as its own user, for example with \
+             `sudo -u bifrost`, or set BIFROST_ALLOW_ROOT=1 to run as root anyway."
+        );
+        std::process::exit(1);
+    }
+
     let cfg = config::init(config::Config::load());
     // Everything Bifrost writes is its own, unless it says otherwise.
     // SAFETY: umask only sets this process's file creation mask.

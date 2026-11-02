@@ -351,8 +351,7 @@ Both the image and the file carry build provenance from the release workflow;
 `gh attestation verify oci://ghcr.io/vidarrio/bifrost:<version> -R vidarrio/bifrost`)
 checks that they were built by this repository from the release's tag.
 
-Without `BIFROST_DATA`, it keeps its data in `~/.local/share/bifrost`, or in
-`/var/lib/bifrost` when run as root. Install `bubblewrap` on the host for the
+Without `BIFROST_DATA`, it keeps its data in `~/.local/share/bifrost`. Install `bubblewrap` on the host for the
 strong sandbox, which custom apworlds need.
 
 Put Bifrost behind a reverse proxy that terminates HTTPS. Session cookies are
@@ -504,6 +503,12 @@ documentation, but no new features or behaviour changes. Each release's notes
 are on the [releases page](https://github.com/vidarrio/bifrost/releases) and
 in the [changelog](../CHANGELOG.md). Sysadmins see a banner in the console
 when a newer release is out (see [Configuration](#configuration)).
+
+**Running as root.** Bifrost refuses to run as root, including its commands, so use
+`sudo -u bifrost` for those. To run as root anyway, set `BIFROST_ALLOW_ROOT=1` in the
+environment (`config.toml` can't set it). The data directory is then `/var/lib/bifrost`
+by default, and a bundle won't use its runtime if another user could change that
+directory, `runtime` in it, or a folder above it.
 
 **Permissions.** Bifrost keeps its data directory to its own user, as it holds password
 hashes, tokens, spoilers and Archipelago passwords. Each start, it tightens the directory

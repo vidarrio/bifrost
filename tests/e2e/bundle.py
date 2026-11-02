@@ -182,13 +182,32 @@ try:
 finally:
     api.shutdown()
 
+# As root, in a container of its own.
+def as_root(script):
+    return subprocess.run(["podman", "run", "--rm", "-v", f"{BUNDLE}:/bifrost:ro",
+                           "docker.io/library/debian:bookworm-slim", "sh", "-c", script],
+                          capture_output=True, text=True, timeout=300)
+
+
+r = as_root("/bifrost auth status; echo exit=$?; ls -A /var/lib/bifrost 2>/dev/null | wc -l")
+check("refuses root by default", "refusing to run as root" in r.stderr and "exit=1\n0\n" in r.stdout, r.stdout + r.stderr)
+allow = "BIFROST_ALLOW_ROOT=1 BIFROST_DATA=/d /bifrost auth status"
+r = as_root(f"mkdir -m 700 /d && {allow}; echo exit=$?; ls -A /d/runtime | wc -l")
+check("root can ask for it", "exit=0\n1\n" in r.stdout, r.stdout + r.stderr)
+r = as_root(f"mkdir -m 700 /d /away && ln -s /away /d/runtime; {allow}; echo exit=$?; ls -A /away | wc -l")
+check("as root, won't unpack through a planted link",
+      "plain directory" in r.stderr and "exit=0" not in r.stdout and r.stdout.endswith("\n0\n"), r.stdout + r.stderr)
+r = as_root(f"mkdir -m 700 /d && chown 1000 /d; {allow}; echo exit=$?; ls -A /d | wc -l")
+check("as root, won't use a data dir another user holds",
+      "another user" in r.stderr and "exit=0" not in r.stdout and r.stdout.endswith("\n0\n"), r.stdout + r.stderr)
+
 # A bare system: no Python, no bubblewrap.
 data = os.path.join(srv.data, "..", "bundle-bare")
 subprocess.run(["rm", "-rf", data])
 os.makedirs(data)
 name = "bfbare"
 subprocess.run(["podman", "rm", "-f", name], capture_output=True)
-r = subprocess.run(["podman", "run", "-d", "--name", name, "-p", "18194:8080",
+r = subprocess.run(["podman", "run", "-d", "--name", name, "--user", "1000:1000", "-p", "18194:8080",
                     "-e", "BIFROST_INSECURE_COOKIES=1", "-e", "BIFROST_DATA=/data", "-e", "BIFROST_UPDATE_CHECK=off",
                     "-v", f"{BUNDLE}:/bifrost:ro", "-v", f"{os.path.abspath(data)}:/data:U",
                     "docker.io/library/debian:bookworm-slim", "/bifrost"], capture_output=True, text=True)

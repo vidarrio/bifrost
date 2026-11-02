@@ -374,6 +374,13 @@ impl Config {
 
 pub const CONFIG_FILE: &str = "config.toml";
 
+/// Bifrost runs game code and keeps data others may be able to write to, so root
+/// has to ask for it. Only the environment can, as the data dir isn't to be trusted
+/// by root until this has passed.
+pub fn root_refused(euid: u32, allow: Option<&std::ffi::OsStr>) -> bool {
+    euid == 0 && allow.is_none_or(|v| v != "1")
+}
+
 /// Settings from the config file, keyed by their `BIFROST_*` name.
 static FILE_VARS: OnceLock<HashMap<String, String>> = OnceLock::new();
 
@@ -626,6 +633,16 @@ pub fn get() -> &'static Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn root_has_to_ask() {
+        use std::ffi::OsStr;
+        assert!(root_refused(0, None));
+        assert!(root_refused(0, Some(OsStr::new("0"))));
+        assert!(root_refused(0, Some(OsStr::new(""))));
+        assert!(!root_refused(0, Some(OsStr::new("1"))));
+        assert!(!root_refused(1000, None));
+    }
     use std::collections::HashMap;
     use std::path::Path;
 
