@@ -4,7 +4,7 @@ use super::*;
 
 /// The "Signed up" roster of submissions, with a Remove control on your own (or,
 /// for an admin, any) entry — posts to `/signup/delete`.
-pub(super) fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool) -> String {
+pub(super) fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool, pre_gen: bool) -> String {
     let mut b = String::from(r#"<h2>Signed up</h2>"#);
     if subs.is_empty() {
         b.push_str(r#"<div class="empty">Nobody yet.</div>"#);
@@ -33,7 +33,7 @@ pub(super) fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool) -> String
         } else {
             format!(r#"<div class="meta">+ {}</div>"#, esc(&s.coop_names))
         };
-        let del = if is_admin || s.username == me {
+        let del = if pre_gen && (is_admin || s.username == me) {
             format!(
                 r#"<form method="post" action="signup/delete" style="display:inline">
 <input type="hidden" name="id" value="{}"><button class="ghost" type="submit">Remove</button></form>"#,
@@ -42,6 +42,11 @@ pub(super) fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool) -> String
         } else {
             String::new()
         };
+        let seats = if s.seat_names.is_empty() {
+            String::new()
+        } else {
+            format!(r#"<div class="meta">+ {}</div>"#, esc(&s.seat_names))
+        };
         let notes = if s.notes.is_empty() {
             String::new()
         } else {
@@ -49,7 +54,7 @@ pub(super) fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool) -> String
         };
         b.push_str(&format!(
             r#"<div class="slot idle stretch"><div class="game"><a class="cover" href="signup/game/{}">{}</a>{custom}</div>
-<div class="meta">{} · by {}</div>{held}{coop}{notes}<div class="seat"><span></span>{del}</div></div>"#,
+<div class="meta">{} · by {}</div>{held}{coop}{seats}{notes}<div class="seat"><span></span>{del}</div></div>"#,
             s.id,
             esc(&s.slot_name),
             esc(&s.game),

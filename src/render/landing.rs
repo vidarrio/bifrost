@@ -139,7 +139,7 @@ pub fn landing_discords(discords: &[crate::db::Discord]) -> String {
 /// (who + game) so the section looks identical whether a season is live or not.
 pub fn landing_signups(subs: &[SubmissionRow]) -> String {
     if subs.is_empty() {
-        return r#"<div class="empty" style="grid-column:1/-1">No sign-ups yet — be the first to <a href="/signups">claim a game for next season</a>.</div>"#
+        return r#"<div class="empty" style="grid-column:1/-1">No sign-ups yet — be the first to <a href="/signups">sign up for next season</a>.</div>"#
             .to_string();
     }
     struct Entry {
@@ -153,8 +153,9 @@ pub fn landing_signups(subs: &[SubmissionRow]) -> String {
             // Primary player first, then any co-op seats, matching the live roster.
             let mut names = vec![s.slot_name.clone()];
             names.extend(
-                s.coop_names
-                    .split(',')
+                [s.coop_names.as_str(), s.seat_names.as_str()]
+                    .into_iter()
+                    .flat_map(|n| n.split(','))
                     .map(str::trim)
                     .filter(|n| !n.is_empty())
                     .map(str::to_string),

@@ -353,6 +353,14 @@ pub(crate) async fn game_view(
     let pt_has = ptrack::has_pack(season, ap_slot);
     let pt_can_manage = i_claim || is_admin;
 
+    let invite = match hosted_live(&st, &ctx, ap_slot, my_id).await {
+        Some(name) => render::invite_box(
+            &format!("game/{ap_slot}"),
+            &format!("/s/{}/seat/", ctx.id),
+            &st.db.seat_links_of_slot(ctx.id, &name).await,
+        ),
+        None => String::new(),
+    };
     render::game_page(
         ap_slot,
         &game,
@@ -374,7 +382,69 @@ pub(crate) async fn game_view(
         log_total,
         pt_has,
         pt_can_manage,
+        &invite,
     )
+}
+
+/// The account hosting a live game: whoever has the slot named after the AP
+/// slot, not a partner's seat. Returns its connect name if that's `account`.
+async fn hosted_live(
+    st: &AppState,
+    ctx: &scope::SeasonCtx,
+    ap_slot: i64,
+    account: i64,
+) -> Option<String> {
+    if !ctx.state().is_live() {
+        return None;
+    }
+    let name = ctx
+        .rt
+        .with_board(|b| b.slots.get(&ap_slot).map(|s| s.name.clone()))??;
+    let slots = st.db.slots(ctx.id).await.ok()?;
+    slots
+        .iter()
+        .find(|r| r.ap_slot == ap_slot && r.name == name && !r.is_common)
+        .filter(|r| r.claimed_by_id == Some(account))
+        .map(|_| name)
+}
+
+pub(crate) async fn game_invite(
+    Path(ap_slot): Path<i64>,
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+) -> Redirect {
+    if let Some(name) = hosted_live(&st, &ctx, ap_slot, me.id()).await {
+        let _ = st
+            .db
+            .add_seat_link(ctx.id, &auth::new_token(), None, Some(&name), me.id())
+            .await;
+    }
+    Redirect::to(&ctx.url(&format!("/game/{ap_slot}")))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct RevokeForm {
+    token: String,
+}
+
+pub(crate) async fn game_revoke(
+    Path(ap_slot): Path<i64>,
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Form(f): Form<RevokeForm>,
+) -> Redirect {
+    if let Some(name) = hosted_live(&st, &ctx, ap_slot, me.id()).await
+        && st
+            .db
+            .seat_links_of_slot(ctx.id, &name)
+            .await
+            .contains(&f.token)
+    {
+        let _ = st.db.revoke_seat_link(ctx.id, &f.token).await;
+    }
+    Redirect::to(&ctx.url(&format!("/game/{ap_slot}")))
 }
 
 #[derive(Deserialize)]
@@ -544,8 +614,12 @@ pub(crate) async fn game_output(
         .any(|r| r.ap_slot == ap_slot && r.claimed_by_id == Some(my_id));
     let back = format!("/game/{ap_slot}");
     if !(i_claim || is_admin) {
-        return render::notice("Claim this game to download its files.", false, &back)
-            .into_response();
+        return render::notice(
+            "Only this game's players can download its files.",
+            false,
+            &back,
+        )
+        .into_response();
     }
     if generate::member_player(&q.file) != Some(ap_slot) {
         return render::notice("That file isn't for this game.", false, &back).into_response();

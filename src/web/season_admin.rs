@@ -183,6 +183,7 @@ pub(crate) async fn clear_signups(st: &AppState, season: i64) {
 /// the staged Players/ YAMLs.
 pub(crate) async fn clear_current_players(st: &AppState, season: i64) {
     let _ = st.db.clear_all_slots(season).await;
+    let _ = st.db.clear_seat_links(season).await;
     let _ = generate::clear_player_yamls(season).await;
 }
 
@@ -206,6 +207,15 @@ pub(crate) async fn admin_clear(
         "apworlds" => {
             let _ = generate::clear_apworlds(id).await;
             worlds::clear_pending(&st.db, id).await;
+        }
+        // Once generated the games are in the seed, and their players stay.
+        "signups" if !matches!(ctx.state(), db::State::Draft | db::State::Signup) => {
+            return render::notice(
+                "The season is generated, so its signups stay.",
+                false,
+                "admin",
+            )
+            .into_response();
         }
         "signups" => clear_signups(&st, id).await,
         "players" => clear_current_players(&st, id).await,

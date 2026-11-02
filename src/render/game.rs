@@ -55,7 +55,7 @@ pub(super) const MC_LOADER: &str = "NeoForge 26.2.0.90"; // mod loader build
 // The AP mod jar name is `crate::generate::MC_MOD_JAR` (shared with the download
 // route that serves it), so the displayed name and the served file can't drift.
 
-/// The per-game page: claim/unclaim its players, hint with live item search,
+/// The per-game page: its players, hint with live item search,
 /// and all hints in this world with a "prioritize" toggle.
 #[allow(clippy::too_many_arguments)]
 /// Game-page tab styling (Hints | Universal Tracker). Distinctive class names:
@@ -559,6 +559,7 @@ pub fn game_page(
     log_total: i64,
     pt_has_pack: bool,
     pt_can_manage: bool,
+    invite: &str,
 ) -> Html<String> {
     let live = snap.ap.get(&ap_slot).cloned().unwrap_or_default();
     let back = format!("/game/{ap_slot}");
@@ -681,7 +682,7 @@ pub fn game_page(
             ));
         } else {
             out.push_str(
-                r#"<p class="empty">The server is whitelisted. <a href="claim">Claim a game</a> this season, then come back here to register your Minecraft username and get let in.</p>"#,
+                r#"<p class="empty">The server is whitelisted. Play a game this season, then come back here to register your Minecraft username and get let in.</p>"#,
             );
         }
 
@@ -719,7 +720,7 @@ pub fn game_page(
             }
         } else {
             out.push_str(
-                r#"<h2>Send a hint</h2><p class="empty">Hinting the common game is open to anyone with a claimed game this season — its shared hint points are reserved for players with a slot of their own. Claim a game on the board to join in.</p>"#,
+                r#"<h2>Send a hint</h2><p class="empty">Hinting the common game is open to anyone with a game this season — its shared hint points are reserved for players with a slot of their own. Sign up with a game, or join one with an invite link, to take part.</p>"#,
             );
         }
 
@@ -745,26 +746,26 @@ pub fn game_page(
         return Html(out);
     }
 
-    // Players (claim / unclaim)
+    // Players
     out.push_str(r#"<h2>Players</h2><div class="grid">"#);
     for r in &here {
         let mine = r.claimed_by.as_deref() == Some(me);
         let (by, action) = match &r.claimed_by {
             Some(_) if mine => (
                 r#"<span class="by mine">you</span>"#.to_string(),
-                claim_button(r.id, "unclaim", "Unclaim", true, &back),
+                String::new(),
             ),
             Some(who) => (
                 format!(r#"<span class="by">{}</span>"#, esc(who)),
-                if is_admin {
-                    claim_button(r.id, "unclaim", "Force unclaim", true, &back)
-                } else {
-                    String::new()
-                },
+                String::new(),
             ),
             None => (
                 r#"<span class="by free">unclaimed</span>"#.to_string(),
-                claim_button(r.id, "claim", "Claim", false, &back),
+                if is_admin {
+                    assign_form(r.id, &back)
+                } else {
+                    String::new()
+                },
             ),
         };
         out.push_str(&format!(
@@ -773,6 +774,7 @@ pub fn game_page(
         ));
     }
     out.push_str("</div>");
+    out.push_str(invite);
 
     // Generated files for this slot — shown only to a claimant of it (or admin);
     // the caller passes an empty list to everyone else. Downloaded through the

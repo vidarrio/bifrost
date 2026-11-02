@@ -447,6 +447,8 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: i64) {
         Ok(msg) => match db.transition(season, State::Live, now()).await {
             Ok(()) => {
                 rts.start_live(season).await;
+                // Only live seasons count, so this waits until now.
+                crate::web::write_mc_whitelist(&db).await;
                 set(&state, false, msg)
             }
             Err(e) => {
@@ -477,6 +479,7 @@ pub async fn regenerate(db: Db, rts: Arc<Runtimes>, season: i64) {
     let r = regen_inner(&db, &rts, &state, season).await;
     // Live either way: on failure the previous seed is still deployed.
     let _ = db.transition(season, State::Live, now()).await;
+    crate::web::write_mc_whitelist(&db).await;
     match r {
         Ok(msg) => set(&state, false, msg),
         Err(e) => set(&state, false, format!("Failed — {e}")),

@@ -58,6 +58,8 @@ pub(crate) async fn claim_get(
 pub(crate) struct ClaimForm {
     pub(crate) slot_id: i64,
     pub(crate) op: String,
+    #[serde(default)]
+    pub(crate) account: String,
     pub(crate) back: Option<String>,
 }
 
@@ -67,30 +69,35 @@ pub(crate) async fn claim_post(
     me: auth::Me,
     Form(f): Form<ClaimForm>,
 ) -> Response {
-    let my_id = me.id();
     let (_me, is_admin) = ctx.ident(&me);
     let back = ctx.back(f.back.as_deref(), "/claim");
     let season = ctx.id;
     if ctx.state() == db::State::Archived {
         return render::notice("That season is archived.", false, &back).into_response();
     }
-    match f.op.as_str() {
-        "claim" => match st.db.claim_one(season, f.slot_id, my_id).await {
-            Ok(db::ClaimOutcome::SlotTaken) => {
-                render::notice("That slot is already claimed.", false, &back).into_response()
-            }
-            _ => {
-                // Claimant set changed → refresh the MC whitelist export.
-                export_mc_whitelist(&st).await;
-                Redirect::to(&back).into_response()
-            }
-        },
-        "unclaim" => {
-            let _ = st.db.unclaim(season, f.slot_id, my_id, is_admin).await;
+    if !is_admin || f.op != "assign" {
+        return Redirect::to(&back).into_response();
+    }
+    let Some(account) = st.db.account_by_name(f.account.trim()).await else {
+        return render::notice("There's no account with that name.", false, &back).into_response();
+    };
+    let slots = st.db.slots(season).await.unwrap_or_default();
+    if slots.iter().any(|r| r.id == f.slot_id && r.is_common) {
+        return render::notice("The common game is everyone's.", false, &back).into_response();
+    }
+    match st.db.claim_one(season, f.slot_id, account.id).await {
+        Ok(db::ClaimOutcome::SlotTaken) => {
+            render::notice("That slot already has a player.", false, &back).into_response()
+        }
+        Ok(_) => {
+            // Claimant set changed → refresh the MC whitelist export.
             export_mc_whitelist(&st).await;
             Redirect::to(&back).into_response()
         }
-        _ => Redirect::to(&back).into_response(),
+        Err(e) => {
+            tracing::warn!("assigning a slot in season {season}: {e}");
+            render::notice("Couldn't assign the slot.", false, &back).into_response()
+        }
     }
 }
 

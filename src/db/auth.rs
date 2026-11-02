@@ -877,16 +877,14 @@ mod tests {
         assert_eq!(db.credits(s, p.account_id).await, 2);
         assert_eq!(db.mc_whitelist(s).await, ["Steve"]);
 
-        // Someone else can neither take nor release it.
+        // Someone else can't take it.
         let other = db.create_account("x", "h", Role::User, 0).await.unwrap();
         assert!(matches!(
             db.claim_one(s, slot, other).await.unwrap(),
             ClaimOutcome::SlotTaken
         ));
-        assert!(!db.unclaim(s, slot, other, false).await.unwrap());
         // Nor can another season's admins, through their own season.
         let s2 = db.create_season("S2", None, 0).await.unwrap();
-        assert!(!db.unclaim(s2, slot, other, true).await.unwrap());
         assert!(matches!(
             db.claim_one(s2, slot, other).await.unwrap(),
             ClaimOutcome::SlotTaken
