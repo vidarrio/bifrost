@@ -31,12 +31,12 @@ fn pack_dir(season: Id, game: Id) -> PathBuf {
         .join(game.to_string())
 }
 
-/// Is a usable pack installed for this slot?
+/// Is a usable pack installed for this game?
 pub fn has_pack(season: Id, game: Id) -> bool {
     poptracker::pack_root(&pack_dir(season, game)).is_ok()
 }
 
-/// A version stamp for the slot's pack (install dir mtime, epoch secs), used to
+/// A version stamp for the game's pack (install dir mtime, epoch secs), used to
 /// cache-bust asset URLs when a pack is (re)installed — browsers otherwise keep
 /// showing cached images even across a hard refresh.
 pub fn pack_version(season: Id, game: Id) -> u64 {
@@ -90,7 +90,7 @@ pub async fn validate(zip_bytes: Arc<Vec<u8>>) -> Result<poptracker::Summary, St
     Ok(sum)
 }
 
-/// Install (extract) an uploaded pack zip for a slot, replacing any existing one.
+/// Install (extract) an uploaded pack zip for a game, replacing any existing one.
 fn install(season: Id, game: Id, zip_bytes: &[u8]) -> Result<(), String> {
     SLOTS.lock().unwrap().remove(&(season, game));
     let dir = pack_dir(season, game);
@@ -134,7 +134,7 @@ pub fn remove_season(season: Id) {
     let _ = std::fs::remove_dir_all(config::get().packs_dir().join(season.to_string()));
 }
 
-/// Remove a slot's installed pack.
+/// Remove a game's installed pack.
 pub fn remove(season: Id, game: Id) {
     SLOTS.lock().unwrap().remove(&(season, game));
     let _ = std::fs::remove_dir_all(pack_dir(season, game));
@@ -754,7 +754,7 @@ pub fn read_pack_asset(season: Id, game: Id, rel: &str) -> Option<Vec<u8>> {
     poptracker::read_asset(&root, &variant, rel)
 }
 
-/// Where a slot's pack's variant is kept, next to its folder: a worker chose it
+/// Where a game's pack's variant is kept, next to its folder: a worker chose it
 /// on upload, and this process doesn't parse what a pack wrote to find out.
 /// A pack installed before this was kept has none, and serves from its root.
 fn variant_file(season: Id, game: Id) -> PathBuf {
