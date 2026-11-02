@@ -49,7 +49,7 @@ an archive of past seasons.
   which carries small compatibility patches.
 - **Operations.** Nightly backups with retention, live load monitoring, and
   season bundles you can download and import on another instance.
-- **Painless updates.** A banner when a new Bifrost is out, a backup before
+- **Updates.** A banner when a new Bifrost is out, a backup before
   each upgrade with the command to go back, and `bifrost update` for the
   single-file build.
 

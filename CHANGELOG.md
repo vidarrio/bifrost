@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A warning in the README and the user guide that Bifrost is in very early development,
+  so read the changelog before updating and expect breaking changes.
 - The minesweeper on the home page is for any account, whether or not they play in a
   season. A season's own minesweeper is for its players and those running it.
 - Private seasons. A new season's board, log and game pages are for its players,
