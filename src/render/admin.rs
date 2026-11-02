@@ -18,6 +18,9 @@ pub(super) fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool, pre_gen: 
             ""
         };
         let held = match (&s.held_for, &s.held_err) {
+            (Some(_), Some(_)) if !(is_admin || s.username == me) => {
+                r#"<div class="meta">held</div>"#.to_string()
+            }
             (Some(_), Some(e)) => format!(
                 r#"<div class="meta" style="color:var(--bad)">held: {}</div>"#,
                 esc(e)

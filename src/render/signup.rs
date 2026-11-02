@@ -26,6 +26,11 @@ pub(super) fn catalog_label(w: &crate::db::CatalogWorld) -> String {
     l
 }
 
+/// A reason, as a sentence ending in one full stop.
+fn sentence(text: &str) -> String {
+    format!("{}.", text.trim_end().trim_end_matches('.'))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn signup_page(
     season: &str,
@@ -55,9 +60,9 @@ pub fn signup_page(
         .filter(|s| s.username == me && s.held_err.is_some())
     {
         b.push_str(&format!(
-            r#"<div class="banner bad">{} needs attention: {}. <a href="signup/game/{}">Open its page</a> to replace the YAML.</div>"#,
+            r#"<div class="banner bad">{} needs attention: {} <a href="signup/game/{}">Open its page</a> to replace the YAML.</div>"#,
             esc(&s.slot_name),
-            esc(s.held_err.as_deref().unwrap_or("")),
+            esc(&sentence(s.held_err.as_deref().unwrap_or(""))),
             s.id
         ));
     }
@@ -288,6 +293,8 @@ pub struct SignupGame<'a> {
     pub is_host: bool,
     pub pre_gen: bool,
     pub edit_notes: bool,
+    /// Why it's held is for those playing it and those running the season.
+    pub show_reason: bool,
     pub replace: bool,
     /// Shown just after signing up.
     pub welcome: Option<String>,
@@ -384,9 +391,12 @@ pub fn signup_game_page(g: &SignupGame) -> Html<String> {
     match (&s.held_for, &s.held_err) {
         // Just signed up: the welcome has said this already.
         (Some(_), None) if g.welcome.is_some() => {}
+        (Some(_), Some(_)) if !g.show_reason => {
+            b.push_str(r#"<div class="banner bad">This game is held.</div>"#)
+        }
         (Some(_), Some(e)) => b.push_str(&format!(
-            r#"<div class="banner bad">This game needs attention: {}. Until it's sorted out, or removed, the season can't be generated.</div>"#,
-            esc(e)
+            r#"<div class="banner bad">This game needs attention: {} Until it's sorted out, or removed, the season can't be generated.</div>"#,
+            esc(&sentence(e))
         )),
         (Some(w), None) => b.push_str(&format!(
             r#"<div class="banner ok">Held, waiting for {} to be approved. Its YAML is checked then. You can replace it meanwhile, and the new file gets checked instead.</div>"#,

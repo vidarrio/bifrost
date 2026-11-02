@@ -239,7 +239,7 @@ pub async fn approve(db: &Db, season: Id, file: &str, by: &str) -> Result<WorldR
     Ok(req)
 }
 
-/// Reject a pending upload; its held signups say so until they're removed.
+/// Reject a pending upload; its held signups say so until they're replaced or removed.
 pub async fn reject(db: &Db, season: Id, file: &str, by: &str) -> Result<(), String> {
     let req = db
         .take_world_request(season, file)
@@ -411,53 +411,43 @@ pub async fn clear_pending(db: &Db, season: Id) {
     let _ = db.clear_world_requests(season).await;
 }
 
-/// What a held YAML can be checked for without running its world: it's YAML, for one
-/// player, with a usable name, and for the game waiting for approval (`world_game`,
-/// empty if the manifest didn't say). Returns its slot name and game. Options only
-/// the world's code understands wait for the check on approval.
-pub fn held_first_look(yaml: &str, world_game: &str) -> Result<(String, String), String> {
-    use serde::Deserialize;
-    use serde_yaml_ng::Value;
-    let mut players = Vec::new();
-    for doc in serde_yaml_ng::Deserializer::from_str(yaml) {
-        let value = Value::deserialize(doc).map_err(|e| format!("That isn't valid YAML: {e}"))?;
-        if !value.is_null() {
-            players.push(value);
-        }
+/// What a first look at a held YAML can tell without running its world: it's YAML,
+/// for one player, with a plain name, and for the game waiting for approval
+/// (`world_game`, empty if the manifest didn't say). Returns its slot name and game.
+/// Options only the world's code understands wait for the check on approval.
+pub fn judge_first_look(
+    look: &crate::ap_adapter::FirstLook,
+    world_game: &str,
+) -> Result<(String, String), String> {
+    if let Some(e) = &look.error {
+        return Err(format!("That isn't valid YAML: {e}"));
     }
-    if players.len() > 1 {
+    if look.players.len() > 1 {
         return Err(ONE_GAME_PER_FILE.to_string());
     }
-    let player = players.first();
+    let Some(player) = look.players.first() else {
+        return Err("Couldn't read a player from that YAML.".to_string());
+    };
     let name = player
-        .and_then(|p| p.get("name"))
-        .and_then(Value::as_str)
+        .name
+        .as_deref()
         .map(str::trim)
         .filter(|n| !n.is_empty())
-        .ok_or("Couldn't find a top-level name: in that YAML.")?;
-    // A templated name, like `Player{number}`, is only known once it's rolled.
-    if !name.contains('{') && name.chars().count() > 16 {
-        return Err(format!(
-            "The name '{name}' is too long: at most 16 characters."
-        ));
+        .ok_or(
+            "Couldn't find a top-level name: in that YAML. While its world waits for approval, \
+             it has to be plain text, in quotes if it could read as something else.",
+        )?;
+    if player.games.is_empty() {
+        return Err("Couldn't find a game: in that YAML.".to_string());
     }
-    // `game:` is a name, or names with weights.
-    let games: Vec<String> = match player.and_then(|p| p.get("game")) {
-        Some(Value::String(g)) => vec![g.clone()],
-        Some(Value::Mapping(m)) => m
-            .keys()
-            .filter_map(|k| k.as_str().map(str::to_string))
-            .collect(),
-        _ => return Err("Couldn't find a game: in that YAML.".to_string()),
-    };
-    if !world_game.is_empty() && !games.iter().any(|g| g == world_game) {
+    if !world_game.is_empty() && !player.games.iter().any(|g| g == world_game) {
         return Err(format!(
             "That YAML is for {}, but the world waiting for approval is {world_game}.",
-            games.join(", ")
+            player.games.join(", ")
         ));
     }
     let game = if world_game.is_empty() {
-        games.first().cloned().unwrap_or_else(|| "?".to_string())
+        player.games[0].clone()
     } else {
         world_game.to_string()
     };
@@ -518,35 +508,47 @@ mod tests {
     }
 
     #[test]
-    fn a_held_yaml_gets_a_first_look() {
-        let look = |y: &str| held_first_look(y, "Foo");
+    fn a_first_look_is_judged() {
+        use crate::ap_adapter::{FirstLook, LookedPlayer};
+        let one = |name: Option<&str>, games: &[&str]| FirstLook {
+            players: vec![LookedPlayer {
+                name: name.map(str::to_string),
+                games: games.iter().map(|g| g.to_string()).collect(),
+            }],
+            error: None,
+        };
+        let judge = |l: &FirstLook| judge_first_look(l, "Foo");
         assert_eq!(
-            look("name: Sam # me\ngame: Foo\nFoo: {}\n"),
+            judge(&one(Some("Sam"), &["Foo"])),
             Ok(("Sam".into(), "Foo".into()))
         );
         assert_eq!(
-            look("---\n\"name\": 'Sam'\ngame: {Foo: 1, Bar: 0}\n"),
+            judge(&one(Some("Sam"), &["Bar", "Foo"])),
             Ok(("Sam".into(), "Foo".into()))
         );
-        assert!(look("name: Player{number}{number}{number}{number}\ngame: Foo\n").is_ok());
-        for (bad, why) in [
-            ("name: [unclosed\n", "valid YAML"),
-            ("game: Foo\n", "top-level name"),
-            ("name: Sam\n", "game:"),
-            ("name: seventeen letters\ngame: Foo\n", "too long"),
-            ("name: Sam\ngame: Bar\n", "is for Bar"),
-            (
-                "name: A\ngame: Foo\n---\n\"name\": B\ngame: Foo\n",
-                "several players",
-            ),
-        ] {
-            let e = look(bad).unwrap_err();
-            assert!(e.contains(why), "{bad}: {e}");
+        assert_eq!(
+            judge_first_look(&one(Some("Sam"), &["Bar"]), ""),
+            Ok(("Sam".into(), "Bar".into())),
+            "a manifest that names no game can't be compared"
+        );
+        let cases = [
+            (one(None, &["Foo"]), "top-level name"),
+            (one(Some("Sam"), &[]), "game:"),
+            (one(Some("Sam"), &["Bar"]), "is for Bar"),
+        ];
+        for (look, why) in cases {
+            assert!(judge(&look).unwrap_err().contains(why), "{why}");
         }
-        // A manifest that names no game can't be compared.
-        assert_eq!(
-            held_first_look("name: Sam\ngame: Bar\n", ""),
-            Ok(("Sam".into(), "Bar".into()))
-        );
+        let mut two = one(Some("A"), &["Foo"]);
+        two.players.push(LookedPlayer {
+            name: Some("B".into()),
+            games: vec!["Foo".into()],
+        });
+        assert!(judge(&two).unwrap_err().contains("several players"));
+        let broken = FirstLook {
+            players: vec![],
+            error: Some("line 1".into()),
+        };
+        assert!(judge(&broken).unwrap_err().contains("valid YAML"));
     }
 }

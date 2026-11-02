@@ -58,16 +58,29 @@ try:
     r = post(bob, f"{S}/signup", files={"yaml": ("x.yaml", fixture("foo.yaml").replace(b"Pfoo", b"One") + second.replace(b"name:", b"\"name\":"))},
              data={"is_custom": "1", "pending_world": "foo.apworld"})
     check("…however it's spelled", "several players" in r.text, r.text[-300:])
-    held = lambda y: post(bob, f"{S}/signup", files={"yaml": ("x.yaml", y)}, data={"is_custom": "1", "pending_world": "foo.apworld"})
+    carl = srv.invite_user(root, "carl")  # signups are rate limited per player
+    held = lambda y, who=carl: post(who, f"{S}/signup", files={"yaml": ("x.yaml", y)}, data={"is_custom": "1", "pending_world": "foo.apworld"})
     r = held(b"name: [unclosed\n")
     check("a held file has to be YAML", "valid YAML" in r.text, r.text[-300:])
     r = held(b"name: Wrong\ngame: Bar Finder\nBar Finder: {}\n")
     check("…for the world waiting", "the world waiting for approval is Foo Finder" in r.text, r.text[-300:])
     r = held(fixture("foo.yaml"))
     check("…with a free name", "already taken" in r.text, r.text[-300:])
+    r = held(b"\xff\xfename: Latin\n")
+    check("…as text", "UTF-8" in r.text, r.text[-300:])
+    r = held(b"name: Yes\ngame: Foo Finder\nFoo Finder: {}\n")
+    check("…with a plain name", "top-level name" in r.text, r.text[-300:])
+    t = time.time()
+    many = b"a: &a [" + b"x, " * 20000 + b"x]\nb: [" + b"*a, " * 2000 + b"*a]\nname: Many\ngame: Bar Finder\n"
+    r = held(many)
+    check("a large file doesn't take long", time.time() - t < 30 and "Foo Finder" in r.text, r.text[-300:])
+    r = held(b"\xef\xbb\xbf" + fixture("foo.yaml").replace(b"Pfoo", b"Bommy"))
+    check("a byte-order mark is fine", "held until" in r.text, r.text[-300:])
+    bom = re.search(r'name="id" value="([0-9a-z]+)"><button class="ghost" type="submit">Remove', get(carl, f"{S}/signup").text).group(1)
+    post(carl, f"{S}/signup/delete", data={"id": bom})
     # Only the world's code can tell this one fails.
     bad = fixture("foo.yaml").replace(b"Pfoo", b"Bofoo") + b"requires:\n  version: 99.0.0\n"
-    r = held(bad)
+    r = held(bad, bob)
     check("what only the world can tell is held", "held until" in r.text, r.text[-300:])
     badg = re.search(r'href="signup/game/([0-9a-z]+)">Bofoo<', get(bob, f"{S}/signup").text).group(1)
 
@@ -98,6 +111,7 @@ try:
     check("approved world is installed with provenance", "approved by root" in adm and "Apworlds waiting" not in adm)
     released = wait_for(lambda: "waiting for foo.apworld" not in get(alice, f"{S}/signup").text, 120, 2)
     needs = wait_for(lambda: "needs attention" in (t := get(bob, f"{S}/signup").text) and t, 120, 2)
+    check("others only see that it's held", "99.0.0" not in get(alice, f"{S}/signup").text and "99.0.0" not in get(alice, f"{S}/signup/game/{badg}").text)
     check("a failed check tells the player", needs and "Bofoo needs attention" in needs, get(bob, f"{S}/signup").text[-500:])
     adm = get(root, f"{S}/admin").text
     check("…and the moderators, who can dismiss it", "Signups that need attention" in adm and ">dismiss<" in adm)

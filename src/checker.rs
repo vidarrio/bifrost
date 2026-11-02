@@ -74,6 +74,29 @@ pub async fn check_yaml(season: &config::SeasonDirs, yaml: &str) -> Result<Check
     ap_adapter::check_yaml(season, yaml).await
 }
 
+/// A first look at a YAML whose world isn't approved, in turn with the checks.
+pub async fn first_look(
+    season: &config::SeasonDirs,
+    yaml: &str,
+) -> Result<ap_adapter::FirstLook, String> {
+    if yaml.len() > MAX_YAML {
+        return Err(format!(
+            "file too large ({} bytes; max {MAX_YAML})",
+            yaml.len()
+        ));
+    }
+    if QUEUED.fetch_add(1, Ordering::SeqCst) >= MAX_QUEUED {
+        QUEUED.fetch_sub(1, Ordering::SeqCst);
+        return Err("the checker is busy — try again in a minute".into());
+    }
+    let _slot = QueueSlot;
+    let _permit = check_gate()
+        .acquire()
+        .await
+        .map_err(|e| format!("checker busy: {e}"))?;
+    ap_adapter::first_look(season, yaml).await
+}
+
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")

@@ -1468,7 +1468,7 @@ impl Db {
     ) -> Result<bool, sqlx::Error> {
         let res = sqlx::query(
             "UPDATE submission
-             SET slot_name = ?1, is_custom = is_custom AND game = ?2, game = ?2, yaml_file = ?3,
+             SET slot_name = ?1, is_custom = ?9 OR (is_custom AND game = ?2), game = ?2, yaml_file = ?3,
                  held_for = CASE WHEN ?9 THEN held_for END, held_err = NULL
              WHERE id = ?4 AND season = ?5 AND yaml_file = ?7
                AND ((account_id = ?6 AND (SELECT state FROM season WHERE id = ?5) = 'signup')

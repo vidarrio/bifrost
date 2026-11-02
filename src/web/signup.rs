@@ -64,6 +64,8 @@ pub(crate) async fn signups_list(State(st): State<AppState>, me: auth::Me) -> Ht
     render::signups_list(&open)
 }
 
+const NOT_TEXT: &str = "That YAML isn't UTF-8 text. Save it as UTF-8 and try again.";
+
 /// The most a game's notes can hold, in characters.
 const MAX_NOTES: usize = 2000;
 
@@ -116,6 +118,7 @@ pub(crate) async fn signup_game(
         is_host,
         pre_gen,
         edit_notes: is_mod || (pre_gen && (is_host || my_seat.is_some())),
+        show_reason: is_mod || is_host || my_seat.is_some(),
         replace,
         welcome,
         invite: invites
@@ -189,7 +192,9 @@ pub(crate) async fn signup_game_yaml(
     let Some(yaml) = yaml.filter(|b| !b.is_empty()) else {
         return refuse("No YAML uploaded.");
     };
-    let yaml_str = String::from_utf8_lossy(&yaml).to_string();
+    let Ok(yaml_str) = String::from_utf8(yaml.clone()) else {
+        return refuse(NOT_TEXT);
+    };
     // Its world still waiting: it can't be checked yet, so it gets the first look
     // and stays held. Otherwise it has to pass like a new signup.
     let waiting = match &sub.held_for {
@@ -200,7 +205,11 @@ pub(crate) async fn signup_game_yaml(
         if yaml.len() > checker::MAX_YAML {
             return refuse("That YAML is too large.");
         }
-        match worlds::held_first_look(&yaml_str, &request.game) {
+        let look = match checker::first_look(&ctx.dirs(), &yaml_str).await {
+            Ok(look) => look,
+            Err(e) => return refuse(&format!("Checker error: {e}")),
+        };
+        match worlds::judge_first_look(&look, &request.game) {
             Ok(found) => found,
             Err(e) => return refuse(&e),
         }
@@ -245,6 +254,27 @@ pub(crate) async fn signup_game_yaml(
         .await;
     let page = match replaced {
         Ok(true) => {
+            let _ = tokio::fs::remove_file(&sub.yaml_file).await;
+            // Its world may have been decided while this was going on, with the
+            // old file: settle the new one now.
+            if let (Some(req), None) = (
+                &waiting,
+                match &waiting {
+                    Some(r) => st.db.world_request(ctx.id, &r.file).await,
+                    None => None,
+                },
+            ) {
+                if ctx.dirs().worlds.join(&req.file).is_file() {
+                    let (db, season, file) = (st.db.clone(), ctx.id, req.file.clone());
+                    tokio::spawn(async move { worlds::recheck_held(&db, season, &file).await });
+                } else {
+                    let why = format!(
+                        "{} was rejected: replace the YAML with an installed game's, or remove this signup",
+                        req.file
+                    );
+                    let _ = st.db.set_held_err(id, &yaml_path, &why).await;
+                }
+            }
             let _ = tokio::fs::remove_file(&sub.yaml_file).await;
             if sub.account_id != me.id() {
                 tracing::info!(
@@ -367,7 +397,9 @@ pub(crate) async fn signup_check(
     let Some(yaml) = yaml.filter(|b| !b.is_empty()) else {
         return Json(serde_json::json!({"ok": false, "error": "No YAML received."}));
     };
-    let yaml_str = String::from_utf8_lossy(&yaml).to_string();
+    let Ok(yaml_str) = String::from_utf8(yaml) else {
+        return Json(serde_json::json!({"ok": false, "error": NOT_TEXT}));
+    };
     match checker::check_yaml(&ctx.dirs(), &yaml_str).await {
         Ok(r) => {
             let (name, game) = r
@@ -459,7 +491,9 @@ pub(crate) async fn signup_post(
     let Some(yaml) = yaml.filter(|b| !b.is_empty()) else {
         return refuse("No YAML uploaded.");
     };
-    let yaml_str = String::from_utf8_lossy(&yaml).to_string();
+    let Ok(yaml_str) = String::from_utf8(yaml.clone()) else {
+        return refuse(NOT_TEXT);
+    };
     let held_for = pending_world.trim().to_string();
     let (slot_name, game) = if !held_for.is_empty() {
         // Its world waits for approval, so the YAML can't be checked yet: hold
@@ -471,7 +505,11 @@ pub(crate) async fn signup_post(
             return refuse("That YAML is too large.");
         }
         // A first look, so the player hears now; the check on approval decides.
-        match worlds::held_first_look(&yaml_str, &request.game) {
+        let look = match checker::first_look(&ctx.dirs(), &yaml_str).await {
+            Ok(look) => look,
+            Err(e) => return refuse(&format!("Checker error: {e}")),
+        };
+        match worlds::judge_first_look(&look, &request.game) {
             Ok((name, _)) if st.db.slot_name_taken(ctx.id, &name).await => {
                 return refuse(&slot_taken(&name));
             }
