@@ -143,5 +143,44 @@
         ]
       }
     ]
+  },
+  {
+    "name": "HiddenParentChild",
+    "parent": "VisLater",
+    "sections": [
+      {
+        "name": "S"
+      }
+    ]
+  },
+  {
+    "name": "AdoptedTree",
+    "parent": "@Blocked",
+    "children": [
+      {
+        "name": "Kid",
+        "sections": [
+          {
+            "name": "S"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "MarkedEmpty",
+    "sections": [
+      {
+        "name": "S"
+      }
+    ],
+    "map_locations": [
+      {
+        "map": "m",
+        "x": 8,
+        "y": 8,
+        "force_invisibility_rules": ""
+      }
+    ]
   }
 ]

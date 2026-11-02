@@ -1511,12 +1511,8 @@ impl Session {
         if enforce_vis {
             settle_visibility(&self.lua, &self.eng);
         }
-        if self.budget.get() == 0 {
-            note_error(
-                &self.eng,
-                "the pack's rules ran out of instruction budget, so some may read as unmet",
-            );
-        }
+        // Marker rules below keep function results for this pass, as settling does.
+        self.eng.borrow_mut().updating_cache = true;
         // After settling: a rule function may have added locations.
         let nodes = self.eng.borrow().nodes.clone();
         let level_of = |id: &str| {
@@ -1604,7 +1600,7 @@ impl Session {
             let loc_checked = !sections.is_empty() && sections.iter().all(|s| s.checked);
             for ml in &n.map_locations {
                 // A map location's own rules, as PopTracker's `isVisible` has them.
-                if enforce_vis {
+                if enforce_vis && self.budget.get() != 0 {
                     let met = |rules: &Rules| {
                         resolve_rules(&self.lua, &self.eng, rules, true, false) != LEVEL_NONE
                     };
@@ -1640,6 +1636,17 @@ impl Session {
                 out.layout = Some(resolve_layout(&layouts, n, 0));
                 break;
             }
+        }
+        {
+            let mut e = self.eng.borrow_mut();
+            e.updating_cache = false;
+            e.indirect_codes.clear();
+        }
+        if self.budget.get() == 0 {
+            note_error(
+                &self.eng,
+                "the pack's rules ran out of instruction budget, so some may read as unmet",
+            );
         }
         // Last: evaluating the rules above runs pack code too.
         {
@@ -1854,6 +1861,10 @@ fn run_rule_function(lua: &Lua, eng: &E, code: &str) -> i64 {
     let Ok(func) = lua.globals().get::<Function>(name) else {
         return 0;
     };
+    // A host function as a rule's runs no Lua instructions, so count the calls too.
+    if !count_custom_call(eng) {
+        return 0;
+    }
     let args =
         MultiValue::from_iter(parts.filter_map(|a| lua.create_string(a).ok().map(Value::String)));
     match func.call::<Value>(args) {
@@ -2388,6 +2399,15 @@ fn parse_rules(eng: &E, node: &serde_json::Value, field: &str, parent: &Rules) -
     out
 }
 
+/// A map location's own rules. Unlike a location's, an empty string is a rule, one
+/// that's always met.
+fn map_location_rules(eng: &E, m: &serde_json::Value, field: &str) -> Rules {
+    match m.get(field) {
+        Some(serde_json::Value::String(s)) => vec![vec![s.clone()]],
+        _ => parse_rules(eng, m, field, &Vec::new()),
+    }
+}
+
 /// Flatten the location tree into [`LocNode`]s, accumulating the parent chain's
 /// access-rule groups so a node's effective accessibility includes its ancestors.
 fn flatten_locations(
@@ -2454,8 +2474,8 @@ fn flatten_locations(
                         y: num(m.get("y")?)?,
                         size: m.get("size").and_then(num),
                         shape: m.get("shape").and_then(|v| v.as_str().map(String::from)),
-                        restrict: parse_rules(eng, m, "restrict_visibility_rules", &Vec::new()),
-                        force_hidden: parse_rules(eng, m, "force_invisibility_rules", &Vec::new()),
+                        restrict: map_location_rules(eng, m, "restrict_visibility_rules"),
+                        force_hidden: map_location_rules(eng, m, "force_invisibility_rules"),
                     })
                 })
                 .collect()
