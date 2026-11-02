@@ -74,6 +74,9 @@ pub(crate) struct GameQuery {
     /// Just signed up, so say so.
     #[serde(default)]
     new: bool,
+    /// What was just changed, so say so.
+    #[serde(default)]
+    saved: String,
 }
 
 /// A game's page: who's in it and its notes, with forms by viewer and stage.
@@ -104,6 +107,11 @@ pub(crate) async fn signup_game(
             sub.slot_name, sub.game
         ),
     });
+    let saved = match q.saved.as_str() {
+        "notes" => Some("Notes saved.".to_string()),
+        "yaml" => Some(format!("YAML replaced: {} — {}.", sub.slot_name, sub.game)),
+        _ => None,
+    };
     let invites =
         (is_host && pre_gen).then(|| (format!("signup/game/{id}"), format!("/s/{}/seat/", ctx.id)));
     let links = if invites.is_some() {
@@ -121,6 +129,7 @@ pub(crate) async fn signup_game(
         show_reason: is_mod || is_host || my_seat.is_some(),
         replace,
         welcome,
+        saved,
         invite: invites
             .as_ref()
             .map(|(action, base)| render::invite_box(action, base, &links))
@@ -157,7 +166,9 @@ pub(crate) async fn signup_game_notes(
         .set_submission_notes(ctx.id, id, me.id(), ctx.can_manage(&me), notes)
         .await
     {
-        Ok(true) => Redirect::to(&ctx.url(&format!("/signup/game/{id}"))).into_response(),
+        Ok(true) => {
+            Redirect::to(&ctx.url(&format!("/signup/game/{id}?saved=notes"))).into_response()
+        }
         _ => render::signup_result("You can't change these notes.", false).into_response(),
     }
 }
@@ -274,7 +285,8 @@ pub(crate) async fn signup_game_yaml(
                     slot_name
                 );
             }
-            return Redirect::to(&ctx.url(&format!("/signup/game/{id}"))).into_response();
+            return Redirect::to(&ctx.url(&format!("/signup/game/{id}?saved=yaml")))
+                .into_response();
         }
         Ok(false) => refuse(closed),
         Err(e) if db::name_clash(&e) => refuse(&slot_taken(&slot_name)),

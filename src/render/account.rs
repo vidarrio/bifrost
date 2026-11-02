@@ -10,7 +10,7 @@ pub(super) const AUTH_STYLE: &str = r#"<style>
 .utable{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px}
 .utable th{text-align:left;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:6px 8px;border-bottom:1px solid var(--bd)}
 .utable td{padding:7px 8px;border-bottom:1px solid var(--bd);vertical-align:middle}
-.utable form{display:inline}.utable .mono{font-family:var(--mono);font-size:12px}
+.utable form{display:inline}.utable .mono{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
 .utable tr.dead td{color:var(--muted)}
 .linkform{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin:6px 0 14px}
 .linkform label{display:grid;gap:4px;font-size:12px;color:var(--muted)}

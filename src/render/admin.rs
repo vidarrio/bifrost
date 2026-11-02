@@ -192,7 +192,13 @@ pub fn admin_page(
         r#"<p class="empty"><b>Generate a season</b> stages the {} queued signup(s), rolls a new seed, maps slots + auto-claims, deploys it (the game restarts), and closes signups — use it for a fresh signup round.<br><b>Regenerate</b> re-rolls the <em>current</em> lineup: it reuses the staged YAMLs + installed apworlds, produces a new world + fresh save (applying the current host.yaml), and keeps everyone's claims. Signups are left as they are.</p>"#,
         subs.len()
     ));
-    let cls = if running { "banner" } else { "banner ok" };
+    let cls = if running {
+        "banner"
+    } else if gen_msg.starts_with("Failed") || gen_msg.starts_with("Generated, but") {
+        "banner bad"
+    } else {
+        "banner ok"
+    };
     let mark = if running { "⏳ " } else { "" };
     b.push_str(&format!(
         r#"<div class="{cls}">{mark}{}</div>"#,
@@ -603,13 +609,14 @@ pub fn admin_page(
 
     b.push_str(r#"<div class="gtabpanel" id="tab-archive" hidden>"#);
     // Archive: live → archived (frozen standings + raw bundle, server stopped).
-    b.push_str(r#"<h2>Archive this season</h2>"#);
     if let Some(name) = archived {
+        b.push_str(r#"<h2>Archive this season</h2>"#);
         b.push_str(&format!(
             r#"<div class="statline">✓ Archived as <b>{}</b>. <a href="season">View the summary</a></div>"#,
             esc(name),
         ));
-    } else {
+    } else if season.state().is_live() {
+        b.push_str(r#"<h2>Archive this season</h2>"#);
         b.push_str(r#"<p class="empty">Ends the season: freezes the roster, each game's final standing and the season's minesweeper leaderboards for <b>Past Seasons</b>, writes the raw replayable bundle (multidata, save, YAMLs, apworlds, logs) to the archives folder, then stops the season's AP server (saving) and frees its port.</p>"#);
         b.push_str(&format!(
             r#"<form class="console" method="post" action="admin/archive-season" autocomplete="off" onsubmit="return confirm('Archive this season? Its game server stops.')"><input type="text" name="name" placeholder="{}" title="Final name (optional)" style="flex:1;min-width:0"><button type="submit">Archive &amp; finalize</button></form>"#,
@@ -651,6 +658,9 @@ pub fn admin_page(
                 &season.name,
                 "Delete this finished season and its bundle? This cannot be undone.",
             ));
+        }
+        crate::db::State::Generating => {
+            b.push_str(r#"<p class="empty">Nothing to do here while it's generating.</p>"#);
         }
         _ => {}
     }
