@@ -1327,7 +1327,9 @@ impl Db {
 
     /// Point a game at a new YAML, for its host, while signups are open. It
     /// keeps everything else, and is no longer held: the new file passed its
-    /// check. Refused (false) if it isn't theirs or signups have closed.
+    /// check. Refused (false) if it isn't theirs, signups have closed, or its
+    /// file is no longer `old_yaml` (a replace or removal got there first).
+    #[allow(clippy::too_many_arguments)]
     pub async fn replace_submission(
         &self,
         season: i64,
@@ -1335,13 +1337,14 @@ impl Db {
         account: i64,
         slot_name: &str,
         game: &str,
+        old_yaml: &str,
         yaml_file: &str,
     ) -> Result<bool, sqlx::Error> {
         let res = sqlx::query(
             "UPDATE submission
              SET slot_name = ?1, is_custom = is_custom AND game = ?2, game = ?2, yaml_file = ?3,
                  held_for = NULL, held_err = NULL
-             WHERE id = ?4 AND season = ?5 AND account_id = ?6
+             WHERE id = ?4 AND season = ?5 AND account_id = ?6 AND yaml_file = ?7
                AND (SELECT state FROM season WHERE id = ?5) = 'signup'",
         )
         .bind(slot_name)
@@ -1350,6 +1353,7 @@ impl Db {
         .bind(id)
         .bind(season)
         .bind(account)
+        .bind(old_yaml)
         .execute(&self.pool)
         .await?;
         Ok(res.rows_affected() > 0)

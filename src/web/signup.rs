@@ -92,7 +92,9 @@ pub(crate) async fn signup_game_notes(
     Path(id): Path<i64>,
     Form(f): Form<NotesForm>,
 ) -> Response {
-    let notes = f.notes.trim();
+    // Browsers send line breaks as CRLF but count them as one.
+    let notes = f.notes.replace("\r\n", "\n");
+    let notes = notes.trim();
     if notes.chars().count() > MAX_NOTES {
         return render::signup_result(
             &format!("Notes can be at most {MAX_NOTES} characters."),
@@ -114,13 +116,14 @@ pub(crate) async fn signup_game_yaml(
     me: auth::Me,
     Path(id): Path<i64>,
     mut mp: Multipart,
-) -> Html<String> {
+) -> Response {
     let closed = "You can't replace this YAML: it isn't yours, or signups are closed.";
+    let refuse = |text: &str| render::signup_result(text, false).into_response();
     let Some(sub) = st.db.submission(ctx.id, id).await else {
-        return render::signup_result(closed, false);
+        return refuse(closed);
     };
     if sub.account_id != me.id() || !ctx.state().accepts_signups() {
-        return render::signup_result(closed, false);
+        return refuse(closed);
     }
     let mut yaml: Option<Vec<u8>> = None;
     while let Ok(Some(field)) = mp.next_field().await {
@@ -131,48 +134,56 @@ pub(crate) async fn signup_game_yaml(
         }
     }
     let Some(yaml) = yaml.filter(|b| !b.is_empty()) else {
-        return render::signup_result("No YAML uploaded.", false);
+        return refuse("No YAML uploaded.");
     };
     let yaml_str = String::from_utf8_lossy(&yaml).to_string();
     let result = match checker::check_yaml(&ctx.dirs(), &yaml_str).await {
         Ok(r) => r,
-        Err(e) => return render::signup_result(&format!("Checker error: {e}"), false),
+        Err(e) => return refuse(&format!("Checker error: {e}")),
     };
     if !result.ok {
-        return render::signup_result(
-            &format!("That YAML didn't pass: {}.", result.errors.join("; ")),
-            false,
-        );
+        return refuse(&format!(
+            "That YAML didn't pass: {}.",
+            result.errors.join("; ")
+        ));
     }
     if result.players.len() > 1 {
-        return render::signup_result(worlds::ONE_GAME_PER_FILE, false);
+        return refuse(worlds::ONE_GAME_PER_FILE);
     }
     let Some(p0) = result.players.first() else {
-        return render::signup_result("Couldn't read a player from that YAML.", false);
+        return refuse("Couldn't read a player from that YAML.");
     };
     let game = p0.game.clone().unwrap_or_else(|| "?".into());
     let Some(yaml_path) = store_yaml(&ctx, &p0.name, &yaml).await else {
-        return render::signup_result("Couldn't store the YAML.", false);
+        return refuse("Couldn't store the YAML.");
     };
     let replaced = st
         .db
-        .replace_submission(ctx.id, id, me.id(), &p0.name, &game, &yaml_path)
+        .replace_submission(
+            ctx.id,
+            id,
+            me.id(),
+            &p0.name,
+            &game,
+            &sub.yaml_file,
+            &yaml_path,
+        )
         .await;
     let page = match replaced {
         Ok(true) => {
             let _ = tokio::fs::remove_file(&sub.yaml_file).await;
-            return render::signup_result(&format!("Replaced: {} — {game}.", p0.name), true);
+            return Redirect::to(&ctx.url(&format!("/signup/game/{id}"))).into_response();
         }
-        Ok(false) => render::signup_result(closed, false),
+        Ok(false) => refuse(closed),
         Err(e)
             if e.as_database_error()
                 .is_some_and(|d| d.is_unique_violation()) =>
         {
-            render::signup_result(&slot_taken(&p0.name), false)
+            refuse(&slot_taken(&p0.name))
         }
         Err(e) => {
             tracing::warn!("replacing a signup in season {}: {e}", ctx.id);
-            render::signup_result("Couldn't store the signup.", false)
+            refuse("Couldn't store the signup.")
         }
     };
     let _ = tokio::fs::remove_file(&yaml_path).await;
@@ -338,7 +349,7 @@ async fn store_yaml(ctx: &scope::SeasonCtx, slot_name: &str, yaml: &[u8]) -> Opt
 
 fn slot_taken(name: &str) -> String {
     format!(
-        "The slot name '{name}' is already taken in this season. Each game needs its own: change name: in the YAML and try again. To replace your own signup, remove it first."
+        "The slot name '{name}' is already taken in this season. Each game needs its own: change name: in the YAML and try again. To replace your own signup, upload the new file on its page."
     )
 }
 

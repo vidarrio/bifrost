@@ -68,9 +68,16 @@ try:
     r = post(bob, f"{url}/yaml", files={"yaml": ("y.yaml", YAML)})
     check("a replacement can't take another game's name", "already taken" in r.text and set(os.listdir(subs)) == before, r.text[-300:])
     r = post(bob, f"{url}/yaml", files={"yaml": ("y.yaml", b"name: Bo c\ngame: ChecksFinder\nChecksFinder: {}\n")})
-    check("the host replaces it, renaming the slot", "Replaced: Bo c" in r.text, r.text[-300:])
+    check("the host replaces it, renaming the slot", "<h1>Bo c</h1>" in r.text and "Save notes" in r.text and "Replace the YAML" in r.text, r.text[-300:])
     check("…leaving one file for it", len(os.listdir(subs)) == len(before), os.listdir(subs))
     check("…and keeping its notes", "double" in get(bob, url).text and "Bo c" in get(bob, url).text)
+    check("the game page escapes them too", "<b>double" not in bob.get(bob.base + url).text)
+    post(root, "/admin/seasons", data=dict(name="Elsewhere"))
+    other = max(int(n) for n in re.findall(r"/s/(\d+)/admin", get(root, "/admin/seasons").text))
+    check("a game isn't found through another season", "double" not in get(bob, f"/s/{other}/signup/game/{game}").text)
+    post(bob, f"/s/{other}/signup/game/{game}/notes", data=dict(notes="elsewhere"))
+    check("…nor changed", "elsewhere" not in get(bob, url).text)
+    check("a game's page needs a sign-in", "double" not in get(srv.session(), url).text)
     # A player with a game gets a button for another, within the season's limit.
     fresh = srv.invite_user(root, "fresh")
     page = get(fresh, f"/s/{sid}/signup").text
@@ -91,6 +98,10 @@ try:
     post(root, f"/s/{sid}/admin/signups/limit", data=dict(games="0"))
     post(root, f"/s/{sid}/admin/generate")
     wait_for(lambda: "Generated seed" in get(root, f"/s/{sid}/admin").text, 300, 3)
+    r = post(bob, f"{url}/notes", data=dict(notes="too late"))
+    check("once generated the notes are read-only", "can't change" in r.text and "Save notes" not in get(bob, url).text, r.text[-300:])
+    r = post(bob, f"{url}/yaml", files={"yaml": ("y.yaml", b"name: Late\ngame: ChecksFinder\nChecksFinder: {}\n")})
+    check("…and the YAML can't be replaced", "can't replace" in r.text and "Replace the YAML" not in get(bob, url).text, r.text[-300:])
     connected = lambda: '"connected":true' in get(root, f"/s/{sid}/board/fragment").text.replace(" ", "") \
         or "isn't connected" not in post(root, f"/s/{sid}/admin/console", data={"cmd": "/players"}).text
     pid = wait_for(lambda: server_pid(srv), 60, 1)

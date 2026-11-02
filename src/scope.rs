@@ -42,6 +42,7 @@ struct Selected(i64);
 /// Instance-level pages: not about a season, so not reachable under `/s/{id}/`
 /// (one URL each — a forward-auth proxy gating them by prefix sees them all).
 const INSTANCE_ROUTES: &[&str] = &[
+    "/signups",
     "/admin/seasons",
     "/admin/settings",
     "/admin/catalog",

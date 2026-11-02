@@ -300,6 +300,17 @@ pub fn signup_game_page(
             esc(&s.coop_names)
         ));
     }
+    match (&s.held_for, &s.held_err) {
+        (Some(_), Some(e)) => b.push_str(&format!(
+            r#"<div class="banner bad">Held: {}</div>"#,
+            esc(e)
+        )),
+        (Some(w), None) => b.push_str(&format!(
+            r#"<div class="banner ok">Held, waiting for {} to be approved. Its YAML can't be replaced until then, as it can't be checked yet.</div>"#,
+            esc(w)
+        )),
+        _ => {}
+    }
     b.push_str("<h2>Notes</h2>");
     if edit_notes {
         b.push_str(&format!(
