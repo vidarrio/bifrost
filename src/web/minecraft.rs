@@ -56,7 +56,7 @@ pub(crate) async fn mc_username_post(
     let name = f.mc_username.trim();
     if !st.db.has_claimed_slot(season, my_id).await {
         return render::notice(
-            "Claim a game this season first — the whitelist is for players with a slot of their own.",
+            "Play a game this season first — the whitelist is for players with a slot of their own.",
             false,
             &back,
         )

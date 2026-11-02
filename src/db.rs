@@ -1028,6 +1028,18 @@ impl Db {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
+        // A seat's name was free when it was picked, so an AP slot with that name
+        // is a clash: fail rather than seat them on another game.
+        for sub in subs {
+            for seat in self.try_seats_of(sub.id).await? {
+                if ap_slots.iter().any(|(_, name, _)| *name == seat.name) {
+                    return Err(sqlx::Error::Protocol(format!(
+                        "seat name {} is already another slot's",
+                        seat.name
+                    )));
+                }
+            }
+        }
         for (num, name, game) in ap_slots {
             sqlx::query(
                 "INSERT OR IGNORE INTO bifrost_slot (season, name, ap_slot, game) VALUES (?, ?, ?, ?)",
@@ -1080,21 +1092,6 @@ impl Db {
                     .bind(game)
                     .execute(&self.pool)
                     .await?;
-                    // The name was free when it was picked, so another game's row
-                    // here is a clash: fail rather than seat them on it.
-                    let on: i64 = sqlx::query_scalar(
-                        "SELECT ap_slot FROM bifrost_slot WHERE season = ? AND name = ?",
-                    )
-                    .bind(season)
-                    .bind(&seat.name)
-                    .fetch_one(&self.pool)
-                    .await?;
-                    if on != *num {
-                        return Err(sqlx::Error::Protocol(format!(
-                            "seat name {} is already another slot's",
-                            seat.name
-                        )));
-                    }
                     sqlx::query(
                         "INSERT OR IGNORE INTO claim (bifrost_slot_id, account_id, claimed_at)
                          SELECT id, ?, ? FROM bifrost_slot WHERE season = ? AND name = ?",
@@ -1327,6 +1324,7 @@ impl Db {
                         JOIN bifrost_slot h ON h.season = b.season AND h.ap_slot = b.ap_slot
                         WHERE h.season = s.season AND h.name = s.slot_name AND b.name <> s.slot_name
                           AND instr(', ' || s.coop_names || ',', ', ' || b.name || ',') = 0
+                          AND (SELECT state FROM season WHERE id = s.season) NOT IN ('draft', 'signup')
                     )), '') AS seat_names
              FROM submission s JOIN account a ON a.id = s.account_id
              WHERE s.season = ? ORDER BY s.created_at",
@@ -1348,6 +1346,7 @@ impl Db {
                         JOIN bifrost_slot h ON h.season = b.season AND h.ap_slot = b.ap_slot
                         WHERE h.season = s.season AND h.name = s.slot_name AND b.name <> s.slot_name
                           AND instr(', ' || s.coop_names || ',', ', ' || b.name || ',') = 0
+                          AND (SELECT state FROM season WHERE id = s.season) NOT IN ('draft', 'signup')
                     )), '') AS seat_names
              FROM submission s JOIN account a ON a.id = s.account_id
              WHERE s.id = ? AND s.season = ?",

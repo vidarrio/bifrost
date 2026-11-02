@@ -372,6 +372,12 @@ mod tests {
                 .is_err()
         );
         assert!(!db.claims_ap_slot(s, ann, 1).await);
+        let reversed = [slots[1].clone(), slots[0].clone()];
+        assert!(
+            db.seed_from_submissions(s, &reversed, &subs, None)
+                .await
+                .is_err()
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

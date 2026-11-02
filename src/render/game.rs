@@ -720,7 +720,7 @@ pub fn game_page(
             }
         } else {
             out.push_str(
-                r#"<h2>Send a hint</h2><p class="empty">Hinting the common game is open to anyone with a game this season — its shared hint points are reserved for players with a slot of their own. Claim a game on the board to join in.</p>"#,
+                r#"<h2>Send a hint</h2><p class="empty">Hinting the common game is open to anyone with a game this season — its shared hint points are reserved for players with a slot of their own. Sign up with a game, or join one with an invite link, to take part.</p>"#,
             );
         }
 

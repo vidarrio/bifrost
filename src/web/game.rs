@@ -614,8 +614,12 @@ pub(crate) async fn game_output(
         .any(|r| r.ap_slot == ap_slot && r.claimed_by_id == Some(my_id));
     let back = format!("/game/{ap_slot}");
     if !(i_claim || is_admin) {
-        return render::notice("Claim this game to download its files.", false, &back)
-            .into_response();
+        return render::notice(
+            "Only this game's players can download its files.",
+            false,
+            &back,
+        )
+        .into_response();
     }
     if generate::member_player(&q.file) != Some(ap_slot) {
         return render::notice("That file isn't for this game.", false, &back).into_response();

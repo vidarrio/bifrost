@@ -109,6 +109,8 @@ try:
     seat = re.search(r'name="seat" value="(\d+)"', get(cat, url).text).group(1)
     post(cat, f"{url}/seat/rename", data=dict(seat=seat, name="Kitty"))
     check("a partner renames their seat", "Kitty" in get(bob, url).text)
+    r = post(cat, f"{url}/seat/rename", data=dict(seat=seat, name="Ann"))
+    check("…but not to a name in use", "already taken" in r.text, r.text[-300:])
     r = post(dee, f"/s/{sid}/signup", files={"yaml": ("y.yaml", b"name: Kitty\ngame: ChecksFinder\nChecksFinder: {}\n")})
     check("a signup can't take a seat's name", "already taken" in r.text, r.text[-300:])
     link = f"/s/{sid}/seat/" + new_link()

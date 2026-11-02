@@ -608,6 +608,9 @@ pub(crate) async fn signup_seat_rename(
     if let Some(e) = db::seat_name_error(name) {
         return render::signup_result(e, false).into_response();
     }
+    if st.db.slot_name_taken(ctx.id, name).await {
+        return render::signup_result(&name_taken(name), false).into_response();
+    }
     match st.db.rename_seat(ctx.id, f.seat, me.id(), name).await {
         Ok(db::JoinOutcome::Joined) => {
             Redirect::to(&ctx.url(&format!("/signup/game/{id}"))).into_response()
