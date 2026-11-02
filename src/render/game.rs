@@ -225,8 +225,8 @@ pub(super) const PT_JS: &str = r#"<script>
    var turn={east:90,south:180,west:270}[k.orientation||m.location_orientation];
    if(turn&&(shape==='trapezoid'||shape==='triangle'||shape==='concave_kite')) mk.style.transform='rotate('+turn+'deg)';
    // As PACKS.md has it: the border goes outside the size, at this many map pixels.
-   var edge=Number(k.border!=null?k.border:(m.location_border!=null?m.location_border:1));
-   if(!isFinite(edge)||edge<0) edge=1;
+   var edge=Number(k.border!=null?k.border:(m.location_border!=null?m.location_border:8));
+   if(!isFinite(edge)||edge<0) edge=8;
    mk._edge=edge; mk._inset=edge/(s+2*edge)*100;
    mk.appendChild(document.createElement('span')).className='ptin';
    mk.dataset.key=k.location+'@'+k.map; mk.dataset.loc=k.location;
