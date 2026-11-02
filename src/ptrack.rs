@@ -23,24 +23,24 @@ use tokio::sync::{Semaphore, SemaphorePermit};
 use crate::sandbox::{self, Job};
 use crate::{ap_adapter, config};
 
-/// Per-slot extracted-pack directory: `<data>/packs/<season>/<ap_slot>/`.
-fn slot_dir(season: Id, ap_slot: i64) -> PathBuf {
+/// A game's extracted-pack directory, by its id, which a re-roll keeps: `<data>/packs/<season>/<game>/`.
+fn pack_dir(season: Id, game: Id) -> PathBuf {
     config::get()
         .packs_dir()
         .join(season.to_string())
-        .join(ap_slot.to_string())
+        .join(game.to_string())
 }
 
 /// Is a usable pack installed for this slot?
-pub fn has_pack(season: Id, ap_slot: i64) -> bool {
-    poptracker::pack_root(&slot_dir(season, ap_slot)).is_ok()
+pub fn has_pack(season: Id, game: Id) -> bool {
+    poptracker::pack_root(&pack_dir(season, game)).is_ok()
 }
 
 /// A version stamp for the slot's pack (install dir mtime, epoch secs), used to
 /// cache-bust asset URLs when a pack is (re)installed — browsers otherwise keep
 /// showing cached images even across a hard refresh.
-pub fn pack_version(season: Id, ap_slot: i64) -> u64 {
-    std::fs::metadata(slot_dir(season, ap_slot))
+pub fn pack_version(season: Id, game: Id) -> u64 {
+    std::fs::metadata(pack_dir(season, game))
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -91,9 +91,9 @@ pub async fn validate(zip_bytes: Arc<Vec<u8>>) -> Result<poptracker::Summary, St
 }
 
 /// Install (extract) an uploaded pack zip for a slot, replacing any existing one.
-fn install(season: Id, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), String> {
-    SLOTS.lock().unwrap().remove(&(season, ap_slot));
-    let dir = slot_dir(season, ap_slot);
+fn install(season: Id, game: Id, zip_bytes: &[u8]) -> Result<(), String> {
+    SLOTS.lock().unwrap().remove(&(season, game));
+    let dir = pack_dir(season, game);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
     let tmp = write_temp("install", zip_bytes)?;
@@ -111,20 +111,20 @@ fn install(season: Id, ap_slot: i64, zip_bytes: &[u8]) -> Result<(), String> {
 /// [`install`] as a worker's equal: it can take a while, and holds a permit for it.
 pub async fn install_pack(
     season: Id,
-    ap_slot: i64,
+    game: Id,
     bytes: Arc<Vec<u8>>,
     variant: String,
 ) -> Result<(), String> {
     let permit = worker_permit().await.map_err(|Busy| BUSY.to_string())?;
     let installed = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        install(season, ap_slot, &bytes)?;
-        std::fs::write(variant_file(season, ap_slot), variant).map_err(|e| format!("write: {e}"))
+        install(season, game, &bytes)?;
+        std::fs::write(variant_file(season, game), variant).map_err(|e| format!("write: {e}"))
     })
     .await
     .map_err(|_| "Upload failed.".to_string())?;
     // A poll during the install may have seen it half unpacked.
-    SLOTS.lock().unwrap().remove(&(season, ap_slot));
+    SLOTS.lock().unwrap().remove(&(season, game));
     installed
 }
 
@@ -135,10 +135,10 @@ pub fn remove_season(season: Id) {
 }
 
 /// Remove a slot's installed pack.
-pub fn remove(season: Id, ap_slot: i64) {
-    SLOTS.lock().unwrap().remove(&(season, ap_slot));
-    let _ = std::fs::remove_dir_all(slot_dir(season, ap_slot));
-    let _ = std::fs::remove_file(variant_file(season, ap_slot));
+pub fn remove(season: Id, game: Id) {
+    SLOTS.lock().unwrap().remove(&(season, game));
+    let _ = std::fs::remove_dir_all(pack_dir(season, game));
+    let _ = std::fs::remove_file(variant_file(season, game));
 }
 
 /// What a pack learns on connect, besides the items: the slot's slot data and
@@ -184,13 +184,13 @@ pub struct Feed<'a> {
 /// and a pack that hit a limit is held back.
 pub async fn compute(
     season: Id,
-    ap_slot: i64,
+    game: Id,
     version: u64,
     feed: Feed<'_>,
 ) -> Result<Arc<String>, ComputeError> {
     use sha2::{Digest, Sha256};
-    let key = (season, ap_slot);
-    let root = poptracker::pack_root(&slot_dir(season, ap_slot))
+    let key = (season, game);
+    let root = poptracker::pack_root(&pack_dir(season, game))
         .map_err(|e| ComputeError::Failed(e.to_string()))?;
     let request = Request {
         pack: root.clone(),
@@ -270,7 +270,7 @@ async fn run_compute(root: PathBuf, request: Vec<u8>) -> (Result<String, Failure
 
 /// One run's place in its slot.
 struct RunOf {
-    key: (Id, i64),
+    key: (Id, Id),
     id: u64,
     hash: [u8; 32],
     tx: tokio::sync::oneshot::Sender<Result<Arc<String>, ComputeError>>,
@@ -362,7 +362,7 @@ impl Slot {
     }
 }
 
-static SLOTS: Mutex<BTreeMap<(Id, i64), Slot>> = Mutex::new(BTreeMap::new());
+static SLOTS: Mutex<BTreeMap<(Id, Id), Slot>> = Mutex::new(BTreeMap::new());
 static NEXT_RUN: AtomicU64 = AtomicU64::new(1);
 
 /// A slot nobody has looked at for this long gives up its result.
@@ -748,17 +748,17 @@ pub fn sweep_scratch() {
 }
 
 /// Read a pack asset (e.g. a map image) for serving to the browser.
-pub fn read_pack_asset(season: Id, ap_slot: i64, rel: &str) -> Option<Vec<u8>> {
-    let root = poptracker::pack_root(&slot_dir(season, ap_slot)).ok()?;
-    let variant = std::fs::read_to_string(variant_file(season, ap_slot)).unwrap_or_default();
+pub fn read_pack_asset(season: Id, game: Id, rel: &str) -> Option<Vec<u8>> {
+    let root = poptracker::pack_root(&pack_dir(season, game)).ok()?;
+    let variant = std::fs::read_to_string(variant_file(season, game)).unwrap_or_default();
     poptracker::read_asset(&root, &variant, rel)
 }
 
 /// Where a slot's pack's variant is kept, next to its folder: a worker chose it
 /// on upload, and this process doesn't parse what a pack wrote to find out.
 /// A pack installed before this was kept has none, and serves from its root.
-fn variant_file(season: Id, ap_slot: i64) -> PathBuf {
-    slot_dir(season, ap_slot).with_extension("variant")
+fn variant_file(season: Id, game: Id) -> PathBuf {
+    pack_dir(season, game).with_extension("variant")
 }
 
 /// Write an uploaded pack to a new, unguessable, owner-only file in the temp
