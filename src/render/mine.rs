@@ -259,7 +259,7 @@ function showLb(kind){
  if(view==='board'&&!over)pauseKind(activeKind);
  view='lb';lbKind=kind;playview.style.display='none';lbview.style.display='';updateTabUI();
  lbview.innerHTML='<p class="empty">Loading…</p>';
- fetch('minesweeper/leaderboard?kind='+kind+FB).then(function(r){return r.text()}).then(function(h){
+ fetch('minesweeper/leaderboard?kind='+kind).then(function(r){return r.text()}).then(function(h){
   if(view==='lb'&&lbKind===kind)lbview.innerHTML=h;
  }).catch(function(){lbview.innerHTML='<p class="empty">Could not load leaderboard.</p>';});
 }
@@ -275,8 +275,6 @@ setInterval(renderTimer,250);
 // every request so the server records to the right scope and skips bonus hints.
 // `FREE` is the page-level global set just above this script.
 var IS_FREE=(typeof FREE!=='undefined')&&FREE===true;
-var FB=IS_FREE?'&free=true':'';
-function wf(o){if(IS_FREE)o.free='true';return o;}
 function post(url,body){return fetch(url,{method:'POST',body:body?new URLSearchParams(body):undefined}).then(function(r){return r.json()});}
 function setStats(h){if(h!=null&&statsEl)statsEl.innerHTML=h;}
 function openCell(cell){var cb=cells[cell.r][cell.c];cb.classList.remove('flag');cb.classList.add('open');if(cell.n>0){cb.textContent=cell.n;cb.setAttribute('data-n',cell.n);}else{cb.textContent='';}}
@@ -329,7 +327,7 @@ function chordReveal(r,c){
 function reveal(r,c){
  if(over)return Promise.resolve();var btn=cells[r][c];
  if(btn.classList.contains('open')||btn.classList.contains('flag'))return Promise.resolve();
- return post('minesweeper/reveal',wf({r:r,c:c,kind:activeKind})).then(function(j){
+ return post('minesweeper/reveal',{r:r,c:c,kind:activeKind}).then(function(j){
   if(over)return;
   if(!j.ok){msg.className='inlinemsg bad';msg.textContent=j.error||'Invalid.';return;}
   if(j.state==='lost'){over=true;(j.mines||[]).forEach(function(m){var mb=cells[m.r][m.c];mb.classList.add('open','mine');mb.textContent='✱';});msg.className='inlinemsg bad';msg.textContent='Boom — try again.';setStats(j.stats);setTimer(j.elapsed_ms,false);showNewBtn(true);return;}
@@ -342,7 +340,7 @@ function startBoard(w,h,mn){W=w;H=h;minesN=mn;over=false;flags=0;buildGrid();upd
 // Start a fresh board for the active difficulty.
 function newGame(){
  msg.textContent='';msg.className='inlinemsg';showNewBtn(false);
- post('minesweeper/new',wf({kind:activeKind})).then(function(j){
+ post('minesweeper/new',{kind:activeKind}).then(function(j){
   if(!j.ok){msg.className='inlinemsg bad';msg.textContent=j.error||'Could not start.';grid.innerHTML='';return;}
   startBoard(j.w,j.h,j.mines);setTimer(0,false);
  }).catch(function(){msg.className='inlinemsg bad';msg.textContent='Could not start.';});
@@ -352,7 +350,7 @@ function newGame(){
 // comes back paused and resumes on the next reveal; an untouched board shows no
 // "resumed" notice.
 function loadGame(){
- fetch('minesweeper/state?kind='+activeKind+FB).then(function(r){return r.json()}).then(function(j){
+ fetch('minesweeper/state?kind='+activeKind).then(function(r){return r.json()}).then(function(j){
   if(!j||!j.active){newGame();return;}
   startBoard(j.w,j.h,j.mines);showNewBtn(false);
   var cs=j.cells||[];cs.forEach(openCell);setTimer(j.elapsed_ms,false);
@@ -362,7 +360,7 @@ function loadGame(){
 // Pause the active difficulty's clock (tab hidden/closed, or leaving for the
 // other difficulty); it resumes on the next reveal of that board.
 function pauseKind(kind){
- try{if(!navigator.sendBeacon('minesweeper/pause?kind='+kind+FB))post('minesweeper/pause?kind='+kind+FB);}catch(e){post('minesweeper/pause?kind='+kind+FB);}
+ try{if(!navigator.sendBeacon('minesweeper/pause?kind='+kind))post('minesweeper/pause?kind='+kind);}catch(e){post('minesweeper/pause?kind='+kind);}
 }
 function pauseNow(){
  if(view!=='board'||over)return;

@@ -270,6 +270,34 @@ impl FromRequestParts<AppState> for SeasonCtx {
     }
 }
 
+/// Minesweeper's scope: an unscoped URL is general minesweeper, for any account.
+/// A season's board is for its players and the people running it.
+pub struct MineScope(pub Option<SeasonCtx>);
+
+impl FromRequestParts<AppState> for MineScope {
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, st: &AppState) -> Result<Self, Response> {
+        if parts.extensions.get::<Selected>().is_none() {
+            return Ok(MineScope(None));
+        }
+        let ctx = <SeasonCtx as FromRequestParts<AppState>>::from_request_parts(parts, st).await?;
+        let me = parts
+            .extensions
+            .get::<crate::auth::Me>()
+            .cloned()
+            .unwrap_or_default();
+        if !ctx.can_manage(&me) && !st.db.is_season_member(ctx.id, me.id()).await {
+            return Err((
+                StatusCode::FORBIDDEN,
+                crate::render::notice("This season's minesweeper is for its players.", false, "/"),
+            )
+                .into_response());
+        }
+        Ok(MineScope(Some(ctx)))
+    }
+}
+
 /// `Option<SeasonCtx>`: `None` when no season exists at all (an explicitly
 /// selected unknown season is still a 404).
 impl axum::extract::OptionalFromRequestParts<AppState> for SeasonCtx {

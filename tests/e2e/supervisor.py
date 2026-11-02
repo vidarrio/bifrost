@@ -219,6 +219,13 @@ try:
     post(root, f"/s/{sid}/admin/privacy", data=dict(what="live", private="0"))
     check("a moderator opens it", get(stranger, f"/s/{sid}/board").status_code == 200 and get(anon, f"/s/{sid}/board").status_code == 200)
     post(root, f"/s/{sid}/admin/privacy", data=dict(what="live", private="1"))
+    # General minesweeper is for any account; a season's is for its players.
+    check("general minesweeper works for a stranger", get(stranger, "/minesweeper").status_code == 200 and post(stranger, "/minesweeper/new", data=dict(kind="standard")).json().get("ok"))
+    check("…but not anonymously", get(anon, "/minesweeper", allow_redirects=False).status_code in (302, 303))
+    post(root, f"/s/{sid}/admin/privacy", data=dict(what="live", private="0"))
+    check("a season's minesweeper isn't for others, even when it's open", get(stranger, f"/s/{sid}/minesweeper").status_code == 403 and post(stranger, f"/s/{sid}/minesweeper/new", data=dict(kind="standard")).status_code == 403)
+    post(root, f"/s/{sid}/admin/privacy", data=dict(what="live", private="1"))
+    check("a player has it", get(bob, f"/s/{sid}/minesweeper").status_code == 200)
     post(other_mod, f"{url}/notes", data=dict(notes="other mod"))
     check("a moderator of other seasons can't edit a game's notes", "other mod" not in get(bob, url).text)
     post(root, f"{url}/notes", data=dict(notes="Live edit"))
