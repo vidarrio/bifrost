@@ -62,7 +62,7 @@ const INSTANCE_ROUTES: &[&str] = &[
 /// Split `/s/{id}/rest` into `(id, "/rest")`; `/s/{id}` alone is its board.
 /// `None` for an instance-level page under `/s/` (it then 404s), and for any
 /// id or tail a forward-auth proxy's path rule might not read the same way
-/// (`+1`, `/s/1//admin`): only plain digits select a season.
+/// (`+1`, `/s/x//admin`): only a generated id selects a season.
 fn split(path: &str) -> Option<(Id, String)> {
     let rest = path.strip_prefix("/s/")?;
     let (id, tail) = rest.split_once('/').unwrap_or((rest, ""));
@@ -317,10 +317,11 @@ impl FromRequestParts<AppState> for GameRef {
             )
                 .into_response()
         };
+        // The season first: it sets the link base the not-found page needs.
+        let ctx = <SeasonCtx as FromRequestParts<AppState>>::from_request_parts(parts, st).await?;
         let axum::extract::Path(id) = axum::extract::Path::<Id>::from_request_parts(parts, st)
             .await
             .map_err(|_| not_found())?;
-        let ctx = <SeasonCtx as FromRequestParts<AppState>>::from_request_parts(parts, st).await?;
         let ap_slot = st
             .db
             .ap_slot_of_game(ctx.id, id)

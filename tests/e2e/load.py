@@ -6,7 +6,7 @@ import re
 import sys
 import time
 
-from lib import Server, check, first_game, get, new_season, post, summary, wait_for
+from lib import Server, check, get, new_season, post, summary, wait_for
 
 YAML = b"name: Ann\ngame: ChecksFinder\nChecksFinder: {}\n"
 SHOT = os.environ.get("SHOT")

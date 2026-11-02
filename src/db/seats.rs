@@ -251,7 +251,7 @@ impl Db {
         }
         let slot_id = Id::new();
         let slot = sqlx::query(
-            "INSERT INTO bifrost_slot (id, season, game_id, name, ap_slot, game) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO bifrost_slot (id, season, game_id, name, ap_slot, game, is_seat) VALUES (?, ?, ?, ?, ?, ?, 1)",
         )
         .bind(slot_id)
         .bind(season)
@@ -401,6 +401,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    #[tokio::test]
+    async fn an_external_season_gets_its_slots_with_shared_game_ids() {
+        let (db, dir) = db("external").await;
+        let s = db.create_season("S", None, 0).await.unwrap();
+        let roster = [
+            (1, "Ann".to_string(), "G".to_string()),
+            (2, "Bob".to_string(), "H".to_string()),
+        ];
+        let coop = [("Ann".to_string(), "Cam".to_string())];
+        db.seed_season(s, &roster, &coop).await.unwrap();
+        let first = db.slots(s).await.unwrap();
+        assert_eq!(first.len(), 3);
+        let game = |n: &str| first.iter().find(|r| r.name == n).unwrap().game_id;
+        assert_eq!(game("Ann"), game("Cam"));
+        assert_ne!(game("Ann"), game("Bob"));
+        assert_eq!(db.ap_slot_of_game(s, game("Cam")).await, Some(1));
+        // Idempotent: nothing new, and the same ids.
+        db.seed_season(s, &roster, &coop).await.unwrap();
+        let again = db.slots(s).await.unwrap();
+        assert_eq!(again.len(), 3);
+        assert_eq!(again[0].id, first[0].id);
+        assert!(again.iter().find(|r| r.name == "Cam").unwrap().is_seat);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn seat_names_follow_the_slot_rules() {
         assert!(seat_name_error("Ann B").is_none());
@@ -529,6 +554,17 @@ mod tests {
             .unwrap();
         db.transition(s, State::Live, 2).await.unwrap();
         assert!(db.claims_ap_slot(s, host, 1).await && db.claims_ap_slot(s, ann, 1).await);
+        // Bifrost connects as the real slot, even if a seat's name sorts first.
+        let slots = db.slots(s).await.unwrap();
+        assert_eq!(slots[0].name, "Ann", "a seat first, by name");
+        assert_eq!(
+            crate::db::connect_slot(&slots, None).as_deref(),
+            Some("Host")
+        );
+        assert_eq!(
+            crate::db::connect_slot(&slots, Some("Ann")).as_deref(),
+            Some("Host")
+        );
         // Locked once live: no renames or removals, moderators or not.
         let seat = db.seats_of(id).await[0].id;
         assert_eq!(

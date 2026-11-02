@@ -17,6 +17,7 @@ mod seats;
 mod settings;
 mod worlds;
 pub use auth::{AccountRow, LinkKind, LinkRow, RedeemError};
+pub use migrate::PRE_0_3;
 pub use seasons::{MAX_DAILY_HINTS, MAX_GAMES_LIMIT, SeasonRow, State};
 pub use seats::{JoinOutcome, SeatLink, SeatRow, name_clash, seat_name_error};
 pub use settings::{Approval, Discord, Instance};
@@ -35,6 +36,8 @@ pub struct SlotRow {
     pub id: Id,
     /// The game's id in URLs, shared by the slots of a co-op game.
     pub game_id: Id,
+    /// A co-op seat, whose name Archipelago doesn't know.
+    pub is_seat: bool,
     pub name: String,
     pub ap_slot: i64,
     pub game: String,
@@ -103,6 +106,21 @@ pub struct SubmissionRow {
     pub notes: String,
     /// Partners' seat names, comma-separated.
     pub seat_names: String,
+}
+
+/// The slot Bifrost's own connections join as: the configured one if it's a real
+/// slot of this season, else the lowest. Never a co-op seat, which the server
+/// doesn't know.
+pub fn connect_slot(slots: &[SlotRow], configured: Option<&str>) -> Option<String> {
+    let mut real = slots.iter().filter(|r| !r.is_seat);
+    configured
+        .filter(|n| slots.iter().any(|r| !r.is_seat && r.name == *n))
+        .map(str::to_string)
+        .or_else(|| {
+            real.by_ref()
+                .min_by_key(|r| r.ap_slot)
+                .map(|r| r.name.clone())
+        })
 }
 
 impl SubmissionRow {
@@ -193,7 +211,7 @@ async fn baseline(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     worlds::migrate(pool).await?;
     sqlx::query(
         r#"CREATE TABLE IF NOT EXISTS bifrost_slot (
-                 id TEXT PRIMARY KEY,
+                 id TEXT PRIMARY KEY NOT NULL,
                  season TEXT NOT NULL REFERENCES season(id) ON DELETE CASCADE,
                  -- A game's id: shared by its seats, and the signup's id if it had one.
                  game_id TEXT NOT NULL,
@@ -202,6 +220,8 @@ async fn baseline(pool: &SqlitePool) -> Result<(), sqlx::Error> {
                  game TEXT NOT NULL,
                  -- The shared "common game" slot (one AP slot everyone plays).
                  is_common INTEGER NOT NULL DEFAULT 0,
+                 -- A co-op seat: a name of Bifrost's, not one Archipelago knows.
+                 is_seat INTEGER NOT NULL DEFAULT 0,
                  UNIQUE(season, name)
                )"#,
     )
@@ -209,7 +229,7 @@ async fn baseline(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .await?;
     sqlx::query(
         r#"CREATE TABLE IF NOT EXISTS claim (
-                 bifrost_slot_id TEXT PRIMARY KEY REFERENCES bifrost_slot(id) ON DELETE CASCADE,
+                 bifrost_slot_id TEXT PRIMARY KEY NOT NULL REFERENCES bifrost_slot(id) ON DELETE CASCADE,
                  account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
                  claimed_at INTEGER NOT NULL
                )"#,
@@ -219,7 +239,7 @@ async fn baseline(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // Signup submissions for a season (before its seed exists).
     sqlx::query(
         r#"CREATE TABLE IF NOT EXISTS submission (
-                 id TEXT PRIMARY KEY,
+                 id TEXT PRIMARY KEY NOT NULL,
                  season TEXT NOT NULL REFERENCES season(id) ON DELETE CASCADE,
                  account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
                  slot_name TEXT NOT NULL,
@@ -240,7 +260,7 @@ async fn baseline(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // name is unique across a season's signups and seats.
     sqlx::raw_sql(
         r#"CREATE TABLE IF NOT EXISTS seat (
-                 id TEXT PRIMARY KEY,
+                 id TEXT PRIMARY KEY NOT NULL,
                  season TEXT NOT NULL REFERENCES season(id) ON DELETE CASCADE,
                  submission_id TEXT NOT NULL REFERENCES submission(id) ON DELETE CASCADE,
                  account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
@@ -1030,28 +1050,30 @@ impl Db {
         ap_slots: &[(i64, String, String)],
         coop: &[(String, String)],
     ) -> Result<(), sqlx::Error> {
-        for (num, name, game) in ap_slots {
+        let add = |name: String, num: i64, game: String, is_seat: bool| async move {
+            // Slots on one AP slot are one game, so they share its id.
             sqlx::query(
-                "INSERT OR IGNORE INTO bifrost_slot (season, name, ap_slot, game) VALUES (?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO bifrost_slot (id, season, game_id, name, ap_slot, game, is_seat)
+                 VALUES (?1, ?2,
+                         COALESCE((SELECT game_id FROM bifrost_slot WHERE season = ?2 AND ap_slot = ?5 LIMIT 1), ?3),
+                         ?4, ?5, ?6, ?7)",
             )
+            .bind(Id::new())
             .bind(season)
+            .bind(Id::new())
             .bind(name)
-            .bind(*num)
+            .bind(num)
             .bind(game)
+            .bind(is_seat)
             .execute(&self.pool)
-            .await?;
+            .await
+        };
+        for (num, name, game) in ap_slots {
+            add(name.clone(), *num, game.clone(), false).await?;
         }
         for (ap_name, extra) in coop {
             if let Some((num, _, game)) = ap_slots.iter().find(|(_, n, _)| n == ap_name) {
-                sqlx::query(
-                    "INSERT OR IGNORE INTO bifrost_slot (season, name, ap_slot, game) VALUES (?, ?, ?, ?)",
-                )
-                .bind(season)
-                .bind(extra)
-                .bind(*num)
-                .bind(game)
-                .execute(&self.pool)
-                .await?;
+                add(extra.clone(), *num, game.clone(), true).await?;
             }
         }
         Ok(())
@@ -1059,7 +1081,7 @@ impl Db {
 
     /// Seed a freshly-generated season from submissions: 1:1 Bifrost slots from
     /// the AP roster, each matching submission's uploader auto-claimed, and a
-    /// co-op Bifrost slot minted per seat (claimed) and per old co-op name (not).
+    /// co-op Bifrost slot minted per seat, also claimed.
     pub async fn seed_from_submissions(
         &self,
         season: Id,
@@ -1116,8 +1138,8 @@ impl Db {
             .await?;
             for seat in self.try_seats_of(sub.id).await? {
                 sqlx::query(
-                    "INSERT OR IGNORE INTO bifrost_slot (id, season, game_id, name, ap_slot, game)
-                     VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT OR IGNORE INTO bifrost_slot (id, season, game_id, name, ap_slot, game, is_seat)
+                     VALUES (?, ?, ?, ?, ?, ?, 1)",
                 )
                 .bind(Id::new())
                 .bind(season)
@@ -1220,8 +1242,8 @@ impl Db {
                 continue;
             };
             sqlx::query(
-                "INSERT OR IGNORE INTO bifrost_slot (id, season, game_id, name, ap_slot, game)
-                 VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO bifrost_slot (id, season, game_id, name, ap_slot, game, is_seat)
+                 VALUES (?, ?, ?, ?, ?, ?, 1)",
             )
             .bind(s.id)
             .bind(new_season)
@@ -1259,7 +1281,7 @@ impl Db {
 
     pub async fn slots(&self, season: Id) -> Result<Vec<SlotRow>, sqlx::Error> {
         sqlx::query_as::<_, SlotRow>(
-            r#"SELECT s.id, s.game_id, s.name, s.ap_slot, s.game, a.username AS claimed_by,
+            r#"SELECT s.id, s.game_id, s.is_seat, s.name, s.ap_slot, s.game, a.username AS claimed_by,
                       c.account_id AS claimed_by_id, s.is_common
                FROM bifrost_slot s LEFT JOIN claim c ON c.bifrost_slot_id = s.id
                LEFT JOIN account a ON a.id = c.account_id

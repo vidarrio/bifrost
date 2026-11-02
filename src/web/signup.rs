@@ -658,8 +658,8 @@ struct Invite {
     host: String,
     game: String,
     signup: Option<db::SubmissionRow>,
-    live_slot: Option<i64>,
-    live_game: Option<Id>,
+    /// On a live season: the AP slot and game a new seat goes on.
+    live: Option<(i64, Id)>,
 }
 
 async fn invite_of(st: &AppState, ctx: &scope::SeasonCtx, link: &db::SeatLink) -> Option<Invite> {
@@ -678,8 +678,7 @@ async fn invite_of(st: &AppState, ctx: &scope::SeasonCtx, link: &db::SeatLink) -
             host: row.claimed_by.clone().unwrap_or(slot_name),
             game: row.game.clone(),
             signup: None,
-            live_slot: Some(row.ap_slot),
-            live_game: Some(row.game_id),
+            live: Some((row.ap_slot, row.game_id)),
         });
     }
     if !matches!(ctx.state(), db::State::Draft | db::State::Signup) {
@@ -690,8 +689,7 @@ async fn invite_of(st: &AppState, ctx: &scope::SeasonCtx, link: &db::SeatLink) -
         host: sub.username.clone(),
         game: sub.game.clone(),
         signup: Some(sub),
-        live_slot: None,
-        live_game: None,
+        live: None,
     })
 }
 
@@ -739,19 +737,11 @@ pub(crate) async fn seat_post(
     if st.db.slot_name_taken(ctx.id, name).await {
         return refuse(&name_taken(name));
     }
-    let joined = match (&invite.signup, invite.live_slot) {
+    let joined = match (&invite.signup, invite.live) {
         (Some(sub), _) => st.db.join_signup(ctx.id, &token, sub, me.id(), name).await,
-        (None, Some(ap)) => {
+        (None, Some((ap, game_id))) => {
             st.db
-                .join_live(
-                    ctx.id,
-                    &token,
-                    ap,
-                    invite.live_game.unwrap_or_default(),
-                    &invite.game,
-                    me.id(),
-                    name,
-                )
+                .join_live(ctx.id, &token, ap, game_id, &invite.game, me.id(), name)
                 .await
         }
         _ => return refuse(gone),
@@ -759,12 +749,9 @@ pub(crate) async fn seat_post(
     match joined {
         Ok(db::JoinOutcome::Joined) => {
             export_mc_whitelist(&st).await;
-            let to = match (&invite.signup, invite.live_slot) {
+            let to = match (&invite.signup, invite.live) {
                 (Some(sub), _) => format!("/signup/game/{}", sub.id),
-                (_, Some(_)) => format!(
-                    "/game/{}",
-                    invite.live_game.map(|g| g.to_string()).unwrap_or_default()
-                ),
+                (_, Some((_, game_id))) => format!("/game/{game_id}"),
                 _ => "/signup".to_string(),
             };
             Redirect::to(&ctx.url(&to)).into_response()

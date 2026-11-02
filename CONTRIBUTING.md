@@ -283,7 +283,7 @@ push the other three changes onto its pull request.
 ### Database changes
 
 The database records its schema version, and Bifrost migrates it on start
-(`src/db/migrate.rs`). The tables as the first release made them are the
+(`src/db/migrate.rs`). The tables as 0.3.0 made them are the
 baseline (`baseline` in `src/db.rs`) and stay frozen. To change the schema,
 append a step to `STEPS` in `src/db/migrate.rs`; never edit or remove a step
 that has been released. Each step runs once, in a transaction, before

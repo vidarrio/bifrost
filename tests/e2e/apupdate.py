@@ -6,7 +6,7 @@ import re
 import subprocess
 import sys
 
-from lib import Server, ap_servers, bundled_ap_version, check, first_game, get, new_season, post, summary, wait_for
+from lib import Server, ap_servers, bundled_ap_version, check, get, new_season, post, summary, wait_for
 
 TAG = os.environ.get("AP_TAG", "0.6.7-bifrost.2")  # a release of the fork
 BUNDLED = bundled_ap_version()

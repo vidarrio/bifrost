@@ -27,6 +27,10 @@ pub const SCHEMA_VERSION: i64 = 1 + STEPS.len() as i64;
 
 const VERSION_KEY: &str = "bifrost_version";
 
+/// What a database from before 0.3.0 gets told.
+pub const PRE_0_3: &str = "this database is from a Bifrost before 0.3.0, which can't be \
+                           upgraded: start with an empty data directory";
+
 /// Who last used a database: its schema version, and the Bifrost version
 /// that last opened it (`None` for a fresh file).
 #[derive(Debug, PartialEq)]
@@ -52,6 +56,11 @@ impl Stamp {
 }
 
 impl Db {
+    /// Whether this database is from before 0.3.0, which can't be upgraded.
+    pub async fn is_pre_0_3(&self) -> Result<bool, sqlx::Error> {
+        is_pre_0_3(&self.pool).await
+    }
+
     /// Read the database's [`Stamp`] without changing anything.
     pub async fn stamp(&self) -> Result<Stamp, sqlx::Error> {
         let schema = user_version(&self.pool).await?;
@@ -84,7 +93,20 @@ async fn user_version(pool: &SqlitePool) -> Result<i64, sqlx::Error> {
         .await
 }
 
+/// Whether this database is from before 0.3.0, when seasons had numeric ids.
+/// There's no upgrade from those.
+async fn is_pre_0_3(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
+    let season_id: Option<String> =
+        sqlx::query_scalar("SELECT type FROM pragma_table_info('season') WHERE name = 'id'")
+            .fetch_optional(pool)
+            .await?;
+    Ok(season_id.as_deref() == Some("INTEGER"))
+}
+
 async fn apply(pool: &SqlitePool, steps: &[&str]) -> Result<(), sqlx::Error> {
+    if is_pre_0_3(pool).await? {
+        return Err(sqlx::Error::Protocol(PRE_0_3.into()));
+    }
     let latest = 1 + steps.len() as i64;
     let mut at = user_version(pool).await?;
     if at > latest {
@@ -92,20 +114,6 @@ async fn apply(pool: &SqlitePool, steps: &[&str]) -> Result<(), sqlx::Error> {
             "the database is at schema version {at}, newer than this Bifrost knows \
              ({latest}): a newer Bifrost has used it"
         )));
-    }
-    // Before 0.3.0 seasons had numeric ids, and there's no upgrade from that.
-    if at > 0 {
-        let season_id: Option<String> =
-            sqlx::query_scalar("SELECT type FROM pragma_table_info('season') WHERE name = 'id'")
-                .fetch_optional(pool)
-                .await?;
-        if season_id.as_deref() == Some("INTEGER") {
-            return Err(sqlx::Error::Protocol(
-                "this database is from a Bifrost before 0.3.0, which can't be upgraded: \
-                 start with an empty data directory"
-                    .into(),
-            ));
-        }
     }
     if at == 0 {
         super::baseline(pool).await?;
@@ -193,10 +201,12 @@ mod tests {
     async fn seasons_from_the_baseline_get_the_default_bonus_hint_cap() {
         let (dir, db) = fresh("cap").await;
         apply(&db.pool, &[]).await.unwrap();
-        sqlx::query("INSERT INTO season (name, created_at) VALUES ('Old', 0)")
-            .execute(&db.pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO season (id, name, created_at) VALUES ('abcdefghjkmnpqrs', 'Old', 0)",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
         db.migrate().await.unwrap();
         let caps: Vec<i64> = sqlx::query_scalar("SELECT mine_daily_hints FROM season")
             .fetch_all(&db.pool)
@@ -204,6 +214,24 @@ mod tests {
             .unwrap();
         assert_eq!(caps, vec![5]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_database_with_numeric_season_ids_is_refused_whatever_its_version() {
+        for version in [0, 2, 6] {
+            let (dir, db) = fresh(&format!("old{version}")).await;
+            sqlx::raw_sql(&format!(
+                "CREATE TABLE season (id INTEGER PRIMARY KEY, name TEXT);
+                 PRAGMA user_version = {version}"
+            ))
+            .execute(&db.pool)
+            .await
+            .unwrap();
+            assert!(db.is_pre_0_3().await.unwrap());
+            let err = db.migrate().await.unwrap_err().to_string();
+            assert!(err.contains("before 0.3.0"), "{err}");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     #[tokio::test]

@@ -17,6 +17,7 @@ const ALPHABET: &[u8; 32] = b"23456789abcdefghijkmnpqrstuvwxyz";
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Id([u8; LEN]);
 
+#[allow(clippy::new_without_default)]
 impl Id {
     pub fn new() -> Self {
         let mut raw = [0u8; LEN];
@@ -27,12 +28,6 @@ impl Id {
     pub fn as_str(&self) -> &str {
         // Only ever built from `ALPHABET`, which is ASCII.
         std::str::from_utf8(&self.0).unwrap_or("")
-    }
-}
-
-impl Default for Id {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

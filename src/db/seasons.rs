@@ -20,7 +20,7 @@ use super::Db;
 pub(super) async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"CREATE TABLE IF NOT EXISTS season (
-             id TEXT PRIMARY KEY,
+             id TEXT PRIMARY KEY NOT NULL,
              name TEXT NOT NULL,
              state TEXT NOT NULL DEFAULT 'draft'
                  CHECK (state IN ('draft', 'signup', 'generating', 'live', 'archived')),
