@@ -42,6 +42,7 @@ pub(crate) async fn signup_get(
         &me,
         is_admin,
         open,
+        matches!(ctx.state(), db::State::Draft | db::State::Signup),
         ctx.row.max_games,
         &worlds,
     )
@@ -523,10 +524,6 @@ pub(crate) async fn signup_delete(
 ) -> Redirect {
     let my_id = me.id();
     let (_me, is_admin) = ctx.ident(&me);
-    // Once generated the game is in the seed; a moderator releases it instead.
-    if !matches!(ctx.state(), db::State::Draft | db::State::Signup) {
-        return Redirect::to(&ctx.url("/signup"));
-    }
     if let Ok(Some(yaml_file)) = st.db.delete_submission(ctx.id, f.id, my_id, is_admin).await {
         let _ = tokio::fs::remove_file(&yaml_file).await;
     }
@@ -653,6 +650,9 @@ async fn invite_of(st: &AppState, ctx: &scope::SeasonCtx, link: &db::SeatLink) -
             signup: None,
             live_slot: Some(row.ap_slot),
         });
+    }
+    if !matches!(ctx.state(), db::State::Draft | db::State::Signup) {
+        return None;
     }
     let sub = signup?;
     Some(Invite {

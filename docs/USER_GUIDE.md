@@ -89,7 +89,7 @@ Before generation you can remove a partner, and partners can rename their seat
 and edit the game's notes with you. Once the season is live, seat names are
 locked and nobody can be removed, so that the logs stay consistent. Someone who
 stops playing keeps their seat while the others finish the game; if everyone on
-a game has gone, a moderator can release it.
+a game has gone, a moderator can use **Mark finished** on its page to release it.
 
 You can still invite someone to a live game, from its page on the live board.
 

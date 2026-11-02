@@ -682,7 +682,7 @@ pub fn game_page(
             ));
         } else {
             out.push_str(
-                r#"<p class="empty">The server is whitelisted. <a href="claim">Claim a game</a> this season, then come back here to register your Minecraft username and get let in.</p>"#,
+                r#"<p class="empty">The server is whitelisted. Play a game this season, then come back here to register your Minecraft username and get let in.</p>"#,
             );
         }
 
@@ -720,7 +720,7 @@ pub fn game_page(
             }
         } else {
             out.push_str(
-                r#"<h2>Send a hint</h2><p class="empty">Hinting the common game is open to anyone with a claimed game this season — its shared hint points are reserved for players with a slot of their own. Claim a game on the board to join in.</p>"#,
+                r#"<h2>Send a hint</h2><p class="empty">Hinting the common game is open to anyone with a game this season — its shared hint points are reserved for players with a slot of their own. Claim a game on the board to join in.</p>"#,
             );
         }
 

@@ -26,12 +26,14 @@ pub(super) fn catalog_label(w: &crate::db::CatalogWorld) -> String {
     l
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn signup_page(
     season: &str,
     subs: &[SubmissionRow],
     me: &str,
     is_admin: bool,
     open: bool,
+    pre_gen: bool,
     max_games: i64,
     worlds: &SignupWorlds,
 ) -> Html<String> {
@@ -44,7 +46,7 @@ pub fn signup_page(
         b.push_str(
             r#"<div class="banner bad">Signups are closed right now. They'll open again before the next season.</div>"#,
         );
-        b.push_str(&roster(subs, me, is_admin));
+        b.push_str(&roster(subs, me, is_admin, pre_gen));
         b.push_str("</main></body></html>");
         return Html(b);
     }
@@ -55,7 +57,7 @@ pub fn signup_page(
         b.push_str(&format!(
             r#"<div class="banner ok">You've reached this season's limit of {max_games} game(s) per player. Your signups are below.</div>"#
         ));
-        b.push_str(&roster(subs, me, is_admin));
+        b.push_str(&roster(subs, me, is_admin, pre_gen));
         b.push_str("</main></body></html>");
         return Html(b);
     }
@@ -160,9 +162,6 @@ pub fn signup_page(
     <h2>Players</h2>
     <div class="coopown">You: <b id="myname">your slot</b> <span class="by free">from your YAML — already in</span></div>
     <label class="chk"><input type="checkbox" name="coop" value="1"> Sharing this game between people (co-op, e.g. Don't Starve Together). You'll get links to invite them.</label>
-    <div id="coopbox" hidden>
-      <label class="hint">You're already included above — just list the <b>other</b> people sharing this game, comma-separated. They can claim their seat once the season is generated.<input type="text" name="coop" placeholder="e.g. Robin, Sam"></label>
-    </div>
     <input type="hidden" name="is_custom" id="iscustom" value="">
     <input type="hidden" name="pending_world" id="pendingworld" value="">
     <div class="nav"><button type="button" class="back" data-goto="2">← Back</button><button type="submit"><!--SUBMIT--></button></div>
@@ -242,7 +241,7 @@ pub fn signup_page(
     );
     b.push_str(wizard_close);
 
-    b.push_str(&roster(subs, me, is_admin));
+    b.push_str(&roster(subs, me, is_admin, pre_gen));
     b.push_str("</main></body></html>");
     Html(b)
 }
@@ -347,7 +346,13 @@ pub fn signup_game_page(g: &SignupGame) -> Html<String> {
             esc(&s.coop_names)
         ));
     }
-    for seat in g.seats {
+    if !g.pre_gen && !s.seat_names.is_empty() {
+        b.push_str(&format!(
+            r#"<div class="meta">+ {}</div>"#,
+            esc(&s.seat_names)
+        ));
+    }
+    for seat in g.seats.iter().filter(|_| g.pre_gen) {
         let remove = if g.is_host && g.pre_gen {
             format!(
                 r#"<form method="post" action="signup/game/{}/seat/remove" style="display:inline"><input type="hidden" name="seat" value="{}"><button class="ghost" type="submit">Remove</button></form>"#,

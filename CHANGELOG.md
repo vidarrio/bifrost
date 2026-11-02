@@ -71,6 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- If you use forward auth, add `/seat` to your proxy's signed-in paths, as in the user
+  guide's rule. Do this when you upgrade.
 - Players no longer claim or unclaim slots. Moderators assign slots in seasons with no
   signups. A signup can't be removed once its season is generated, and nobody is removed
   from a seat after that.

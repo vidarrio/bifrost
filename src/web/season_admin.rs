@@ -208,6 +208,15 @@ pub(crate) async fn admin_clear(
             let _ = generate::clear_apworlds(id).await;
             worlds::clear_pending(&st.db, id).await;
         }
+        // Once generated the games are in the seed, and their players stay.
+        "signups" if !matches!(ctx.state(), db::State::Draft | db::State::Signup) => {
+            return render::notice(
+                "The season is generated, so its signups stay.",
+                false,
+                "admin",
+            )
+            .into_response();
+        }
         "signups" => clear_signups(&st, id).await,
         "players" => clear_current_players(&st, id).await,
         "save" => generate::clear_save(id).await,

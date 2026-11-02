@@ -37,6 +37,9 @@ pub fn seat_name_error(name: &str) -> Option<&'static str> {
     if n == 0 || n > 16 {
         return Some("A seat name has 1 to 16 characters.");
     }
+    if name.eq_ignore_ascii_case(crate::generate::COMMON_SLOT_NAME) {
+        return Some("That name is reserved. Pick another.");
+    }
     if name
         .chars()
         .any(|c| c.is_control() || matches!(c, '{' | '}' | ','))
@@ -60,12 +63,16 @@ fn now() -> i64 {
 }
 
 impl Db {
-    /// Whether a name is in use in a season: a signup, a seat or a live slot.
+    /// Whether a name is in use in a season: a signup, a seat, an old signup's
+    /// co-op name, or a generated slot (before generation, slots are only
+    /// what a failed attempt left, which the next one clears).
     pub async fn slot_name_taken(&self, season: i64, name: &str) -> bool {
         sqlx::query_scalar::<_, i64>(
-            "SELECT EXISTS(SELECT 1 FROM submission WHERE season = ?1 AND slot_name = ?2)
+            "SELECT EXISTS(SELECT 1 FROM submission WHERE season = ?1 AND (slot_name = ?2
+                     OR instr(', ' || coop_names || ',', ', ' || ?2 || ',') > 0))
                  OR EXISTS(SELECT 1 FROM seat WHERE season = ?1 AND name = ?2)
-                 OR EXISTS(SELECT 1 FROM bifrost_slot WHERE season = ?1 AND name = ?2)",
+                 OR ((SELECT state FROM season WHERE id = ?1) NOT IN ('draft', 'signup')
+                     AND EXISTS(SELECT 1 FROM bifrost_slot WHERE season = ?1 AND name = ?2))",
         )
         .bind(season)
         .bind(name)
@@ -148,6 +155,10 @@ impl Db {
     }
 
     pub async fn seats_of(&self, submission: i64) -> Vec<SeatRow> {
+        self.try_seats_of(submission).await.unwrap_or_default()
+    }
+
+    pub async fn try_seats_of(&self, submission: i64) -> Result<Vec<SeatRow>, sqlx::Error> {
         sqlx::query_as(
             "SELECT s.id, s.account_id, a.username, s.name
              FROM seat s JOIN account a ON a.id = s.account_id
@@ -156,7 +167,6 @@ impl Db {
         .bind(submission)
         .fetch_all(&self.pool)
         .await
-        .unwrap_or_default()
     }
 
     /// Use a link before generation: it's spent, and the partner has a seat.
@@ -306,9 +316,10 @@ impl Db {
         Ok(res.rows_affected() > 0)
     }
 
-    /// Drop a season's unused links, when its players are deleted.
+    /// Drop the unused links of a season's live games, when its players are
+    /// deleted. A signup's links stay with the signup.
     pub async fn clear_seat_links(&self, season: i64) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM seat_link WHERE season = ?")
+        sqlx::query("DELETE FROM seat_link WHERE season = ? AND submission_id IS NULL")
             .bind(season)
             .execute(&self.pool)
             .await?;
@@ -335,10 +346,39 @@ mod tests {
             .unwrap()
     }
 
+    #[tokio::test]
+    async fn seeding_fails_rather_than_seat_someone_on_another_game() {
+        let (db, dir) = db("clash").await;
+        let s = db.create_season("S", None, 0).await.unwrap();
+        let (host, ann) = (account(&db, "host").await, account(&db, "ann").await);
+        let id = db
+            .add_submission(s, host, "Host", "G", false, "", "/y", None, 0)
+            .await
+            .unwrap()
+            .unwrap();
+        let sub = db.submission(s, id).await.unwrap();
+        db.add_seat_link(s, "t", Some(id), None, host)
+            .await
+            .unwrap();
+        db.join_signup(s, "t", &sub, ann, "Other").await.unwrap();
+        let subs = db.submissions(s).await.unwrap();
+        let slots = [
+            (1, "Other".to_string(), "H".to_string()),
+            (2, "Host".to_string(), "G".to_string()),
+        ];
+        assert!(
+            db.seed_from_submissions(s, &slots, &subs, None)
+                .await
+                .is_err()
+        );
+        assert!(!db.claims_ap_slot(s, ann, 1).await);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn seat_names_follow_the_slot_rules() {
         assert!(seat_name_error("Ann B").is_none());
-        for bad in ["", "seventeen letters", "a,b", "{x}", "a\nb"] {
+        for bad in ["", "seventeen letters", "a,b", "{x}", "a\nb", "commons"] {
             assert!(seat_name_error(bad).is_some(), "{bad:?}");
         }
     }
@@ -468,6 +508,18 @@ mod tests {
         );
         assert!(db.claims_ap_slot(s, bob, 1).await);
         assert!(db.seat_links_of_slot(s, "Host").await.is_empty());
+        assert_eq!(
+            db.submissions(s).await.unwrap()[0].seat_names,
+            "Ann, Bob",
+            "a mid-season joiner shows too"
+        );
+        // A re-roll keeps them, on the new AP slot.
+        db.remap_season(s, &[(7, "Host".into(), "G".into())])
+            .await
+            .unwrap();
+        assert!(db.claims_ap_slot(s, bob, 7).await && db.claims_ap_slot(s, ann, 7).await);
+        // Retracting is over too.
+        assert_eq!(db.delete_submission(s, id, host, true).await.unwrap(), None);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

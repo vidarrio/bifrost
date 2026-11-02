@@ -697,6 +697,7 @@ async fn run_inner(
     db.seed_from_submissions(season_id, &ap_slots, &subs, mc.then_some(COMMON_SLOT_NAME))
         .await
         .map_err(|e| e.to_string())?;
+    crate::web::write_mc_whitelist(db).await;
 
     set(state, true, "Deploying…");
     deploy(db, rts, season_id, &dirs, &seed_zip).await?;

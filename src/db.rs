@@ -1070,7 +1070,7 @@ impl Db {
                     .await?;
                 }
                 // Partners who joined through a link already have an account.
-                for seat in self.seats_of(sub.id).await {
+                for seat in self.try_seats_of(sub.id).await? {
                     sqlx::query(
                         "INSERT OR IGNORE INTO bifrost_slot (season, name, ap_slot, game) VALUES (?, ?, ?, ?)",
                     )
@@ -1080,6 +1080,21 @@ impl Db {
                     .bind(game)
                     .execute(&self.pool)
                     .await?;
+                    // The name was free when it was picked, so another game's row
+                    // here is a clash: fail rather than seat them on it.
+                    let on: i64 = sqlx::query_scalar(
+                        "SELECT ap_slot FROM bifrost_slot WHERE season = ? AND name = ?",
+                    )
+                    .bind(season)
+                    .bind(&seat.name)
+                    .fetch_one(&self.pool)
+                    .await?;
+                    if on != *num {
+                        return Err(sqlx::Error::Protocol(format!(
+                            "seat name {} is already another slot's",
+                            seat.name
+                        )));
+                    }
                     sqlx::query(
                         "INSERT OR IGNORE INTO claim (bifrost_slot_id, account_id, claimed_at)
                          SELECT id, ?, ? FROM bifrost_slot WHERE season = ? AND name = ?",
@@ -1305,7 +1320,14 @@ impl Db {
         sqlx::query_as::<_, SubmissionRow>(
             "SELECT s.id, s.account_id, a.username, s.slot_name, s.game, s.is_custom,
                     s.coop_names, s.yaml_file, s.held_for, s.held_err, s.notes,
-                    COALESCE((SELECT group_concat(name, ', ') FROM seat WHERE submission_id = s.id), '') AS seat_names
+                    COALESCE((SELECT group_concat(name, ', ') FROM (
+                        SELECT name FROM seat WHERE submission_id = s.id
+                        UNION
+                        SELECT b.name FROM bifrost_slot b
+                        JOIN bifrost_slot h ON h.season = b.season AND h.ap_slot = b.ap_slot
+                        WHERE h.season = s.season AND h.name = s.slot_name AND b.name <> s.slot_name
+                          AND instr(', ' || s.coop_names || ',', ', ' || b.name || ',') = 0
+                    )), '') AS seat_names
              FROM submission s JOIN account a ON a.id = s.account_id
              WHERE s.season = ? ORDER BY s.created_at",
         )
@@ -1319,7 +1341,14 @@ impl Db {
         sqlx::query_as::<_, SubmissionRow>(
             "SELECT s.id, s.account_id, a.username, s.slot_name, s.game, s.is_custom,
                     s.coop_names, s.yaml_file, s.held_for, s.held_err, s.notes,
-                    COALESCE((SELECT group_concat(name, ', ') FROM seat WHERE submission_id = s.id), '') AS seat_names
+                    COALESCE((SELECT group_concat(name, ', ') FROM (
+                        SELECT name FROM seat WHERE submission_id = s.id
+                        UNION
+                        SELECT b.name FROM bifrost_slot b
+                        JOIN bifrost_slot h ON h.season = b.season AND h.ap_slot = b.ap_slot
+                        WHERE h.season = s.season AND h.name = s.slot_name AND b.name <> s.slot_name
+                          AND instr(', ' || s.coop_names || ',', ', ' || b.name || ',') = 0
+                    )), '') AS seat_names
              FROM submission s JOIN account a ON a.id = s.account_id
              WHERE s.id = ? AND s.season = ?",
         )
@@ -1422,11 +1451,16 @@ impl Db {
             return Ok(None);
         }
         // Only the file read above: a replace that got in first keeps its signup.
-        let res = sqlx::query("DELETE FROM submission WHERE id = ? AND yaml_file = ?")
-            .bind(id)
-            .bind(&yaml_file)
-            .execute(&self.pool)
-            .await?;
+        // Once generated the game is in the seed; a moderator releases it instead.
+        let res = sqlx::query(
+            "DELETE FROM submission WHERE id = ?1 AND yaml_file = ?2
+               AND (SELECT state FROM season WHERE id = ?3) IN ('draft', 'signup')",
+        )
+        .bind(id)
+        .bind(&yaml_file)
+        .bind(season)
+        .execute(&self.pool)
+        .await?;
         Ok((res.rows_affected() > 0).then_some(yaml_file))
     }
 

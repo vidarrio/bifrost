@@ -3,6 +3,7 @@
 Bifrost down cleanly, stopping the server first."""
 import os
 import re
+import sqlite3
 import signal
 import subprocess
 import sys
@@ -78,6 +79,7 @@ try:
     post(bob, f"/s/{other}/signup/game/{game}/notes", data=dict(notes="elsewhere"))
     check("…nor changed", "elsewhere" not in get(bob, url).text)
     check("a game's page needs a sign-in", "double" not in get(srv.session(), url).text)
+    check("the signup form has one co-op field", get(root, f"/s/{sid}/signup").text.count('name="coop"') == 1)
     # Co-op: one-use links from the host, a name picked by the partner.
     cat, dee = srv.invite_user(root, "cat"), srv.invite_user(root, "dee")
     def new_link():
@@ -91,6 +93,9 @@ try:
     check("a link says who invites you to what", "bob has invited you to join them for" in page and "ChecksFinder" in page and "disabled" in page, page[-400:])
     r = post(cat, link, data=dict(name="Ann"))
     check("a seat can't take a name in use", "already taken" in r.text, r.text[-300:])
+    r = post(cat, link, data=dict(name="Commons"))
+    check("a seat can't take the common game's name", "reserved" in r.text, r.text[-300:])
+    check("a link needs a sign-in", "invited you" not in get(srv.session(), link).text)
     r = post(cat, link, data=dict(name="seventeen letters"))
     check("a seat name follows the rules", "1 to 16" in r.text, r.text[-300:])
     r = post(cat, link, data=dict(name="Cat"))
@@ -120,6 +125,8 @@ try:
     check("ticking co-op leads to the invite links", "Invite your co-op partners" in r.text, r.text[-300:])
     deeg = re.search(r'href="signup/game/(\d+)">DeeCo<', get(dee, f"/s/{sid}/signup").text).group(1)
     check("…with one ready", re.search(r"/seat/[0-9a-f]+", get(dee, f"/s/{sid}/signup/game/{deeg}").text))
+    post(cat, f"/s/{sid}/seat/" + re.search(r"/seat/([0-9a-f]+)", get(dee, f"/s/{sid}/signup/game/{deeg}").text).group(1), data=dict(name="<b>x"))
+    check("a seat's name is escaped", "&lt;b&gt;x" in cat.get(cat.base + f"/s/{sid}/signup").text and "<b>x" not in cat.get(cat.base + f"/s/{sid}/signup/game/{deeg}").text)
     # A player with a game gets a button for another, within the season's limit.
     fresh = srv.invite_user(root, "fresh")
     page = get(fresh, f"/s/{sid}/signup").text
@@ -155,7 +162,10 @@ try:
     slots = get(root, f"/s/{sid}/claim").text
     check("a partner's seat is theirs after generation", re.search(r"Kitty</span><span><span class=\"by\">cat", slots), slots[-800:])
     post(bob, f"/s/{sid}/signup/delete", data=dict(id=game))
-    check("a game can't be retracted once generated", "Bo c" in get(root, f"/s/{sid}/signup").text)
+    post(root, f"/s/{sid}/admin/delete-player", data=dict(id=game))
+    r = post(root, f"/s/{sid}/admin/clear", data=dict(what="signups"))
+    page = get(root, f"/s/{sid}/signup").text
+    check("a game can't be retracted once generated, by anyone", "Bo c" in page and "signups stay" in r.text and ">Remove<" not in page, page[-300:])
     sid_slot = re.search(r'name="slot_id" value="(\d+)"', get(bob, f"/s/{sid}/claim").text)
     for op in ("claim", "unclaim", "assign"):
         post(bob, f"/s/{sid}/claim", data=dict(slot_id=sid_slot.group(1) if sid_slot else 1, op=op, account="bob"))
@@ -172,6 +182,16 @@ try:
     r = post(late, f"/s/{sid}/seat/{token[0]}", data=dict(name="Late"))
     check("someone joins mid-season", "Late" in get(root, f"/s/{sid}/claim").text and r.status_code == 200, r.text[-300:])
     check("…and is on the game", "Late" in get(root, f"/s/{sid}/game/{ap}").text)
+    check("…and its card", "Late" in get(root, f"/s/{sid}/signup").text)
+    # A slot with no player: a moderator assigns it.
+    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+        free = db.execute("INSERT INTO bifrost_slot (season, name, ap_slot, game) VALUES (?, 'Free', ?, 'ChecksFinder')", (sid, ap)).lastrowid
+    post(bob, f"/s/{sid}/claim", data=dict(slot_id=free, op="assign", account="bob"))
+    check("a player can't assign an empty slot", "unclaimed" in get(root, f"/s/{sid}/claim").text)
+    r = post(root, f"/s/{sid}/claim", data=dict(slot_id=free, op="assign", account="nobody"))
+    check("an unknown account is refused", "no account" in r.text, r.text[-300:])
+    post(root, f"/s/{sid}/claim", data=dict(slot_id=free, op="assign", account="dee"))
+    check("a moderator assigns it", re.search(r"Free</span><span><span class=\"by\">dee", get(root, f"/s/{sid}/claim").text))
     os.kill(pid, signal.SIGKILL)
     check("the supervisor notices the exit", wait_for(lambda: "AP server exited" in srv.logtext(), 30, 1))
     new = wait_for(lambda: (p := server_pid(srv)) and p != pid and p, 60, 1)

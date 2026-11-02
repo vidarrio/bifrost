@@ -20,7 +20,11 @@ pub(crate) fn valid_mc_username(s: &str) -> bool {
 /// which Bifrost has no reach to. Best-effort: a failure is logged, and the
 /// next change (or the host timer) reconciles.
 pub(crate) async fn export_mc_whitelist(st: &AppState) {
-    let names = st.db.mc_whitelist_all().await;
+    write_mc_whitelist(&st.db).await;
+}
+
+pub(crate) async fn write_mc_whitelist(db: &db::Db) {
+    let names = db.mc_whitelist_all().await;
     let json = serde_json::to_string(&names).unwrap_or_else(|_| "[]".into());
     let file = config::get().mc_whitelist_file();
     let tmp = file.with_extension("json.tmp");
