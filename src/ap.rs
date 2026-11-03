@@ -79,7 +79,7 @@ pub struct Board {
     /// The slot where "connected" may only mean Bifrost's tracker is on it: its
     /// slot, on a server that lets our connections set a slot's status (anything
     /// but a current fork build, which says so in `Connected`).
-    pub tracker_slot: Option<i64>,
+    pub masked_slot: Option<i64>,
     pub seed: Option<String>,
     /// Percentage of a world's locations that must be checked to afford a hint.
     pub hint_cost: i64,
@@ -612,7 +612,7 @@ fn on_connected(board: &Arc<RwLock<Board>>, pkt: &Value) -> Vec<String> {
     b.connected = true;
     b.team = team;
     let own_status_ignored = pkt.get("bifrost_status").and_then(Value::as_bool) == Some(true);
-    b.tracker_slot = pkt
+    b.masked_slot = pkt
         .get("slot")
         .and_then(Value::as_i64)
         .filter(|_| !own_status_ignored);
@@ -660,7 +660,7 @@ fn apply_storage(b: &mut Board, key: &str, value: &Value) {
         // On this server joining sets a slot to connected, and our tracker
         // joined this one, so it says nothing about its player until they go
         // further.
-        let status = if status == 5 && b.tracker_slot == Some(slot) {
+        let status = if status == 5 && b.masked_slot == Some(slot) {
             0
         } else {
             status
@@ -1273,7 +1273,7 @@ mod tests {
         for slot in [1, 2] {
             b.slots.insert(slot, Default::default());
         }
-        b.tracker_slot = Some(1);
+        b.masked_slot = Some(1);
         let status = |b: &mut super::Board, slot: i64, value: i64| {
             let key = format!("_read_client_status_0_{slot}");
             super::apply_storage(b, &key, &serde_json::json!(value));
@@ -1290,9 +1290,9 @@ mod tests {
     fn a_current_fork_says_the_trackers_slot_can_be_trusted() {
         let board = Arc::new(RwLock::new(Board::default()));
         on_connected(&board, &json!({"slot": 1}));
-        assert_eq!(board.read().unwrap().tracker_slot, Some(1));
+        assert_eq!(board.read().unwrap().masked_slot, Some(1));
         on_connected(&board, &json!({"slot": 1, "bifrost_status": true}));
-        assert_eq!(board.read().unwrap().tracker_slot, None);
+        assert_eq!(board.read().unwrap().masked_slot, None);
     }
 
     #[test]

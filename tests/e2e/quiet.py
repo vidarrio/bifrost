@@ -6,11 +6,12 @@ import asyncio
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
 
-from lib import AP_DIR, DEV, Server, check, first_game, get, new_season, post, summary, wait_for
+from lib import AP_DIR, DEV, Server, ap_servers, check, first_game, get, new_season, post, summary, wait_for
 
 UPSTREAM = sys.argv[1:] == ["upstream"]  # control run: the plain release announces everything
 AP = os.environ.get("QUIET_AP") or (os.path.join(DEV, "archipelago") if UPSTREAM else AP_DIR)
@@ -173,7 +174,7 @@ asyncio.run(main())
         print("ready", flush=True)
         try:
             while True:
-                print(await asyncio.wait_for(ws.recv(), 6), flush=True)
+                print(await asyncio.wait_for(ws.recv(), 10), flush=True)
         except asyncio.TimeoutError:
             pass
 """)
@@ -181,8 +182,20 @@ asyncio.run(main())
         j = post(root, f"/s/{sid}/hint", data=dict(slot_id=other_id, item="Map Width")).json()
         print("second slot's hint:", j)
         check("the watched slot's connection ran", j.get("ok") or "afford" in j.get("message", ""), j)
-        seen = watch.communicate(timeout=30)[0]
+        seen = watch.communicate(timeout=40)[0]
+        check("…and the watcher saw it", watch.returncode == 0 and "!hint Map Width" in seen, seen[-300:])
         check("Bifrost's connection didn't make a slot connected", key not in seen, seen[-300:])
+
+        # A server killed with a player on: their status doesn't outlast it.
+        p = client(tracked, """
+        await ws.send(json.dumps([{"cmd": "StatusUpdate", "status": 20}]))
+        await asyncio.sleep(300)
+""")
+        check("a player is playing", wait_for(lambda: card(tracked) == "playing", 8, 0.5), card(tracked))
+        time.sleep(65)  # AP saves once a minute
+        os.kill(ap_servers(srv)[0][0], signal.SIGKILL)
+        p.kill()
+        check("…and not after the server's killed", wait_for(lambda: card(tracked) == "idle", 90, 2), card(tracked))
 finally:
     srv.stop()
 
