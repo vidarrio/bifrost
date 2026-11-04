@@ -6,11 +6,12 @@ import asyncio
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
 
-from lib import AP_DIR, DEV, Server, check, first_game, get, new_season, post, summary, wait_for
+from lib import AP_DIR, DEV, Server, ap_servers, check, first_game, get, new_season, post, summary, wait_for
 
 UPSTREAM = sys.argv[1:] == ["upstream"]  # control run: the plain release announces everything
 AP = os.environ.get("QUIET_AP") or (os.path.join(DEV, "archipelago") if UPSTREAM else AP_DIR)
@@ -132,6 +133,70 @@ asyncio.run(main())
     j = post(root, f"/s/{sid}/hint", data=dict(slot_id=ids[0], item="Map Height")).json()
     spam.wait(30)
     check("…even while another player sends !players", j.get("ok") and credits() == 0, j)
+
+    if not UPSTREAM:
+        # A slot's status is its player's. The tracker sits on the lowest slot.
+        with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
+            (tracked, _, _), (other, other_slot, other_id) = c.execute(
+                "SELECT name, ap_slot, id FROM slot WHERE season_id = ? ORDER BY ap_slot", (sid,)).fetchall()
+        print("tracker on", tracked, "- watching", other, other_slot)
+        def client(name, script):
+            return subprocess.Popen([os.path.join(AP, "venv/bin/python"), "-u", "-c", f'''
+import asyncio, json, websockets
+async def main():
+    async with websockets.connect("ws://127.0.0.1:{ap_port}") as ws:
+        await ws.recv()
+        await ws.send(json.dumps([{{"cmd": "Connect", "game": "ChecksFinder", "name": "{name}", "uuid": "c",
+            "version": {{"class": "Version", "major": 0, "minor": 6, "build": 8}}, "items_handling": 0,
+            "tags": [], "slot_data": False, "password": ""}}]))
+{script}
+asyncio.run(main())
+'''], stdout=subprocess.PIPE, text=True)
+        def card(name):
+            for part in get(root, f"/s/{sid}/board").text.split('class="slot cardlink ')[1:]:
+                if f'<span class="who">{name}</span>' in part.split('class="slot cardlink')[0]:
+                    return part.split('"')[0]
+        check("nobody on the tracker's slot: no status", wait_for(lambda: card(tracked) == "idle", 20), card(tracked))
+        p = client(tracked, """
+        await asyncio.sleep(5)
+        await ws.send(json.dumps([{"cmd": "StatusUpdate", "status": 20}]))
+        await asyncio.sleep(5)
+""")
+        check("a player there shows connected", wait_for(lambda: card(tracked) == "conn", 5, 0.5), card(tracked))
+        check("…then playing", wait_for(lambda: card(tracked) == "playing", 8, 0.5), card(tracked))
+        p.wait(30)
+        check("…and clears when they leave, with the tracker still on it", wait_for(lambda: card(tracked) == "idle", 8, 0.5), card(tracked))
+
+        # Bifrost's short connections don't touch a status, watched from another slot.
+        key = f"_read_client_status_0_{other_slot}"
+        watch = client(tracked, f"""
+        await ws.send(json.dumps([{{"cmd": "SetNotify", "keys": ["{key}"]}}]))
+        print("ready", flush=True)
+        try:
+            while True:
+                print(await asyncio.wait_for(ws.recv(), 10), flush=True)
+        except asyncio.TimeoutError:
+            pass
+""")
+        watch.stdout.readline()
+        j = post(root, f"/s/{sid}/hint", data=dict(slot_id=other_id, item="Map Width")).json()
+        print("second slot's hint:", j)
+        check("the watched slot's connection ran", j.get("ok") or "afford" in j.get("message", ""), j)
+        seen = watch.communicate(timeout=40)[0]
+        check("…and the watcher saw it", watch.returncode == 0 and "!hint Map Width" in seen, seen[-300:])
+        check("Bifrost's connection didn't make a slot connected", key not in seen, seen[-300:])
+
+        # A server killed with a player on: their status doesn't outlast it.
+        p = client(tracked, """
+        await ws.send(json.dumps([{"cmd": "StatusUpdate", "status": 20}]))
+        await asyncio.sleep(300)
+""")
+        check("a player is playing", wait_for(lambda: card(tracked) == "playing", 8, 0.5), card(tracked))
+        saved = post(root, f"/s/{sid}/admin/console", data=dict(cmd="/save")).json()
+        check("…and saved", "Game saved" in json.dumps(saved), saved)
+        os.kill(ap_servers(srv)[0][0], signal.SIGKILL)
+        p.kill()
+        check("…and not after the server's killed", wait_for(lambda: card(tracked) == "idle", 90, 2), card(tracked))
 finally:
     srv.stop()
 
