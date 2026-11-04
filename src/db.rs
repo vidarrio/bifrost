@@ -435,7 +435,7 @@ impl Db {
         if season.is_some() {
             sql.push_str(" AND season_id=?");
         }
-        let mut q = sqlx::query_as::<_, MineStats>(&sql)
+        let mut q = sqlx::query_as::<_, MineStats>(sqlx::AssertSqlSafe(sql))
             .bind(account)
             .bind(kind);
         if let Some(s) = season {
@@ -460,7 +460,7 @@ impl Db {
             sql.push_str(" AND m.season_id=?");
         }
         sql.push_str(" GROUP BY m.account_id ORDER BY best ASC LIMIT ?");
-        let mut q = sqlx::query_as::<_, (String, i64)>(&sql).bind(kind);
+        let mut q = sqlx::query_as::<_, (String, i64)>(sqlx::AssertSqlSafe(sql)).bind(kind);
         if let Some(s) = season {
             q = q.bind(s);
         }
@@ -490,7 +490,7 @@ impl Db {
         sql.push_str(
             " GROUP BY m.account_id HAVING total>=? ORDER BY (CAST(SUM(m.won) AS REAL)/COUNT(*)) DESC, total DESC LIMIT ?",
         );
-        let mut q = sqlx::query_as::<_, (String, i64, i64)>(&sql).bind(kind);
+        let mut q = sqlx::query_as::<_, (String, i64, i64)>(sqlx::AssertSqlSafe(sql)).bind(kind);
         if let Some(s) = season {
             q = q.bind(s);
         }
@@ -653,10 +653,7 @@ impl Db {
 
     /// Append the active WHERE conditions for a filter onto a query builder that
     /// already has `WHERE season = <bound>`.
-    fn apply_activity_filter<'a>(
-        qb: &mut sqlx::QueryBuilder<'a, sqlx::Sqlite>,
-        f: &'a ActFilter<'a>,
-    ) {
+    fn apply_activity_filter(qb: &mut sqlx::QueryBuilder<sqlx::Sqlite>, f: &ActFilter<'_>) {
         if !f.kinds.is_empty() {
             qb.push(" AND kind IN (");
             let mut sep = qb.separated(", ");

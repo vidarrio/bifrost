@@ -7,7 +7,7 @@ use std::str::FromStr;
 use argon2::password_hash::rand_core::{OsRng, RngCore};
 use sqlx::encode::IsNull;
 use sqlx::error::BoxDynError;
-use sqlx::sqlite::{Sqlite, SqliteArgumentValue, SqliteTypeInfo, SqliteValueRef};
+use sqlx::sqlite::{Sqlite, SqliteArgumentsBuffer, SqliteTypeInfo, SqliteValueRef};
 
 /// How many characters an id has: 16 of 32 symbols is 80 random bits.
 const LEN: usize = 16;
@@ -78,9 +78,9 @@ impl sqlx::Type<Sqlite> for Id {
     }
 }
 
-impl<'q> sqlx::Encode<'q, Sqlite> for Id {
-    fn encode_by_ref(&self, buf: &mut Vec<SqliteArgumentValue<'q>>) -> Result<IsNull, BoxDynError> {
-        <String as sqlx::Encode<'q, Sqlite>>::encode(self.to_string(), buf)
+impl sqlx::Encode<'_, Sqlite> for Id {
+    fn encode_by_ref(&self, buf: &mut SqliteArgumentsBuffer) -> Result<IsNull, BoxDynError> {
+        <String as sqlx::Encode<'_, Sqlite>>::encode(self.to_string(), buf)
     }
 }
 
