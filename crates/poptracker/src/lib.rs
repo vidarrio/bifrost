@@ -2479,7 +2479,60 @@ fn resolve_layout(
 /// Parse a pack JSON file tolerating JSONC/JSON5 (comments + trailing commas),
 /// which PopTracker packs use freely; strict `serde_json` rejects those.
 fn parse_pack_json(txt: &str) -> std::result::Result<serde_json::Value, String> {
+    if nesting(txt) > MAX_NESTING {
+        return Err(format!("nested more than {MAX_NESTING} deep"));
+    }
     json5::from_str::<serde_json::Value>(txt).map_err(|e| e.to_string())
+}
+
+/// The deepest a pack's JSON may nest. The parser recurses without a limit of
+/// its own, and real packs stay within a few dozen levels.
+const MAX_NESTING: usize = 256;
+
+/// How deep `txt`'s arrays and objects nest, skipping strings and comments.
+/// Malformed input only has to come out no shallower than the parser sees it.
+fn nesting(txt: &str) -> usize {
+    let (mut depth, mut deepest) = (0usize, 0usize);
+    let mut chars = txt.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '[' | '{' => {
+                depth += 1;
+                deepest = deepest.max(depth);
+            }
+            ']' | '}' => depth = depth.saturating_sub(1),
+            '"' | '\'' => {
+                while let Some(d) = chars.next() {
+                    match d {
+                        '\\' => {
+                            chars.next();
+                        }
+                        d if d == c => break,
+                        _ => {}
+                    }
+                }
+            }
+            '/' if chars.peek() == Some(&'/') => {
+                for d in chars.by_ref() {
+                    if d == '\n' {
+                        break;
+                    }
+                }
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut star = false;
+                for d in chars.by_ref() {
+                    if star && d == '/' {
+                        break;
+                    }
+                    star = d == '*';
+                }
+            }
+            _ => {}
+        }
+    }
+    deepest
 }
 
 /// An item image spec may carry comma-separated image mods (e.g.
@@ -3644,6 +3697,26 @@ fn sandboxed_lua() -> Result<Lua> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pack_json_nesting_is_capped() {
+        let deep = |n: usize| format!("{}{}", "[".repeat(n), "]".repeat(n));
+        assert!(parse_pack_json(&deep(MAX_NESTING)).is_ok());
+        assert!(parse_pack_json(&deep(MAX_NESTING + 1)).is_err());
+        // A pack this deep used to be refused by the old parser; the new one
+        // would overflow the stack.
+        assert!(parse_pack_json(&deep(100_000)).is_err());
+        // Brackets in strings and comments don't count.
+        let txt = format!(
+            "{{\"a\": \"{}\", 'b': '\\'{}', /* {} */ // {}\n \"c\": [1]}}",
+            "[".repeat(300),
+            "{".repeat(300),
+            "[".repeat(300),
+            "{".repeat(300)
+        );
+        assert_eq!(nesting(&txt), 2);
+        assert!(parse_pack_json(&txt).is_ok());
+    }
+
     use super::*;
 
     /// Bytecode for `x = 1`, compiled outside the sandbox.
