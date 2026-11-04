@@ -71,8 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connections no longer make a game flash "connected", and the game Bifrost's tracker
   connects as now shows a real player connecting and clears when they leave, instead of
   staying "playing". This needs Archipelago 0.6.8-bifrost.4, now the bundled build; on
-  older builds and external servers, these statuses stay as they were. A status other
-  than a goal also no longer outlasts a restart of the game's server.
+  older builds and external servers, these statuses stay as they were. On that build, a
+  game's server that was killed rather than stopped no longer keeps a status other than a
+  goal after it restarts.
 - A URL nothing answers shows a page, rather than the browser's own error, and so do "Moderators only"
   and a game page with no game to show.
 - The first game on a board no longer says "connected" just because Bifrost's own tracker joined as it.
