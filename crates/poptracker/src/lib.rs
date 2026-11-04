@@ -2513,8 +2513,9 @@ fn nesting(txt: &str) -> usize {
                 }
             }
             '/' if chars.peek() == Some(&'/') => {
+                // Where the parser ends one: any JSON5 line terminator.
                 for d in chars.by_ref() {
-                    if d == '\n' {
+                    if json5::char::is_json5_line_terminator(d) {
                         break;
                     }
                 }
@@ -3697,6 +3698,8 @@ fn sandboxed_lua() -> Result<Lua> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn pack_json_nesting_is_capped() {
         let deep = |n: usize| format!("{}{}", "[".repeat(n), "]".repeat(n));
@@ -3715,9 +3718,12 @@ mod tests {
         );
         assert_eq!(nesting(&txt), 2);
         assert!(parse_pack_json(&txt).is_ok());
+        // A line comment ends wherever the parser ends it.
+        for end in ["\n", "\r", "\u{2028}", "\u{2029}"] {
+            let txt = format!("// x{end}{}", deep(MAX_NESTING + 1));
+            assert!(parse_pack_json(&txt).is_err(), "{end:?}");
+        }
     }
-
-    use super::*;
 
     /// Bytecode for `x = 1`, compiled outside the sandbox.
     fn bytecode() -> Vec<u8> {
