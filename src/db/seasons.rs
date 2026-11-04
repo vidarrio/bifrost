@@ -229,19 +229,21 @@ impl Db {
     }
 
     pub async fn season(&self, id: Id) -> Option<SeasonRow> {
-        sqlx::query_as(&format!("SELECT {COLS} FROM season WHERE id = ?"))
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .ok()
-            .flatten()
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT {COLS} FROM season WHERE id = ?"
+        )))
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten()
     }
 
     /// Every season, newest first.
     pub async fn seasons(&self) -> Vec<SeasonRow> {
-        sqlx::query_as(&format!(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {COLS} FROM season ORDER BY created_at DESC, rowid DESC"
-        ))
+        )))
         .fetch_all(&self.pool)
         .await
         .unwrap_or_default()
@@ -251,13 +253,13 @@ impl Db {
     /// in-progress one (generating, signup, draft — in that order), else the
     /// most recently archived.
     pub async fn default_season(&self) -> Option<SeasonRow> {
-        sqlx::query_as(&format!(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {COLS} FROM season ORDER BY
                CASE state WHEN 'live' THEN 0 WHEN 'generating' THEN 1 WHEN 'signup' THEN 2
                           WHEN 'draft' THEN 3 ELSE 4 END,
                COALESCE(live_at, archived_at, created_at) DESC, rowid DESC
              LIMIT 1"
-        ))
+        )))
         .fetch_optional(&self.pool)
         .await
         .ok()
@@ -714,10 +716,12 @@ impl Db {
             "mine_result",
             "slot",
         ] {
-            sqlx::query(&format!("DELETE FROM {table} WHERE season_id = ?"))
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DELETE FROM {table} WHERE season_id = ?"
+            )))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         }
         // Links made on the live game; a signup's stay with it.
         sqlx::query("DELETE FROM seat_link WHERE season_id = ? AND submission_id IS NULL")
@@ -734,10 +738,12 @@ impl Db {
     /// results and hint credits belong to the season and are kept.
     pub async fn clear_seed_data(&self, id: Id) -> Result<(), sqlx::Error> {
         for table in ["activity", "hint_priority", "inlogic"] {
-            sqlx::query(&format!("DELETE FROM {table} WHERE season_id = ?"))
-                .bind(id)
-                .execute(&self.pool)
-                .await?;
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DELETE FROM {table} WHERE season_id = ?"
+            )))
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
         }
         self.set_journal_cursor(id, None).await;
         Ok(())

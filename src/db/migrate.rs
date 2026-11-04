@@ -106,7 +106,7 @@ async fn is_pre_0_3(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
     Ok(season_id.as_deref() == Some("INTEGER"))
 }
 
-async fn apply(pool: &SqlitePool, steps: &[&str]) -> Result<(), sqlx::Error> {
+async fn apply(pool: &SqlitePool, steps: &[&'static str]) -> Result<(), sqlx::Error> {
     if is_pre_0_3(pool).await? {
         return Err(sqlx::Error::Protocol(PRE_0_3.into()));
     }
@@ -161,7 +161,11 @@ async fn apply(pool: &SqlitePool, steps: &[&str]) -> Result<(), sqlx::Error> {
 
 /// Run one step and stamp version `to`, all in one transaction, which rolls
 /// back if the step fails or leaves a dangling reference.
-async fn step(conn: &mut sqlx::SqliteConnection, sql: &str, to: i64) -> Result<(), sqlx::Error> {
+async fn step(
+    conn: &mut sqlx::SqliteConnection,
+    sql: &'static str,
+    to: i64,
+) -> Result<(), sqlx::Error> {
     use sqlx::Connection;
     let mut tx = conn.begin().await?;
     sqlx::raw_sql(sql).execute(&mut *tx).await?;
@@ -176,7 +180,7 @@ async fn step(conn: &mut sqlx::SqliteConnection, sql: &str, to: i64) -> Result<(
             dangling.len()
         )));
     }
-    sqlx::raw_sql(&format!("PRAGMA user_version = {to}"))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("PRAGMA user_version = {to}")))
         .execute(&mut *tx)
         .await?;
     tx.commit().await
@@ -233,20 +237,20 @@ mod tests {
         for (table, strict) in &tables {
             assert_eq!(*strict, 1, "{table} isn't STRICT");
             // Every reference has an index to find its rows by when its parent goes.
-            let keys: Vec<String> = sqlx::query_scalar(&format!(
+            let keys: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT \"from\" FROM pragma_foreign_key_list('{table}')"
-            ))
+            )))
             .fetch_all(&db.pool)
             .await
             .unwrap();
             for key in keys {
                 // An index on it first, or it's the rowid.
-                let covered: i64 = sqlx::query_scalar(&format!(
+                let covered: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                     "SELECT (SELECT COUNT(*) FROM pragma_index_list('{table}') l
                              JOIN pragma_index_info(l.name) i ON i.seqno = 0 AND i.name = ?1)
                           + (SELECT COUNT(*) FROM pragma_table_info('{table}')
                              WHERE name = ?1 AND pk = 1 AND type = 'INTEGER')"
-                ))
+                )))
                 .bind(&key)
                 .fetch_one(&db.pool)
                 .await
@@ -285,10 +289,10 @@ mod tests {
     async fn a_database_with_numeric_season_ids_is_refused_whatever_its_version() {
         for version in [0, 2, 6] {
             let (dir, db) = fresh(&format!("old{version}")).await;
-            sqlx::raw_sql(&format!(
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
                 "CREATE TABLE season (id INTEGER PRIMARY KEY, name TEXT);
                  PRAGMA user_version = {version}"
-            ))
+            )))
             .execute(&db.pool)
             .await
             .unwrap();
