@@ -77,7 +77,9 @@ try:
     check("the UT tab polls for its contents", 'id="utbody"' in page and f"game/'+slot+'/inlogic" in page)
     with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
         (slot,) = c.execute("SELECT ap_slot FROM slot WHERE season_id = ? AND game_id = ?", (sid, game)).fetchone()
-        c.execute("UPDATE inlogic SET locations = '[\"Somewhere New\"]', count = 1, err = NULL WHERE season_id = ? AND ap_slot = ?", (sid, slot))
+        # (The tracker only rewrites a row when the slot's items or checks change.)
+        n = c.execute("UPDATE inlogic SET locations = '[\"Somewhere New\"]', count = 1, err = NULL WHERE season_id = ? AND ap_slot = ?", (sid, slot)).rowcount
+    check("…with a result to replace", n == 1, n)
     j = get(root, f"/s/{sid}/game/{game}/inlogic").json()
     check("…and gets the latest result", "Somewhere New" in j.get("body", "") and j.get("avail") == " · 1 available", j)
 

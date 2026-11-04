@@ -70,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A game page's Universal Tracker tab keeps itself current while it's open, as the
-  PopTracker and activity tabs do, and so does the "available" count at the top.
+  PopTracker and activity tabs do, and the "available" count at the top updates with it.
   Before, it showed the result from when the page loaded.
 - A game's status on the board reflects its players, not Bifrost. Bifrost's own short
   connections no longer make a game flash "connected", and the game Bifrost's tracker
