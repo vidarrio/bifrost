@@ -635,7 +635,14 @@ fn parse_error(text: &str, e: &toml::de::Error) -> String {
     let what = e.message().lines().next().unwrap_or("invalid TOML");
     match e.span() {
         Some(span) => {
-            let before = &text[..span.start.min(text.len())];
+            // On a character boundary, as slicing elsewhere would panic and
+            // the panic would quote the file; and at the end of the file, on
+            // its last line rather than the empty one after it.
+            let mut at = text.floor_char_boundary(span.start);
+            if at == text.len() {
+                at = text.trim_end_matches(['\n', '\r']).len();
+            }
+            let before = &text[..at];
             let line = before.matches('\n').count() + 1;
             let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
             format!("not valid TOML at line {line}, column {column}: {what}")
@@ -871,14 +878,25 @@ mod tests {
 
     #[test]
     fn a_file_that_doesnt_parse_isnt_quoted_back() {
-        for text in [
-            "[archipelago]\npassword = \"s3cret\n",
-            "[archipelago]\npassword = \"s3cret\"\npassword = \"s3cret\"\n",
-            "[archipelago]\npassword = s3cret\n",
+        for (text, at) in [
+            ("[archipelago]\npassword = \"s3cret\n", "line 2, column 19:"),
+            (
+                "[archipelago]\npassword = \"s3cret\"\npassword = \"s3cret\"\n",
+                "line 3, column 1:",
+            ),
+            ("[archipelago]\npassword = s3cret\n", "line 2, column 12:"),
+            // Columns count characters, and CRLF ends a line.
+            ("[a]\r\nb = \"s3cretåäö\" x\r\n", "line 2, column 17:"),
+            // At the end of the file, the last line.
+            ("[a]\nb = \"\"\"s3cret\n", "line 2, column 14:"),
+            (
+                "[archipelago]\npassword = \"s3cret\"\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\npassword = 1\n",
+                "line 22, column 1:",
+            ),
         ] {
             let err = parse_file(text).unwrap_err();
             assert!(!err.contains("s3cret"), "{err}");
-            assert!(err.contains("line 2") || err.contains("line 3"), "{err}");
+            assert!(err.contains(&format!(" at {at} ")), "{text:?}: {err}");
         }
     }
 
