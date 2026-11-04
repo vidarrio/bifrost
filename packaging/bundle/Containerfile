@@ -38,8 +38,8 @@ RUN touch src/main.rs crates/poptracker/src/lib.rs \
 # ---- the runtime payload ----
 FROM docker.io/library/debian:${DEBIAN}-slim AS runtime
 ARG APT
-ARG AP_VERSION=0.6.8-bifrost.3
-ARG AP_SHA256=d8d53f02837e26224dab37e3a6ab51a72e8628c178647a0147f64af32785f51b
+ARG AP_VERSION=0.6.8-bifrost.4
+ARG AP_SHA256=b3329648658eb29bcf9dbb326e41273d6a0c1c3de61cb6cffffd75db05f0a7a8
 ARG AP_REPO=https://github.com/vidarrio/Archipelago
 ARG PY_URL=https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.13.18+20261026-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
 ARG PY_SHA256=df15fe60d3ff55bf9dcf25824b5572756bb8816ff93865a273d3301d7066a8b7

@@ -44,7 +44,7 @@ RUN touch src/main.rs crates/poptracker/src/lib.rs \
 # ---- Archipelago (source checkout + venv; paths match the runtime stage) ----
 FROM docker.io/library/debian:${DEBIAN}-slim AS archipelago
 ARG APT
-ARG AP_VERSION=0.6.8-bifrost.3
+ARG AP_VERSION=0.6.8-bifrost.4
 ARG AP_REPO=https://github.com/vidarrio/Archipelago
 RUN ${APT} update && ${APT} install -y --no-install-recommends \
         ca-certificates git python3 python3-venv python3-dev build-essential \
