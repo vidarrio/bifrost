@@ -115,8 +115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `config.toml` is read as TOML 1.1, which also allows inline tables over several lines,
-  `\e` and `\xHH` escapes in strings, and times without seconds.
+- `config.toml` is read as TOML 1.1, so its strings can also use `\e` and `\xHH` escapes.
 - A signup's `name:` has to be one plain name of at most 16 characters, without
   placeholders. Those worked until generation, but the host then didn't get their slot.
 - Slot names ignore case when checking they're free, as Archipelago does.
