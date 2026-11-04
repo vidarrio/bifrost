@@ -19,10 +19,11 @@ defaults to the fork). The image and the native bundle pin one build
 | Patch | What it does |
 |---|---|
 | `0001` MultiServer: no announcements for Bifrost's own clients | A client that presents the server's `BIFROST_QUIET_KEY` (as `bifrost_key` in its Connect) joins, leaves, changes tags and uses `!admin` without a broadcast to everyone. Bifrost generates the key per process, gives it to the AP servers it runs, and every one of its tools sends it (`quiet_key` in `src/ap.rs`). A key, not a tag: players could set a tag themselves to sneak into slots unannounced. Hints and goals are still announced as usual. |
+| `0002` MultiServer: Bifrost's own clients don't change a slot's status | Those clients neither set nor clear a slot's status by joining or leaving, so it reflects players only. Their `Connected` carries `bifrost_status`, so Bifrost can trust the status of the slot its tracker sits on. Loading a save clears every status but a goal, as nobody's connected yet. |
 
 Keep patches small and local, so they carry forward across upstream releases.
 On an upstream server everything still works; Bifrost's connections are
-just announced like any other.
+just announced like any other, and can change a slot's status.
 
 ## Cutting a build
 
