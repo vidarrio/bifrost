@@ -136,6 +136,7 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         .route("/game/{game}/poptracker/state", get(pt_state))
         .route("/game/{game}/poptracker/asset", get(pt_asset))
         .route("/game/{game}/hints", get(game_hints))
+        .route("/game/{game}/inlogic", get(game_inlogic))
         .route("/game/{game}/items", get(game_items))
         .route("/game/{game}/output", get(game_output))
         .route("/game/mc/{which}", get(mc_asset))
