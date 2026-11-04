@@ -106,18 +106,18 @@ impl Db {
     }
 
     pub async fn accounts(&self) -> Vec<AccountRow> {
-        sqlx::query_as(&format!(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {ACCOUNT_COLS} FROM account ORDER BY username COLLATE NOCASE"
-        ))
+        )))
         .fetch_all(&self.pool)
         .await
         .unwrap_or_default()
     }
 
     pub async fn account_by_name(&self, username: &str) -> Option<AccountRow> {
-        sqlx::query_as(&format!(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {ACCOUNT_COLS} FROM account WHERE username = ?"
-        ))
+        )))
         .bind(username)
         .fetch_optional(&self.pool)
         .await

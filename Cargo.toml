@@ -22,7 +22,8 @@ serde = { version = "1", features = ["derive"] }   # form bodies + checker JSON
 serde_json = "1"
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake"] }  # AP tracker websocket (ws://)
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }  # Bifrost slots + claims
+# Not plain "sqlite": that also builds in extension loading and deserialize, which Bifrost doesn't use.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite-bundled", "sqlite-unlock-notify", "macros"] }  # Bifrost slots + claims
 poptracker = { path = "crates/poptracker" }  # PopTracker-pack engine (runs pack Lua -> tracker state)
 zip = { version = "9", default-features = false, features = ["deflate"] }  # read per-player files out of the generated seed zip + uploaded pack assets
 # std enables rand_core/getrandom, which `argon2::password_hash::rand_core::OsRng`
