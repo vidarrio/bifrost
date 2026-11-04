@@ -582,6 +582,20 @@ pub(crate) async fn game_hints(
     ))
 }
 
+/// The Universal Tracker tab's latest contents and the header's count, which
+/// the game page polls while the tab is open.
+pub(crate) async fn game_inlogic(
+    scope::GameRef { ap_slot, .. }: scope::GameRef,
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+) -> Json<serde_json::Value> {
+    let inlogic = st.db.inlogic_get(ctx.id, ap_slot).await;
+    Json(serde_json::json!({
+        "body": render::inlogic_body(inlogic.as_ref()),
+        "avail": render::inlogic_avail(inlogic.as_ref()),
+    }))
+}
+
 /// The hint-search suggestion list for one slot, as JSON — the game page polls
 /// this after a hint so a name whose last copy was just hinted drops out.
 pub(crate) async fn game_items(

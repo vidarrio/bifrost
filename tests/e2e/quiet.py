@@ -71,6 +71,18 @@ try:
             return c.execute("SELECT count(*) FROM inlogic WHERE season_id = ?", (sid,)).fetchone()[0]
     check("in-logic tracker ran", wait_for(lambda: inlogic_rows() >= 2, 120, 3))
 
+    # The game page's Universal Tracker tab follows a new result without a reload.
+    game = first_game(root, sid)
+    page = get(root, f"/s/{sid}/game/{game}").text
+    check("the UT tab polls for its contents", 'id="utbody"' in page and f"game/'+slot+'/inlogic" in page)
+    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
+        (slot,) = c.execute("SELECT ap_slot FROM slot WHERE season_id = ? AND game_id = ?", (sid, game)).fetchone()
+        # (The tracker only rewrites a row when the slot's items or checks change.)
+        n = c.execute("UPDATE inlogic SET locations = '[\"Somewhere New\"]', count = 1, err = NULL WHERE season_id = ? AND ap_slot = ?", (sid, slot)).rowcount
+    check("…with a result to replace", n == 1, n)
+    j = get(root, f"/s/{sid}/game/{game}/inlogic").json()
+    check("…and gets the latest result", "Somewhere New" in j.get("body", "") and j.get("avail") == " · 1 available", j)
+
     # A real player: AP's own client library, no Bifrost tag.
     port = re.search(r"127\.0\.0\.1:(391\d\d)", get(root, f"/s/{sid}/admin").text + srv.logtext()).group(1)
     def connect_as(name, extra):

@@ -498,9 +498,46 @@ pub(super) fn log_panel(game_id: Id, rows: &[crate::db::ActivityRow], total: i64
     s
 }
 
-/// The Universal Tracker tab panel, from the slot's cached in-logic result.
-pub(super) fn inlogic_panel(inlogic: Option<&crate::db::InLogic>) -> String {
-    let mut s = String::from(r#"<div class="gtabpanel" id="tab-ut" hidden><h2>Available now</h2>"#);
+/// The Universal Tracker tab panel: its contents (refreshed by `UT_JS` from
+/// `game/<id>/inlogic`) and the script that keeps them current.
+pub(super) fn inlogic_panel(game_id: Id, inlogic: Option<&crate::db::InLogic>) -> String {
+    format!(
+        r#"<div class="gtabpanel" id="tab-ut" hidden><h2>Available now</h2><div id="utbody" data-slot="{game_id}">{}</div></div>{UT_JS}"#,
+        inlogic_body(inlogic)
+    )
+}
+
+/// While the Universal Tracker tab is open, fetch its latest result every 12s
+/// (Bifrost recomputes it whenever the slot's items or checks change), and at
+/// once when the tab is opened. The header's "available" count follows.
+const UT_JS: &str = r#"<script>
+(function(){
+ var host=document.getElementById('utbody'); if(!host) return;
+ var slot=host.getAttribute('data-slot'), panel=document.getElementById('tab-ut');
+ function load(){ fetch('game/'+slot+'/inlogic').then(function(r){return r.json();}).then(function(j){
+  if(!j||typeof j.body!=='string') return;
+  host.innerHTML=j.body;
+  var a=document.getElementById('utavail'); if(a) a.textContent=j.avail;
+  if(window.bifTick) bifTick();
+ }).catch(function(){}); }
+ var bar=document.querySelector('.gtabs');
+ if(bar){ bar.addEventListener('click',function(e){var b=e.target.closest('.gtab'); if(b&&b.getAttribute('data-tab')==='tab-ut') load();}); }
+ setInterval(function(){ if(panel&&!panel.hidden) load(); },12000);
+})();
+</script>"#;
+
+/// The header's "· N available", from the slot's Universal Tracker result.
+pub fn inlogic_avail(inlogic: Option<&crate::db::InLogic>) -> String {
+    inlogic
+        .filter(|il| il.err.is_none())
+        .and_then(|il| serde_json::from_str::<Vec<String>>(&il.locations).ok())
+        .map(|v| format!(" · {} available", v.len()))
+        .unwrap_or_default()
+}
+
+/// The Universal Tracker tab's contents, from the slot's cached in-logic result.
+pub fn inlogic_body(inlogic: Option<&crate::db::InLogic>) -> String {
+    let mut s = String::new();
     match inlogic {
         None => s.push_str(
             r#"<p class="empty">Universal Tracker hasn't mapped this slot yet — it recomputes a few seconds after the slot's items or checks change. Check back shortly.</p>"#,
@@ -533,7 +570,6 @@ pub(super) fn inlogic_panel(inlogic: Option<&crate::db::InLogic>) -> String {
             }
         }
     }
-    s.push_str("</div>");
     s
 }
 
@@ -572,17 +608,13 @@ pub fn game_page(
     out.push_str(TABS_CSS);
     // The UT and Log tab panels are the same for the common and regular slot
     // branches; build them once.
-    let ut_html = inlogic_panel(inlogic);
+    let ut_html = inlogic_panel(game_id, inlogic);
     let log_html = log_panel(game_id, log, log_total);
     // "available now" count from the slot's Universal Tracker result (if any).
-    let avail = inlogic
-        .filter(|il| il.err.is_none())
-        .and_then(|il| serde_json::from_str::<Vec<String>>(&il.locations).ok())
-        .map(|v| format!(" · {} available", v.len()))
-        .unwrap_or_default();
+    let avail = inlogic_avail(inlogic);
     out.push_str(&format!(
         r#"<h1>{}</h1><div class="crumb"><a href="board">← board</a>{}</div>
-<div class="meta">{} locations · sent {} · received {} · {} left{avail}</div>"#,
+<div class="meta">{} locations · sent {} · received {} · {} left<span id="utavail">{avail}</span></div>"#,
         esc(game),
         if is_admin { " · admin" } else { "" },
         live.world_size,
