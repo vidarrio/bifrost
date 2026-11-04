@@ -629,10 +629,34 @@ fn load_file(path: &Path) -> Result<HashMap<String, String>, String> {
     parse_file(&text)
 }
 
+/// Where and why config.toml doesn't parse, without quoting the line: toml's
+/// own message shows it, and the line may hold a secret.
+fn parse_error(text: &str, e: &toml::de::Error) -> String {
+    let what = e.message().lines().next().unwrap_or("invalid TOML");
+    match e.span() {
+        Some(span) => {
+            // On a character boundary, as slicing elsewhere would panic and
+            // the panic would quote the file; and at the end of the file, on
+            // its last line rather than the empty one after it.
+            let mut at = text.floor_char_boundary(span.start);
+            if at == text.len() {
+                at = text.trim_end_matches(['\n', '\r']).len();
+            }
+            let before = &text[..at];
+            let line = before.matches('\n').count() + 1;
+            let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+            format!("not valid TOML at line {line}, column {column}: {what}")
+        }
+        None => format!("not valid TOML: {what}"),
+    }
+}
+
 /// Map config.toml onto `BIFROST_*` names. Unknown keys are errors (a typo'd
 /// secret should fail loudly, not silently fall back to a default).
 fn parse_file(text: &str) -> Result<HashMap<String, String>, String> {
-    let table: toml::Table = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    let table: toml::Table = text
+        .parse()
+        .map_err(|e: toml::de::Error| parse_error(text, &e))?;
     let mut out = HashMap::new();
     for (section, value) in &table {
         let toml::Value::Table(keys) = value else {
@@ -850,6 +874,30 @@ mod tests {
             ("BIFROST_AP_PYTHON", "/usr/bin/python3"),
         ]);
         assert_eq!(c.ap_python, Path::new("/usr/bin/python3"));
+    }
+
+    #[test]
+    fn a_file_that_doesnt_parse_isnt_quoted_back() {
+        for (text, at) in [
+            ("[archipelago]\npassword = \"s3cret\n", "line 2, column 19:"),
+            (
+                "[archipelago]\npassword = \"s3cret\"\npassword = \"s3cret\"\n",
+                "line 3, column 1:",
+            ),
+            ("[archipelago]\npassword = s3cret\n", "line 2, column 12:"),
+            // Columns count characters, and CRLF ends a line.
+            ("[a]\r\nb = \"s3cretåäö\" x\r\n", "line 2, column 17:"),
+            // At the end of the file, the last line.
+            ("[a]\nb = \"\"\"s3cret\n", "line 2, column 14:"),
+            (
+                "[archipelago]\npassword = \"s3cret\"\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\npassword = 1\n",
+                "line 22, column 1:",
+            ),
+        ] {
+            let err = parse_file(text).unwrap_err();
+            assert!(!err.contains("s3cret"), "{err}");
+            assert!(err.contains(&format!(" at {at} ")), "{text:?}: {err}");
+        }
     }
 
     #[test]
