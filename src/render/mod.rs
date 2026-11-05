@@ -133,7 +133,7 @@ function bifApplyMe(m){
  var a=document.getElementById('adminslot');
  if(a)a.innerHTML=(m&&m.admin)?'<a class="pill" href="/admin/seasons">admin</a>':'';
  var h=document.getElementById('homeslot');
- if(h){h.innerHTML='';if(m&&m.home){var l=document.createElement('a');l.className='pill';l.href=m.home;l.textContent='home';h.appendChild(l)}}
+ if(h){h.innerHTML='';if(m&&m.home){var l=document.createElement('a');l.className='pill';l.href=m.home;var t='home';try{t=new URL(m.home).host||t}catch(e){}l.textContent=t+' \u2197';h.appendChild(l)}}
 }
 try{var _m=localStorage.getItem('bifme');if(_m)bifApplyMe(JSON.parse(_m));}catch(e){}
 fetch('/api/me').then(function(r){return r.json()}).then(function(m){
@@ -182,11 +182,13 @@ h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute
 .signup{display:grid;gap:12px;max-width:460px;margin-bottom:10px}.signup label{display:grid;gap:4px;font-size:13px;color:var(--muted)}.signup label.chk{display:flex;flex-direction:row;align-items:center;gap:8px}
 .signup input[type=file],.signup input[type=text],.signup textarea{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:6px 8px;font-size:13px}
 code{font-family:var(--mono);font-size:12px;color:var(--accent)}
+details.identedit{margin:-4px 0 8px}details.identedit summary{cursor:pointer;font-size:12.5px;color:var(--accent)}details.identedit form{margin-top:6px}
 .guide{font-size:13.5px;line-height:1.55}.guide ol,.guide ul,.downloads{margin:4px 0 10px;padding-left:20px}.guide li,.downloads li{margin:4px 0}.guide code{background:var(--bg);padding:1px 5px;border-radius:4px}.guide pre{background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:8px 10px;overflow-x:auto}.guide img{max-width:100%}.guide table{border-collapse:collapse}.guide th,.guide td{border:1px solid var(--bd);padding:3px 8px}
 .guide details{margin:6px 0 4px;border:1px solid var(--bd);border-radius:7px;padding:2px 12px;background:var(--bg)}
 .cardlink{text-decoration:none;color:inherit;display:block;transition:border-color .1s}.cardlink:hover{border-color:var(--accent);text-decoration:none}
 .cardlink:hover .game{color:var(--accent)}
 .prow{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.players .who{font-family:inherit;font-size:15px;font-weight:600;color:var(--fg)}.players .by{font-size:12px}
 header{width:100%;border-bottom:1px solid var(--bd);background:var(--panel)}
 header .hwrap{max-width:900px;margin:0 auto;padding:0 16px;height:52px;display:flex;align-items:center;gap:14px}
 header .brand{font-weight:700;font-size:16px;color:var(--fg);text-decoration:none}header .brand:hover{text-decoration:none}

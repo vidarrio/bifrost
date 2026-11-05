@@ -55,6 +55,8 @@ Changed), and a `config.toml` with `[minecraft]` has to lose it (see Removed).
   the map. Watches on item codes run when those items change. Items draw with their
   image filters, `disabled_img` and overlays, and maps draw trapezoid, triangle and
   kite markers. Nothing a pack does can write to the server.
+- The home page lists a signed-in player's games in live seasons, each linking to its
+  page.
 - The home page's minesweeper is for any account. A season's own is for its players and
   those running it.
 - The README and user guide warn that Bifrost is in very early development: read the
@@ -140,6 +142,10 @@ Changed), and a `config.toml` with `[minecraft]` has to lose it (see Removed).
   through `bifrost backup` or with Bifrost stopped.
 - `config.toml` is read as TOML 1.1, so its strings can also use `\e` and `\xHH`
   escapes.
+- The header's link to the operator's site is named after that site (`example.org ↗`),
+  not "home", which read as Bifrost's own home page.
+- A season console's Overview shows only what applies to the season's stage: signups
+  open and close before generation, and a live season offers only its re-roll.
 
 ### Removed
 

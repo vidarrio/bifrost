@@ -303,6 +303,8 @@ pub struct SignupGame<'a> {
     /// The invite box, for the host.
     pub invite: String,
     pub max_notes: usize,
+    /// The season is live, so the game has its own page to point to.
+    pub live: bool,
 }
 
 /// The box a game's host invites co-op partners from: a one-use link each.
@@ -360,6 +362,12 @@ pub fn signup_game_page(g: &SignupGame) -> Html<String> {
     }
     if let Some(w) = &g.welcome {
         b.push_str(&format!(r#"<div class="banner ok">{}</div>"#, esc(w)));
+    }
+    if g.live {
+        b.push_str(&format!(
+            r#"<p class="statline">The season is live: hints, trackers and files are on <a href="game/{}">the game's page</a>.</p>"#,
+            s.id
+        ));
     }
     if !g.pre_gen && !s.seat_names.is_empty() {
         b.push_str(&format!(

@@ -620,8 +620,9 @@ pub fn inlogic_body(inlogic: Option<&crate::db::InLogic>) -> String {
     s
 }
 
-/// A common game's heading, join guide, downloads and allowlist form.
-fn common_join(c: &CommonView, can_register: bool, back: &str) -> String {
+/// A common game's card above the tabs: what it is, where its server is, and
+/// the player's name for its allowlist, or the form to register one.
+fn common_card(c: &CommonView, can_register: bool, back: &str) -> String {
     let mut out = format!(
         r#"<h2>Common game</h2><p class="empty"><b>{}</b> is shared by everyone this season: drop in when you're stuck, taking a break or done with your own game. Its checks send items to the rest of the group.</p>"#,
         esc(&c.name)
@@ -632,19 +633,65 @@ fn common_join(c: &CommonView, can_register: bool, back: &str) -> String {
             esc(&c.address)
         ));
     }
-    if !c.in_catalog {
-        out.push_str(
-            r#"<p class="empty">How to join isn't available right now: ask an admin.</p>"#,
-        );
+    let Some(id) = c.ident.as_ref().filter(|_| c.in_catalog) else {
+        return out;
+    };
+    if !can_register {
+        out.push_str(&format!(
+            r#"<p class="empty">The server only lets in this season's players. Play a game this season, then come back here to register your {}.</p>"#,
+            esc(&id.label)
+        ));
         return out;
     }
+    let form = |cur: &str, btn: &str| {
+        format!(
+            r#"<form method="post" action="common/{key}/ident" class="hintform">
+<input type="hidden" name="back" value="{back}">
+<input name="name" value="{cur}" maxlength="64" autocomplete="off" aria-label="{label}" required>
+<button type="submit">{btn}</button></form>"#,
+            key = esc(&c.key),
+            back = esc(back),
+            cur = esc(cur),
+            label = esc(&id.label),
+        )
+    };
+    match id.current.as_deref() {
+        Some(cur) => out.push_str(&format!(
+            r#"<p class="statline">Your {label}: <b>{}</b>, on the allowlist.</p><details class="identedit"><summary>Change it</summary>{}</details>"#,
+            esc(cur),
+            form(cur, "Update"),
+            label = esc(&id.label),
+        )),
+        None => {
+            let hint = if id.hint.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", esc(&id.hint))
+            };
+            out.push_str(&format!(
+                r#"<p class="empty">The server only lets in this season's players. Register the exact {} you'll join with{hint}: the admins put it on the server's allowlist.</p>{}"#,
+                esc(&id.label),
+                form("", "Register"),
+            ));
+        }
+    }
+    out
+}
+
+/// A common game's How to join tab: its guide and client downloads.
+fn common_guide(c: &CommonView) -> String {
+    if !c.in_catalog {
+        return r#"<p class="empty">How to join isn't available right now: ask an admin.</p>"#
+            .to_string();
+    }
+    let mut out = String::new();
     if !c.guide_html.is_empty() {
-        out.push_str(r#"<h3>How to join</h3><div class="guide">"#);
+        out.push_str(r#"<div class="guide">"#);
         out.push_str(&c.guide_html);
         out.push_str("</div>");
     }
     if !c.downloads.is_empty() {
-        out.push_str(r#"<h3>Downloads</h3><ul class="downloads">"#);
+        out.push_str(r#"<h2>Downloads</h2><ul class="downloads">"#);
         for (n, label) in c.downloads.iter().enumerate() {
             out.push_str(&format!(
                 r#"<li><a href="common/{}/file/{n}">{}</a></li>"#,
@@ -654,42 +701,18 @@ fn common_join(c: &CommonView, can_register: bool, back: &str) -> String {
         }
         out.push_str("</ul>");
     }
-    let Some(id) = &c.ident else {
-        return out;
-    };
-    out.push_str(&format!(r#"<h3>Your {}</h3>"#, esc(&id.label)));
-    if !can_register {
-        out.push_str(&format!(
-            r#"<p class="empty">The server only lets in this season's players. Play a game this season, then come back here to register your {}.</p>"#,
-            esc(&id.label)
-        ));
-        return out;
+    if out.is_empty() {
+        out.push_str(r#"<p class="empty">This common game has no join guide. Ask an admin.</p>"#);
     }
-    let cur = id.current.as_deref().unwrap_or("");
-    if !cur.is_empty() {
-        out.push_str(&format!(
-            r#"<p class="statline">On the allowlist as <b>{}</b>.</p>"#,
-            esc(cur)
-        ));
-    }
-    let hint = if id.hint.is_empty() {
-        String::new()
-    } else {
-        format!(" ({})", esc(&id.hint))
-    };
-    out.push_str(&format!(
-        r#"<p class="empty">The server only lets in this season's players. Register the exact {label} you'll join with{hint}: the admins put it on the server's allowlist.</p>
-<form method="post" action="common/{key}/ident" class="hintform">
-<input type="hidden" name="back" value="{back}">
-<input name="name" value="{cur}" maxlength="64" autocomplete="off" aria-label="{label}" required>
-<button type="submit">{btn}</button></form>"#,
-        label = esc(&id.label),
-        key = esc(&c.key),
-        back = esc(back),
-        cur = esc(cur),
-        btn = if cur.is_empty() { "Register" } else { "Update" },
-    ));
     out
+}
+
+/// Whether a common game's page opens on How to join: until the player has
+/// registered the name its server lets in by (or can't yet).
+fn join_first(c: &CommonView, can_register: bool) -> bool {
+    c.ident
+        .as_ref()
+        .is_some_and(|id| !can_register || id.current.is_none())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -755,12 +778,16 @@ pub fn game_page(
     // A common game: shared by everyone, with no claim. Show how to join its
     // server instead of the claim and hint controls.
     if let Some(c) = common {
-        out.push_str(&common_join(c, can_hint_common, &back));
+        out.push_str(&common_card(c, can_hint_common, &back));
 
-        // Tabs: everything hint-related goes in the Hints panel; the Universal
-        // Tracker panel (built above) sits beside it. The join and allowlist
-        // info above stays outside the tabs.
-        out.push_str(tabs_open());
+        // Tabs: everything hint-related goes in the Hints panel, how to join
+        // in its own, which comes first until the player is on the allowlist.
+        let join = join_first(c, can_hint_common);
+        let (hints_on, join_on) = if join { ("", " on") } else { (" on", "") };
+        out.push_str(&format!(
+            r#"<div class="gtabs"><button type="button" class="gtab{hints_on}" data-tab="tab-hints">Hints</button><button type="button" class="gtab{join_on}" data-tab="tab-join">How to join</button><button type="button" class="gtab" data-tab="tab-ut">Universal Tracker</button><button type="button" class="gtab" data-tab="tab-pt">PopTracker</button><button type="button" class="gtab" data-tab="tab-log">Log</button></div><div class="gtabpanel" id="tab-hints"{}>"#,
+            if join { " hidden" } else { "" }
+        ));
 
         // Communal hinting: only players with a claimed game this season may spend
         // the common game's OWN (shared) AP hint points — no personal/bonus points.
@@ -769,7 +796,7 @@ pub fn game_page(
                 let items_json = serde_json::to_string(item_names).unwrap_or_else(|_| "[]".into());
                 let have = match points {
                     Some(p) => format!(
-                        r#"The common game has <b id="hintpts">{p}</b> shared hint points. "#
+                        r#"The common game's shared hint points: <b id="hintpts">{p}</b>. "#
                     ),
                     None => String::new(),
                 };
@@ -808,6 +835,11 @@ pub fn game_page(
         ));
         out.push_str("</div>"); // close #worldhints
         out.push_str("</div>"); // close #tab-hints
+        out.push_str(&format!(
+            r#"<div class="gtabpanel" id="tab-join"{}>{}</div>"#,
+            if join { "" } else { " hidden" },
+            common_guide(c)
+        ));
         out.push_str(&ut_html);
         out.push_str(&poptracker_panel(game_id, pt_has_pack, pt_can_manage));
         out.push_str(&log_html);
@@ -819,7 +851,7 @@ pub fn game_page(
     }
 
     // Players
-    out.push_str(r#"<h2>Players</h2><div class="grid">"#);
+    out.push_str(r#"<h2>Players</h2><div class="grid players">"#);
     for r in &here {
         let mine = r.claimed_by.as_deref() == Some(me);
         let (by, action) = match &r.claimed_by {
@@ -880,12 +912,12 @@ pub fn game_page(
     if let Some(sid) = hint_slot {
         let items_json = serde_json::to_string(item_names).unwrap_or_else(|_| "[]".into());
         let have = match points {
-            Some(p) => format!(r#"You have <b id="hintpts">{p}</b> hint points. "#),
+            Some(p) => format!(r#"Your hint points: <b id="hintpts">{p}</b>. "#),
             None => String::new(),
         };
         let bonus = if credits > 0 {
             format!(
-                r#" You also have <b id="bonushints">{credits}</b> bonus hint(s) — spent automatically when you're out of points."#
+                r#" Bonus hints: <b id="bonushints">{credits}</b>, spent automatically when you're out of points."#
             )
         } else {
             String::new()

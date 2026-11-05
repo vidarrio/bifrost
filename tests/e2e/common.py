@@ -86,6 +86,7 @@ try:
     check("a common game's page goes by its setup's name", "<h1>Clique Vanilla</h1>" in page, (h := re.search(r"<h1>[^<]*</h1>", page)) and h.group(0))
     regular = get(carl, f"/s/{sid}/game/{re.search(r'href=\"game/([0-9a-z]+)\"><span class=\"st\">[^<]*</span><div class=\"game\">ChecksFinder<', board()).group(1)}").text
     check("…and a regular game's by its game", "<h1>ChecksFinder</h1>" in regular, (h := re.search(r"<h1>[^<]*</h1>", regular)) and h.group(0))
+    check("someone not on the allowlist yet lands on How to join", 'class="gtab on" data-tab="tab-join"' in page and 'id="tab-hints" hidden' in page)
     check("the guide fills in the address and slot", "<strong>vanilla.example:25565</strong>" in page and "<code>Vanilla</code>" in page, page[-3000:])
     # Raw: the helpers decode entities.
     guide = carl.get(carl.base + van).text.split('<div class="guide">')[1].split("</div>")[0]
@@ -107,13 +108,14 @@ try:
 
     post(ann, f"/s/{sid}/common/vanilla.1/ident", data=dict(name="Steve"))
     page = get(ann, van).text
-    check("a player registers their name", "On the allowlist as <b>Steve</b>" in page, re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", page.split("<main>")[-1]))[:600])
+    check("…and once they are, on Hints", 'class="gtab on" data-tab="tab-hints"' in page and 'id="tab-join" hidden' in page)
+    check("a player registers their name", "Your Minecraft username: <b>Steve</b>, on the allowlist" in page, re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", page.split("<main>")[-1]))[:600])
     r = post(bob, f"/s/{sid}/common/modded/ident", data=dict(name="steve"))
     check("a name is one player's per kind of game", "Someone else already registered" in r.text, r.text[-300:])
     r = post(bob, f"/s/{sid}/common/modded/ident", data=dict(name="a b"))
     check("a name follows the setup's rule", "3 to 16 letters" in r.text, r.text[-300:])
     post(bob, f"/s/{sid}/common/modded/ident", data=dict(name="Alex_2"))
-    check("one name serves every setup of its kind", "On the allowlist as <b>Alex_2</b>" in get(bob, van).text)
+    check("one name serves every setup of its kind", "Your Minecraft username: <b>Alex_2</b>, on the allowlist" in get(bob, van).text)
 
     r = get(root, f"/s/{sid}/admin/common/vanilla.1/allowlist")
     check("the admin downloads the allowlist", r.text == "Alex_2\nSteve\n" and "attachment" in r.headers.get("content-disposition", ""), repr(r.text))

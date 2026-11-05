@@ -135,6 +135,7 @@ pub(crate) async fn signup_game(
             .map(|(action, base)| render::invite_box(action, base, &links))
             .unwrap_or_default(),
         max_notes: MAX_NOTES,
+        live: ctx.state().is_live(),
     })
     .into_response()
 }

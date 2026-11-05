@@ -56,6 +56,10 @@ try:
     wait_for(lambda: "Generated seed" in get(mod, f"/s/{sid}/admin").text, 300, 3)
     check("the board comes up", wait_for(lambda: first_game(mod, sid) == game, 60, 2))
     live_url = f"/s/{sid}/game/{game}"
+    a = get(mod, f"/s/{sid}/admin").text
+    check("a live season's overview offers no signups to open", "Open signups" not in a and "Regenerating re-rolls" in a)
+    check("a signup's page points to the live game's", f'href="game/{game}"' in get(ann, f"/s/{sid}/signup/game/{game}").text)
+    check("the home page lists a player's own games", f'href="/s/{sid}/game/{game}"' in get(ann, "/").text)
     wait_for(lambda: "Create an invite link" in get(ann, live_url).text, 60, 2)
     post(ann, f"{live_url}/invite")
     token = re.search(r"/seat/([0-9a-f]+)", get(ann, live_url).text).group(1)

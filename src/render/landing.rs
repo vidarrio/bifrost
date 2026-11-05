@@ -71,10 +71,42 @@ pub fn landing_roster(
     out
 }
 
-/// The home page's "Join" block: where each live season's connection details
-/// are (its own address and password, on its board).
-pub fn landing_connect(live: &[(Id, String)]) -> String {
-    let mut out = String::from(r#"<div class="lbl">Connect to</div>"#);
+/// One of the signed-in player's games in a live season, for the home page.
+pub struct MyGame {
+    pub season: Id,
+    pub game_id: Id,
+    pub slot: String,
+    pub game: String,
+}
+
+/// The home page's "Join" block: the signed-in player's own games, each
+/// linking to its page, then where each live season's connection details are
+/// (its own address and password, on its board).
+pub fn landing_connect(live: &[(Id, String)], mine: &[MyGame]) -> String {
+    let mut out = String::new();
+    if !mine.is_empty() {
+        out.push_str(r#"<div class="lbl">Your games</div>"#);
+        for g in mine {
+            let season = live
+                .iter()
+                .find(|(id, _)| *id == g.season)
+                .map(|(_, n)| n.as_str())
+                .unwrap_or("");
+            out.push_str(&format!(
+                r#"<div class="pw"><a href="/s/{}/game/{}">{} · {}</a> in {}</div>"#,
+                g.season,
+                g.game_id,
+                esc(&g.slot),
+                esc(&g.game),
+                esc(season)
+            ));
+        }
+    }
+    out.push_str(if mine.is_empty() {
+        r#"<div class="lbl">Connect to</div>"#
+    } else {
+        r#"<div class="lbl" style="margin-top:12px">Connect to</div>"#
+    });
     if live.is_empty() {
         out.push_str(r#"<div class="cs">no season is live</div>"#);
     }
@@ -92,7 +124,23 @@ pub fn home_pill(url: &str) -> String {
     if url.is_empty() {
         String::new()
     } else {
-        format!(r#"<a class="pill" href="{}">home</a>"#, esc(url))
+        format!(
+            r#"<a class="pill" href="{}">{} ↗</a>"#,
+            esc(url),
+            esc(&home_label(url))
+        )
+    }
+}
+
+/// What the header's home link says: the site it goes to, by host name.
+pub fn home_label(url: &str) -> String {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = host.rsplit('@').next().unwrap_or(host);
+    if host.is_empty() {
+        "home".into()
+    } else {
+        host.to_string()
     }
 }
 
