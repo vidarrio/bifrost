@@ -523,6 +523,37 @@ pub(super) fn inlogic_panel(game_id: Id, inlogic: Option<&crate::db::InLogic>) -
     )
 }
 
+/// The header's figures for a slot.
+pub fn game_stats(live: &crate::ap::ApLive) -> String {
+    format!(
+        "{} locations · sent {} · received {} · {} left",
+        live.world_size, live.sent, live.received, live.still_to_find
+    )
+}
+
+/// Keeps the header's figures and the hints list up to date while the page is
+/// open: every 12 seconds, and when the page comes back into view. The list is
+/// left alone while its tab is hidden or someone's using it.
+const LIVE_JS: &str = r#"<script>
+(function(){
+ var stats=document.getElementById('gamestats'); if(!stats) return;
+ var slot=stats.getAttribute('data-slot'), hints=document.getElementById('worldhints'), panel=document.getElementById('tab-hints');
+ function busy(){ return hints && hints.contains(document.activeElement); }
+ function load(){
+  if(document.hidden) return;
+  var want=hints&&!(panel&&panel.hidden)&&!busy();
+  fetch('game/'+slot+'/live'+(want?'':'?hints=0')).then(function(r){return r.json();}).then(function(j){
+   if(!j||typeof j.stats!=='string') return;
+   stats.textContent=j.stats;
+   if(want&&typeof j.hints==='string'&&!busy()) hints.innerHTML=j.hints;
+   if(window.bifTick) bifTick();
+  }).catch(function(){});
+ }
+ setInterval(load,12000);
+ document.addEventListener('visibilitychange',function(){ if(!document.hidden) load(); });
+})();
+</script>"#;
+
 /// While the Universal Tracker tab is open, fetch its latest result every 12s
 /// (Bifrost recomputes it whenever the slot's items or checks change), and at
 /// once when the tab is opened. The header's "available" count follows.
@@ -700,13 +731,10 @@ pub fn game_page(
     let avail = inlogic_avail(inlogic);
     out.push_str(&format!(
         r#"<h1>{}</h1><div class="crumb"><a href="board">← board</a>{}</div>
-<div class="meta">{} locations · sent {} · received {} · {} left<span id="utavail">{avail}</span></div>"#,
+<div class="meta"><span id="gamestats" data-slot="{game_id}">{}</span><span id="utavail">{avail}</span></div>"#,
         esc(game),
         if is_admin { " · admin" } else { "" },
-        live.world_size,
-        live.sent,
-        live.received,
-        live.still_to_find,
+        game_stats(&live),
     ));
 
     // Admin: mark this slot finished (registers its goal → collects/releases its
@@ -784,6 +812,7 @@ pub fn game_page(
         out.push_str(&log_html);
         out.push_str(TABS_JS);
         out.push_str(GAME_TAB_JS);
+        out.push_str(LIVE_JS);
         out.push_str("</main></body></html>");
         return Html(out);
     }
@@ -906,6 +935,7 @@ pub fn game_page(
     out.push_str(&log_html);
     out.push_str(TABS_JS);
     out.push_str(GAME_TAB_JS);
+    out.push_str(LIVE_JS);
 
     out.push_str("</main></body></html>");
     Html(out)
