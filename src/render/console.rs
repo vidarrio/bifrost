@@ -630,7 +630,7 @@ pub fn common_setup_page(
     // Long file names and the add-download form wrap on a phone.
     body.push_str("<style>.hintrow{flex-wrap:wrap;gap:6px}.hintrow code{overflow-wrap:anywhere}form.console{flex-wrap:wrap}</style>");
     body.push_str(&format!(
-        r#"<div class="crumb"><a href="/admin/common-games">← common games</a></div><h2>{}</h2>"#,
+        r#"<div class="crumb"><a href="/admin/common-games">← common games</a></div><h2 style="font-size:20px;letter-spacing:0;text-transform:none;color:var(--fg);margin-top:14px">{}</h2>"#,
         if v.fields.name.is_empty() {
             k.clone()
         } else {
