@@ -707,12 +707,11 @@ fn common_guide(c: &CommonView) -> String {
     out
 }
 
-/// Whether a common game's page opens on How to join: until the player has
-/// registered the name its server lets in by (or can't yet).
+/// Whether a common game's page opens on How to join: for a player who can't
+/// hint there yet (no game this season), and until the player has registered
+/// the name its server lets in by.
 fn join_first(c: &CommonView, can_register: bool) -> bool {
-    c.ident
-        .as_ref()
-        .is_some_and(|id| !can_register || id.current.is_none())
+    !can_register || c.ident.as_ref().is_some_and(|id| id.current.is_none())
 }
 
 #[allow(clippy::too_many_arguments)]

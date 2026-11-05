@@ -109,21 +109,23 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
         .map(|s| (s.id, s.name.clone()))
         .collect();
     // The signed-in player's own games in live seasons, to link from the top.
-    let mut mine = Vec::new();
-    if me.id() != 0 {
-        for (sid, _) in &live {
-            for r in st.db.slots(*sid).await.unwrap_or_default() {
-                if r.claimed_by_id == Some(me.id()) {
-                    mine.push(render::MyGame {
-                        season: *sid,
-                        game_id: r.game_id,
-                        slot: r.name,
-                        game: r.game,
-                    });
-                }
-            }
-        }
-    }
+    let mine: Vec<render::MyGame> = if me.id() == 0 {
+        Vec::new()
+    } else {
+        st.db
+            .live_games_of(me.id())
+            .await
+            .into_iter()
+            // Only seasons the viewer can see, as listed above.
+            .filter(|(sid, ..)| live.iter().any(|(id, _)| id == sid))
+            .map(|(season, game_id, slot, game)| render::MyGame {
+                season,
+                game_id,
+                slot,
+                game,
+            })
+            .collect()
+    };
     let mut landing = LANDING.to_string();
     if !season_cards {
         while let (Some(i), Some(j)) = (

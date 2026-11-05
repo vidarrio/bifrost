@@ -135,12 +135,25 @@ pub fn home_pill(url: &str) -> String {
 /// What the header's home link says: the site it goes to, by host name.
 pub fn home_label(url: &str) -> String {
     let rest = url.split_once("://").map_or(url, |(_, r)| r);
-    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = rest.split(['/', '\\', '?', '#']).next().unwrap_or("");
     let host = host.rsplit('@').next().unwrap_or(host);
-    if host.is_empty() {
-        "home".into()
-    } else {
-        host.to_string()
+    // Without a port, as the page's own script shows it (`URL.hostname`).
+    let host = match host.rsplit_once(':') {
+        // A port, not part of a bare IPv6 address.
+        Some((h, p))
+            if !p.is_empty()
+                && p.bytes().all(|b| b.is_ascii_digit())
+                && (h.ends_with(']') || !h.contains(':')) =>
+        {
+            h
+        }
+        _ => host,
+    };
+    let host = host.to_ascii_lowercase();
+    match host.chars().count() {
+        0 => "home".into(),
+        n if n > 24 => format!("{}…", host.chars().take(23).collect::<String>()),
+        _ => host,
     }
 }
 
@@ -239,4 +252,25 @@ pub fn past_seasons_section(seasons: &[(Id, String, i64)]) -> String {
     }
     out.push_str("</div>");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_home_link_is_named_after_its_host() {
+        for (url, want) in [
+            ("https://example.org/", "example.org"),
+            ("https://Example.org:443/x", "example.org"),
+            ("http://user:pw@example.org:8080", "example.org"),
+            ("https://example.org\\evil", "example.org"),
+            ("https://[::1]:8080/", "[::1]"),
+            ("", "home"),
+            (
+                "https://a-very-long-host-name.example.org/",
+                "a-very-long-host-name.e…",
+            ),
+        ] {
+            assert_eq!(super::home_label(url), want, "{url}");
+        }
+    }
 }

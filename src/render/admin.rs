@@ -316,9 +316,11 @@ pub fn admin_page(
     // Generate, or re-roll once live.
     let n = subs.len();
     let about = match state {
-        crate::db::State::Draft | crate::db::State::Signup | crate::db::State::Generating => format!(
-            "Generating rolls a seed from the {n} signup{}, gives each its slot, starts the season's server and closes signups.",
-            if n == 1 { "" } else { "s" }
+        // While a generation or re-roll runs, the banner says what's happening.
+        crate::db::State::Draft | crate::db::State::Signup => format!(
+            "Generating rolls a seed from the {n} signup{}, gives each its slot and starts the season's server{}.",
+            if n == 1 { "" } else { "s" },
+            if signups_open { ", closing signups" } else { "" }
         ),
         crate::db::State::Live => "Regenerating re-rolls the current lineup into a new world with a fresh save, using the season's current host.yaml. Everyone keeps their game; the server restarts.".to_string(),
         _ => String::new(),

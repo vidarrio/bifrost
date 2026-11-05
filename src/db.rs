@@ -1003,6 +1003,21 @@ impl Db {
         Ok(())
     }
 
+    /// An account's games in live seasons: (season, game id, slot name, game),
+    /// a seat on a co-op game included.
+    pub async fn live_games_of(&self, account: i64) -> Vec<(Id, Id, String, String)> {
+        sqlx::query_as(
+            "SELECT s.season_id, s.game_id, s.name, s.game FROM slot s
+             JOIN claim c ON c.slot_id = s.id JOIN season se ON se.id = s.season_id
+             WHERE c.account_id = ? AND se.state = 'live'
+             ORDER BY se.live_at, s.name",
+        )
+        .bind(account)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default()
+    }
+
     pub async fn slots(&self, season: Id) -> Result<Vec<SlotRow>, sqlx::Error> {
         sqlx::query_as::<_, SlotRow>(
             r#"SELECT s.id, s.game_id, s.is_seat, s.name, s.ap_slot, s.game, a.username AS claimed_by,
