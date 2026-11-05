@@ -218,7 +218,10 @@ To cut release `X.Y.Z`:
    `https://github.com/vidarrio/bifrost/releases/tag/v0.1.0`. These links 404
    until step 5 pushes the tag; that's expected.
 3. **Version**: set `version = "X.Y.Z"` in the root `Cargo.toml`, then run
-   `cargo update --workspace` so `Cargo.lock` follows.
+   `cargo update --workspace` so `Cargo.lock` follows. For 0.3.0, which
+   freezes the schema, also remake the baseline fixture from this build:
+   `cargo build && tests/e2e/fixtures/make_baseline.py` (see "Database
+   changes"). CI refuses the pull request until the fixture says 0.3.0.
 4. **Pull request**: open it as `release: vX.Y.Z`, with CI and review like any
    other change. Review checks that the changelog is complete and accurate for
    the release. Then merge it.

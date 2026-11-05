@@ -6,12 +6,18 @@ files. The baseline database the upgrade suite opens
 (`the_schema_is_its_files` in `src/db/migrate.rs`) checks that the code uses
 exactly these files, in order. Until a 0.3.0 or later release exists there's
 nothing to check, and pre-releases (`v0.3.0-rc.1`) don't freeze anything.
+Before then, once `Cargo.toml` says 0.3.0 or later (the release pull
+request), the fixture has to have been made by that version, as it's about to
+be frozen.
 
 Run from the repository's root, with the release tags fetched."""
 import os
 import re
+import sqlite3
 import subprocess
 import sys
+import tarfile
+import tempfile
 
 SCHEMA = "src/db/schema.sql"
 STEPS = "src/db/steps"
@@ -43,6 +49,18 @@ def same(tag, path):
 tags = [t for t in git("tag", "--list", "v*").decode().split() if re.fullmatch(r"v\d+\.\d+\.\d+", t)]
 released = [t for t in tags if version(t) >= (0, 3, 0)]
 if not released:
+    with open("Cargo.toml") as f:
+        cargo = re.search(r'^version = "(\d+\.\d+\.\d+)"$', f.read(), re.M)
+    if cargo and version("v" + cargo.group(1)) >= (0, 3, 0):
+        with tempfile.TemporaryDirectory() as d, tarfile.open(FIXTURE) as tar:
+            tar.extract("data/bifrost.db", d, filter="data")
+            with sqlite3.connect(os.path.join(d, "data", "bifrost.db")) as db:
+                made = db.execute("SELECT value FROM setting WHERE key = 'bifrost_version'").fetchone()
+            db.close()
+        if not made or made[0] != cargo.group(1):
+            fail(FIXTURE, f"the baseline database was made by Bifrost {made and made[0]}, not "
+                          f"{cargo.group(1)}: it's frozen with this release, so remake it from this "
+                          "build (tests/e2e/fixtures/make_baseline.py).")
     print("No release from 0.3.0 on yet: the schema isn't frozen.")
     sys.exit(0)
 tag = max(released, key=version)

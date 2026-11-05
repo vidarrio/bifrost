@@ -58,6 +58,16 @@ finally:
     srv.stop()
 schema, version = stamp(srv)
 check("a fresh data dir is stamped with a schema version and this Bifrost's", schema >= 1 and version, (schema, version))
+
+
+def schema_of(srv):
+    """A database's schema: what an upgraded one has to match a fresh one in."""
+    with contextlib.closing(sqlite3.connect(os.path.join(srv.data, "bifrost.db"))) as db:
+        return db.execute("SELECT type, name, tbl_name, sql FROM sqlite_master "
+                          "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name").fetchall()
+
+
+fresh_schema = schema_of(srv)
 check("a first start takes no backup", backups(srv) == [], backups(srv))
 
 srv = server()
@@ -168,6 +178,7 @@ remove_db()
 # since, and finds everything.
 remove_db()
 srv = Server("upgrade", port=PORT, ap_ports=AP_PORTS, fresh=True, extra_env=ENV)
+shutil.rmtree(srv.data + ".unpack", ignore_errors=True)
 with tarfile.open(os.path.join(FIX, "baseline.tar.gz")) as tar:
     tar.extractall(srv.data + ".unpack", filter="data")
 shutil.rmtree(srv.data)
@@ -178,8 +189,8 @@ with open(os.path.join(srv.data, ".data-dir")) as f:
     was = f.read()
 os.remove(os.path.join(srv.data, ".data-dir"))
 with contextlib.closing(sqlite3.connect(os.path.join(srv.data, "bifrost.db"))) as db, db:
-    db.execute("UPDATE submission SET yaml_file = ? || substr(yaml_file, ?) WHERE yaml_file LIKE ? || '/%'",
-               (srv.data, len(was) + 1, was))
+    db.execute("UPDATE submission SET yaml_file = ? || substr(yaml_file, ?) WHERE substr(yaml_file, 1, ?) = ?",
+               (srv.data, len(was) + 1, len(was) + 1, was + "/"))
 srv.start()
 try:
     with contextlib.closing(sqlite3.connect(os.path.join(srv.data, "bifrost.db"))) as db:
@@ -191,6 +202,9 @@ try:
     r = srv.cli("auth", "status")
     check("the baseline database opens and migrates", version == schema and r.returncode == 0, (version, schema, r.stderr))
     check("with its references and pages intact", problems == [], problems)
+    upgraded = schema_of(srv)
+    check("and the same schema as a fresh one", upgraded == fresh_schema,
+          [r for r in upgraded if r not in fresh_schema] + [r for r in fresh_schema if r not in upgraded])
     root = srv.session()
     r = root.post(srv.base + "/login", data=dict(username="root", password="correct horse battery"))
     check("its accounts still sign in", "bifrost_session" in root.cookies.get_dict(), r.text[-300:])
