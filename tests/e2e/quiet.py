@@ -91,6 +91,8 @@ try:
     j = wait_for(lambda: (x := live()) and "Map Width" in x.get("hints", "") and x, 60, 3) or live()
     check("…which carry the slot's hints", "Map Width" in j.get("hints", ""), j)
     stats = re.search(r'id="gamestats"[^>]*>([^<]*)<', get(root, f"/s/{sid}/game/{hinted}").text)
+    j0 = get(root, f"/s/{sid}/game/{hinted}/live", params={"hints": "0"}).json()
+    check("…and leaves the hints out when their tab is hidden", j0.get("hints") is None and j0.get("stats") == j.get("stats"), j0)
     check("…and the header's figures", stats and re.fullmatch(r"\d+ locations · sent \d+ · received \d+ · \d+ left", j.get("stats", "")) and j["stats"] == stats.group(1), (j.get("stats"), stats and stats.group(1)))
 
     # A real player: AP's own client library, no Bifrost tag.

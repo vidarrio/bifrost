@@ -523,9 +523,6 @@ pub(super) fn inlogic_panel(game_id: Id, inlogic: Option<&crate::db::InLogic>) -
     )
 }
 
-/// While the Universal Tracker tab is open, fetch its latest result every 12s
-/// (Bifrost recomputes it whenever the slot's items or checks change), and at
-/// once when the tab is opened. The header's "available" count follows.
 /// The header's figures for a slot.
 pub fn game_stats(live: &crate::ap::ApLive) -> String {
     format!(
@@ -544,10 +541,11 @@ const LIVE_JS: &str = r#"<script>
  function busy(){ return hints && hints.contains(document.activeElement); }
  function load(){
   if(document.hidden) return;
-  fetch('game/'+slot+'/live').then(function(r){return r.json();}).then(function(j){
+  var want=hints&&!(panel&&panel.hidden)&&!busy();
+  fetch('game/'+slot+'/live'+(want?'':'?hints=0')).then(function(r){return r.json();}).then(function(j){
    if(!j||typeof j.stats!=='string') return;
    stats.textContent=j.stats;
-   if(hints&&typeof j.hints==='string'&&!(panel&&panel.hidden)&&!busy()) hints.innerHTML=j.hints;
+   if(want&&typeof j.hints==='string'&&!busy()) hints.innerHTML=j.hints;
    if(window.bifTick) bifTick();
   }).catch(function(){});
  }
@@ -556,6 +554,9 @@ const LIVE_JS: &str = r#"<script>
 })();
 </script>"#;
 
+/// While the Universal Tracker tab is open, fetch its latest result every 12s
+/// (Bifrost recomputes it whenever the slot's items or checks change), and at
+/// once when the tab is opened. The header's "available" count follows.
 const UT_JS: &str = r#"<script>
 (function(){
  var host=document.getElementById('utbody'); if(!host) return;

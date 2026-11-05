@@ -607,15 +607,31 @@ pub(crate) async fn game_live(
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
     me: auth::Me,
+    Query(q): Query<LiveQuery>,
 ) -> Json<serde_json::Value> {
     let Some(snap) = ctx.rt.with_board(|b| b.snapshot()) else {
         return Json(serde_json::json!({}));
     };
-    let live = snap.ap.get(&ap_slot).cloned().unwrap_or_default();
-    Json(serde_json::json!({
-        "stats": render::game_stats(&live),
-        "hints": hints_html(&st, &ctx, &me, &snap, game_id, ap_slot).await,
-    }))
+    let stats = snap
+        .ap
+        .get(&ap_slot)
+        .map(render::game_stats)
+        .unwrap_or_else(|| render::game_stats(&Default::default()));
+    // The page only wants the list while its tab is showing.
+    let hints = if q.hints.as_deref() == Some("0") {
+        serde_json::Value::Null
+    } else {
+        hints_html(&st, &ctx, &me, &snap, game_id, ap_slot)
+            .await
+            .into()
+    };
+    Json(serde_json::json!({ "stats": stats, "hints": hints }))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct LiveQuery {
+    #[serde(default)]
+    pub(crate) hints: Option<String>,
 }
 
 /// The Universal Tracker tab's latest contents and the header's count, which
