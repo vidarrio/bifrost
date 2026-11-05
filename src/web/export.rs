@@ -15,8 +15,9 @@ async fn authorized(st: &AppState, headers: &axum::http::HeaderMap) -> bool {
     let Some(token) = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(str::trim)
+        .and_then(|v| v.split_once(' '))
+        .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+        .map(|(_, t)| t.trim())
         .filter(|t| !t.is_empty())
     else {
         return false;
@@ -71,9 +72,19 @@ async fn live_common(
     Some((row, common))
 }
 
-/// The seed's files for a season's common game: its slot's per-player files.
-async fn slot_files(st: &AppState, season: Id, key: &str) -> Vec<generate::OutputFile> {
-    let slots = st.db.slots(season).await.unwrap_or_default();
+/// The files of a season's current seed.
+async fn outputs(season: Id) -> Vec<generate::OutputFile> {
+    tokio::task::spawn_blocking(move || generate::list_outputs(season))
+        .await
+        .unwrap_or_default()
+}
+
+/// Of the seed's files, a season's common game's: its slot's per-player files.
+fn slot_files<'a>(
+    slots: &[db::SlotRow],
+    outputs: &'a [generate::OutputFile],
+    key: &str,
+) -> Vec<&'a generate::OutputFile> {
     let Some(ap_slot) = slots
         .iter()
         .find(|r| r.common_key.as_deref() == Some(key))
@@ -81,10 +92,8 @@ async fn slot_files(st: &AppState, season: Id, key: &str) -> Vec<generate::Outpu
     else {
         return Vec::new();
     };
-    tokio::task::spawn_blocking(move || generate::list_outputs(season))
-        .await
-        .unwrap_or_default()
-        .into_iter()
+    outputs
+        .iter()
         .filter(|o| o.player == Some(ap_slot) && !o.is_spoiler)
         .collect()
 }
@@ -108,17 +117,20 @@ pub(crate) async fn export_commons(
         if commons.is_empty() {
             continue;
         }
+        let slots = st.db.slots(row.id).await.unwrap_or_default();
+        let seed_files = outputs(row.id).await;
         let mut out = Vec::new();
         for c in commons {
             let setup = crate::common::load(&c.key).ok();
             let ident = setup.as_ref().and_then(|s| s.identifier.as_ref());
             let base = format!("/export/{}/{}", row.id, c.key);
-            let files: Vec<serde_json::Value> = slot_files(&st, row.id, &c.key)
-                .await
+            let files: Vec<serde_json::Value> = slot_files(&slots, &seed_files, &c.key)
                 .into_iter()
                 .map(|f| {
                     serde_json::json!({
-                        "name": f.member.rsplit('/').next().unwrap_or(&f.member),
+                        // As `file?name=` takes it: its path in the seed.
+                        "name": f.member,
+                        "filename": f.member.rsplit('/').next().unwrap_or(&f.member),
                         "size": f.size,
                         "url": format!("{base}/file?name={}", url_encode(&f.member)),
                     })
@@ -156,12 +168,18 @@ pub(crate) async fn export_commons(
 pub(crate) async fn export_allowlist(
     State(st): State<AppState>,
     headers: axum::http::HeaderMap,
-    Path((season, key)): Path<(Id, String)>,
-    Query(q): Query<AllowlistQuery>,
+    Path((season, key)): Path<(String, String)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     if !authorized(&st, &headers).await {
         return refused();
     }
+    let Ok(season) = season.parse::<Id>() else {
+        return not_found();
+    };
+    let q = AllowlistQuery {
+        format: q.get("format").cloned().unwrap_or_default(),
+    };
     if live_common(&st, season, &key).await.is_none() {
         return not_found();
     }
@@ -172,39 +190,38 @@ pub(crate) async fn export_allowlist(
     allowlist_response(season, &key, &names, &q.format)
 }
 
-#[derive(Deserialize)]
-pub(crate) struct ExportFileQuery {
-    pub(crate) name: String,
-}
-
 /// One of the seed's files for a live season's common game, by its name as
 /// the index lists it.
 pub(crate) async fn export_file(
     State(st): State<AppState>,
     headers: axum::http::HeaderMap,
-    Path((season, key)): Path<(Id, String)>,
-    Query(q): Query<ExportFileQuery>,
+    Path((season, key)): Path<(String, String)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     if !authorized(&st, &headers).await {
         return refused();
     }
+    let (Ok(season), Some(name)) = (season.parse::<Id>(), q.get("name")) else {
+        return not_found();
+    };
     if live_common(&st, season, &key).await.is_none() {
         return not_found();
     }
-    if !slot_files(&st, season, &key)
-        .await
+    let slots = st.db.slots(season).await.unwrap_or_default();
+    let seed_files = outputs(season).await;
+    if !slot_files(&slots, &seed_files, &key)
         .iter()
-        .any(|f| f.member == q.name)
+        .any(|f| &f.member == name)
     {
         return not_found();
     }
-    let member = q.name.clone();
+    let member = name.clone();
     match tokio::task::spawn_blocking(move || generate::read_output(season, &member))
         .await
         .ok()
         .flatten()
     {
-        Some(data) => download_response(&q.name, data),
+        Some(data) => download_response(name, data),
         None => not_found(),
     }
 }
@@ -253,7 +270,11 @@ pub(crate) async fn admin_export_token(
             render::export_token_page(&token).into_response()
         }
         "revoke" => {
-            let _ = st.db.set_export_token_hash(None).await;
+            if let Err(e) = st.db.set_export_token_hash(None).await {
+                tracing::warn!("revoking the export token: {e}");
+                return render::notice("Couldn't revoke the token.", false, "/admin/settings")
+                    .into_response();
+            }
             tracing::info!("export token revoked by {}", me.username());
             Redirect::to("/admin/settings#export").into_response()
         }

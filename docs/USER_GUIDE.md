@@ -714,8 +714,9 @@ It only reads, and only these:
   when a season is re-rolled, which is when the server needs its new file.
 - `GET /export/<season>/<key>/allowlist`: one name per line, or a JSON array
   with `?format=json`.
-- `GET /export/<season>/<key>/file?name=<file>`: one of the slot's files, as
-  the index lists it.
+- `GET /export/<season>/<key>/file?name=<name>`: one of the slot's files, by
+  the `name` the index gives it (its path in the seed; `filename` is just its
+  file name). Each file's `url` in the index already has it.
 
 Send the token as a bearer token:
 
