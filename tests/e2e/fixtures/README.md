@@ -11,6 +11,5 @@ are matching player options. The catalog suite uses them as custom worlds.
 the baseline 0.3.0 freezes, with a bit of everything Bifrost keeps. It was
 written by Bifrost through its own pages (`make_baseline.py`), and the
 `upgrade` suite starts the current build on it, in another directory than it
-was made in. Its accounts' password
-is `correct horse battery`. See "Database changes" in CONTRIBUTING.md for when
-it may be remade.
+was made in. Its accounts' password is `correct horse battery`. See "Database
+changes" in CONTRIBUTING.md for when it may be remade.

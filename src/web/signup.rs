@@ -431,9 +431,9 @@ pub(crate) async fn signup_check(
     }
 }
 
-/// Write a signup's YAML to a new file of its own and return its path.
-/// Store a signup's YAML in the season's folder. Returns how the database
-/// names it: by its place in the data dir (see `Config::data_file`).
+/// Write a signup's YAML to a new file of its own in the season's folder.
+/// Returns how the database names it: by its place in the data dir (see
+/// `Config::data_file`).
 async fn store_yaml(ctx: &scope::SeasonCtx, slot_name: &str, yaml: &[u8]) -> Option<String> {
     // Names can be long, and file names can't.
     let slug: String = slugify(slot_name).chars().take(64).collect();
