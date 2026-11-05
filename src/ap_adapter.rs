@@ -176,18 +176,16 @@ async fn ensure_host_yaml(season: &SeasonDirs, ap: &Install) -> Result<(), Strin
     Ok(())
 }
 
-/// The apworlds Bifrost itself ships (vendored or operator-supplied common
-/// game), by SHA-256. Anything else in a season's `worlds/` is custom.
+/// The apworlds Bifrost itself ships (vendored, or the sysadmin's common
+/// games), by SHA-256. Anything else in a season's `worlds/` is custom.
 fn trusted_world_hashes() -> Vec<String> {
-    let cfg = config::get();
-    [
-        cfg.vendor_file("tracker.apworld"),
-        cfg.common_dir().join("minecraft.apworld"),
-    ]
-    .iter()
-    .filter_map(|p| std::fs::read(p).ok())
-    .map(|b| sha256_hex(&b))
-    .collect()
+    let mut paths = vec![config::get().vendor_file("tracker.apworld")];
+    paths.extend(crate::common::apworld_paths());
+    paths
+        .iter()
+        .filter_map(|p| std::fs::read(p).ok())
+        .map(|b| sha256_hex(&b))
+        .collect()
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -210,7 +208,7 @@ pub struct Pin {
     /// Installed from the curated catalog.
     #[serde(default)]
     pub catalog: bool,
-    /// A world Bifrost ships (Universal Tracker, the common game), as staged
+    /// A world Bifrost ships (Universal Tracker, a common game), as staged
     /// into this season — trusted even after an upgrade changes the shipped copy.
     #[serde(default)]
     pub shipped: bool,

@@ -106,8 +106,6 @@ try:
     check("a link says who invites you to what", "bob has invited you to join them for" in page and "ChecksFinder" in page and "disabled" in page, page[-400:])
     r = post(cat, link, data=dict(name="Ann"))
     check("a seat can't take a name in use", "already taken" in r.text, r.text[-300:])
-    r = post(cat, link, data=dict(name="Commons"))
-    check("a seat can't take the common game's name", "reserved" in r.text, r.text[-300:])
     check("a link needs a sign-in", "invited you" not in get(srv.session(), link).text)
     r = post(cat, link, data=dict(name="seventeen letters"))
     check("a seat name follows the rules", "1 to 16" in r.text, r.text[-300:])

@@ -87,7 +87,6 @@ pub struct SeasonRow {
     pub live_at: Option<i64>,
     pub archived_at: Option<i64>,
     pub minesweeper_enabled: bool,
-    pub mc_enabled: bool,
     /// Bonus hints a player can earn from minesweeper in any 24 hours; 0 is
     /// no cap.
     pub mine_daily_hints: i64,
@@ -122,7 +121,7 @@ impl SeasonRow {
 }
 
 const COLS: &str = "id, name, state, created_by, created_at, seed, live_at, archived_at,
-                    minesweeper_enabled, mc_enabled, mine_daily_hints, max_games, private_live, private_signup, signup_token, ap_port, ap_version";
+                    minesweeper_enabled, mine_daily_hints, max_games, private_live, private_signup, signup_token, ap_port, ap_version";
 
 /// Why a transition was refused.
 #[derive(Debug, PartialEq)]
@@ -611,15 +610,6 @@ impl Db {
     pub async fn set_mine_daily_hints(&self, id: Id, cap: i64) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE season SET mine_daily_hints = ? WHERE id = ?")
             .bind(cap)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    pub async fn set_mc_enabled(&self, id: Id, on: bool) -> Result<(), sqlx::Error> {
-        sqlx::query("UPDATE season SET mc_enabled = ? WHERE id = ?")
-            .bind(on)
             .bind(id)
             .execute(&self.pool)
             .await?;

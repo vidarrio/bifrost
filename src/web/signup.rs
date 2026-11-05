@@ -364,7 +364,7 @@ pub(crate) async fn signup_apworld(
     if !worlds::looks_like_apworld(&bytes) {
         return fail("That doesn't look like a valid .apworld (zip) file.");
     }
-    let file = match worlds::world_file(&fname) {
+    let file = match worlds::upload_file(&fname) {
         Ok(f) => f,
         Err(e) => return fail(e),
     };
@@ -821,7 +821,6 @@ pub(crate) async fn seat_post(
     };
     match joined {
         Ok(db::JoinOutcome::Joined) => {
-            export_mc_whitelist(&st).await;
             let to = match (&invite.signup, invite.live) {
                 (Some(sub), _) => format!("/signup/game/{}", sub.id),
                 (_, Some((_, game_id))) => format!("/game/{game_id}"),

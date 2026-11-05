@@ -14,7 +14,7 @@ cd "$(dirname "$0")"
 # shard also goes into `shard)` and `shards)` below.
 shard1="apupdate backup forward_auth homepill minesweeper packs upgrade"
 shard2="quiet load season_actions"
-shard3="catalog supervisor season_import"
+shard3="catalog supervisor season_import common"
 native="$shard1 $shard2 $shard3"
 case "${1:-native}" in
     native) suites=$native ;;

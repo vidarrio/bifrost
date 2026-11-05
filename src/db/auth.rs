@@ -822,7 +822,9 @@ mod tests {
             ClaimOutcome::Ok
         ));
         db.add_credits(s, p.account_id, 2).await.unwrap();
-        db.set_mc_username(p.account_id, "Steve").await.unwrap();
+        db.set_game_ident(p.account_id, "minecraft", "Steve")
+            .await
+            .unwrap();
 
         // The IdP renames the user: everything stays theirs, under the new name.
         db.idp_principal("sub", "new", None, 0).await.unwrap();
@@ -830,7 +832,7 @@ mod tests {
         assert_eq!(row.claimed_by.as_deref(), Some("new"));
         assert_eq!(row.claimed_by_id, Some(p.account_id));
         assert_eq!(db.credits(s, p.account_id).await, 2);
-        assert_eq!(db.mc_whitelist(s).await, ["Steve"]);
+        assert_eq!(db.season_allowlist(s, "minecraft").await, ["Steve"]);
 
         // Someone else can't take it.
         let other = db.create_account("x", "h", Role::User, 0).await.unwrap();

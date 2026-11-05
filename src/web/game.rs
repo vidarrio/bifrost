@@ -336,12 +336,16 @@ pub(crate) async fn game_view(
         .any(|r| r.ap_slot == ap_slot && r.claimed_by_id == Some(my_id));
     // The common game shows its own shared points to everyone; personal slots
     // only to their claimant.
-    let is_common_slot = slots.iter().any(|r| r.ap_slot == ap_slot && r.is_common);
+    let common_key = slots
+        .iter()
+        .find(|r| r.ap_slot == ap_slot)
+        .and_then(|r| r.common_key.clone());
+    let is_common_slot = common_key.is_some();
     // Communal hinting requires skin in the game: the viewer must own a regular
     // (non-common) slot this season to spend the common game's shared points.
     let i_have_claim = slots
         .iter()
-        .any(|r| !r.is_common && r.claimed_by_id == Some(my_id));
+        .any(|r| !r.is_common() && r.claimed_by_id == Some(my_id));
     let points = match (i_claim || is_common_slot, &ctx.rt.ap_cfg()) {
         (true, Some(cfg)) if !connect_name.is_empty() => {
             ap::slot_points(&cfg.url, &cfg.password, &connect_name).await
@@ -365,9 +369,11 @@ pub(crate) async fn game_view(
     } else {
         Vec::new()
     };
-    // The viewer's own registered Minecraft username, for the common-game page's
-    // whitelist form (only read/used there).
-    let my_mc = st.db.mc_username(my_id).await;
+    // A common game's setup: how to join it, and the viewer's name for its allowlist.
+    let common = match &common_key {
+        Some(key) => Some(common_view(&st, season, key, my_id).await),
+        None => None,
+    };
 
     // Cached Universal-Tracker in-logic locations for this slot (computed by the
     // inlogic recomputer; may be absent until the first run completes).
@@ -411,8 +417,7 @@ pub(crate) async fn game_view(
         credits,
         ctx.row.minesweeper_enabled,
         i_have_claim,
-        my_mc.as_deref(),
-        mc_addr().as_deref(),
+        common.as_ref(),
         &my_files,
         inlogic.as_ref(),
         &log,
@@ -440,7 +445,7 @@ async fn hosted_live(
     let slots = st.db.slots(ctx.id).await.ok()?;
     slots
         .iter()
-        .find(|r| r.ap_slot == ap_slot && r.name == name && !r.is_common)
+        .find(|r| r.ap_slot == ap_slot && r.name == name && !r.is_common())
         .filter(|r| r.claimed_by_id == Some(account))
         .map(|_| name)
 }

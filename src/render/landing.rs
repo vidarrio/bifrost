@@ -23,11 +23,12 @@ pub fn landing_roster(
     let mut entries: Vec<Entry> = group_by_ap(slots)
         .into_iter()
         .map(|g| {
-            // The common game is shared — show it as everyone's, sorted first.
+            // A common game is shared: show it as everyone's, sorted first, and
+            // by its slot's name too, as a season can have two of one game.
             if g.is_common {
                 return Entry {
-                    key: String::new(),
-                    game: g.game.to_string(),
+                    key: format!("\u{0}{}", g.rows[0].name.to_lowercase()),
+                    game: format!("{} ({})", g.game, g.rows[0].name),
                     who: "Everyone".to_string(),
                 };
             }

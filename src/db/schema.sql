@@ -62,7 +62,6 @@ CREATE TABLE season (
     live_at INTEGER,
     archived_at INTEGER,
     minesweeper_enabled INTEGER NOT NULL DEFAULT 0 CHECK (minesweeper_enabled IN (0, 1)),
-    mc_enabled INTEGER NOT NULL DEFAULT 0 CHECK (mc_enabled IN (0, 1)),
     -- Bonus hints a player can earn from minesweeper in any 24 hours (0 = no cap).
     mine_daily_hints INTEGER NOT NULL DEFAULT 5 CHECK (mine_daily_hints >= 0),
     -- How many games a player may sign up with (0 = no limit).
@@ -144,8 +143,9 @@ CREATE TABLE slot (
     name TEXT NOT NULL COLLATE NOCASE,
     ap_slot INTEGER NOT NULL,
     game TEXT NOT NULL,
-    -- The shared "common game" slot (one AP slot everyone plays).
-    is_common INTEGER NOT NULL DEFAULT 0 CHECK (is_common IN (0, 1)),
+    -- A common game's slot, one everyone in the season plays: the key of its
+    -- setup in the instance's catalog (see season_common).
+    common_key TEXT,
     -- A co-op seat: a name of Bifrost's, not one Archipelago knows.
     is_seat INTEGER NOT NULL DEFAULT 0 CHECK (is_seat IN (0, 1)),
     UNIQUE (season_id, name)
@@ -223,6 +223,38 @@ CREATE TRIGGER submission_name_update BEFORE UPDATE OF slot_name ON submission
 WHEN EXISTS (SELECT 1 FROM seat WHERE season_id = NEW.season_id AND name = NEW.slot_name)
 BEGIN SELECT RAISE(ABORT, 'slot name taken'); END;
 
+-- A common game the season includes: a setup from the instance's catalog of
+-- common games (`common/<key>/` in the data dir), played as one AP slot by
+-- everyone in the season. Its name and slot name are the setup's when it was
+-- added, so the season keeps them if the catalog changes.
+CREATE TABLE season_common (
+    season_id TEXT NOT NULL REFERENCES season(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    name TEXT NOT NULL,
+    -- Reserved in the season from when it's added, like a signup's.
+    slot_name TEXT NOT NULL COLLATE NOCASE,
+    -- Where players join its server; empty for the setup's own default.
+    address TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (season_id, key),
+    UNIQUE (season_id, slot_name)
+) STRICT;
+CREATE TRIGGER season_common_name_insert BEFORE INSERT ON season_common
+WHEN EXISTS (SELECT 1 FROM submission WHERE season_id = NEW.season_id AND slot_name = NEW.slot_name)
+  OR EXISTS (SELECT 1 FROM seat WHERE season_id = NEW.season_id AND name = NEW.slot_name)
+BEGIN SELECT RAISE(ABORT, 'slot name taken'); END;
+CREATE TRIGGER seat_common_insert BEFORE INSERT ON seat
+WHEN EXISTS (SELECT 1 FROM season_common WHERE season_id = NEW.season_id AND slot_name = NEW.name)
+BEGIN SELECT RAISE(ABORT, 'slot name taken'); END;
+CREATE TRIGGER seat_common_update BEFORE UPDATE OF name ON seat
+WHEN EXISTS (SELECT 1 FROM season_common WHERE season_id = NEW.season_id AND slot_name = NEW.name)
+BEGIN SELECT RAISE(ABORT, 'slot name taken'); END;
+CREATE TRIGGER submission_common_insert BEFORE INSERT ON submission
+WHEN EXISTS (SELECT 1 FROM season_common WHERE season_id = NEW.season_id AND slot_name = NEW.slot_name)
+BEGIN SELECT RAISE(ABORT, 'slot name taken'); END;
+CREATE TRIGGER submission_common_update BEFORE UPDATE OF slot_name ON submission
+WHEN EXISTS (SELECT 1 FROM season_common WHERE season_id = NEW.season_id AND slot_name = NEW.slot_name)
+BEGIN SELECT RAISE(ABORT, 'slot name taken'); END;
+
 -- Bonus hint credits earned through seasonal minesweeper.
 CREATE TABLE hint_credit (
     season_id TEXT NOT NULL REFERENCES season(id) ON DELETE CASCADE,
@@ -256,14 +288,18 @@ CREATE TABLE mine_result (
 CREATE INDEX mine_result_season ON mine_result (season_id, account_id, kind);
 CREATE INDEX mine_result_account ON mine_result (account_id);
 
--- A player's Minecraft username, for the common-game server's whitelist. Per account,
--- so a returning player keeps it; unique so two can't claim one Minecraft account.
-CREATE TABLE mc_account (
-    account_id INTEGER PRIMARY KEY REFERENCES account(id) ON DELETE CASCADE,
-    mc_username TEXT NOT NULL,
-    updated_at INTEGER NOT NULL
+-- A player's name in a common game's own accounts, for its server's allowlist:
+-- one per kind of name a setup asks for (`minecraft`, ...), so one Minecraft
+-- name serves every Minecraft setup. Per account, so a returning player keeps
+-- it; unique per kind, so two can't claim one account.
+CREATE TABLE game_ident (
+    account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (account_id, kind)
 ) STRICT;
-CREATE UNIQUE INDEX mc_account_name ON mc_account (mc_username COLLATE NOCASE);
+CREATE UNIQUE INDEX game_ident_name ON game_ident (kind, name COLLATE NOCASE);
 
 -- One row per kept AP journal event, in journal order by `id`. De-duplication across
 -- runs is by the season's journal cursor, so identical events in a second both stay.

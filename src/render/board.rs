@@ -96,7 +96,7 @@ pub fn board_page(
     snap: &BoardSnapshot,
     slots: &[SlotRow],
     prios: &std::collections::HashSet<(i64, i64, i64)>,
-    mc_addr: Option<&str>,
+    commons: &[crate::db::SeasonCommon],
     activity: &[crate::db::ActivityRow],
     inlogic: &std::collections::HashMap<i64, i64>,
     connect: &str,
@@ -113,7 +113,7 @@ pub fn board_page(
         season_progress(snap, slots)
     ));
     out.push_str(r#"<div class="boardcols">"#);
-    board_inner(&mut out, snap, slots, prios, mc_addr, activity, inlogic);
+    board_inner(&mut out, snap, slots, prios, commons, activity, inlogic);
     out.push_str("</div></main></body></html>");
     Html(out)
 }
@@ -126,7 +126,7 @@ pub(super) fn board_inner(
     snap: &BoardSnapshot,
     slots: &[SlotRow],
     prios: &std::collections::HashSet<(i64, i64, i64)>,
-    mc_addr: Option<&str>,
+    commons: &[crate::db::SeasonCommon],
     activity: &[crate::db::ActivityRow],
     inlogic: &std::collections::HashMap<i64, i64>,
 ) {
@@ -144,11 +144,16 @@ pub(super) fn board_inner(
                 .get(&g.ap_slot)
                 .map(|n| format!(" · {n} available"))
                 .unwrap_or_default();
+            let common = g
+                .rows
+                .iter()
+                .find_map(|r| r.common_key.as_deref())
+                .and_then(|k| commons.iter().find(|c| c.key == k));
             out.push_str(&format!(
                 r#"<a class="slot cardlink {cls}" href="game/{}"><span class="st">{label}</span><div class="game">{}</div>
 <div class="meta">{} locations · sent {} · recv {} · {} left{avail}</div>"#,
                 g.rows[0].game_id,
-                esc(g.game),
+                esc(common.map_or(g.game, |c| c.name.as_str())),
                 live.world_size,
                 live.sent,
                 live.received,
@@ -157,10 +162,10 @@ pub(super) fn board_inner(
             out.push_str(&card_progress(live.sent, live.world_size));
             if g.is_common {
                 out.push_str(r#"<div class="seat"><span class="who">Everyone</span><span class="by free">shared game</span></div>"#);
-                if let Some(addr) = mc_addr {
+                if let Some(c) = common.filter(|c| !c.address.is_empty()) {
                     out.push_str(&format!(
                         r#"<div class="seat"><span class="who">join at</span><span class="by">{}</span></div>"#,
-                        esc(addr)
+                        esc(&c.address)
                     ));
                 }
             } else {
@@ -209,12 +214,12 @@ pub fn board_fragment(
     snap: &BoardSnapshot,
     slots: &[SlotRow],
     prios: &std::collections::HashSet<(i64, i64, i64)>,
-    mc_addr: Option<&str>,
+    commons: &[crate::db::SeasonCommon],
     activity: &[crate::db::ActivityRow],
     inlogic: &std::collections::HashMap<i64, i64>,
 ) -> String {
     let mut out = String::new();
-    board_inner(&mut out, snap, slots, prios, mc_addr, activity, inlogic);
+    board_inner(&mut out, snap, slots, prios, commons, activity, inlogic);
     out
 }
 

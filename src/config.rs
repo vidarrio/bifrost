@@ -15,9 +15,8 @@
 //!   bifrost.db
 //!   packs/<season>/<game>/        poptracker packs
 //!   uploads/                      submitted player YAMLs
-//!   common/                       operator-supplied shared-game assets
+//!   common/<key>/                 the catalog of common games (see crate::common)
 //!   archives/<seed>.tar.gz        raw season bundles
-//!   mc-whitelist.json
 //!   connect_password.request
 //!   seasons/<id>/                 an AP "user dir" per season (see SeasonDirs)
 //!   seasons/_core/                empty user dir for checks before any season
@@ -275,8 +274,7 @@ impl Config {
     pub fn uploads_dir(&self) -> PathBuf {
         self.data_dir.join("uploads")
     }
-    /// Operator-supplied assets for the shared Minecraft game (apworld, YAML,
-    /// and client jars under `client/`).
+    /// The catalog of common games: one folder per setup (see [`crate::common`]).
     pub fn common_dir(&self) -> PathBuf {
         self.data_dir.join("common")
     }
@@ -286,9 +284,6 @@ impl Config {
     /// The curated apworld catalog, one `<sha256>.apworld` per entry.
     pub fn catalog_dir(&self) -> PathBuf {
         self.data_dir.join("catalog")
-    }
-    pub fn mc_whitelist_file(&self) -> PathBuf {
-        self.data_dir.join("mc-whitelist.json")
     }
     /// Bifrost writes a requested connect password here for the host to apply.
     pub fn connpw_request_file(&self) -> PathBuf {
@@ -345,8 +340,7 @@ impl Config {
     /// tokens, spoilers and AP passwords. Only ever tightens, and only what's Bifrost's
     /// own, by its service: never as root, as anyone able to write here could point a
     /// link anywhere, and an operator's own files stay as they set them. The dir
-    /// itself can still be passed through, for a host's service to read the Minecraft
-    /// whitelist by its name.
+    /// itself can still be passed through.
     fn lock_down(&self) {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         // SAFETY: geteuid only reads this process's user id.
@@ -373,18 +367,7 @@ impl Config {
             return;
         };
         for entry in entries.flatten() {
-            let path = entry.path();
-            if path != self.mc_whitelist_file() {
-                tighten(&path, 0o700);
-                continue;
-            }
-            // For a host's service; a restored backup would have it private.
-            if let Ok(meta) = std::fs::symlink_metadata(&path)
-                && meta.is_file()
-                && meta.uid() == me
-            {
-                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644));
-            }
+            tighten(&entry.path(), 0o700);
         }
     }
 }
@@ -603,7 +586,6 @@ const FILE_KEYS: &[(&str, &str, &str)] = &[
     ("forward_auth", "season_pages", "BIFROST_FWD_SEASON_PAGES"),
     ("forward_auth", "sign_in_url", "BIFROST_FWD_SIGN_IN_URL"),
     ("forward_auth", "sign_out_url", "BIFROST_FWD_SIGN_OUT_URL"),
-    ("minecraft", "address", "BIFROST_MC_ADDR"),
     ("season", "coop", "BIFROST_COOP"),
 ];
 
@@ -667,7 +649,15 @@ fn parse_file(text: &str) -> Result<HashMap<String, String>, String> {
                 .iter()
                 .find(|(s, k, _)| s == section && k == key)
                 .map(|(_, _, n)| *n)
-                .ok_or_else(|| format!("unknown setting [{section}] {key}"))?;
+                .ok_or_else(|| {
+                    if section == "minecraft" {
+                        "[minecraft] is gone: a common game's address is set on the season's \
+                         admin page, under Common games, or in its setup's game.toml"
+                            .to_string()
+                    } else {
+                        format!("unknown setting [{section}] {key}")
+                    }
+                })?;
             let v = match v {
                 toml::Value::String(s) => s.clone(),
                 toml::Value::Integer(i) => i.to_string(),
@@ -758,8 +748,6 @@ pub const EXAMPLE: &str = r#"# $BIFROST_DATA/config.toml — every setting here 
 # sign_in_url = "/oauth2/sign_in"    # BIFROST_FWD_SIGN_IN_URL
 # sign_out_url = "/oauth2/sign_out"  # BIFROST_FWD_SIGN_OUT_URL
 
-[minecraft]
-# address = "mc.example:25565"       # BIFROST_MC_ADDR (shown on the common-game card)
 "#;
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -843,7 +831,6 @@ mod tests {
             c.uploads_dir(),
             c.common_dir(),
             c.archives_dir(),
-            c.mc_whitelist_file(),
             c.connpw_request_file(),
             s.root.clone(),
             s.players.clone(),
@@ -874,6 +861,12 @@ mod tests {
             ("BIFROST_AP_PYTHON", "/usr/bin/python3"),
         ]);
         assert_eq!(c.ap_python, Path::new("/usr/bin/python3"));
+    }
+
+    #[test]
+    fn the_old_minecraft_section_says_where_it_went() {
+        let e = parse_file("[minecraft]\naddress = \"mc.example:25565\"").unwrap_err();
+        assert!(e.contains("Common games"), "{e}");
     }
 
     #[test]

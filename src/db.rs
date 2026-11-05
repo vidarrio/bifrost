@@ -10,6 +10,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use sqlx::{FromRow, SqlitePool};
 
 mod auth;
+mod common;
 mod migrate;
 pub use migrate::SCHEMA_VERSION;
 mod seasons;
@@ -17,6 +18,7 @@ mod seats;
 mod settings;
 mod worlds;
 pub use auth::{AccountRow, LinkKind, LinkRow, RedeemError};
+pub use common::{SeasonCommon, SetIdentOutcome};
 pub use migrate::PRE_0_3;
 pub use seasons::{MAX_DAILY_HINTS, MAX_GAMES_LIMIT, SeasonRow, State};
 pub use seats::{JoinOutcome, SeatLink, SeatRow, name_clash, seat_name_error};
@@ -44,10 +46,16 @@ pub struct SlotRow {
     /// The claimant's current username (display) and account (authorization).
     pub claimed_by: Option<String>,
     pub claimed_by_id: Option<i64>,
-    /// A communal "common game" slot (the shared Minecraft server): one AP slot
-    /// everyone plays, no per-person claim. Rendered as a shared card.
+    /// A common game's slot: one AP slot everyone in the season plays, with no
+    /// claim. Its setup's key in the catalog.
     #[sqlx(default)]
-    pub is_common: bool,
+    pub common_key: Option<String>,
+}
+
+impl SlotRow {
+    pub fn is_common(&self) -> bool {
+        self.common_key.is_some()
+    }
 }
 
 /// Aggregated minesweeper stats for one player in one season. Time fields are
@@ -77,13 +85,6 @@ pub enum ClaimOutcome {
     Ok,
     /// The slot is already claimed by someone else.
     SlotTaken,
-}
-
-/// Result of setting a Minecraft username for the whitelist.
-pub enum SetMcOutcome {
-    Ok,
-    /// Some other player has already registered that Minecraft username.
-    TakenByOther,
 }
 
 #[derive(Debug, FromRow, Clone)]
@@ -233,7 +234,7 @@ impl Db {
     pub async fn has_claimed_slot(&self, season: Id, account: i64) -> bool {
         let n: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM claim c JOIN slot s ON s.id = c.slot_id
-             WHERE s.season_id = ? AND c.account_id = ? AND s.is_common = 0",
+             WHERE s.season_id = ? AND c.account_id = ? AND s.common_key IS NULL",
         )
         .bind(season)
         .bind(account)
@@ -241,87 +242,6 @@ impl Db {
         .await
         .unwrap_or(0);
         n > 0
-    }
-
-    /// This player's registered Minecraft username, if any.
-    pub async fn mc_username(&self, account: i64) -> Option<String> {
-        sqlx::query_scalar("SELECT mc_username FROM mc_account WHERE account_id = ?")
-            .bind(account)
-            .fetch_optional(&self.pool)
-            .await
-            .ok()
-            .flatten()
-    }
-
-    /// Set (or update) this player's Minecraft username. Fails if another player
-    /// already registered it (case-insensitive). The caller is expected to have
-    /// already validated the name's shape.
-    pub async fn set_mc_username(
-        &self,
-        account: i64,
-        name: &str,
-    ) -> Result<SetMcOutcome, sqlx::Error> {
-        // Taken by someone else? (Same user re-saving their own name is fine.)
-        let owner: Option<i64> = sqlx::query_scalar(
-            "SELECT account_id FROM mc_account WHERE mc_username = ? COLLATE NOCASE",
-        )
-        .bind(name)
-        .fetch_optional(&self.pool)
-        .await?;
-        if matches!(owner, Some(o) if o != account) {
-            return Ok(SetMcOutcome::TakenByOther);
-        }
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        sqlx::query(
-            "INSERT INTO mc_account (account_id, mc_username, updated_at) VALUES (?, ?, ?)
-             ON CONFLICT(account_id) DO UPDATE SET mc_username = excluded.mc_username, updated_at = excluded.updated_at",
-        )
-        .bind(account)
-        .bind(name)
-        .bind(now)
-        .execute(&self.pool)
-        .await?;
-        Ok(SetMcOutcome::Ok)
-    }
-
-    /// The Minecraft whitelist for a season: the registered usernames of everyone
-    /// holding a regular (non-common) slot this season. Exported for the
-    /// host-side `mc-whitelist-sync` to apply to the Minecraft server.
-    /// Everyone to whitelist on the shared Minecraft server: claimants of a
-    /// regular slot in any live season that has the common game on.
-    pub async fn mc_whitelist_all(&self) -> Vec<String> {
-        sqlx::query_scalar(
-            "SELECT a.mc_username FROM mc_account a
-             WHERE EXISTS (
-                 SELECT 1 FROM claim c JOIN slot s ON s.id = c.slot_id
-                 JOIN season se ON se.id = s.season_id
-                 WHERE se.state = 'live' AND se.mc_enabled = 1
-                   AND c.account_id = a.account_id AND s.is_common = 0
-             )
-             ORDER BY a.mc_username COLLATE NOCASE",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .unwrap_or_default()
-    }
-
-    #[cfg(test)]
-    pub async fn mc_whitelist(&self, season: Id) -> Vec<String> {
-        sqlx::query_scalar(
-            "SELECT a.mc_username FROM mc_account a
-             WHERE EXISTS (
-                 SELECT 1 FROM claim c JOIN slot s ON s.id = c.slot_id
-                 WHERE s.season_id = ? AND c.account_id = a.account_id AND s.is_common = 0
-             )
-             ORDER BY a.mc_username COLLATE NOCASE",
-        )
-        .bind(season)
-        .fetch_all(&self.pool)
-        .await
-        .unwrap_or_default()
     }
 
     /// Grant `n` bonus-hint credits, returning the new total.
@@ -891,7 +811,7 @@ impl Db {
         season: Id,
         ap_slots: &[(i64, String, String)],
         subs: &[SubmissionRow],
-        common_slot: Option<&str>,
+        commons: &[(&str, &str)],
     ) -> Result<(), sqlx::Error> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -964,11 +884,13 @@ impl Db {
                 .await?;
             }
         }
-        // Mark the communal common-game slot (no claim; shared by everyone).
-        if let Some(common) = common_slot {
-            sqlx::query("UPDATE slot SET is_common = 1 WHERE season_id = ? AND name = ?")
+        // Mark the common games' slots (no claim; shared by everyone), by
+        // (slot name, setup key).
+        for (name, key) in commons {
+            sqlx::query("UPDATE slot SET common_key = ? WHERE season_id = ? AND name = ?")
+                .bind(key)
                 .bind(season)
-                .bind(common)
+                .bind(name)
                 .execute(&self.pool)
                 .await?;
         }
@@ -993,11 +915,10 @@ impl Db {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         let roster: HashSet<&str> = new_ap_slots.iter().map(|(_, n, _)| n.as_str()).collect();
-        // Names that were communal common-game slots last season stay communal.
-        let common_names: HashSet<&str> = old
+        // Common games' slots stay theirs, by name.
+        let common_keys: HashMap<&str, &str> = old
             .iter()
-            .filter(|s| s.is_common)
-            .map(|s| s.name.as_str())
+            .filter_map(|s| Some((s.name.as_str(), s.common_key.as_deref()?)))
             .collect();
         let new_ap_by_name: HashMap<&str, i64> = new_ap_slots
             .iter()
@@ -1020,7 +941,7 @@ impl Db {
                 .find(|s| &s.name == name)
                 .map_or_else(Id::new, |s| s.game_id);
             sqlx::query(
-                "INSERT OR IGNORE INTO slot (id, season_id, game_id, name, ap_slot, game, is_common)
+                "INSERT OR IGNORE INTO slot (id, season_id, game_id, name, ap_slot, game, common_key)
                  VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(Id::new())
@@ -1029,7 +950,7 @@ impl Db {
             .bind(name)
             .bind(num)
             .bind(game)
-            .bind(common_names.contains(name.as_str()))
+            .bind(common_keys.get(name.as_str()).copied())
             .execute(&self.pool)
             .await?;
         }
@@ -1085,7 +1006,7 @@ impl Db {
     pub async fn slots(&self, season: Id) -> Result<Vec<SlotRow>, sqlx::Error> {
         sqlx::query_as::<_, SlotRow>(
             r#"SELECT s.id, s.game_id, s.is_seat, s.name, s.ap_slot, s.game, a.username AS claimed_by,
-                      c.account_id AS claimed_by_id, s.is_common
+                      c.account_id AS claimed_by_id, s.common_key
                FROM slot s LEFT JOIN claim c ON c.slot_id = s.id
                LEFT JOIN account a ON a.id = c.account_id
                WHERE s.season_id = ?
@@ -1374,7 +1295,7 @@ impl Db {
         id: Id,
     ) -> Result<Option<(i64, Option<i64>, bool)>, sqlx::Error> {
         sqlx::query_as::<_, (i64, Option<i64>, bool)>(
-            "SELECT s.ap_slot, c.account_id, s.is_common FROM slot s
+            "SELECT s.ap_slot, c.account_id, s.common_key IS NOT NULL FROM slot s
              LEFT JOIN claim c ON c.slot_id = s.id WHERE s.id = ? AND s.season_id = ?",
         )
         .bind(id)

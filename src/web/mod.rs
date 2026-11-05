@@ -15,9 +15,9 @@ use tower_http::trace::TraceLayer;
 
 mod board;
 mod catalog;
+mod common;
 mod game;
 mod logs;
-mod minecraft;
 mod minesweeper;
 mod play;
 mod public;
@@ -28,9 +28,9 @@ mod signup;
 
 pub(crate) use board::*;
 pub(crate) use catalog::*;
+pub(crate) use common::*;
 pub(crate) use game::*;
 pub(crate) use logs::*;
-pub(crate) use minecraft::*;
 pub(crate) use minesweeper::*;
 pub(crate) use play::*;
 pub(crate) use public::*;
@@ -139,10 +139,10 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         .route("/game/{game}/inlogic", get(game_inlogic))
         .route("/game/{game}/items", get(game_items))
         .route("/game/{game}/output", get(game_output))
-        .route("/game/mc/{which}", get(mc_asset))
+        .route("/common/{key}/file/{n}", get(common_file))
         .route("/game/{game}/finish", post(game_finish))
         .route("/claim", get(claim_get).post(claim_post))
-        .route("/mc/username", post(mc_username_post))
+        .route("/common/{key}/ident", post(common_ident_post))
         .route("/hint", post(hint_post))
         .route("/prioritize", post(prioritize_post))
         .route("/signup", get(signup_get).post(signup_post))
@@ -207,7 +207,8 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         .route("/admin/privacy", post(admin_privacy))
         .route("/admin/cancel", post(admin_cancel))
         .route("/admin/season/delete", post(admin_delete_season))
-        .route("/admin/mc", post(admin_mc))
+        .route("/admin/common", post(admin_common))
+        .route("/admin/common/{key}/allowlist", get(admin_common_allowlist))
         .route("/admin/output", get(admin_output))
         .route("/admin/archive-season", post(admin_archive_season))
         .route("/season", get(season_view))

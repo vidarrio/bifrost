@@ -182,14 +182,8 @@ h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute
 .signup{display:grid;gap:12px;max-width:460px;margin-bottom:10px}.signup label{display:grid;gap:4px;font-size:13px;color:var(--muted)}.signup label.chk{display:flex;flex-direction:row;align-items:center;gap:8px}
 .signup input[type=file],.signup input[type=text],.signup textarea{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:6px 8px;font-size:13px}
 code{font-family:var(--mono);font-size:12px;color:var(--accent)}
-.mcjoin{margin:4px 0 10px;padding-left:20px;font-size:13.5px;line-height:1.55}.mcjoin li{margin:4px 0}.mcjoin code{background:var(--bg);padding:1px 5px;border-radius:4px}
-details.prism{margin:6px 0 4px;border:1px solid var(--bd);border-radius:7px;padding:2px 12px;background:var(--bg)}
-details.prism summary{cursor:pointer;padding:9px 0;font-size:13px;font-weight:600;color:var(--fg);list-style:none}
-details.prism summary::-webkit-details-marker{display:none}
-details.prism summary::before{content:"\25B8  ";color:var(--accent)}
-details.prism[open] summary::before{content:"\25BE  "}
-details.prism[open] summary{border-bottom:1px solid var(--bd);margin-bottom:4px}
-details.prism .mcjoin{margin-bottom:8px}
+.guide{font-size:13.5px;line-height:1.55}.guide ol,.guide ul,.downloads{margin:4px 0 10px;padding-left:20px}.guide li,.downloads li{margin:4px 0}.guide code{background:var(--bg);padding:1px 5px;border-radius:4px}.guide pre{background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:8px 10px;overflow-x:auto}.guide img{max-width:100%}.guide table{border-collapse:collapse}.guide th,.guide td{border:1px solid var(--bd);padding:3px 8px}
+.guide details{margin:6px 0 4px;border:1px solid var(--bd);border-radius:7px;padding:2px 12px;background:var(--bg)}
 .cardlink{text-decoration:none;color:inherit;display:block;transition:border-color .1s}.cardlink:hover{border-color:var(--accent);text-decoration:none}
 .cardlink:hover .game{color:var(--accent)}
 .prow{display:flex;justify-content:space-between;align-items:center;gap:8px}
@@ -438,14 +432,14 @@ fn group_by_ap(slots: &[SlotRow]) -> Vec<Group<'_>> {
     for r in slots {
         match groups.last_mut() {
             Some(g) if g.ap_slot == r.ap_slot => {
-                g.is_common |= r.is_common;
+                g.is_common |= r.is_common();
                 g.rows.push(r);
             }
             _ => groups.push(Group {
                 ap_slot: r.ap_slot,
                 game: &r.game,
                 rows: vec![r],
-                is_common: r.is_common,
+                is_common: r.is_common(),
             }),
         }
     }

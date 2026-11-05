@@ -13,27 +13,11 @@ use crate::meta::Meta;
 use crate::runtime::Runtimes;
 use crate::{ap_adapter, config};
 
-/// Assets for the shared Minecraft "common game" (in the data dir's
-/// `common/`), staged into the seed when the admin enables it (see
-/// `Db::mc_enabled`). The host-side `mc-deploy` step then ships the resulting
-/// `.apmc` to the Minecraft LXC.
-const COMMON_APWORLD: &str = "minecraft.apworld";
-const COMMON_YAML: &str = "Commons.yaml";
 /// The Universal Tracker apworld, shipped in the runtime's `vendor/` and staged
 /// into the season's `worlds/` on every deploy so the in-logic feature always
 /// has it even after clearing the custom worlds. No YAML references it,
 /// so it's inert during generation.
 const TRACKER_APWORLD: &str = "tracker.apworld";
-/// The AP slot name the common-game YAML declares — used to tag its Bifrost
-/// slot communal.
-pub const COMMON_SLOT_NAME: &str = "Commons";
-
-/// Client-side Minecraft assets staged under `common/client/` so Bifrost can
-/// serve them for download from the common-game page. Keep these in sync with
-/// what's installed on the Minecraft host and the `MC_*` display strings in render.rs.
-pub const MC_NEOFORGE_JAR: &str = "neoforge-26.2.0.90-installer.jar";
-pub const MC_MOD_JAR: &str = "aprandomizer-2.2.1-26.2.jar";
-
 /// (running, last message).
 pub type GenState = Arc<Mutex<(bool, String)>>;
 
@@ -254,20 +238,6 @@ fn file_name(member: &str) -> &str {
     member.rsplit('/').next().unwrap_or(member)
 }
 
-/// Read a staged Minecraft client asset for download: `which` is "neoforge" (the
-/// NeoForge installer) or "mod" (the AP mod jar). Returns (download filename,
-/// bytes), or `None` if unknown or not staged. Blocking — call from
-/// `spawn_blocking`.
-pub fn read_client_asset(which: &str) -> Option<(&'static str, Vec<u8>)> {
-    let name = match which {
-        "neoforge" => MC_NEOFORGE_JAR,
-        "mod" => MC_MOD_JAR,
-        _ => return None,
-    };
-    let bytes = std::fs::read(config::get().common_dir().join("client").join(name)).ok()?;
-    Some((name, bytes))
-}
-
 /// Read one member's bytes out of the current seed zip, but only if `member` is
 /// actually a file in it (so a crafted query can't pull anything arbitrary), and
 /// never the `.archipelago` server file. Blocking — call from `spawn_blocking`.
@@ -311,6 +281,66 @@ async fn stage_tracker_apworld(season: Id) {
     } else if let Err(e) = ap_adapter::pin_shipped(&dirs, TRACKER_APWORLD) {
         tracing::warn!("pinning the staged Universal Tracker apworld: {e}");
     }
+}
+
+/// Stage the season's common games for the roll: each setup's YAML into
+/// `Players/`, and the apworld it ships, if any, into `worlds/`, pinned as
+/// shipped. Apworlds an earlier roll staged for a common game the season no
+/// longer has are removed. Returns each one's (slot name, key).
+async fn stage_commons(db: &Db, season: Id) -> Result<Vec<(String, String)>, String> {
+    let dirs = config::get().season(season);
+    let mut worlds: std::collections::BTreeMap<String, Vec<u8>> = Default::default();
+    let mut out = Vec::new();
+    for c in db.season_commons(season).await {
+        let setup =
+            crate::common::load(&c.key).map_err(|e| format!("the common game {}: {e}", c.name))?;
+        if !setup.slot.eq_ignore_ascii_case(&c.slot_name) {
+            return Err(format!(
+                "the common game {}'s setup names its slot {} now, not {}: remove it from the \
+                 season and add it again",
+                c.name, setup.slot, c.slot_name
+            ));
+        }
+        let yaml = crate::common::file(&c.key, &setup.yaml)
+            .and_then(|p| std::fs::read(p).map_err(|e| e.to_string()))
+            .map_err(|e| format!("the common game {}'s YAML: {e}", c.name))?;
+        tokio::fs::write(dirs.players.join(format!("common-{}.yaml", c.key)), yaml)
+            .await
+            .map_err(|e| format!("staging the common game {}'s YAML: {e}", c.name))?;
+        if let Some(w) = &setup.apworld {
+            let bytes = crate::common::file(&c.key, w)
+                .and_then(|p| std::fs::read(p).map_err(|e| e.to_string()))
+                .map_err(|e| format!("the common game {}'s apworld: {e}", c.name))?;
+            if worlds.get(w).is_some_and(|b| *b != bytes) {
+                return Err(format!(
+                    "two of the season's common games ship different apworlds named {w}"
+                ));
+            }
+            worlds.insert(w.clone(), bytes);
+        }
+        out.push((c.slot_name, c.key));
+    }
+    let pins = ap_adapter::world_pins(&dirs);
+    for w in worlds.keys() {
+        if dirs.worlds.join(w).exists() && !pins.get(w).is_some_and(|p| p.shipped) {
+            return Err(format!(
+                "the season has a custom world named {w}, which a common game ships too"
+            ));
+        }
+    }
+    for (file, pin) in &pins {
+        if pin.shipped && file != TRACKER_APWORLD && !worlds.contains_key(file) {
+            let _ = tokio::fs::remove_file(dirs.worlds.join(file)).await;
+            ap_adapter::unpin_world(&dirs, Some(file))?;
+        }
+    }
+    for (w, bytes) in &worlds {
+        tokio::fs::write(dirs.worlds.join(w), bytes)
+            .await
+            .map_err(|e| format!("staging {w}: {e}"))?;
+        ap_adapter::pin_shipped(&dirs, w)?;
+    }
+    Ok(out)
 }
 
 /// Remove every staged player YAML from the season's Players/.
@@ -461,8 +491,6 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
         Ok(msg) => match db.transition(season, State::Live, now()).await {
             Ok(()) => {
                 rts.start_live(season).await;
-                // Only live seasons count, so this waits until now.
-                crate::web::write_mc_whitelist(&db).await;
                 set(&state, false, msg)
             }
             Err(e) => {
@@ -493,7 +521,6 @@ pub async fn regenerate(db: Db, rts: Arc<Runtimes>, season: Id) {
     let r = regen_inner(&db, &rts, &state, season).await;
     // Live either way: on failure the previous seed is still deployed.
     let _ = db.transition(season, State::Live, now()).await;
-    crate::web::write_mc_whitelist(&db).await;
     match r {
         Ok(msg) => set(&state, false, msg),
         Err(e) => set(&state, false, format!("Failed — {e}")),
@@ -660,10 +687,8 @@ async fn run_inner(
     // Only the player YAMLs are staged here; custom apworlds are installed into
     // the season's worlds/ at signup time (so the checker can validate against them),
     // so we leave that directory alone.
-    let mc = db.season(season).await.is_some_and(|s| s.mc_enabled);
     let season_id = season;
     let season = config::get().season(season);
-    let common = config::get().common_dir();
     clear_ext(&season.players, "yaml").await?;
     clear_old_seeds(season_id).await;
     for sub in &subs {
@@ -676,22 +701,12 @@ async fn run_inner(
             .map_err(|e| format!("staging {}'s YAML: {e}", sub.slot_name))?;
     }
 
-    // Shared Minecraft common game: if the admin enabled it before generating,
-    // stage its apworld + YAML so the roll includes the communal slot. The
-    // resulting .apmc is shipped to the Minecraft LXC afterwards by `mc-deploy`.
-    if mc {
-        set(state, true, "Adding the Minecraft common game…");
-        tokio::fs::copy(
-            common.join(COMMON_APWORLD),
-            season.worlds.join(COMMON_APWORLD),
-        )
-        .await
-        .map_err(|e| format!("staging the Minecraft apworld: {e}"))?;
-        ap_adapter::pin_shipped(&season, COMMON_APWORLD)?;
-        tokio::fs::copy(common.join(COMMON_YAML), season.players.join(COMMON_YAML))
-            .await
-            .map_err(|e| format!("staging the common-game YAML: {e}"))?;
-    }
+    let commons = if db.season_commons(season_id).await.is_empty() {
+        Vec::new()
+    } else {
+        set(state, true, "Adding the common games…");
+        stage_commons(db, season_id).await?
+    };
 
     // Always keep the Universal Tracker apworld present for the in-logic feature.
     stage_tracker_apworld(season_id).await;
@@ -706,6 +721,19 @@ async fn run_inner(
     let seed_zip = newest_seed(season_id).await.ok_or("no seed was produced")?;
     set(state, true, "Mapping slots and claims…");
     let (seed_name, ap_slots) = read_seed(&dirs, &seed_zip).await?;
+    // Each common game's slot, by its name in the seed.
+    let mut common_slots: Vec<(&str, &str)> = Vec::new();
+    for (want, key) in &commons {
+        let Some((_, name, _)) = ap_slots
+            .iter()
+            .find(|(_, n, _)| n.eq_ignore_ascii_case(want))
+        else {
+            return Err(format!(
+                "the common game {key}'s YAML doesn't name its player {want}, as its game.toml says"
+            ));
+        };
+        common_slots.push((name, key));
+    }
     db.set_season_seed(season_id, &seed_name)
         .await
         .map_err(|e| e.to_string())?;
@@ -716,17 +744,21 @@ async fn run_inner(
     db.clear_seed_data(season_id)
         .await
         .map_err(|e| e.to_string())?;
-    db.seed_from_submissions(season_id, &ap_slots, &subs, mc.then_some(COMMON_SLOT_NAME))
+    db.seed_from_submissions(season_id, &ap_slots, &subs, &common_slots)
         .await
         .map_err(|e| e.to_string())?;
 
     set(state, true, "Deploying…");
     deploy(db, rts, season_id, &dirs, &seed_zip).await?;
 
-    let common = if mc {
-        " The Minecraft common game is included — run “Deploy common game” (manage → archipelago) to ship it to the Minecraft server."
+    let common = if commons.is_empty() {
+        String::new()
     } else {
-        ""
+        format!(
+            " It includes {} common game{}: set up each one's server with its file from the Common games section.",
+            commons.len(),
+            if commons.len() == 1 { "" } else { "s" }
+        )
     };
     Ok(format!(
         "Generated seed {seed_name} — {} AP slots. The game is restarting. Signups are now closed.{common}",

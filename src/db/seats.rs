@@ -38,9 +38,6 @@ pub fn seat_name_error(name: &str) -> Option<&'static str> {
     if n == 0 || n > 16 {
         return Some("A seat name has 1 to 16 characters.");
     }
-    if name.eq_ignore_ascii_case(crate::generate::COMMON_SLOT_NAME) {
-        return Some("That name is reserved. Pick another.");
-    }
     if name
         .chars()
         .any(|c| c.is_control() || matches!(c, '{' | '}' | ','))
@@ -64,13 +61,14 @@ fn now() -> i64 {
 }
 
 impl Db {
-    /// Whether a name is in use in a season: a signup, a seat or a generated
+    /// Whether a name is in use in a season: a signup, a seat, a common game or a generated
     /// slot (before generation, slots are only
     /// what a failed attempt left, which the next one clears).
     pub async fn slot_name_taken(&self, season: Id, name: &str) -> bool {
         let names: Vec<String> = sqlx::query_scalar(
             "SELECT slot_name FROM submission WHERE season_id = ?1
              UNION ALL SELECT name FROM seat WHERE season_id = ?1
+             UNION ALL SELECT slot_name FROM season_common WHERE season_id = ?1
              UNION ALL SELECT name FROM slot WHERE season_id = ?1
                AND (SELECT state FROM season WHERE id = ?1) NOT IN ('draft', 'signup')",
         )
@@ -378,14 +376,14 @@ mod tests {
             (2, "Host".to_string(), "G".to_string()),
         ];
         assert!(
-            db.seed_from_submissions(s, &slots, &subs, None)
+            db.seed_from_submissions(s, &slots, &subs, &[])
                 .await
                 .is_err()
         );
         assert!(!db.claims_ap_slot(s, ann, 1).await);
         let reversed = [slots[1].clone(), slots[0].clone()];
         assert!(
-            db.seed_from_submissions(s, &reversed, &subs, None)
+            db.seed_from_submissions(s, &reversed, &subs, &[])
                 .await
                 .is_err()
         );
@@ -420,7 +418,7 @@ mod tests {
     #[test]
     fn seat_names_follow_the_slot_rules() {
         assert!(seat_name_error("Ann B").is_none());
-        for bad in ["", "seventeen letters", "a,b", "{x}", "a\nb", "commons"] {
+        for bad in ["", "seventeen letters", "a,b", "{x}", "a\nb"] {
             assert!(seat_name_error(bad).is_some(), "{bad:?}");
         }
     }
@@ -541,7 +539,7 @@ mod tests {
             JoinOutcome::LinkGone,
             "not while generating"
         );
-        db.seed_from_submissions(s, &[(1, "Host".into(), "G".into())], &subs, None)
+        db.seed_from_submissions(s, &[(1, "Host".into(), "G".into())], &subs, &[])
             .await
             .unwrap();
         db.transition(s, State::Live, 2).await.unwrap();

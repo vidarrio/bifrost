@@ -25,6 +25,7 @@ mod backup;
 mod bundle;
 mod checker;
 mod cli;
+mod common;
 mod config;
 mod db;
 mod generate;
