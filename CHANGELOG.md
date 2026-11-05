@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-05
+
 **Upgrading:** data from 0.2 or earlier can't be carried over, so start with an empty
 data directory. From 0.3.0 on, upgrades keep working. Bifrost no longer runs as root
 unless told to (see Security). If you use forward auth, your proxy needs new paths (see
@@ -29,7 +31,7 @@ Changed), and a `config.toml` with `[minecraft]` has to lose it (see Removed).
 - Private seasons. A new season's board, log and game pages are for its players,
   moderators and sysadmins, and a moderator can open them to anyone. Signups can also be
   made private, reachable only through a link. Non-members don't see a private season on
-  the home page or in past seasons. Existing and imported seasons stay open after
+  the home page or in past seasons. Imported seasons stay open after
   generation, and before generation every season's pages need a sign-in.
 - Signups, reworked:
   - The home page lists the seasons open for signup.
@@ -305,7 +307,8 @@ Upgrading from 0.1.x:
   a given version), checked against the release's checksums. Going back means
   restoring the pre-upgrade backup and the previous file, which it keeps.
 
-[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/vidarrio/bifrost/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/vidarrio/bifrost/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/vidarrio/bifrost/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/vidarrio/bifrost/compare/v0.1.0...v0.1.1
