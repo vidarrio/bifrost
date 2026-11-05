@@ -31,7 +31,7 @@ Changed), and a `config.toml` with `[minecraft]` has to lose it (see Removed).
 - Private seasons. A new season's board, log and game pages are for its players,
   moderators and sysadmins, and a moderator can open them to anyone. Signups can also be
   made private, reachable only through a link. Non-members don't see a private season on
-  the home page or in past seasons. Existing and imported seasons stay open after
+  the home page or in past seasons. Imported seasons stay open after
   generation, and before generation every season's pages need a sign-in.
 - Signups, reworked:
   - The home page lists the seasons open for signup.
