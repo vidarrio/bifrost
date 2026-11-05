@@ -1,7 +1,10 @@
-"""Make baseline.db: a database at schema version 1, the baseline 0.3.0
-freezes, holding a bit of everything Bifrost keeps, written by Bifrost itself
-through its pages. The `upgrade` suite opens it with the current build, so
-every migration step after the baseline is tried on real data.
+"""Make baseline.tar.gz: a data directory whose database is at schema
+version 1, the baseline 0.3.0 freezes, holding a bit of everything Bifrost
+keeps, written by Bifrost itself through its pages, with the season files
+beside it. The `upgrade` suite starts the current build on it, so every
+migration step after the baseline is tried on real data. Its `.data-dir`
+names the directory it was made in, which paths in the database start with:
+the suite moves it the way an operator would move a data directory.
 
     tests/e2e/fixtures/make_baseline.py
 
@@ -9,16 +12,19 @@ needs a debug build and Archipelago (tests/e2e/setup-ap.sh), like the suites.
 Remake it only while the baseline can still change, before 0.3.0 is tagged,
 and from the build that's tagged: after that it stands for what 0.3.0 wrote.
 Its accounts' password is `correct horse battery`."""
+import io
 import os
 import re
-import shutil
 import sqlite3
 import sys
+import tarfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from lib import FIX, Server, fixture, get, new_season, post, wait_for  # noqa: E402
 
-OUT = os.path.join(FIX, "baseline.db")
+OUT = os.path.join(FIX, "baseline.tar.gz")
+# The upgrade suite's ports, so the live season's fits where it's opened.
+PORT, AP_PORTS = 18193, "39175-39177"
 YAML = "name: {}\ngame: ChecksFinder\nChecksFinder: {{}}\n"
 
 
@@ -27,7 +33,7 @@ def generated(s, sid):
     assert t and "Generated seed" in t, (t or "")[-800:]
 
 
-srv = Server("baseline", port=18199, ap_ports="39190-39192")
+srv = Server("baseline", port=PORT, ap_ports=AP_PORTS)
 srv.start()
 try:
     root = srv.setup_sysadmin()
@@ -74,11 +80,31 @@ try:
 finally:
     srv.stop()
 
-tmp = OUT + ".tmp"
-if os.path.exists(tmp):
-    os.remove(tmp)
 with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
     assert db.execute("PRAGMA user_version").fetchone()[0] == 1, "not the baseline schema"
-    db.execute("VACUUM INTO ?", (tmp,))
-shutil.move(tmp, OUT)
+db.close()
+with sqlite3.connect(os.path.join(srv.data, "bifrost.db"), isolation_level=None) as db:
+    db.execute("VACUUM")
+db.close()
+
+
+def keep(t):
+    """What a moved data directory would carry: not logs, the sandbox's
+    filter (made on start) or backups."""
+    rel = t.name.split("/", 1)[1] if "/" in t.name else ""
+    if rel in ("bifrost.log", "sandbox-seccomp.bpf") or rel.startswith("backups") or "/logs/" in rel:
+        return None
+    t.uid = t.gid = 0
+    t.uname = t.gname = ""
+    return t
+
+
+tmp = OUT + ".tmp"
+with tarfile.open(tmp, "w:gz") as tar:
+    tar.add(srv.data, arcname="data", filter=keep)
+    note = srv.data.encode()
+    info = tarfile.TarInfo("data/.data-dir")
+    info.size = len(note)
+    tar.addfile(info, io.BytesIO(note))
+os.replace(tmp, OUT)
 print("wrote", OUT, os.path.getsize(OUT), "bytes")

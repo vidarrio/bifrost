@@ -284,30 +284,34 @@ push the other three changes onto its pull request.
 
 The database records its schema version, and Bifrost migrates it on start
 (`src/db/migrate.rs`). The tables as 0.3.0 made them are the
-baseline (`src/db/schema.sql`) and stay frozen. To change the schema,
-append a step to `STEPS` in `src/db/migrate.rs`; never edit or remove a step
-that has been released. Each step runs once, in a transaction, before
-anything else reads the database. Steps run with foreign keys off, so
-rebuilding a table (SQLite's way of changing a column) doesn't cascade into
-the tables that reference it, and the references are checked before the step
-commits. The first start of a new version takes a pre-upgrade backup before
-migrating; restoring it and running the old version undoes the upgrade.
+baseline (`src/db/schema.sql`) and stay frozen. To change the schema, add a
+step: a file in `src/db/steps/` named after the version it makes (`0002.sql`
+first, then `0003.sql`, …), included in `STEPS` in `src/db/migrate.rs`. Never
+edit, rename or remove a step that has been released. Each step runs once, in
+a transaction, before anything else reads the database. Steps run with foreign
+keys off, so rebuilding a table (SQLite's way of changing a column) doesn't
+cascade into the tables that reference it, and the references are checked
+before the step commits. The first start of a new version takes a pre-upgrade
+backup before migrating; restoring it and running the old version undoes the
+upgrade.
 
 Two checks hold this in place:
 
-- `STEP_SHA256` and `BASELINE_SHA256` in `src/db/migrate.rs` pin the SHA-256 of
-  each step and of the baseline, and a unit test fails if one of them changes.
-  A new step appends its hash.
-- From the 0.3.0 release on, CI's `lint` job also compares with the latest
-  release tag (`.github/scripts/schema_frozen.py`). `schema.sql` has to be the
-  same, and that release's step hashes have to come first in today's list. So
-  changing a pinned hash doesn't get a change past it.
+- A unit test (`the_schema_is_its_files`) checks that the baseline is
+  `schema.sql` and the steps are exactly the files in `src/db/steps/`, in
+  order, with no gaps.
+- From the 0.3.0 release on, CI's `lint` job compares with the latest release
+  tag (`.github/scripts/schema_frozen.py`): `schema.sql`, every step file that
+  release has, and the baseline fixture below have to be byte-identical to
+  it. Pre-release tags don't freeze anything.
 
-The `upgrade` suite opens `tests/e2e/fixtures/baseline.db`, a database at the
-baseline that Bifrost wrote through its own pages, and checks what it holds
-after every step since. It's made by `tests/e2e/fixtures/make_baseline.py`.
-Remake it only before 0.3.0 is tagged, from the build that gets tagged. After
-that it stands for what 0.3.0 wrote, and stays as it is.
+The `upgrade` suite starts the current build on
+`tests/e2e/fixtures/baseline.tar.gz`. That's a data directory whose database is
+at the baseline, written by Bifrost through its own pages, and the suite checks
+what it holds after every step since. It's made by
+`tests/e2e/fixtures/make_baseline.py`. Remake it only before 0.3.0 is tagged,
+from the build that gets tagged. After that it stands for what 0.3.0 wrote, and
+CI keeps it as released.
 
 ### End-to-end tests
 

@@ -13,29 +13,20 @@ use sqlx::SqlitePool;
 use super::Db;
 
 /// Schema changes after the baseline, oldest first: `STEPS[i]` takes the
-/// schema from version `i + 1` to `i + 2`. Append only: a released step is
-/// never edited, reordered or removed. A step is plain SQL and may hold
-/// several statements; SQLite can't alter a column in place, so changing one
-/// means rebuilding its table (<https://sqlite.org/lang_altertable.html>).
-/// Steps run with foreign keys off, so rebuilding a table others reference
-/// doesn't cascade into them; the references are checked before the step
-/// commits.
+/// schema from version `i + 1` to `i + 2`, and is the file
+/// `steps/NNNN.sql` named after the version it makes (`0002.sql` first),
+/// included as `include_str!("steps/0002.sql")`. Append only: a released step
+/// is never edited, reordered or removed, and CI compares the files with the
+/// latest release's (`.github/scripts/schema_frozen.py`). A step is plain SQL
+/// and may hold several statements; SQLite can't alter a column in place, so
+/// changing one means rebuilding its table
+/// (<https://sqlite.org/lang_altertable.html>). Steps run with foreign keys
+/// off, so rebuilding a table others reference doesn't cascade into them; the
+/// references are checked before the step commits.
 const STEPS: &[&str] = &[];
 
 /// The schema at version 1.
 const BASELINE: &str = include_str!("schema.sql");
-
-/// SHA-256 of [`BASELINE`] and of each of [`STEPS`], as released. From 0.3.0
-/// these never change: a schema change is a new step, whose hash is appended
-/// here. CI also checks them against the latest release
-/// (`.github/scripts/schema_frozen.py`), so editing a hash doesn't get a
-/// change past it.
-#[cfg(test)]
-const BASELINE_SHA256: &str = "1b68101bf129b84bb4000b35f85920e12b991ea395bda368206ea2a1f367b981";
-// schema-steps-begin
-#[cfg(test)]
-const STEP_SHA256: &[&str] = &[];
-// schema-steps-end
 
 /// The schema version this build writes.
 pub const SCHEMA_VERSION: i64 = 1 + STEPS.len() as i64;
@@ -234,28 +225,43 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The schema is its files: the baseline is `schema.sql`, and the steps
+    /// are `steps/0002.sql`, `steps/0003.sql`, … in order, every one of them.
+    /// That's what CI holds to the latest release.
     #[test]
-    fn the_released_schema_doesnt_change() {
-        let hash = |s: &str| crate::auth::token_hash(s);
+    fn the_schema_is_its_files() {
+        let db = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/db");
         assert_eq!(
-            hash(BASELINE),
-            BASELINE_SHA256,
-            "schema.sql changed: from 0.3.0 the baseline is frozen, so add a step to STEPS \
-             instead (before then, update BASELINE_SHA256)"
+            BASELINE,
+            std::fs::read_to_string(db.join("schema.sql")).unwrap(),
+            "BASELINE has to be include_str!(\"schema.sql\")"
         );
-        for (i, (step, want)) in STEPS.iter().zip(STEP_SHA256).enumerate() {
-            assert_eq!(
-                hash(step),
-                *want,
-                "STEPS[{i}] changed: a released step is never edited, add another"
-            );
-        }
+        let mut files: Vec<String> = std::fs::read_dir(db.join("steps"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".sql"))
+            .collect();
+        files.sort();
+        let want: Vec<String> = (0..files.len())
+            .map(|i| format!("{:04}.sql", i + 2))
+            .collect();
+        assert_eq!(
+            files, want,
+            "steps/ holds 0002.sql, 0003.sql, … with no gaps"
+        );
         assert_eq!(
             STEPS.len(),
-            STEP_SHA256.len(),
-            "STEPS and STEP_SHA256 differ in length: a step is only ever appended, with its \
-             hash appended to STEP_SHA256"
+            files.len(),
+            "STEPS includes every file in steps/"
         );
+        for (i, f) in files.iter().enumerate() {
+            assert_eq!(
+                STEPS[i],
+                std::fs::read_to_string(db.join("steps").join(f)).unwrap(),
+                "STEPS[{i}] has to be include_str!(\"steps/{f}\")"
+            );
+        }
     }
 
     #[tokio::test]
