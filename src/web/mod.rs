@@ -16,6 +16,7 @@ use tower_http::trace::TraceLayer;
 mod board;
 mod catalog;
 mod common;
+mod export;
 mod game;
 mod logs;
 mod minesweeper;
@@ -29,6 +30,7 @@ mod signup;
 pub(crate) use board::*;
 pub(crate) use catalog::*;
 pub(crate) use common::*;
+pub(crate) use export::*;
 pub(crate) use game::*;
 pub(crate) use logs::*;
 pub(crate) use minesweeper::*;
@@ -119,6 +121,9 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
     Router::new()
         .fallback(page_not_found)
         .route("/health", get(health))
+        .route("/export/commons", get(export_commons))
+        .route("/export/{season}/{key}/allowlist", get(export_allowlist))
+        .route("/export/{season}/{key}/file", get(export_file))
         .route("/", get(landing))
         .route("/favicon.svg", get(favicon))
         .route("/check", get(check_form).post(check_run))
@@ -181,6 +186,7 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         .route("/admin/settings/backups/now", post(backup_now))
         .route("/admin/settings/backups/download", get(backup_download))
         .route("/admin/settings/backups/delete", post(backup_delete))
+        .route("/admin/settings/export", post(admin_export_token))
         .route("/admin/mods/add", post(mods_add))
         .route("/admin/mods/remove", post(mods_remove))
         .route("/admin/signups", post(admin_signups))

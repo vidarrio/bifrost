@@ -1076,6 +1076,7 @@ mod tests {
             "/check",
             "/health",
             "/favicon.svg",
+            "/export/commons",
             "/login",
             "/logout",
             "/setup",

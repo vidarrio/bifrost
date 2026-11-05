@@ -703,6 +703,29 @@ Bifrost never reaches the game's server. Once a season is generated:
 2. Apply the **allowlist** from the season console's options, and update it
    when players register. Players see the address the season gives.
 
+To do this with a script of your own instead, make an **export token** under
+**Settings → Common-game export**. It's shown once, and only its hash is kept;
+replace it to stop the old one working, or revoke it to turn the export off.
+It only reads, and only these:
+
+- `GET /export/commons`: every live season's common games as JSON, each with
+  its season's id and seed name, its key, name, slot, address, its allowlist's
+  URL and count, and its slot's files with their URLs. The seed name changes
+  when a season is re-rolled, which is when the server needs its new file.
+- `GET /export/<season>/<key>/allowlist`: one name per line, or a JSON array
+  with `?format=json`.
+- `GET /export/<season>/<key>/file?name=<file>`: one of the slot's files, as
+  the index lists it.
+
+Send the token as a bearer token:
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" https://bifrost.example/export/commons
+```
+
+Behind forward auth, `/export` is one of the public paths: leave it out of the
+proxy's sign-in, and let the `Authorization` header through.
+
 ### Archipelago versions
 
 The image and bundle ship a pinned Archipelago. **Settings → Archipelago**
