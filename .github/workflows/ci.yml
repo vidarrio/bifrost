@@ -58,7 +58,11 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Python helpers compile
-        run: python3 -m py_compile scripts/*.py tests/e2e/*.py .github/scripts/*.py
+        run: python3 -m py_compile scripts/*.py tests/e2e/*.py tests/e2e/fixtures/*.py .github/scripts/*.py
+      - name: The database schema stays as released
+        run: |
+          git fetch --no-tags --depth=1 origin '+refs/tags/v*:refs/tags/v*'
+          python3 .github/scripts/schema_frozen.py
       - name: Every end-to-end suite runs in CI
         run: |
           diff <(tests/e2e/run.sh list | sort) \

@@ -11,9 +11,10 @@ import shutil
 import stat
 import sqlite3
 import sys
+import tarfile
 import zipfile
 
-from lib import Server, check, summary
+from lib import FIX, Server, check, get, summary, wait_for
 
 PORT, AP_PORTS = 18193, "39175-39177"
 ENV = {"BIFROST_BACKUP_HOUR": "off"}
@@ -57,6 +58,16 @@ finally:
     srv.stop()
 schema, version = stamp(srv)
 check("a fresh data dir is stamped with a schema version and this Bifrost's", schema >= 1 and version, (schema, version))
+
+
+def schema_of(srv):
+    """A database's schema: what an upgraded one has to match a fresh one in."""
+    with contextlib.closing(sqlite3.connect(os.path.join(srv.data, "bifrost.db"))) as db:
+        return db.execute("SELECT type, name, tbl_name, sql FROM sqlite_master "
+                          "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name").fetchall()
+
+
+fresh_schema = schema_of(srv)
 check("a first start takes no backup", backups(srv) == [], backups(srv))
 
 srv = server()
@@ -161,6 +172,54 @@ for old in (0, 2, 6):
     r = srv.cli("auth", "status")
     check("commands refuse it too", r.returncode == 1 and "before 0.3.0" in r.stderr, (r.returncode, r.stderr))
 remove_db()
+
+# The baseline 0.3.0 freezes, a data directory as Bifrost wrote it
+# (fixtures/make_baseline.py): the current build starts on it, runs every step
+# since, and finds everything.
+remove_db()
+srv = Server("upgrade", port=PORT, ap_ports=AP_PORTS, fresh=True, extra_env=ENV)
+shutil.rmtree(srv.data + ".unpack", ignore_errors=True)
+with tarfile.open(os.path.join(FIX, "baseline.tar.gz")) as tar:
+    tar.extractall(srv.data + ".unpack", filter="data")
+shutil.rmtree(srv.data)
+os.rename(os.path.join(srv.data + ".unpack", "data"), srv.data)
+os.rmdir(srv.data + ".unpack")
+# Moved, as an operator would move a data directory: the paths it keeps follow.
+with open(os.path.join(srv.data, ".data-dir")) as f:
+    was = f.read()
+os.remove(os.path.join(srv.data, ".data-dir"))
+with contextlib.closing(sqlite3.connect(os.path.join(srv.data, "bifrost.db"))) as db, db:
+    db.execute("UPDATE submission SET yaml_file = ? || substr(yaml_file, ?) WHERE substr(yaml_file, 1, ?) = ?",
+               (srv.data, len(was) + 1, len(was) + 1, was + "/"))
+srv.start()
+try:
+    with contextlib.closing(sqlite3.connect(os.path.join(srv.data, "bifrost.db"))) as db:
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        ids = dict(db.execute("SELECT name, id FROM season").fetchall())
+        signup = db.execute("SELECT id FROM submission WHERE slot_name = 'Ann' AND season_id = ?", (ids["Signups"],)).fetchone()[0]
+        problems = db.execute("PRAGMA foreign_key_check").fetchall() + [
+            r for r in db.execute("PRAGMA integrity_check").fetchall() if r[0] != "ok"]
+    r = srv.cli("auth", "status")
+    check("the baseline database opens and migrates", version == schema and r.returncode == 0, (version, schema, r.stderr))
+    check("with its references and pages intact", problems == [], problems)
+    upgraded = schema_of(srv)
+    check("and the same schema as a fresh one", upgraded == fresh_schema,
+          [r for r in upgraded if r not in fresh_schema] + [r for r in fresh_schema if r not in upgraded])
+    root = srv.session()
+    r = root.post(srv.base + "/login", data=dict(username="root", password="correct horse battery"))
+    check("its accounts still sign in", "bifrost_session" in root.cookies.get_dict(), r.text[-300:])
+    seasons = get(root, "/admin/seasons").text
+    check("its seasons are all there", all(n in seasons for n in ("Draft", "Signups", "Live", "Archived")), seasons[-1500:])
+    page = get(root, f"/s/{ids['Signups']}/signup/game/{signup}").text
+    check("with their signups, notes and seats", "Ann" in page and "Bring snacks" in page and "Cat" in page, page[-1200:])
+    check("an archived season keeps its summary", "Cat" in get(root, f"/s/{ids['Archived']}/season").text)
+    r = get(root, f"/s/{ids['Live']}/admin/common/vanilla/allowlist")
+    check("a live season keeps its common game and allowlist", r.text == "Alex\nSteve\n", repr(r.text))
+    check("the instance keeps its settings", 'value="ap.example"' in get(root, "/admin/settings").text and "A token is set" in get(root, "/admin/settings").text)
+    check("and its catalogs", "vetted" in get(root, "/admin/catalog").text and "plays as <b>Commons</b>" in get(root, "/admin/common-games").text)
+    check("the live season comes back up", wait_for(lambda: "Vanilla" in get(root, f"/s/{ids['Live']}/board").text and "Ann" in get(root, f"/s/{ids['Live']}/board").text, 90, 3))
+finally:
+    srv.stop()
 
 # `bifrost update` is for the single-file build (see bundle.py); this one has
 # no bundled runtime.

@@ -13,13 +13,16 @@ use sqlx::SqlitePool;
 use super::Db;
 
 /// Schema changes after the baseline, oldest first: `STEPS[i]` takes the
-/// schema from version `i + 1` to `i + 2`. Append only: a released step is
-/// never edited, reordered or removed. A step is plain SQL and may hold
-/// several statements; SQLite can't alter a column in place, so changing one
-/// means rebuilding its table (<https://sqlite.org/lang_altertable.html>).
-/// Steps run with foreign keys off, so rebuilding a table others reference
-/// doesn't cascade into them; the references are checked before the step
-/// commits.
+/// schema from version `i + 1` to `i + 2`, and is the file
+/// `steps/NNNN.sql` named after the version it makes (`0002.sql` first),
+/// included as `include_str!("steps/0002.sql")`. Append only: a released step
+/// is never edited, reordered or removed, and CI compares the files with the
+/// latest release's (`.github/scripts/schema_frozen.py`). A step is plain SQL
+/// and may hold several statements; SQLite can't alter a column in place, so
+/// changing one means rebuilding its table
+/// (<https://sqlite.org/lang_altertable.html>). Steps run with foreign keys
+/// off, so rebuilding a table others reference doesn't cascade into them; the
+/// references are checked before the step commits.
 const STEPS: &[&str] = &[];
 
 /// The schema at version 1.
@@ -220,6 +223,45 @@ mod tests {
         db.migrate().await.unwrap();
         assert_eq!(db.stamp().await.unwrap(), stamp);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The schema is its files: the baseline is `schema.sql`, and the steps
+    /// are `steps/0002.sql`, `steps/0003.sql`, … in order, every one of them.
+    /// That's what CI holds to the latest release.
+    #[test]
+    fn the_schema_is_its_files() {
+        let db = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/db");
+        assert_eq!(
+            BASELINE,
+            std::fs::read_to_string(db.join("schema.sql")).unwrap(),
+            "BASELINE has to be include_str!(\"schema.sql\")"
+        );
+        let mut files: Vec<String> = std::fs::read_dir(db.join("steps"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".sql"))
+            .collect();
+        files.sort();
+        let want: Vec<String> = (0..files.len())
+            .map(|i| format!("{:04}.sql", i + 2))
+            .collect();
+        assert_eq!(
+            files, want,
+            "steps/ holds 0002.sql, 0003.sql, … with no gaps"
+        );
+        assert_eq!(
+            STEPS.len(),
+            files.len(),
+            "STEPS includes every file in steps/"
+        );
+        for (i, f) in files.iter().enumerate() {
+            assert_eq!(
+                STEPS[i],
+                std::fs::read_to_string(db.join("steps").join(f)).unwrap(),
+                "STEPS[{i}] has to be include_str!(\"steps/{f}\")"
+            );
+        }
     }
 
     #[tokio::test]

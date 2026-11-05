@@ -218,7 +218,10 @@ To cut release `X.Y.Z`:
    `https://github.com/vidarrio/bifrost/releases/tag/v0.1.0`. These links 404
    until step 5 pushes the tag; that's expected.
 3. **Version**: set `version = "X.Y.Z"` in the root `Cargo.toml`, then run
-   `cargo update --workspace` so `Cargo.lock` follows.
+   `cargo update --workspace` so `Cargo.lock` follows. For 0.3.0, which
+   freezes the schema, also remake the baseline fixture from this build:
+   `cargo build && tests/e2e/fixtures/make_baseline.py` (see "Database
+   changes"). CI refuses the pull request until the fixture says 0.3.0.
 4. **Pull request**: open it as `release: vX.Y.Z`, with CI and review like any
    other change. Review checks that the changelog is complete and accurate for
    the release. Then merge it.
@@ -284,14 +287,34 @@ push the other three changes onto its pull request.
 
 The database records its schema version, and Bifrost migrates it on start
 (`src/db/migrate.rs`). The tables as 0.3.0 made them are the
-baseline (`src/db/schema.sql`) and stay frozen. To change the schema,
-append a step to `STEPS` in `src/db/migrate.rs`; never edit or remove a step
-that has been released. Each step runs once, in a transaction, before
-anything else reads the database. Steps run with foreign keys off, so
-rebuilding a table (SQLite's way of changing a column) doesn't cascade into
-the tables that reference it, and the references are checked before the step
-commits. The first start of a new version takes a pre-upgrade backup before
-migrating; restoring it and running the old version undoes the upgrade.
+baseline (`src/db/schema.sql`) and stay frozen. To change the schema, add a
+step: a file in `src/db/steps/` named after the version it makes (`0002.sql`
+first, then `0003.sql`, …), included in `STEPS` in `src/db/migrate.rs`. Never
+edit, rename or remove a step that has been released. Each step runs once, in
+a transaction, before anything else reads the database. Steps run with foreign
+keys off, so rebuilding a table (SQLite's way of changing a column) doesn't
+cascade into the tables that reference it, and the references are checked
+before the step commits. The first start of a new version takes a pre-upgrade
+backup before migrating; restoring it and running the old version undoes the
+upgrade.
+
+Two checks hold this in place:
+
+- A unit test (`the_schema_is_its_files`) checks that the baseline is
+  `schema.sql` and the steps are exactly the files in `src/db/steps/`, in
+  order, with no gaps.
+- From the 0.3.0 release on, CI's `lint` job compares with the latest release
+  tag (`.github/scripts/schema_frozen.py`): `schema.sql`, every step file that
+  release has, and the baseline fixture below have to be byte-identical to
+  it. Pre-release tags don't freeze anything.
+
+The `upgrade` suite starts the current build on
+`tests/e2e/fixtures/baseline.tar.gz`. That's a data directory whose database is
+at the baseline, written by Bifrost through its own pages, and the suite checks
+what it holds after every step since. It's made by
+`tests/e2e/fixtures/make_baseline.py`. Remake it only before 0.3.0 is tagged,
+from the build that gets tagged. After that it stands for what 0.3.0 wrote, and
+CI keeps it as released.
 
 ### End-to-end tests
 
