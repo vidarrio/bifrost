@@ -22,12 +22,15 @@ try:
     post(root, f"/s/{sid}/signup", files={"yaml": ("y.yaml", YAML)})
     post(root, f"/s/{sid}/admin/generate")
     wait_for(lambda: "Generated seed" in get(root, f"/s/{sid}/admin").text, 300, 3)
-    panel = wait_for(lambda: (p := get(root, "/admin/settings/load").text) and "Loaded — AP server" in p
-                     and re.search(r"Loaded — AP server</td><td>([1-9]\d*) MiB", p) and p, 60, 5)
+    served = lambda p: (m := re.search(r"Loaded — AP server</td><td>(\d+) MiB", p)) and int(m.group(1))
+    panel = wait_for(lambda: (p := get(root, "/admin/settings/load").text) and served(p) and p, 60, 5)
     check("the live season's server is listed with its memory", panel, (panel or get(root, "/admin/settings/load").text)[:600])
     if panel:
-        mib = int(re.search(r"Loaded — AP server</td><td>(\d+) MiB", panel).group(1))
-        check("…a plausible amount (20–2000 MiB)", 20 <= mib <= 2000, mib)
+        # A sample taken while the server is still loading reads low: wait for
+        # it to finish rather than judge the first one.
+        mib = wait_for(lambda: (n := served(get(root, "/admin/settings/load").text)) and n >= 20 and n, 60, 5) \
+            or served(get(root, "/admin/settings/load").text)
+        check("…a plausible amount (20–2000 MiB)", mib and 20 <= mib <= 2000, mib)
         check("host memory and CPU charts", panel.count('class="loadchart"') == 2 and "<polyline" in panel)
         check("helpers and Bifrost rows", "Other processes" in panel and "<td>Bifrost</td>" in panel)
     page = get(root, "/admin/settings").text
