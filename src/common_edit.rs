@@ -210,6 +210,7 @@ pub fn put(
     upload: &Path,
     file: &str,
     label: Option<&str>,
+    by: &str,
 ) -> Result<(), String> {
     let _g = lock();
     let dir = folder(root, key)?;
@@ -253,7 +254,14 @@ pub fn put(
         return Err(e.to_string());
     }
     let marked = if label.is_none() {
-        undo.write(&dir.join(common::UPLOADED), rel.as_bytes())
+        let by: String = by.chars().filter(|c| !c.is_control()).collect();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        undo.write(
+            &dir.join(common::UPLOADED),
+            format!("{rel}\n{by}\n{now}\n").as_bytes(),
+        )
     } else {
         Ok(())
     };
@@ -377,10 +385,10 @@ mod tests {
 
         let up = upload_path(&r, "vanilla").unwrap();
         std::fs::write(&up, "not a zip").unwrap();
-        assert!(put(&r, "vanilla", &up, "minecraft.apworld", None).is_err());
+        assert!(put(&r, "vanilla", &up, "minecraft.apworld", None, "root").is_err());
         let up = upload_path(&r, "vanilla").unwrap();
         std::fs::write(&up, "PK\x03\x04old").unwrap();
-        put(&r, "vanilla", &up, "old.apworld", None).unwrap();
+        put(&r, "vanilla", &up, "old.apworld", None, "root").unwrap();
         assert!(
             common::uploaded_from(&r, "vanilla", "old.apworld"),
             "marked as uploaded"
@@ -388,12 +396,12 @@ mod tests {
         // Replacing it with another name drops the old file.
         let up = upload_path(&r, "vanilla").unwrap();
         std::fs::write(&up, "PK\x03\x04zip").unwrap();
-        put(&r, "vanilla", &up, "minecraft.APWORLD", None).unwrap();
+        put(&r, "vanilla", &up, "minecraft.APWORLD", None, "root").unwrap();
         assert!(!r.join("vanilla/old.apworld").exists());
         assert!(common::uploaded_from(&r, "vanilla", "minecraft.apworld"));
         let up = upload_path(&r, "vanilla").unwrap();
         std::fs::write(&up, "jar").unwrap();
-        put(&r, "vanilla", &up, "mod.jar", Some("The mod")).unwrap();
+        put(&r, "vanilla", &up, "mod.jar", Some("The mod"), "root").unwrap();
         let s = common::load_from(&r, "vanilla").unwrap();
         assert_eq!(s.apworld.as_deref(), Some("minecraft.apworld"));
         assert_eq!(s.downloads[0].file, "client/mod.jar");
@@ -445,15 +453,15 @@ mod tests {
         assert!(!r.join("bad").exists());
         let up = upload_path(&r, "vanilla").unwrap();
         std::fs::write(&up, "PK\x03\x04").unwrap();
-        assert!(put(&r, "vanilla", &up, "Tracker.apworld", None).is_err());
+        assert!(put(&r, "vanilla", &up, "Tracker.apworld", None, "root").is_err());
         // A put that would break the setup leaves what was there.
         let up = upload_path(&r, "vanilla").unwrap();
         std::fs::write(&up, "PK\x03\x04good").unwrap();
-        put(&r, "vanilla", &up, "w.apworld", None).unwrap();
+        put(&r, "vanilla", &up, "w.apworld", None, "root").unwrap();
         std::fs::write(r.join("vanilla/player.yaml"), "name: Other\n").unwrap();
         let up = upload_path(&r, "vanilla").unwrap();
         std::fs::write(&up, "PK\x03\x04new").unwrap();
-        assert!(put(&r, "vanilla", &up, "w.apworld", None).is_err());
+        assert!(put(&r, "vanilla", &up, "w.apworld", None, "root").is_err());
         assert_eq!(
             std::fs::read(r.join("vanilla/w.apworld")).unwrap(),
             b"PK\x03\x04good"

@@ -267,8 +267,16 @@ async fn put_upload(
         }
         let k = key.clone();
         let t = tmp.clone();
+        let who = me.username();
         let r = tokio::task::spawn_blocking(move || {
-            common_edit::put(&root(), &k, &t, &file, download.then_some(label.as_str()))
+            common_edit::put(
+                &root(),
+                &k,
+                &t,
+                &file,
+                download.then_some(label.as_str()),
+                &who,
+            )
         })
         .await
         .unwrap_or_else(|e| Err(e.to_string()));

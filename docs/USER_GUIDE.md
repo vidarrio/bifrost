@@ -688,7 +688,9 @@ label = "Archipelago Randomizer mod"
 - An apworld you put in a setup's folder is trusted like Bifrost's own, and
   uploads can't use its file name. One uploaded through the console isn't: it's
   a custom world, so it only runs where custom worlds can (see
-  [Isolation](#isolation)), and the console only takes one there.
+  [Isolation](#isolation)), and the console only takes one there. The console
+  marks such an apworld in the setup's `.uploaded-apworld`. To trust a file you
+  put in place of one, delete that file.
 - The guide is shown on the game page. `{address}` and `{slot}` in it are filled
   in with the season's address and the slot's name. HTML in it is shown as
   text, and links only go to web pages or within Bifrost.

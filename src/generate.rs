@@ -283,6 +283,9 @@ async fn stage_tracker_apworld(season: Id) {
     }
 }
 
+/// Who uploaded a common game's apworld through the console, and when.
+type Uploader = (String, i64);
+
 /// Stage the season's common games for the roll: each setup's YAML into
 /// `Players/`, and the apworld it ships, if any, into `worlds/`: pinned as
 /// shipped when the host's operator put it in the catalog, or as an approved
@@ -291,8 +294,10 @@ async fn stage_tracker_apworld(season: Id) {
 /// longer has are removed. Returns each one's (slot name, key).
 async fn stage_commons(db: &Db, season: Id) -> Result<Vec<(String, String)>, String> {
     let dirs = config::get().season(season);
-    // By file: its bytes, and whether it came in through the console.
-    let mut worlds: std::collections::BTreeMap<String, (Vec<u8>, bool)> = Default::default();
+    // By file: its bytes, and who uploaded it through the console and when, if
+    // someone did.
+    let mut worlds: std::collections::BTreeMap<String, (Vec<u8>, Option<Uploader>)> =
+        Default::default();
     let mut out = Vec::new();
     for c in db.season_commons(season).await {
         let setup =
@@ -319,8 +324,12 @@ async fn stage_commons(db: &Db, season: Id) -> Result<Vec<(String, String)>, Str
                     "two of the season's common games ship different apworlds named {w}"
                 ));
             }
-            let uploaded =
-                crate::common::uploaded(&c.key, w) || worlds.get(w).is_some_and(|(_, u)| *u);
+            let uploaded = if crate::common::uploaded(&c.key, w) {
+                // Unreadable details still mean uploaded.
+                Some(crate::common::uploader(&c.key, w).unwrap_or_default())
+            } else {
+                worlds.get(w).and_then(|(_, u)| u.clone())
+            };
             worlds.insert(w.clone(), (bytes, uploaded));
         }
         out.push((c.slot_name, c.key));
@@ -340,11 +349,12 @@ async fn stage_commons(db: &Db, season: Id) -> Result<Vec<(String, String)>, Str
         }
     }
     for (w, (bytes, uploaded)) in &worlds {
-        if *uploaded {
+        if let Some((who, at)) = uploaded {
+            let who = if who.is_empty() { "a sysadmin" } else { who };
             let pin = ap_adapter::Pin {
-                uploaded_by: "a sysadmin".into(),
-                approved_by: "a sysadmin (common game)".into(),
-                uploaded_at: crate::web::now_secs(),
+                uploaded_by: who.to_string(),
+                approved_by: format!("{who} (common game)"),
+                uploaded_at: *at,
                 common: true,
                 ..ap_adapter::Pin::default()
             };

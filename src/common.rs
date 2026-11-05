@@ -336,8 +336,24 @@ pub fn apworld_files() -> Vec<String> {
 }
 
 /// The file in a setup's folder that names an apworld uploaded through the
-/// console, rather than put there by whoever runs the host.
+/// console, rather than put there by whoever runs the host: its file name,
+/// then who uploaded it and when (Unix seconds), one per line.
 pub const UPLOADED: &str = ".uploaded-apworld";
+
+/// Who uploaded a setup's apworld through the console, and when, if they did.
+pub fn uploader(key: &str, apworld: &str) -> Option<(String, i64)> {
+    let text = std::fs::read_to_string(config::get().common_dir().join(key).join(UPLOADED)).ok()?;
+    let mut lines = text.lines();
+    if lines.next()?.trim() != apworld {
+        return None;
+    }
+    let who = lines.next().unwrap_or("").trim().to_string();
+    let at = lines
+        .next()
+        .and_then(|l| l.trim().parse().ok())
+        .unwrap_or(0);
+    Some((who, at))
+}
 
 /// Whether a setup's apworld came in through the console. Such a world isn't
 /// trusted like Bifrost's own: it's a custom world, which needs a sandbox
@@ -345,7 +361,7 @@ pub const UPLOADED: &str = ".uploaded-apworld";
 pub fn uploaded_from(root: &Path, key: &str, apworld: &str) -> bool {
     valid_key(key)
         && std::fs::read_to_string(root.join(key).join(UPLOADED))
-            .map(|s| s.trim() == apworld)
+            .map(|s| s.lines().next().unwrap_or("").trim() == apworld)
             // Unreadable: don't trust it either.
             .unwrap_or_else(|e| e.kind() != std::io::ErrorKind::NotFound)
 }
