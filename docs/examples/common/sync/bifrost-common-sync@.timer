@@ -1,0 +1,11 @@
+# Run the RCON sync for %i every minute (copy mode has bifrost-common-copy@.timer).
+[Unit]
+Description=Sync %i from Bifrost every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+Unit=bifrost-common-sync@%i.service
+
+[Install]
+WantedBy=timers.target

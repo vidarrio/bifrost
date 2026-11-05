@@ -742,6 +742,11 @@ curl -H "Authorization: Bearer $TOKEN" https://bifrost.example/export/commons
 Behind forward auth, `/export` is one of the public paths: leave it out of the
 proxy's sign-in, and let the `Authorization` header through.
 
+[docs/examples/common/sync](examples/common/sync) has such a script, with
+systemd units. It applies the allowlist to a running Minecraft server over
+RCON, or copies it into place as text, JSON or Minecraft's `whitelist.json`, and
+fetches each new seed's files for the server.
+
 ### Archipelago versions
 
 The image and bundle ship a pinned Archipelago. **Settings → Archipelago**

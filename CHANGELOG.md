@@ -24,7 +24,8 @@ Changed), and a `config.toml` with `[minecraft]` has to lose it (see Removed).
   has a Minecraft setup to start from.
 - A read-only export token for common games, made on the settings page, so a sysadmin's
   own script can fetch every live season's common games, allowlists and seed files from
-  `/export/...` with `curl`.
+  `/export/...` with `curl`. `docs/examples/common/sync` has one, with systemd units,
+  that applies the allowlist over Minecraft's RCON or copies it into place.
 - Private seasons. A new season's board, log and game pages are for its players,
   moderators and sysadmins, and a moderator can open them to anyone. Signups can also be
   made private, reachable only through a link. Non-members don't see a private season on

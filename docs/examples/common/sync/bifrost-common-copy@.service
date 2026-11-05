@@ -1,0 +1,18 @@
+# Write a common game's allowlist and seed files into place:
+# bifrost-common-copy@vanilla reads /etc/bifrost-common-sync/vanilla.env.
+# It runs as root so it can write the server's files and run AFTER (such as
+# restarting the server); set User= to the server's own user if AFTER
+# doesn't need root.
+[Unit]
+Description=Copy %i's allowlist and seed from Bifrost
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/bifrost-common-sync/%i.env
+Environment=STATE_DIR=/var/lib/bifrost-common-sync/%i
+ExecStart=/usr/local/bin/bifrost-common-sync copy
+StateDirectory=bifrost-common-sync/%i
+PrivateTmp=yes
+NoNewPrivileges=yes
