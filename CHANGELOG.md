@@ -104,6 +104,8 @@ Changed), and a `config.toml` with `[minecraft]` has to lose it (see Removed).
     tracking may be incomplete), and packs that
     also read an emulator's memory, such as Super Metroid's, keep their received items.
 - A game's PopTracker pack stays with it through a re-roll.
+- A data directory moved or restored to another path keeps its signups: the database
+  names their YAMLs from inside the data directory, not by absolute path.
 - An unknown URL, "Moderators only" and a game page with no game show a page rather than
   the browser's own error. Long links and paths no longer widen the page, a failed
   generation shows as a failure, the apworld approval options are laid out properly, and

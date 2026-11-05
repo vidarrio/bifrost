@@ -1,10 +1,9 @@
 """Make baseline.tar.gz: a data directory whose database is at schema
 version 1, the baseline 0.3.0 freezes, holding a bit of everything Bifrost
 keeps, written by Bifrost itself through its pages, with the season files
-beside it. The `upgrade` suite starts the current build on it, so every
-migration step after the baseline is tried on real data. Its `.data-dir`
-names the directory it was made in, which paths in the database start with:
-the suite moves it the way an operator would move a data directory.
+beside it. The `upgrade` suite starts the current build on it, in another
+directory than it was made in, so every migration step after the baseline is
+tried on real data, and on a moved data directory.
 
     tests/e2e/fixtures/make_baseline.py
 
@@ -12,7 +11,6 @@ needs a debug build and Archipelago (tests/e2e/setup-ap.sh), like the suites.
 Remake it only while the baseline can still change, before 0.3.0 is tagged,
 and from the build that's tagged: after that it stands for what 0.3.0 wrote.
 Its accounts' password is `correct horse battery`."""
-import io
 import os
 import re
 import sqlite3
@@ -102,9 +100,5 @@ def keep(t):
 tmp = OUT + ".tmp"
 with tarfile.open(tmp, "w:gz") as tar:
     tar.add(srv.data, arcname="data", filter=keep)
-    note = srv.data.encode()
-    info = tarfile.TarInfo("data/.data-dir")
-    info.size = len(note)
-    tar.addfile(info, io.BytesIO(note))
 os.replace(tmp, OUT)
 print("wrote", OUT, os.path.getsize(OUT), "bytes")

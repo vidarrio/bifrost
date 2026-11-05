@@ -184,13 +184,11 @@ with tarfile.open(os.path.join(FIX, "baseline.tar.gz")) as tar:
 shutil.rmtree(srv.data)
 os.rename(os.path.join(srv.data + ".unpack", "data"), srv.data)
 os.rmdir(srv.data + ".unpack")
-# Moved, as an operator would move a data directory: the paths it keeps follow.
-with open(os.path.join(srv.data, ".data-dir")) as f:
-    was = f.read()
-os.remove(os.path.join(srv.data, ".data-dir"))
-with contextlib.closing(sqlite3.connect(os.path.join(srv.data, "bifrost.db"))) as db, db:
-    db.execute("UPDATE submission SET yaml_file = ? || substr(yaml_file, ?) WHERE substr(yaml_file, 1, ?) = ?",
-               (srv.data, len(was) + 1, len(was) + 1, was + "/"))
+# It was made in another directory, as a moved or restored data directory is:
+# what it keeps names its files from inside it, so nothing needs rewriting.
+with contextlib.closing(sqlite3.connect(os.path.join(srv.data, "bifrost.db"))) as db:
+    stored = [r[0] for r in db.execute("SELECT yaml_file FROM submission")]
+check("signups name their files from inside the data directory", stored and all(not p.startswith("/") for p in stored), stored)
 srv.start()
 try:
     with contextlib.closing(sqlite3.connect(os.path.join(srv.data, "bifrost.db"))) as db:

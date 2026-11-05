@@ -188,7 +188,7 @@ pub(crate) async fn admin_regenerate(
 pub(crate) async fn clear_signups(st: &AppState, season: Id) {
     if let Ok(files) = st.db.clear_submissions(season).await {
         for f in files {
-            let _ = tokio::fs::remove_file(&f).await;
+            remove_yaml(&f).await;
         }
     }
 }
@@ -483,7 +483,7 @@ pub(crate) async fn admin_delete_player(
     if is_admin
         && let Ok(Some(yaml_file)) = st.db.delete_submission(ctx.id, f.id, my_id, true).await
     {
-        let _ = tokio::fs::remove_file(&yaml_file).await;
+        remove_yaml(&yaml_file).await;
     }
     Redirect::to(&ctx.url("/admin"))
 }
