@@ -180,9 +180,10 @@ pub fn export_token_page(token: &str) -> Html<String> {
     b.push_str(&format!(
         r#"<h1>Export token</h1><div class="crumb"><a href="/admin/settings#export">← settings</a></div>
 <div class="banner ok">Copy it now: it isn't shown again, and only its hash is kept.</div>
+<style>.token,pre.howto{{overflow-wrap:anywhere;white-space:pre-wrap}}</style>
 <p><code class="token">{t}</code></p>
 <p class="statline">Send it as a bearer token. The index lists every live season's common games, each with its allowlist's and files' URLs:</p>
-<pre>printf 'Authorization: Bearer %s\n' {t} &gt; bifrost-export.hdr    # chmod 600
+<pre class="howto">printf 'Authorization: Bearer %s\n' {t} &gt; bifrost-export.hdr    # chmod 600
 curl -H @bifrost-export.hdr https://&lt;bifrost&gt;/export/commons</pre>
 <p class="statline">Keep the token in a file like that rather than on a command line, where other users of the host can see it.</p>
 <p class="statline">An allowlist is one name per line, or JSON with <code>?format=json</code>. A season's seed name changes when it's re-rolled, which is when its servers need their new files.</p>"#,
@@ -589,7 +590,7 @@ pub fn common_catalog_page(
     }
     body.push_str(r#"<h2>New setup</h2>
 <form class="signup" style="max-width:none" method="post" action="/admin/common-games/new" autocomplete="off">
-<label>Key, the folder's name (lower-case letters, digits, <code>.</code>, <code>_</code> or <code>-</code>)<input type="text" name="key" placeholder="vanilla.26.2" maxlength="40" required></label>
+<label><span>Key, the folder's name (lower-case letters, digits, <code>.</code>, <code>_</code> or <code>-</code>)</span><input type="text" name="key" placeholder="vanilla.26.2" maxlength="40" required></label>
 <label>Name, as players see it<input type="text" name="name" placeholder="Minecraft 26.2" maxlength="60" required></label>
 <label>Slot, the player name its YAML declares (at most 16 characters)<input type="text" name="slot" placeholder="Commons" maxlength="16" required></label>
 <label>Player YAML<textarea name="yaml" rows="6" style="width:100%;font-family:var(--mono)" required>name: Commons
@@ -626,6 +627,8 @@ pub fn common_setup_page(
 ) -> Html<String> {
     let k = esc(&v.key);
     let mut body = console_nav("/admin/common-games", true);
+    // Long file names and the add-download form wrap on a phone.
+    body.push_str("<style>.hintrow{flex-wrap:wrap;gap:6px}.hintrow code{overflow-wrap:anywhere}form.console{flex-wrap:wrap}</style>");
     body.push_str(&format!(
         r#"<div class="crumb"><a href="/admin/common-games">← common games</a></div><h2>{}</h2>"#,
         if v.fields.name.is_empty() {
@@ -661,16 +664,16 @@ pub fn common_setup_page(
 <label>Name, as players see it<input type="text" name="name" value="{name}" maxlength="60" required></label>
 <label>Slot, the player name its YAML declares<input type="text" name="slot" value="{slot}" maxlength="16" required></label>
 <label>Address players join at; a season can set its own<input type="text" name="address" value="{address}" maxlength="200" placeholder="mc.example:25565"></label>
-<h3>Allowlist name</h3>
+<h2>Allowlist name</h2>
 <p class="statline">If the server only lets in the season's players, players register a name for it. Setups of one kind share them, so one Minecraft username serves every Minecraft setup. Leave the kind empty if the server lets anyone in.</p>
-<label>Kind (lower-case letters, digits, <code>_</code> or <code>-</code>)<input type="text" name="kind" value="{kind}" maxlength="32" placeholder="minecraft"></label>
+<label><span>Kind (lower-case letters, digits, <code>_</code> or <code>-</code>)</span><input type="text" name="kind" value="{kind}" maxlength="32" placeholder="minecraft"></label>
 <label>Label<input type="text" name="label" value="{label}" maxlength="60" placeholder="Minecraft username"></label>
 <label>Pattern, a regular expression the whole name has to match<input type="text" name="pattern" value="{pattern}" maxlength="200" placeholder="[A-Za-z0-9_]{{3,16}}"></label>
 <label>Hint, the rule in words<input type="text" name="hint" value="{hint}" maxlength="120" placeholder="3 to 16 letters, digits or underscores"></label>
-<h3>Join guide</h3>
+<h2>Join guide</h2>
 <p class="statline">Markdown, shown on the game page. <code>{{address}}</code> and <code>{{slot}}</code> are filled in. HTML shows as text.</p>
 <textarea name="guide" rows="14" style="width:100%;font-family:var(--mono)">{guide}</textarea>
-<h3>Player YAML</h3>
+<h2>Player YAML</h2>
 <textarea name="yaml" rows="8" style="width:100%;font-family:var(--mono)" required>{yaml}</textarea>
 <div class="btnrow"><button type="submit">Save</button></div></form>"#,
         name = esc(&f.name),
@@ -684,7 +687,7 @@ pub fn common_setup_page(
         yaml = esc(&f.yaml),
     ));
 
-    body.push_str(r#"<h3>Apworld</h3>"#);
+    body.push_str(r#"<h2>Apworld</h2>"#);
     match &v.apworld {
         Some(w) => body.push_str(&format!(
             r#"<div class="hintrow"><span><code>{}</code> · {}</span><span>{}</span></div>"#,
@@ -715,7 +718,7 @@ pub fn common_setup_page(
         body.push_str(r#"<p class="statline">This host has no sandbox for custom worlds, so an apworld can't be uploaded here. Put it in the setup's folder on the host instead, and name it in <code>game.toml</code>.</p>"#);
     }
 
-    body.push_str(r#"<h3>Downloads</h3><p class="statline">Client files the game page offers, such as a mod or its loader.</p>"#);
+    body.push_str(r#"<h2>Downloads</h2><p class="statline">Client files the game page offers, such as a mod or its loader.</p>"#);
     for (file, label) in &v.downloads {
         body.push_str(&format!(
             r#"<div class="hintrow"><span>{} · <code>{}</code></span><span>{}</span></div>"#,
@@ -731,10 +734,10 @@ pub fn common_setup_page(
         ));
     }
     body.push_str(&format!(
-        r#"<form class="console" method="post" action="/admin/common-games/{k}/download" enctype="multipart/form-data"><input type="text" name="label" placeholder="label, e.g. NeoForge installer" maxlength="80" required style="flex:1;min-width:0"><input type="file" name="file" required style="flex:1;min-width:0"><button type="submit">Add download</button></form>"#
+        r#"<form class="console" method="post" action="/admin/common-games/{k}/download" enctype="multipart/form-data"><input type="text" name="label" placeholder="label, e.g. NeoForge installer" maxlength="80" required style="flex:1 1 14em;min-width:0"><input type="file" name="file" required style="flex:1 1 14em;min-width:0"><button type="submit">Add download</button></form>"#
     ));
 
-    body.push_str(r#"<h3>Delete</h3>"#);
+    body.push_str(r#"<h2>Delete</h2>"#);
     if v.seasons.is_empty() {
         body.push_str(&action_btn(
             &format!("/admin/common-games/{}/delete", v.key),

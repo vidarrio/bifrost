@@ -83,6 +83,7 @@ try:
     page = wait_for(lambda: (x := get(carl, van).text) and "isn't up yet" not in x and x, 60)
     j = get(carl, van + "/live").json()
     check("a common game's page keeps its figures and hints live too", re.fullmatch(r"\d+ locations · sent \d+ · received \d+ · \d+ left", j.get("stats", "")) and isinstance(j.get("hints"), str), j)
+    check("a common game's page goes by its setup's name", "<h1>Clique Vanilla</h1>" in page, re.search(r"<h1>[^<]*</h1>", page) and re.search(r"<h1>[^<]*</h1>", page).group(0))
     check("the guide fills in the address and slot", "<strong>vanilla.example:25565</strong>" in page and "<code>Vanilla</code>" in page, page[-3000:])
     # Raw: the helpers decode entities.
     guide = carl.get(carl.base + van).text.split('<div class="guide">')[1].split("</div>")[0]

@@ -732,7 +732,8 @@ pub fn game_page(
     out.push_str(&format!(
         r#"<h1>{}</h1><div class="crumb"><a href="board">← board</a>{}</div>
 <div class="meta"><span id="gamestats" data-slot="{game_id}">{}</span><span id="utavail">{avail}</span></div>"#,
-        esc(game),
+        // A common game goes by its setup's name, as on the board.
+        esc(common.map_or(game, |c| c.name.as_str())),
         if is_admin { " · admin" } else { "" },
         game_stats(&live),
     ));
