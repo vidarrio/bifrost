@@ -91,7 +91,7 @@ try:
     r = get(anon, f"/s/{sid}/common/vanilla.1/file/0")
     check("downloads need a sign-in", r.content != b"JARBYTES", r.status_code)
     r = post(anon, f"/s/{sid}/common/vanilla.1/ident", data=dict(name="Anon1"))
-    check("and so does registering", "Anon1" not in get(root, f"/s/{sid}/admin/common/vanilla.1/allowlist").text)
+    check("and so does registering", "Play a game this season first" not in r.text and "Anon1" not in get(root, f"/s/{sid}/admin/common/vanilla.1/allowlist").text, r.text[-300:])
     r = get(carl, f"/s/{sid}/common/vanilla.1/file/1")
     check("only what the setup lists", r.content != b"not listed" and "isn't available" in r.text)
     r = get(carl, f"/s/{sid}/common/broken/file/0")

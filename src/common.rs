@@ -162,15 +162,32 @@ pub fn name_rule(pattern: &str) -> Result<regex::Regex, String> {
 }
 
 impl Identifier {
-    /// Whether a player's name fits the setup's rule. Whatever the rule, a
-    /// name is one line of at most 64 characters, without control characters,
-    /// as the allowlist goes out one name per line.
+    /// Whether a player's name fits the setup's rule.
     pub fn accepts(&self, name: &str) -> bool {
-        (1..=64).contains(&name.chars().count())
-            && !name.chars().any(char::is_control)
-            && name_rule(&self.pattern).is_ok_and(|r| r.is_match(name))
+        name_rule(&self.pattern).is_ok_and(|r| fits(&r, name))
+    }
+
+    /// The names of `names` that fit the setup's rule.
+    pub fn keep(&self, names: &mut Vec<String>) {
+        match name_rule(&self.pattern) {
+            Ok(r) => names.retain(|n| fits(&r, n)),
+            Err(_) => names.clear(),
+        }
     }
 }
+
+/// Whatever the setup's rule, a name is one line of at most 64 characters,
+/// without control characters or Unicode's line and paragraph separators, as
+/// the allowlist goes out one name per line.
+fn fits(rule: &regex::Regex, name: &str) -> bool {
+    (1..=64).contains(&name.chars().count())
+        && !name
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
+        && rule.is_match(name)
+}
+
+impl Identifier {}
 
 /// Read one setup from `root/<key>/`.
 pub fn load_from(root: &Path, key: &str) -> Result<Setup, String> {
@@ -199,7 +216,7 @@ pub fn load_from(root: &Path, key: &str) -> Result<Setup, String> {
     let yaml = m.yaml.unwrap_or_else(|| "player.yaml".into());
     let yaml_text = read_text(&inside(&dir, &yaml).map_err(|e| format!("yaml: {e}"))?)?;
     if let Some(name) = yaml_name(&yaml_text)
-        && name != slot
+        && !name.eq_ignore_ascii_case(&slot)
     {
         return Err(format!("yaml: its name: is {name}, not the slot {slot}"));
     }
@@ -418,6 +435,17 @@ label = "The mod"
             ..id.clone()
         };
         assert!(!loose.accepts("Ann\rBob"), "one line");
+        assert!(
+            !loose.accepts("Ann\u{2028}Bob"),
+            "nor Unicode's line separator"
+        );
+        assert!(
+            !loose.accepts("Ann\u{2029}Bob"),
+            "nor its paragraph separator"
+        );
+        let mut names = vec!["Ann".to_string(), "Ann\u{2028}Bob".to_string()];
+        loose.keep(&mut names);
+        assert_eq!(names, ["Ann"]);
         assert!(!loose.accepts(&"x".repeat(65)), "at most 64");
         let unicode = Identifier {
             pattern: "(?i)\\p{L}+".into(),

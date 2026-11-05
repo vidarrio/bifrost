@@ -308,7 +308,7 @@ pub(crate) async fn allowlist(
     id: &crate::common::Identifier,
 ) -> Vec<String> {
     let mut names = st.db.season_allowlist(season, &id.kind).await;
-    names.retain(|n| id.accepts(n));
+    id.keep(&mut names);
     names
 }
 
