@@ -71,10 +71,42 @@ pub fn landing_roster(
     out
 }
 
-/// The home page's "Join" block: where each live season's connection details
-/// are (its own address and password, on its board).
-pub fn landing_connect(live: &[(Id, String)]) -> String {
-    let mut out = String::from(r#"<div class="lbl">Connect to</div>"#);
+/// One of the signed-in player's games in a live season, for the home page.
+pub struct MyGame {
+    pub season: Id,
+    pub game_id: Id,
+    pub slot: String,
+    pub game: String,
+}
+
+/// The home page's "Join" block: the signed-in player's own games, each
+/// linking to its page, then where each live season's connection details are
+/// (its own address and password, on its board).
+pub fn landing_connect(live: &[(Id, String)], mine: &[MyGame]) -> String {
+    let mut out = String::new();
+    if !mine.is_empty() {
+        out.push_str(r#"<div class="lbl">Your games</div>"#);
+        for g in mine {
+            let season = live
+                .iter()
+                .find(|(id, _)| *id == g.season)
+                .map(|(_, n)| n.as_str())
+                .unwrap_or("");
+            out.push_str(&format!(
+                r#"<div class="pw"><a href="/s/{}/game/{}">{} · {}</a> in {}</div>"#,
+                g.season,
+                g.game_id,
+                esc(&g.slot),
+                esc(&g.game),
+                esc(season)
+            ));
+        }
+    }
+    out.push_str(if mine.is_empty() {
+        r#"<div class="lbl">Connect to</div>"#
+    } else {
+        r#"<div class="lbl" style="margin-top:12px">Connect to</div>"#
+    });
     if live.is_empty() {
         out.push_str(r#"<div class="cs">no season is live</div>"#);
     }
@@ -92,7 +124,36 @@ pub fn home_pill(url: &str) -> String {
     if url.is_empty() {
         String::new()
     } else {
-        format!(r#"<a class="pill" href="{}">home</a>"#, esc(url))
+        format!(
+            r#"<a class="pill" href="{}">{} ↗</a>"#,
+            esc(url),
+            esc(&home_label(url))
+        )
+    }
+}
+
+/// What the header's home link says: the site it goes to, by host name.
+pub fn home_label(url: &str) -> String {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let host = rest.split(['/', '\\', '?', '#']).next().unwrap_or("");
+    let host = host.rsplit('@').next().unwrap_or(host);
+    // Without a port, as the page's own script shows it (`URL.hostname`).
+    let host = match host.rsplit_once(':') {
+        // A port, not part of a bare IPv6 address.
+        Some((h, p))
+            if !p.is_empty()
+                && p.bytes().all(|b| b.is_ascii_digit())
+                && (h.ends_with(']') || !h.contains(':')) =>
+        {
+            h
+        }
+        _ => host,
+    };
+    let host = host.to_ascii_lowercase();
+    match host.chars().count() {
+        0 => "home".into(),
+        n if n > 24 => format!("{}…", host.chars().take(23).collect::<String>()),
+        _ => host,
     }
 }
 
@@ -191,4 +252,25 @@ pub fn past_seasons_section(seasons: &[(Id, String, i64)]) -> String {
     }
     out.push_str("</div>");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_home_link_is_named_after_its_host() {
+        for (url, want) in [
+            ("https://example.org/", "example.org"),
+            ("https://Example.org:443/x", "example.org"),
+            ("http://user:pw@example.org:8080", "example.org"),
+            ("https://example.org\\evil", "example.org"),
+            ("https://[::1]:8080/", "[::1]"),
+            ("", "home"),
+            (
+                "https://a-very-long-host-name.example.org/",
+                "a-very-long-host-name.e…",
+            ),
+        ] {
+            assert_eq!(super::home_label(url), want, "{url}");
+        }
+    }
 }

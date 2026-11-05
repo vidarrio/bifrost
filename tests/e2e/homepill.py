@@ -14,6 +14,7 @@ try:
     post(root, "/admin/settings", data=dict(domain="", home_url="https://home.example.org/", discords=""))
     check("/api/me carries the configured home link", get(root, "/api/me").json().get("home") == "https://home.example.org/")
     check("landing shows it too", 'href="https://home.example.org/"' in get(root, "/").text)
+    check("…by the site it goes to", "home.example.org ↗</a>" in get(root, "/").text)
     r = get(srv.session(), "/api/me")
     check("anonymous header gets it as well", r.status_code == 401 and r.json().get("home") == "https://home.example.org/", (r.status_code, r.text[:200]))
 finally:

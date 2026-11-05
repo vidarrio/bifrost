@@ -197,7 +197,8 @@ Each one is a single slot the whole group plays. It has its own hint points,
 earned as the group checks its locations, which any player with a game of their
 own can spend.
 
-A common game's page says how to join its server, with any client files it
+A common game's page gives its server's address, and its **How to join** tab
+says how to join, with any client files it
 needs. If the server only lets in the season's players, the page also asks for
 the name you play it under, such as your Minecraft username. Register it there
 before joining. One name covers every setup of its kind, so your Minecraft

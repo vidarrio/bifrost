@@ -108,6 +108,24 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
         .filter(|s| s.state() == db::State::Live)
         .map(|s| (s.id, s.name.clone()))
         .collect();
+    // The signed-in player's own games in live seasons, to link from the top.
+    let mine: Vec<render::MyGame> = if me.id() == 0 {
+        Vec::new()
+    } else {
+        st.db
+            .live_games_of(me.id())
+            .await
+            .into_iter()
+            // Only seasons the viewer can see, as listed above.
+            .filter(|(sid, ..)| live.iter().any(|(id, _)| id == sid))
+            .map(|(season, game_id, slot, game)| render::MyGame {
+                season,
+                game_id,
+                slot,
+                game,
+            })
+            .collect()
+    };
     let mut landing = LANDING.to_string();
     if !season_cards {
         while let (Some(i), Some(j)) = (
@@ -125,7 +143,7 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
             .replace("<!--SEASONLABEL-->", &render::escape(&label))
             .replace("<!--ROSTER-->", &roster)
             .replace("<!--PASTSEASONS-->", &past_html)
-            .replace("<!--CONNECT-->", &render::landing_connect(&live))
+            .replace("<!--CONNECT-->", &render::landing_connect(&live, &mine))
             .replace("<!--HOMEPILL-->", &render::home_pill(&inst.home_url))
             .replace("<!--TAG-->", &render::landing_tag(&inst.domain))
             .replace(

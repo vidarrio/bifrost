@@ -33,8 +33,8 @@ pub(super) fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool, pre_gen: 
         };
         let del = if pre_gen && (is_admin || s.username == me) {
             format!(
-                r#"<form method="post" action="signup/delete" style="display:inline">
-<input type="hidden" name="id" value="{}"><button class="ghost" type="submit">Remove</button></form>"#,
+                r#"<div class="seat"><span></span><form method="post" action="signup/delete" style="display:inline">
+<input type="hidden" name="id" value="{}"><button class="ghost" type="submit">Remove</button></form></div>"#,
                 s.id
             )
         } else {
@@ -52,7 +52,7 @@ pub(super) fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool, pre_gen: 
         };
         b.push_str(&format!(
             r#"<div class="slot idle stretch"><div class="game"><a class="cover" href="signup/game/{}">{}</a>{custom}</div>
-<div class="meta">{} · by {}</div>{held}{seats}{notes}<div class="seat"><span></span>{del}</div></div>"#,
+<div class="meta">{} · by {}</div>{held}{seats}{notes}{del}</div>"#,
             s.id,
             esc(&s.slot_name),
             esc(&s.game),
@@ -285,33 +285,50 @@ pub fn admin_page(
 
     b.push_str(r#"<div class="gtabpanel" id="tab-overview">"#);
     // Signups
-    b.push_str(r#"<h2>Signups window</h2>"#);
-    if signups_open {
-        b.push_str(r#"<div class="statline">Signups are <b>open</b>.</div>"#);
-        b.push_str(&format!(
-            r#"<div class="btnrow">{}</div>"#,
-            action_btn(
-                "admin/signups",
-                &[("open", "0")],
-                "Close signups",
-                false,
-                ""
-            )
-        ));
-    } else {
-        b.push_str(r#"<div class="statline">Signups are <b>closed</b>.</div>"#);
-        b.push_str(&format!(
-            r#"<div class="btnrow">{}</div>"#,
-            action_btn("admin/signups", &[("open", "1")], "Open signups", false, "")
-        ));
+    let state = season.state();
+    let pre_gen = matches!(state, crate::db::State::Draft | crate::db::State::Signup);
+    // Signups only open or close before generation.
+    if pre_gen {
+        b.push_str(r#"<h2>Signups</h2>"#);
+        if signups_open {
+            b.push_str(r#"<div class="statline">Signups are <b>open</b>.</div>"#);
+            b.push_str(&format!(
+                r#"<div class="btnrow">{}</div>"#,
+                action_btn(
+                    "admin/signups",
+                    &[("open", "0")],
+                    "Close signups",
+                    false,
+                    ""
+                )
+            ));
+        } else {
+            b.push_str(
+                r#"<div class="statline">Signups are <b>closed</b>: the season is a draft.</div>"#,
+            );
+            b.push_str(&format!(
+                r#"<div class="btnrow">{}</div>"#,
+                action_btn("admin/signups", &[("open", "1")], "Open signups", false, "")
+            ));
+        }
     }
 
-    // Generate
-    b.push_str(r#"<h2>Generate</h2>"#);
-    b.push_str(&format!(
-        r#"<p class="empty"><b>Generate a season</b> stages the {} queued signup(s), rolls a new seed, maps slots + auto-claims, deploys it (the game restarts), and closes signups — use it for a fresh signup round.<br><b>Regenerate</b> re-rolls the <em>current</em> lineup: it reuses the staged YAMLs + installed apworlds, produces a new world + fresh save (applying the current host.yaml), and keeps everyone's claims. Signups are left as they are.</p>"#,
-        subs.len()
-    ));
+    // Generate, or re-roll once live.
+    let n = subs.len();
+    let about = match state {
+        // While a generation or re-roll runs, the banner says what's happening.
+        crate::db::State::Draft | crate::db::State::Signup => format!(
+            "Generating rolls a seed from the {n} signup{}, gives each its slot and starts the season's server{}.",
+            if n == 1 { "" } else { "s" },
+            if signups_open { ", closing signups" } else { "" }
+        ),
+        crate::db::State::Live => "Regenerating re-rolls the current lineup into a new world with a fresh save, using the season's current host.yaml. Everyone keeps their game; the server restarts.".to_string(),
+        _ => String::new(),
+    };
+    if !about.is_empty() {
+        b.push_str(r#"<h2>Generate</h2>"#);
+        b.push_str(&format!(r#"<p class="empty">{}</p>"#, esc(&about)));
+    }
     let cls = if running {
         "banner"
     } else if gen_msg.starts_with("Failed") || gen_msg.starts_with("Generated, but") {
@@ -320,10 +337,13 @@ pub fn admin_page(
         "banner ok"
     };
     let mark = if running { "⏳ " } else { "" };
-    b.push_str(&format!(
-        r#"<div class="{cls}">{mark}{}</div>"#,
-        esc(gen_msg)
-    ));
+    // Nothing to say before anything has run.
+    if running || gen_msg != "idle" {
+        b.push_str(&format!(
+            r#"<div class="{cls}">{mark}{}</div>"#,
+            esc(gen_msg)
+        ));
+    }
     if running {
         b.push_str(r#"<script>setTimeout(function(){location.reload()},4000)</script>"#);
     } else {
@@ -355,10 +375,6 @@ pub fn admin_page(
 
     b.push_str(r#"<div class="gtabpanel" id="tab-entries" hidden>"#);
     // Signups (the queue for the next season)
-    let pre_gen = matches!(
-        season.state(),
-        crate::db::State::Draft | crate::db::State::Signup
-    );
     let attention: Vec<&SubmissionRow> = subs.iter().filter(|s| s.held_err.is_some()).collect();
     if !attention.is_empty() {
         b.push_str(r#"<h2>Signups that need attention</h2><p class="warnnote">The season can't be generated until each is sorted out: replace the YAML on its page, or dismiss the signup.</p>"#);
