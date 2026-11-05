@@ -8,9 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 **Upgrading:** data from 0.2 or earlier can't be carried over, so start with an empty
-data directory. From 0.3.0 on, upgrades keep working. If you use forward auth, your
-proxy needs new paths (see Changed), and a `config.toml` with `[minecraft]` has to lose
-it (see Removed).
+data directory. From 0.3.0 on, upgrades keep working. Bifrost no longer runs as root
+unless told to (see Security). If you use forward auth, your proxy needs new paths (see
+Changed), and a `config.toml` with `[minecraft]` has to lose it (see Removed).
 
 ### Added
 
@@ -36,14 +36,15 @@ it (see Removed).
     replace the YAML without losing the signup. Moderators can edit notes and, until
     generation, replace YAMLs.
   - A player can sign up with several games (*Add another game*), up to a limit
-    moderators can set (0, the default, means none). Each YAML holds one player.
+    moderators can set (0, the default, means no limit). Each YAML holds one player.
   - A YAML for a world awaiting approval is checked as far as it can be without running
     the world, and can be replaced while it waits. A signup that fails its check says
-    so, to its player and to moderators, who can replace its YAML or dismiss it.
-    Generation names the signups it's held up by.
+    so on the season's page and to moderators, who can replace its YAML or dismiss it.
+    The approval screen lists who's waiting, and generation names the signups it's held
+    up by.
 - Co-op partners join through one-use invite links from a game's host, before or after
   generation, and pick their own seat name. They can edit the game's notes and, before
-  generation, rename their seat or leave.
+  generation, rename their seat or leave. Signing up takes you to your game's page.
 - Moderators can delete a season before generation and cancel a live one back to
   signups, keeping its signups, notes and partners. Sysadmins can delete an archived
   season. Each asks you to type the season's name.
@@ -68,7 +69,8 @@ it (see Removed).
 - PopTracker packs' Lua runs in a sandboxed process of its own, stopped after 30 seconds
   (`pack_timeout_secs`). Each slot computes its tracker once at a time, at most four run
   at once, and uploads are rate-limited. A pack that hits a limit waits a minute, then
-  longer each time, or until it's replaced.
+  longer each time, or until it's replaced, and a slow pack's tracker updates less
+  often.
 - When `config.toml` doesn't parse, the error gives the line and column but no longer
   quotes the line, which could hold a secret.
 
@@ -106,6 +108,8 @@ it (see Removed).
   the browser's own error. Long links and paths no longer widen the page, a failed
   generation shows as a failure, the apworld approval options are laid out properly, and
   a game page only links to minesweeper when the season has it on.
+- A season's Archive tab only offers archiving once the season is live, as it couldn't be
+  done before then.
 
 ### Changed
 
