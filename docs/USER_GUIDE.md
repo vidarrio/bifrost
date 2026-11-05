@@ -694,6 +694,16 @@ label = "Archipelago Randomizer mod"
 - The season console flags a setup it can't read and says why. Bifrost reads the
   catalog as it goes, so there's nothing to restart.
 
+**Console → Common games** does the same from the browser, for sysadmins. It
+lists each setup with the seasons using it. You can make a setup, edit its
+fields, allowlist name, guide and YAML, upload or remove its apworld and
+downloads, and delete it once no season that isn't archived includes it. Each
+change is checked like a setup on disk and refused, leaving the files as they
+were, if the setup wouldn't load after it. A setup that can't be read can be
+fixed there too. Saving rewrites `game.toml`, so comments in it are lost.
+A season keeps the slot name it added a setup with: if you change a setup's
+slot, the season's moderators remove it and add it again before generating.
+
 [docs/examples/common](examples/common) has a Minecraft setup to start from.
 
 Bifrost never reaches the game's server. Once a season is generated:

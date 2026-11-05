@@ -47,17 +47,17 @@ pub struct Setup {
     pub downloads: Vec<Download>,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Identifier {
     pub kind: String,
     pub label: String,
     pub pattern: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub hint: String,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Download {
     /// Relative to the setup's folder.
@@ -65,23 +65,35 @@ pub struct Download {
     pub label: String,
 }
 
-#[derive(serde::Deserialize)]
+/// A setup's `game.toml`, as written.
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
-struct Manifest {
-    name: String,
-    slot: String,
-    #[serde(default)]
-    yaml: Option<String>,
-    #[serde(default)]
-    apworld: Option<String>,
-    #[serde(default)]
-    address: String,
-    #[serde(default)]
-    guide: Option<String>,
-    #[serde(default)]
-    identifier: Option<Identifier>,
-    #[serde(default)]
-    download: Vec<Download>,
+pub struct Manifest {
+    pub name: String,
+    pub slot: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub yaml: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apworld: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub address: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guide: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identifier: Option<Identifier>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub download: Vec<Download>,
+}
+
+impl Manifest {
+    /// The YAML's file in the setup's folder.
+    pub fn yaml_file(&self) -> &str {
+        self.yaml.as_deref().unwrap_or("player.yaml")
+    }
+    /// The guide's file in the setup's folder.
+    pub fn guide_file(&self) -> &str {
+        self.guide.as_deref().unwrap_or("guide.md")
+    }
 }
 
 /// A setup's key, which is its folder's name: lower-case letters, digits and
@@ -191,23 +203,8 @@ impl Identifier {}
 
 /// Read one setup from `root/<key>/`.
 pub fn load_from(root: &Path, key: &str) -> Result<Setup, String> {
-    if !valid_key(key) {
-        return Err(
-            "the folder's name isn't a valid key (lower-case letters, digits, '.', '_' or '-')"
-                .into(),
-        );
-    }
+    let m = manifest_from(root, key)?;
     let dir = root.join(key);
-    if !std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
-        return Err("not in the catalog".into());
-    }
-    let text = read_text(&inside(&dir, "game.toml")?)?;
-    let m: Manifest = toml::from_str(&text).map_err(|e| {
-        format!(
-            "game.toml: {}",
-            e.message().lines().next().unwrap_or("invalid TOML")
-        )
-    })?;
     let name = m.name.trim().to_string();
     if name.is_empty() || name.chars().count() > 60 || name.chars().any(char::is_control) {
         return Err("name: needs 1 to 60 characters, on one line".into());
@@ -263,6 +260,35 @@ pub fn load_from(root: &Path, key: &str) -> Result<Setup, String> {
         identifier: m.identifier,
         downloads: m.download,
     })
+}
+
+/// A setup's `game.toml` as it stands, without checking what it says.
+pub fn manifest_from(root: &Path, key: &str) -> Result<Manifest, String> {
+    if !valid_key(key) {
+        return Err(
+            "the folder's name isn't a valid key (lower-case letters, digits, '.', '_' or '-')"
+                .into(),
+        );
+    }
+    let dir = root.join(key);
+    if !std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
+        return Err("not in the catalog".into());
+    }
+    let text = read_text(&inside(&dir, "game.toml")?)?;
+    toml::from_str(&text).map_err(|e| {
+        format!(
+            "game.toml: {}",
+            e.message().lines().next().unwrap_or("invalid TOML")
+        )
+    })
+}
+
+/// A text file of a setup's folder, if it's there (the YAML or the guide).
+pub fn text_from(root: &Path, key: &str, rel: &str) -> Option<String> {
+    if !valid_key(key) {
+        return None;
+    }
+    read_text(&inside(&root.join(key), rel).ok()?).ok()
 }
 
 /// Every folder in `root`, read as a setup or with why it can't be, by key.

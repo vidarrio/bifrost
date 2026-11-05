@@ -16,6 +16,7 @@ use tower_http::trace::TraceLayer;
 mod board;
 mod catalog;
 mod common;
+mod common_catalog;
 mod export;
 mod game;
 mod logs;
@@ -30,6 +31,7 @@ mod signup;
 pub(crate) use board::*;
 pub(crate) use catalog::*;
 pub(crate) use common::*;
+pub(crate) use common_catalog::*;
 pub(crate) use export::*;
 pub(crate) use game::*;
 pub(crate) use logs::*;
@@ -205,6 +207,28 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         )
         .route("/admin/catalog/remove", post(catalog_remove))
         .route("/admin/catalog/approval", post(catalog_approval))
+        .route("/admin/common-games", get(common_catalog_view))
+        .route("/admin/common-games/new", post(common_catalog_new))
+        .route(
+            "/admin/common-games/{key}",
+            get(common_setup_view).post(common_setup_save),
+        )
+        .route(
+            "/admin/common-games/{key}/apworld",
+            post(common_setup_apworld).layer(common_upload_limit()),
+        )
+        .route(
+            "/admin/common-games/{key}/download",
+            post(common_setup_download).layer(common_upload_limit()),
+        )
+        .route(
+            "/admin/common-games/{key}/remove",
+            post(common_setup_remove),
+        )
+        .route(
+            "/admin/common-games/{key}/delete",
+            post(common_setup_delete),
+        )
         .route("/admin/console", post(admin_console))
         .route("/admin/connect-password", post(admin_connect_password))
         .route("/admin/minesweeper", post(admin_minesweeper))
@@ -275,6 +299,11 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
 }
 
 /// Body limit for the file-upload routes (apworlds, PopTracker packs).
+/// A common game's client files can be large (a modpack); they stream to disk.
+pub(crate) fn common_upload_limit() -> axum::extract::DefaultBodyLimit {
+    axum::extract::DefaultBodyLimit::max(1 << 30)
+}
+
 pub(crate) fn upload_limit() -> axum::extract::DefaultBodyLimit {
     axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024)
 }

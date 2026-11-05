@@ -174,6 +174,38 @@ try:
     root.post(srv.base + "/admin/settings/export", data={"do": "revoke"})
     check("revoking turns the export off", "No token is set" in get(root, "/admin/settings").text and export("/export/commons", token2).status_code == 401)
 
+    # Editing the catalog from the console.
+    page = lambda key="": get(root, "/admin/common-games" + (f"/{key}" if key else "")).text
+    check("the console lists the catalog and who uses it", "plays as <b>Vanilla</b>" in page() and "in Commons, Not yet" in page() and "Can't be used" in page(), page()[-2000:])
+    r1 = get(ann, "/admin/common-games").text
+    r2 = post(ann, "/admin/common-games/new", data=dict(key="x", name="X", slot="X", yaml="name: X\n")).text
+    check("only sysadmins edit it", "New setup" not in r1 and not os.path.exists(os.path.join(cat, "x")), re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", r1.split("<main>")[-1]))[:300] + " | " + re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", r2.split("<main>")[-1]))[:300])
+    r = post(root, "/admin/common-games/new", data=dict(key="gui", name="Bar Co-op", slot="Barco", yaml="name: Barco\r\ngame: Bar Finder\r\nBar Finder: {}\r\n"))
+    check("a sysadmin makes a setup", r.url.endswith("/admin/common-games/gui") and "Bar Co-op" in r.text, r.text[-800:])
+    r = post(root, "/admin/common-games/new", data=dict(key="gui2", name="X", slot="Barco", yaml="name: Other\n"))
+    check("one that wouldn't load isn't made", "not the slot" in r.text and not os.path.exists(os.path.join(cat, "gui2")), r.text[-600:])
+    form = dict(name="Bar Co-op", slot="Barco", address="bar.example:1", kind="bar", label="Bar name", pattern="[a-z]{2,8}", hint="", guide="Go to **{address}**", yaml="name: Barco\ngame: Bar Finder\nBar Finder: {}\n")
+    r = post(root, "/admin/common-games/gui", data=form)
+    check("its fields save", "Saved." in r.text and 'value="bar.example:1"' in r.text, r.text[-800:])
+    r = post(root, "/admin/common-games/gui", data={**form, "pattern": "("})
+    check("a change that breaks it is refused, nothing changed", "Not saved" in r.text and 'value="[a-z]{2,8}"' in r.text, r.text[-600:])
+    r = post(root, "/admin/common-games/gui/apworld", files={"file": ("bar.apworld", fixture("bar.apworld"))})
+    check("its apworld uploads", "Added." in r.text and "<code>bar.apworld</code>" in r.text, r.text[-600:])
+    r = post(root, "/admin/common-games/gui/download", data=dict(label="The client"), files={"file": ("../My Client.zip", b"CLIENT")})
+    check("a download uploads, under a plain name", "client/My_Client.zip" in r.text and open(os.path.join(cat, "gui", "client", "My_Client.zip"), "rb").read() == b"CLIENT", r.text[-600:])
+    r = post(root, f"/s/{other}/admin/common", data={"do": "add", "key": "gui"})
+    check("an edited setup can be added to a season", "plays as <b>Barco</b>" in get(root, f"/s/{other}/admin").text, re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", r.text.split("<main>")[-1]))[:400])
+    r = post(root, "/admin/common-games/gui/delete")
+    check("a setup a season uses can't be deleted", "still include it" in r.text and os.path.isdir(os.path.join(cat, "gui")), r.text[-400:])
+    post(root, f"/s/{other}/admin/common", data={"do": "remove", "key": "gui"})
+    post(root, "/admin/common-games/gui/remove", data=dict(what="download", n="0"))
+    check("a download is removed with its file", not os.path.exists(os.path.join(cat, "gui", "client", "My_Client.zip")))
+    r = post(root, "/admin/common-games/gui/delete")
+    check("an unused setup is deleted", "Deleted gui" in r.text and not os.path.exists(os.path.join(cat, "gui")), r.text[-400:])
+    check("a broken setup's page says why", "can't be used as it is" in page("broken"))
+    r = post(root, "/admin/common-games/broken", data=dict(name="Fixed", slot="X", yaml="name: X\ngame: ChecksFinder\nChecksFinder: {}\n"))
+    check("and saving fixes it", "Saved." in r.text and "Can't be used" not in page(), r.text[-600:])
+
     r = post(root, f"/s/{sid}/admin/common", data={"do": "remove", "key": "modded"})
     check("a generated season keeps its common games", "keeps its common games" in r.text and "plays as <b>Modded</b>" in admin(), r.text[-300:])
     r = post(root, f"/s/{sid}/admin/common", data={"do": "add", "key": "broken"})

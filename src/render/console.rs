@@ -531,3 +531,198 @@ pub fn catalog_page(
     );
     auth_page("Console", r#"<a href="/">← home</a>"#, err, &body)
 }
+
+/// One setup on the console's Common games page.
+#[derive(Debug, Default)]
+pub struct CommonCatalogRow {
+    pub key: String,
+    pub name: String,
+    pub slot: String,
+    /// Why it can't be used, if it can't.
+    pub problem: Option<String>,
+    /// Seasons not yet archived that include it.
+    pub seasons: Vec<String>,
+}
+
+/// The catalog of common games: each setup, and a form to make one.
+pub fn common_catalog_page(
+    rows: &[CommonCatalogRow],
+    err: Option<&str>,
+    saved: Option<&str>,
+) -> Html<String> {
+    let mut body = console_nav("/admin/common-games", true);
+    if let Some(m) = saved {
+        body.push_str(&format!(r#"<div class="banner ok">{}</div>"#, esc(m)));
+    }
+    body.push_str(r#"<h2>Common games</h2><p class="statline">Co-op games you host, such as a Minecraft or Factorio server, that a season's moderators can add as a slot everyone plays. Each setup is a folder under <code>common/</code> in the data directory; editing it here or by hand comes to the same thing. Bifrost never reaches the game's server: set it up from the season's files, and keep its allowlist in step from the season console or the export.</p>"#);
+    if rows.is_empty() {
+        body.push_str(r#"<div class="empty">No setups yet.</div>"#);
+    }
+    for r in rows {
+        let used = if r.seasons.is_empty() {
+            String::new()
+        } else {
+            format!(" · in {}", esc(&r.seasons.join(", ")))
+        };
+        let head = if r.name.is_empty() {
+            format!("<b>{}</b>", esc(&r.key))
+        } else {
+            format!(
+                r#"<b>{}</b> <span class="by free">{}</span> · plays as <b>{}</b>"#,
+                esc(&r.name),
+                esc(&r.key),
+                esc(&r.slot)
+            )
+        };
+        body.push_str(&format!(
+            r#"<div class="hintrow"><span>{head}{used}</span><span><a href="/admin/common-games/{k}">edit</a></span></div>"#,
+            k = esc(&r.key)
+        ));
+        if let Some(p) = &r.problem {
+            body.push_str(&format!(
+                r#"<p class="warnnote">Can't be used: {}.</p>"#,
+                esc(p)
+            ));
+        }
+    }
+    body.push_str(r#"<h2>New setup</h2>
+<form class="signup" style="max-width:none" method="post" action="/admin/common-games/new" autocomplete="off">
+<label>Key, the folder's name (lower-case letters, digits, <code>.</code>, <code>_</code> or <code>-</code>)<input type="text" name="key" placeholder="vanilla.26.2" maxlength="40" required></label>
+<label>Name, as players see it<input type="text" name="name" placeholder="Minecraft 26.2" maxlength="60" required></label>
+<label>Slot, the player name its YAML declares (at most 16 characters)<input type="text" name="slot" placeholder="Commons" maxlength="16" required></label>
+<label>Player YAML<textarea name="yaml" rows="6" style="width:100%;font-family:var(--mono)" required>name: Commons
+game: Minecraft
+Minecraft: {}
+</textarea></label>
+<div class="btnrow"><button type="submit">Make it</button></div></form>
+<p class="statline">Then add its apworld, if Archipelago doesn't ship the game, and its guide and downloads on its page.</p>"#);
+    auth_page("Console", r#"<a href="/">← home</a>"#, err, &body)
+}
+
+/// A setup's page in the console.
+#[derive(Debug, Default)]
+pub struct CommonSetupView {
+    pub key: String,
+    pub fields: crate::common_edit::Fields,
+    pub apworld: Option<String>,
+    /// Each download's (file, label).
+    pub downloads: Vec<(String, String)>,
+    pub problem: Option<String>,
+    pub seasons: Vec<String>,
+}
+
+pub fn common_setup_page(
+    v: &CommonSetupView,
+    err: Option<&str>,
+    saved: Option<&str>,
+) -> Html<String> {
+    let k = esc(&v.key);
+    let mut body = console_nav("/admin/common-games", true);
+    body.push_str(&format!(
+        r#"<div class="crumb"><a href="/admin/common-games">← common games</a></div><h2>{}</h2>"#,
+        if v.fields.name.is_empty() {
+            k.clone()
+        } else {
+            esc(&v.fields.name)
+        }
+    ));
+    if let Some(m) = saved {
+        body.push_str(&format!(r#"<div class="banner ok">{}</div>"#, esc(m)));
+    }
+    if let Some(p) = &v.problem {
+        body.push_str(&format!(
+            r#"<div class="banner warn">It can't be used as it is: {}. Saving the form below rewrites <code>game.toml</code>.</div>"#,
+            esc(p)
+        ));
+    }
+    if !v.seasons.is_empty() {
+        body.push_str(&format!(
+            r#"<p class="statline">In use by {}. Changes show on their game pages straight away, and reach their seeds when they're next generated. A season keeps the slot name it was added with: if you change it, the season's moderators remove the game and add it again before generating.</p>"#,
+            esc(&v.seasons.join(", "))
+        ));
+    }
+    let f = &v.fields;
+    let (kind, label, pattern, hint) = &f.ident;
+    body.push_str(&format!(
+        r#"<form class="signup" style="max-width:none" method="post" action="/admin/common-games/{k}" autocomplete="off">
+<label>Name, as players see it<input type="text" name="name" value="{name}" maxlength="60" required></label>
+<label>Slot, the player name its YAML declares<input type="text" name="slot" value="{slot}" maxlength="16" required></label>
+<label>Address players join at; a season can set its own<input type="text" name="address" value="{address}" maxlength="200" placeholder="mc.example:25565"></label>
+<h3>Allowlist name</h3>
+<p class="statline">If the server only lets in the season's players, players register a name for it. Setups of one kind share them, so one Minecraft username serves every Minecraft setup. Leave the kind empty if the server lets anyone in.</p>
+<label>Kind (lower-case letters, digits, <code>_</code> or <code>-</code>)<input type="text" name="kind" value="{kind}" maxlength="32" placeholder="minecraft"></label>
+<label>Label<input type="text" name="label" value="{label}" maxlength="60" placeholder="Minecraft username"></label>
+<label>Pattern, a regular expression the whole name has to match<input type="text" name="pattern" value="{pattern}" maxlength="200" placeholder="[A-Za-z0-9_]{{3,16}}"></label>
+<label>Hint, the rule in words<input type="text" name="hint" value="{hint}" maxlength="120" placeholder="3 to 16 letters, digits or underscores"></label>
+<h3>Join guide</h3>
+<p class="statline">Markdown, shown on the game page. <code>{{address}}</code> and <code>{{slot}}</code> are filled in. HTML shows as text.</p>
+<textarea name="guide" rows="14" style="width:100%;font-family:var(--mono)">{guide}</textarea>
+<h3>Player YAML</h3>
+<textarea name="yaml" rows="8" style="width:100%;font-family:var(--mono)" required>{yaml}</textarea>
+<div class="btnrow"><button type="submit">Save</button></div></form>"#,
+        name = esc(&f.name),
+        slot = esc(&f.slot),
+        address = esc(&f.address),
+        kind = esc(kind),
+        label = esc(label),
+        pattern = esc(pattern),
+        hint = esc(hint),
+        guide = esc(&f.guide),
+        yaml = esc(&f.yaml),
+    ));
+
+    body.push_str(r#"<h3>Apworld</h3>"#);
+    match &v.apworld {
+        Some(w) => body.push_str(&format!(
+            r#"<div class="hintrow"><span><code>{}</code></span><span>{}</span></div>"#,
+            esc(w),
+            action_btn(
+                &format!("/admin/common-games/{}/remove", v.key),
+                &[("what", "apworld")],
+                "remove",
+                true,
+                "Remove the apworld?"
+            )
+        )),
+        None => {
+            body.push_str(r#"<p class="statline">None: the game is one Archipelago ships.</p>"#)
+        }
+    }
+    body.push_str(&format!(
+        r#"<form class="console" method="post" action="/admin/common-games/{k}/apworld" enctype="multipart/form-data"><input type="file" name="file" accept=".apworld" required style="flex:1;min-width:0"><button type="submit">{}</button></form>"#,
+        if v.apworld.is_some() { "Replace apworld" } else { "Add apworld" }
+    ));
+
+    body.push_str(r#"<h3>Downloads</h3><p class="statline">Client files the game page offers, such as a mod or its loader.</p>"#);
+    for (n, (file, label)) in v.downloads.iter().enumerate() {
+        body.push_str(&format!(
+            r#"<div class="hintrow"><span>{} · <code>{}</code></span><span>{}</span></div>"#,
+            esc(label),
+            esc(file),
+            action_btn(
+                &format!("/admin/common-games/{}/remove", v.key),
+                &[("what", "download"), ("n", &n.to_string())],
+                "remove",
+                true,
+                &format!("Remove {file}?")
+            )
+        ));
+    }
+    body.push_str(&format!(
+        r#"<form class="console" method="post" action="/admin/common-games/{k}/download" enctype="multipart/form-data"><input type="text" name="label" placeholder="label, e.g. NeoForge installer" maxlength="80" required style="flex:1;min-width:0"><input type="file" name="file" required style="flex:1;min-width:0"><button type="submit">Add download</button></form>"#
+    ));
+
+    body.push_str(r#"<h3>Delete</h3>"#);
+    if v.seasons.is_empty() {
+        body.push_str(&action_btn(
+            &format!("/admin/common-games/{}/delete", v.key),
+            &[],
+            "Delete this setup",
+            true,
+            "Delete this setup and its folder? This can't be undone.",
+        ));
+    } else {
+        body.push_str(r#"<p class="statline">It can't be deleted while a season that isn't archived includes it.</p>"#);
+    }
+    auth_page("Console", r#"<a href="/">← home</a>"#, err, &body)
+}
