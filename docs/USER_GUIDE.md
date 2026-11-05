@@ -736,7 +736,8 @@ It only reads, and only these:
 Send the token as a bearer token:
 
 ```sh
-curl -H "Authorization: Bearer $TOKEN" https://bifrost.example/export/commons
+printf 'Authorization: Bearer %s\n' "$TOKEN" > bifrost-export.hdr    # chmod 600
+curl -H @bifrost-export.hdr https://bifrost.example/export/commons
 ```
 
 Behind forward auth, `/export` is one of the public paths: leave it out of the

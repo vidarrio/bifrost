@@ -182,7 +182,9 @@ pub fn export_token_page(token: &str) -> Html<String> {
 <div class="banner ok">Copy it now: it isn't shown again, and only its hash is kept.</div>
 <p><code class="token">{t}</code></p>
 <p class="statline">Send it as a bearer token. The index lists every live season's common games, each with its allowlist's and files' URLs:</p>
-<pre>curl -H "Authorization: Bearer {t}" https://&lt;bifrost&gt;/export/commons</pre>
+<pre>printf 'Authorization: Bearer %s\n' {t} &gt; bifrost-export.hdr    # chmod 600
+curl -H @bifrost-export.hdr https://&lt;bifrost&gt;/export/commons</pre>
+<p class="statline">Keep the token in a file like that rather than on a command line, where other users of the host can see it.</p>
 <p class="statline">An allowlist is one name per line, or JSON with <code>?format=json</code>. A season's seed name changes when it's re-rolled, which is when its servers need their new files.</p>"#,
         t = esc(token)
     ));
