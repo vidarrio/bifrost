@@ -1,61 +1,77 @@
 # Syncing a common game's server
 
-Bifrost never reaches a common game's server. A small job on the server's host
-keeps it in step instead, through the read-only export: make a token under
-**Settings → Common-game export** in Bifrost's console.
+Bifrost never reaches a common game's server. Something on the server's host
+keeps it in step instead, through Bifrost's read-only export: make a token
+under **Settings → Common-game export**. What that something is depends on the
+game and how you run it, so it's yours to write. Here are two ways to go
+about it, as starting points.
 
-`bifrost-common-sync` is that job, with two ways to apply what it reads. It
-needs only Python 3.
+The export, all of it sent with `Authorization: Bearer <token>`:
 
-- **`rcon`** talks to a running Minecraft server over RCON. It adds the
-  season's allowlist to the server's whitelist and removes names that aren't
-  on it anymore, except those in `KEEP`. Nothing restarts. Turn RCON on in the
-  server's `server.properties` (`enable-rcon=true`, `rcon.password=…`), and
-  keep its port off the network.
-- **`copy`** writes files: the allowlist as text, JSON, or Minecraft's
-  `whitelist.json` (it looks up the UUIDs from Mojang), and then runs `AFTER`
-  if anything changed, for example a restart. It suits any game whose server
-  reads its allowlist from a file.
+- `GET /export/commons` lists the live seasons' common games as JSON: each
+  season's id and seed name, and each common game's key, address, allowlist
+  URL and seed files' URLs.
+- `GET /export/<season>/<key>/allowlist` gives one name per line (or JSON,
+  with `?format=json`).
+- `GET /export/<season>/<key>/file?name=…` gives one of the slot's seed files,
+  by the name the index lists. A season's seed name changes when it's
+  re-rolled: that's when the server needs its new file.
 
-Either way, with `SEED_DIR` set it also fetches the slot's seed files when the
-season is generated or re-rolled, such as the `.apmc` the Minecraft randomizer
-loads. A new seed needs a fresh world on the server; that part is yours.
+Keep the token in a file only root can read, use `https://`, and don't follow
+redirects with it (plain `curl` doesn't).
 
-## Setting it up with systemd
+## Copying a file into place, on a timer
 
-Install the script and the units:
-
-```sh
-install -m 755 bifrost-common-sync /usr/local/bin/
-install -m 644 bifrost-common-sync@.service bifrost-common-sync@.timer \
-  bifrost-common-copy@.service bifrost-common-copy@.timer /etc/systemd/system/
-install -d -m 700 /etc/bifrost-common-sync
-install -m 600 bifrost-common-sync.env /etc/bifrost-common-sync/vanilla.env
-```
-
-Fill in `/etc/bifrost-common-sync/vanilla.env`: Bifrost's address, the token,
-the setup's key and the RCON password, or the copy settings. Then try it once
-and start the timer:
+For a server that reads its allowlist from a file, fetch it and swap it in.
+Some games need a format of their own (Minecraft's `whitelist.json` wants
+UUIDs), so convert as you go.
 
 ```sh
-systemctl start bifrost-common-sync@vanilla.service
-journalctl -u bifrost-common-sync@vanilla
-systemctl enable --now bifrost-common-sync@vanilla.timer
+#!/bin/sh
+# /usr/local/bin/fetch-allowlist: BIFROST_URL, BIFROST_EXPORT_TOKEN, SEASON,
+# COMMON_KEY and OUT come from the environment.
+set -eu
+curl -fsS -H "Authorization: Bearer $BIFROST_EXPORT_TOKEN" \
+  "$BIFROST_URL/export/$SEASON/$COMMON_KEY/allowlist" -o "$OUT.new"
+mv "$OUT.new" "$OUT"
 ```
 
-One instance per server: a second Minecraft server, say `atm10`, gets its own
-`atm10.env` and `bifrost-common-sync@atm10.timer`.
+Run it every few minutes with a systemd timer, as the server's own user:
 
-For copy mode, use `bifrost-common-copy@vanilla.service` and
-`bifrost-common-copy@vanilla.timer` the same way. The rcon service runs as a throwaway user that can only
-reach the network and its own state. The copy service runs as root, so it can
-write the server's files and run `AFTER`. Narrow it with `User=` and
-`ReadWritePaths=` to what your server needs.
+```ini
+# /etc/systemd/system/fetch-allowlist.service
+[Service]
+Type=oneshot
+User=gameserver
+EnvironmentFile=/etc/fetch-allowlist.env
+ExecStart=/usr/local/bin/fetch-allowlist
 
-## Without systemd
+# /etc/systemd/system/fetch-allowlist.timer
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
 
-The script reads only its environment, so cron works too:
+[Install]
+WantedBy=timers.target
+```
+
+## Applying it to a running server, over RCON
+
+For a Minecraft server with RCON on (`enable-rcon=true` and an
+`rcon.password` in `server.properties`), add each name with an RCON client
+such as [mcrcon](https://github.com/Tiiffi/mcrcon). Only send names the game
+takes: a setup's own name rule may be looser, and anything else in a command
+is a command.
 
 ```sh
-* * * * * root sh -c 'set -a; . /etc/bifrost-common-sync/vanilla.env; exec bifrost-common-sync rcon'
+curl -fsS -H "Authorization: Bearer $BIFROST_EXPORT_TOKEN" \
+  "$BIFROST_URL/export/$SEASON/$COMMON_KEY/allowlist" |
+while read -r name; do
+  case $name in *[!A-Za-z0-9_]*|"") continue ;; esac
+  mcrcon -H 127.0.0.1 -p "$RCON_PASSWORD" "whitelist add $name"
+done
 ```
+
+Removing names that have left the list, picking up a re-rolled seed, or
+restarting the server after a change are for your script to add as your
+server needs them.

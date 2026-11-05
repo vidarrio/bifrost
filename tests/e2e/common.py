@@ -10,13 +10,7 @@ import json
 import os
 import re
 import shutil
-import socket
 import sqlite3
-import struct
-import subprocess
-import sys
-import tempfile
-import threading
 import zipfile
 
 from lib import Server, check, fixture, get, new_season, post, summary, wait_for
@@ -173,67 +167,6 @@ try:
     r = export(f"/export/{sid}/vanilla.1/allowlist", token)
     check("the allowlist downloads with the token", r.text == "Alex_2\nSteve\n", repr(r.text))
     check("not without it", export(f"/export/{sid}/vanilla.1/allowlist", None).status_code == 401)
-
-    # The example sync (docs/examples/common/sync), both ways.
-    sync = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "docs", "examples", "common", "sync", "bifrost-common-sync")
-    work = tempfile.mkdtemp(prefix="bifrost-sync-")
-    base_env = {"PATH": os.environ["PATH"], "BIFROST_URL": srv.base, "BIFROST_EXPORT_TOKEN": token,
-                "COMMON_KEY": "vanilla.1", "SEED_DIR": os.path.join(work, "seed")}
-    run = lambda mode, **e: subprocess.run([sys.executable, "-I", sync, mode], env={**base_env, **e}, capture_output=True, text=True, timeout=60)
-    copy_env = dict(STATE_DIR=os.path.join(work, "copy"), ALLOWLIST_FILE=os.path.join(work, "whitelist.txt"),
-                    AFTER=f"touch {os.path.join(work, 'after')}")
-    r = run("copy", **copy_env)
-    seedfile = os.path.join(work, "seed", vfile.split("/")[-1])
-    check("the copy sync writes the allowlist", r.returncode == 0 and open(copy_env["ALLOWLIST_FILE"]).read() == "Alex_2\nSteve\n", (r.returncode, r.stdout, r.stderr))
-    check("…and the slot's seed file", os.path.exists(seedfile) and open(seedfile, "rb").read() == b"VANILLA-SEED")
-    check("…and runs AFTER", os.path.exists(os.path.join(work, "after")))
-    os.remove(os.path.join(work, "after"))
-    r = run("copy", **copy_env)
-    check("a second run with nothing new changes nothing", r.returncode == 0 and not os.path.exists(os.path.join(work, "after")) and r.stdout == "", (r.stdout, r.stderr))
-    r = run("copy", **{**copy_env, "ALLOWLIST_FORMAT": "json", "ALLOWLIST_FILE": os.path.join(work, "w.json")})
-    check("…and writes it as JSON", r.returncode == 0 and json.load(open(os.path.join(work, "w.json"))) == ["Alex_2", "Steve"], r.stderr)
-    r = run("copy", **{**copy_env, "BIFROST_EXPORT_TOKEN": "0" * 64})
-    check("a wrong token fails the sync", r.returncode == 1 and "401" in r.stderr, (r.returncode, r.stderr))
-
-    # A stand-in Minecraft server's RCON.
-    sent = []
-    lsock = socket.socket()
-    lsock.bind(("127.0.0.1", 0))
-    lsock.listen(1)
-
-    def rcon_server():
-        conn, _ = lsock.accept()
-        def recv(n):
-            b = b""
-            while len(b) < n:
-                b += conn.recv(n - len(b))
-            return b
-        try:
-            while True:
-                (length,) = struct.unpack("<i", recv(4))
-                rid, kind = struct.unpack("<ii", recv(8))
-                body = recv(length - 8)[:-2].decode()
-                if kind == 3:
-                    reply = "" if body == "pw" else None
-                    rid = rid if reply is not None else -1
-                    reply = reply or ""
-                else:
-                    sent.append(body)
-                    reply = ("There are 3 whitelisted player(s): Steve, Herobrine, Notch" if body == "whitelist list"
-                             else "ok " + body)
-                data = struct.pack("<ii", rid, 0) + reply.encode() + b"\0\0"
-                conn.sendall(struct.pack("<i", len(data)) + data)
-        except (struct.error, OSError):
-            conn.close()
-
-    t = threading.Thread(target=rcon_server, daemon=True)
-    t.start()
-    r = run("rcon", STATE_DIR=os.path.join(work, "rcon"), RCON_PORT=str(lsock.getsockname()[1]), RCON_PASSWORD="pw", KEEP="notch")
-    t.join(10)
-    check("the RCON sync whitelists who's missing and removes who's gone, keeping KEEP",
-          r.returncode == 0 and sent == ["whitelist list", "whitelist add Alex_2", "whitelist remove Herobrine"], (sent, r.stdout, r.stderr))
-    lsock.close()
-    shutil.rmtree(work)
     check("only a season's own common games", export(f"/export/{sid}/broken/allowlist", token).status_code == 404)
     check("settings say a token is set", "A token is set" in get(root, "/admin/settings").text)
     r = root.post(srv.base + "/admin/settings/export", data={"do": "new"})

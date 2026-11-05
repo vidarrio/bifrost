@@ -8,5 +8,5 @@ change it to match your server. See "Common games" under Sysadmins in the
 - `minecraft-26.2/`: Minecraft Java Edition with NeoForge and the Archipelago
   Randomizer mod. It doesn't include the apworld or the client jars: add
   `minecraft.apworld` and the files under `client/` that `game.toml` lists.
-- `sync/`: keeping a server in step with Bifrost through its export, over
-  Minecraft's RCON or by copying files into place, with systemd units.
+- `sync/`: two ways to keep a server in step with Bifrost through its export,
+  by copying a file into place or over Minecraft's RCON.
