@@ -722,7 +722,10 @@ async fn run_inner(
         let dst = season
             .players
             .join(format!("{}-{}.yaml", sub.id, slug(&sub.slot_name)));
-        tokio::fs::copy(&sub.yaml_file, &dst)
+        let src = config::get()
+            .data_file(&sub.yaml_file)
+            .ok_or_else(|| format!("{}'s YAML isn't in the data directory", sub.slot_name))?;
+        tokio::fs::copy(&src, &dst)
             .await
             .map_err(|e| format!("staging {}'s YAML: {e}", sub.slot_name))?;
     }

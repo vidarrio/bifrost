@@ -271,7 +271,7 @@ pub(crate) async fn signup_game_yaml(
         .await;
     let page = match replaced {
         Ok(true) => {
-            let _ = tokio::fs::remove_file(&sub.yaml_file).await;
+            remove_yaml(&sub.yaml_file).await;
             if let Some(req) = &waiting {
                 worlds::settle_held(&st.db, ctx.id, id, &yaml_path, &req.file).await;
             }
@@ -295,7 +295,7 @@ pub(crate) async fn signup_game_yaml(
             refuse("Couldn't store the signup.")
         }
     };
-    let _ = tokio::fs::remove_file(&yaml_path).await;
+    remove_yaml(&yaml_path).await;
     page
 }
 
@@ -431,17 +431,17 @@ pub(crate) async fn signup_check(
     }
 }
 
-/// Write a signup's YAML to a new file of its own and return its path.
+/// Write a signup's YAML to a new file of its own in the season's folder.
+/// Returns how the database names it: by its place in the data dir (see
+/// `Config::data_file`).
 async fn store_yaml(ctx: &scope::SeasonCtx, slot_name: &str, yaml: &[u8]) -> Option<String> {
     // Names can be long, and file names can't.
     let slug: String = slugify(slot_name).chars().take(64).collect();
     let uploads = ctx.dirs().submissions;
     let _ = tokio::fs::create_dir_all(&uploads).await;
     let nonce = &auth::new_token()[..16];
-    let yaml_path = uploads
-        .join(format!("{slug}-{nonce}.yaml"))
-        .to_string_lossy()
-        .into_owned();
+    let yaml_path = uploads.join(format!("{slug}-{nonce}.yaml"));
+    let name = config::get().data_name(&yaml_path)?;
     // `create_new`: what's already there isn't ours, so leave it alone.
     let mut f = tokio::fs::OpenOptions::new()
         .write(true)
@@ -456,7 +456,14 @@ async fn store_yaml(ctx: &scope::SeasonCtx, slot_name: &str, yaml: &[u8]) -> Opt
         let _ = tokio::fs::remove_file(&yaml_path).await;
         return None;
     }
-    Some(yaml_path)
+    Some(name)
+}
+
+/// Remove a signup's stored YAML, by the name the database has for it.
+pub(crate) async fn remove_yaml(name: &str) {
+    if let Some(p) = config::get().data_file(name) {
+        let _ = tokio::fs::remove_file(p).await;
+    }
 }
 
 fn slot_taken(name: &str) -> String {
@@ -570,7 +577,7 @@ pub(crate) async fn signup_post(
         .await
     {
         Ok(None) => {
-            let _ = tokio::fs::remove_file(&yaml_path).await;
+            remove_yaml(&yaml_path).await;
             refuse(&limit_message(ctx.row.max_games))
         }
         // The game's page is where the rest happens: its invite links, notes and YAML.
@@ -581,7 +588,7 @@ pub(crate) async fn signup_post(
             Redirect::to(&ctx.url(&format!("/signup/game/{id}?new=true"))).into_response()
         }
         Err(e) => {
-            let _ = tokio::fs::remove_file(&yaml_path).await;
+            remove_yaml(&yaml_path).await;
             if db::name_clash(&e) {
                 refuse(&slot_taken(&slot_name))
             } else {
@@ -606,7 +613,7 @@ pub(crate) async fn signup_delete(
     let my_id = me.id();
     let (_me, is_admin) = ctx.ident(&me);
     if let Ok(Some(yaml_file)) = st.db.delete_submission(ctx.id, f.id, my_id, is_admin).await {
-        let _ = tokio::fs::remove_file(&yaml_file).await;
+        remove_yaml(&yaml_file).await;
     }
     Redirect::to(&ctx.url("/signup"))
 }

@@ -296,7 +296,11 @@ pub const ONE_GAME_PER_FILE: &str = "That YAML holds several players. Sign up on
 pub async fn recheck_held(db: &Db, season: Id, file: &str) {
     let dirs = config::get().season(season);
     for (id, yaml_path) in db.held_submissions(season, file).await {
-        let outcome = match tokio::fs::read_to_string(&yaml_path).await {
+        let read = match config::get().data_file(&yaml_path) {
+            Some(p) => tokio::fs::read_to_string(p).await,
+            None => Err(std::io::Error::other("not in the data directory")),
+        };
+        let outcome = match read {
             Err(e) => Err(format!("the stored YAML is gone ({e})")),
             Ok(yaml) => match check_with_retries(&dirs, &yaml).await {
                 // No verdict: `stale_holds` picks it up again.

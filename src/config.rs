@@ -274,6 +274,28 @@ impl Config {
     pub fn uploads_dir(&self) -> PathBuf {
         self.data_dir.join("uploads")
     }
+    /// A file the database names by its place in the data dir (a signup's
+    /// YAML), so a data dir can be moved or restored elsewhere. `None` for a
+    /// path that's absolute or would leave the data dir.
+    pub fn data_file(&self, rel: &str) -> Option<PathBuf> {
+        let p = Path::new(rel);
+        (!rel.is_empty()
+            && p.components()
+                .all(|c| matches!(c, std::path::Component::Normal(_))))
+        .then(|| self.data_dir.join(p))
+    }
+
+    /// How the database names a file in the data dir: its path from there.
+    /// `None` for a path outside it.
+    pub fn data_name(&self, path: &Path) -> Option<String> {
+        let rel = path
+            .strip_prefix(&self.data_dir)
+            .ok()?
+            .to_str()?
+            .to_string();
+        self.data_file(&rel).map(|_| rel)
+    }
+
     /// The catalog of common games: one folder per setup (see [`crate::common`]).
     pub fn common_dir(&self) -> PathBuf {
         self.data_dir.join("common")
@@ -861,6 +883,22 @@ mod tests {
             ("BIFROST_AP_PYTHON", "/usr/bin/python3"),
         ]);
         assert_eq!(c.ap_python, Path::new("/usr/bin/python3"));
+    }
+
+    #[test]
+    fn files_the_database_names_stay_in_the_data_dir() {
+        let c = with(&[("BIFROST_DATA", "/data")]);
+        let path = c
+            .season(crate::id::Id::new())
+            .root
+            .join("submissions/a.yaml");
+        let rel = c.data_name(&path).unwrap();
+        assert!(!rel.starts_with('/'), "{rel}");
+        assert_eq!(c.data_file(&rel).unwrap(), path);
+        for bad in ["", "/etc/passwd", "../x", "seasons/../../x", "./x"] {
+            assert!(c.data_file(bad).is_none(), "{bad}");
+        }
+        assert!(c.data_name(Path::new("/elsewhere/a.yaml")).is_none());
     }
 
     #[test]
