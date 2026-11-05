@@ -7,167 +7,150 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**Upgrading:** data from 0.2 or earlier can't be carried over, so start with an empty
+data directory. From 0.3.0 on, upgrades keep working. Bifrost no longer runs as root
+unless told to (see Security). If you use forward auth, your proxy needs new paths (see
+Changed), and a `config.toml` with `[minecraft]` has to lose it (see Removed).
+
 ### Added
 
-- Held signups: a YAML for a world awaiting approval gets checked as far as it can be
-  without running the world, and can be replaced while it waits. A signup that fails its
-  check shows a clear notice, on the season's page and to moderators, who can replace its
-  YAML or dismiss it. The approval screen lists who's waiting, and a refused generation
-  names the signups.
-- A season's moderators can delete it before generation, and cancel a live one back to
-  signups, keeping its signups, notes and partners. Sysadmins can delete an archived
-  season. Each asks you to type the season's name.
-- A warning in the README and the user guide that Bifrost is in very early development,
-  so read the changelog before updating and expect breaking changes.
-- The minesweeper on the home page is for any account, whether or not they play in a
-  season. A season's own minesweeper is for its players and those running it.
+- Common games: co-op games a sysadmin hosts, such as a Minecraft, Factorio or Terraria
+  server, that a season includes as one slot everyone plays. Sysadmins keep a catalog of
+  setups under Console → Common games, or as folders under `common/` in the data
+  directory: each one's YAML, any apworld, a join guide in Markdown and client files to
+  download. A season can include several, two setups of one game among them, each with
+  its own address. Players register the name they play under once per kind of game, and
+  moderators download each common game's allowlist as text or JSON. `docs/examples/common`
+  has a Minecraft setup to start from.
+- A read-only export token for common games, made on the settings page, so a sysadmin's
+  own script can fetch every live season's common games, allowlists and seed files from
+  `/export/...` with `curl`.
 - Private seasons. A new season's board, log and game pages are for its players,
-  its moderators and sysadmins, and a moderator can open them to anyone. Moderators can also make
-  a season's signups private, reachable only through a link. Non-members don't see a
-  private season on the home page or in past seasons. Seasons you already have, and
-  imported ones, stay open after generation. Before generation, every season's pages
-  now need a sign-in.
+  moderators and sysadmins, and a moderator can open them to anyone. Signups can also be
+  made private, reachable only through a link. Non-members don't see a private season on
+  the home page or in past seasons. Existing and imported seasons stay open after
+  generation, and before generation every season's pages need a sign-in.
+- Signups, reworked:
+  - The home page lists the seasons open for signup.
+  - Each game has its own page, with notes for the other players, and its host can
+    replace the YAML without losing the signup. Moderators can edit notes and, until
+    generation, replace YAMLs.
+  - A player can sign up with several games (*Add another game*), up to a limit
+    moderators can set (0, the default, means no limit). Each YAML holds one player.
+  - A YAML for a world awaiting approval is checked as far as it can be without running
+    the world, and can be replaced while it waits. A signup that fails its check says
+    so on the season's page and to moderators, who can replace its YAML or dismiss it.
+    The approval screen lists who's waiting, and generation names the signups it's held
+    up by.
 - Co-op partners join through one-use invite links from a game's host, before or after
   generation, and pick their own seat name. They can edit the game's notes and, before
   generation, rename their seat or leave. Signing up takes you to your game's page.
-- *Sign up for a season* on the home page now lists the seasons open for signup. Each
-  game on a season's page opens its own page, with notes for the other players and, for
-  its host, a way to replace the YAML without losing the signup. A season's moderators
-  can edit the notes and, until generation, replace the YAML.
-- A player can sign up with several games in a season: once you have one, the
-  signup page offers *Add another game*. A season's moderators can limit it on the
-  Options tab (0, the default, means no limit), and a player can claim more than one
-  slot in a season. Each signup's YAML now has to hold one player; a file with several
-  is refused.
-- PopTracker items draw with their packs' image filters, `disabled_img` and overlay
-  images, and maps draw trapezoid, triangle and kite markers with their orientation
-  and border, as packs ask.
-- PopTracker packs' watches on item codes run when those items change, so state a
-  pack derives from other items keeps up.
-- PopTracker packs can read their slot's hints and Archipelago's data storage, from
-  the season's save, so as often as the server saves it (by default, every minute).
-  Packs that track hints or a game's
-  own progress there now show them, and hinted locations are outlined on the map.
-  Nothing a pack does can write to the server.
-- Common games. A sysadmin keeps a catalog of co-op games they host, such as a
-  Minecraft, Factorio or Terraria server, one folder each under `common/` in the data
-  directory, with its YAML, any apworld, a join guide in Markdown and client files to
-  download. A season can include several, including two setups of one game, each
-  played as one shared slot with its own address. Players register the name they play
-  under once per kind of game, and moderators download each common game's allowlist
-  for the season, as text or JSON. `docs/examples/common` has a Minecraft setup to
-  start from. Sysadmins can also make, edit and delete setups, with their apworld and
-  downloads, under Console → Common games.
-- A read-only export token for common games, made by a sysadmin on the settings page,
-  so their own script can fetch every live season's common games, allowlists and seed
-  files from `/export/...` with `curl`.
+- Moderators can delete a season before generation and cancel a live one back to
+  signups, keeping its signups, notes and partners. Sysadmins can delete an archived
+  season. Each asks you to type the season's name.
+- PopTracker packs read their slot's hints and Archipelago's data storage from the
+  season's save, as often as the server saves (every minute by default), so packs that
+  track hints or a game's own progress show them, and hinted locations are outlined on
+  the map. Watches on item codes run when those items change. Items draw with their
+  image filters, `disabled_img` and overlays, and maps draw trapezoid, triangle and
+  kite markers. Nothing a pack does can write to the server.
+- The home page's minesweeper is for any account. A season's own is for its players and
+  those running it.
+- The README and user guide warn that Bifrost is in very early development: read the
+  changelog before updating.
 
 ### Security
 
+- Bifrost refuses to run as root, commands included, unless `BIFROST_ALLOW_ROOT=1` is set
+  in the environment. If you run it as root, switch to its own user and `chown` its data
+  directory first. Run as root, it won't start if another user could change the data
+  directory, anything in it, a folder above it or a link on the way to it.
+- Unpacking a bundle no longer writes through a link left at the paths it creates.
+- PopTracker packs' Lua runs in a sandboxed process of its own, stopped after 30 seconds
+  (`pack_timeout_secs`). Each slot computes its tracker once at a time, at most four run
+  at once, and uploads are rate-limited. A pack that hits a limit waits a minute, then
+  longer each time, or until it's replaced, and a slow pack's tracker updates less
+  often.
 - When `config.toml` doesn't parse, the error gives the line and column but no longer
   quotes the line, which could hold a secret.
-- Bifrost refuses to run as root, commands included, unless `BIFROST_ALLOW_ROOT=1` is set
-  in the environment. If you run it as root, switch to its own user, and `chown` its data
-  directory to that user first.
-- Run as root, Bifrost won't start if another user could change the data directory,
-  anything in it, a folder above it, or a link on the way to it. For any user, a bundle's unpacking no longer writes
-  through a link left at the paths it creates.
-- PopTracker packs' Lua runs in a sandboxed process of its own, stopped after
-  30 seconds (`pack_timeout_secs`), so a pack can't tie up the server. Each
-  slot computes its tracker once at a time, at most four run at once, and
-  uploads are rate-limited. A pack that hits a limit isn't run again for a
-  minute, then longer each time, or until it's replaced; a slow pack's tracker
-  updates less often.
 
 ### Fixed
 
-- A game page's Universal Tracker tab keeps itself current while it's open, as the
-  PopTracker and activity tabs do, and the "available" count at the top updates with it.
-  Before, it showed the result from when the page loaded.
-- A game's status on the board reflects its players, not Bifrost. Bifrost's own short
-  connections no longer make a game flash "connected", and the game Bifrost's tracker
-  connects as now shows a real player connecting and clears when they leave, instead of
-  staying "playing". This needs Archipelago 0.6.8-bifrost.4, now the bundled build; on
-  older builds and external servers, these statuses stay as they were. On that build, a
-  game's server that was killed rather than stopped no longer keeps a status other than a
-  goal after it restarts.
-- A URL nothing answers shows a page, rather than the browser's own error, and so do "Moderators only"
-  and a game page with no game to show.
-- The first game on a board no longer says "connected" just because Bifrost's own tracker joined as it.
-- A season's Archive tab only offers archiving once it's live, as it couldn't be done before then.
-- A game page only links to minesweeper when the season has it on.
-- A game page's notes and YAML say when they've been saved.
-- Long links and paths no longer widen the page, a failed generation shows as a failure, and the
-  apworld approval options are laid out properly.
-- A game's PopTracker pack stays with it through a re-roll. Packs are stored by game id, not by
-  the slot number a re-roll can change.
-- PopTracker locations honour `parent`, and map markers their own
-  `restrict_visibility_rules` and `force_invisibility_rules`.
-- PopTracker packs that also read an emulator's memory, such as Super Metroid's,
-  no longer lose their received items: only Archipelago reads as connected.
-- PopTracker items behave as in PopTracker: their starting stage, `allow_disabled`,
-  `inherit_codes`, `static` and `composite_toggle` items, several items sharing a
-  code, custom items counting toward rules, sections that host an item, and counts
-  and stages kept within their limits.
-- PopTracker access rules work as they do in PopTracker: `{}` inspect rules,
-  `^$` levels, `[optional]` references, `@location/section` references including
-  locations that aren't drawn, section `ref`, locations with the same name, nested
-  rules, and how a location's rules join its parent's. Many locations change
-  colour, and large logic packs that never finished computing now do.
-- Many more PopTracker packs load. Bifrost picks the pack's Archipelago map
-  variant and finds files in its folder, and supplies more of what packs call,
-  such as overlays and `os.time`. An error in one of a pack's handlers no longer
-  blanks its tracker: it carries on, and the tab says tracking may be incomplete.
-- PopTracker packs that load their scripts with `require`, or use custom
-  items, frame handlers or change watches, can be uploaded and track (for
-  example the Satisfactory pack). `require` only loads files from the pack.
-- PopTracker access rules that pass arguments to one of the pack's functions
-  (`$name|arg`) give it those arguments.
-- PopTracker packs get the slot's slot data, the seed name and the other
-  players' names and games, as they would from Archipelago on connect. Packs
-  that read the seed's options there now track them, such as Satisfactory's
-  starting recipes.
+- A game's status on the board follows its players, not Bifrost. Bifrost's own short
+  connections no longer make a game flash "connected", and the game its tracker joins as
+  shows a real player connecting and clears when they leave, instead of staying
+  "playing". A server killed rather than stopped no longer keeps a status other than a
+  goal after it restarts. This needs Archipelago 0.6.8-bifrost.4, now the bundled build;
+  on older builds and external servers, statuses stay as they were.
+- A game page keeps itself current while it's open, as the board does: its figures
+  (locations, sent, received, left), its hints list, and its Universal Tracker tab with the
+  "available" count at the top.
+- Many more PopTracker packs load and track as they do in PopTracker:
+  - Bifrost picks a pack's Archipelago variant, finds files in its folder, loads scripts
+    with `require` (from the pack only), and supplies more of what packs call, such as
+    overlays, `os.time`, frame handlers and change watches.
+  - Packs get the slot's slot data, the seed name and the other players' names and
+    games, as from Archipelago on connect, so packs that read the seed's options track
+    them (Satisfactory's starting recipes, for one).
+  - Access rules: `{}` inspect rules, `^$` levels, `[optional]` and
+    `@location/section` references (undrawn locations too), section `ref`, locations of
+    the same name, nested rules, `$name|arg` arguments, and how a location's rules join
+    its parent's. Large logic packs that never finished computing now do.
+  - Items: starting stages, `allow_disabled`, `inherit_codes`, `static` and
+    `composite_toggle`, several items on one code, custom items in rules, sections that
+    host an item, and counts and stages kept in their limits. Locations honour `parent`,
+    and map markers their visibility rules.
+  - An error in one of a pack's handlers no longer blanks its tracker (the tab says
+    tracking may be incomplete), and packs that
+    also read an emulator's memory, such as Super Metroid's, keep their received items.
+- A game's PopTracker pack stays with it through a re-roll.
+- An unknown URL, "Moderators only" and a game page with no game show a page rather than
+  the browser's own error. Long links and paths no longer widen the page, a failed
+  generation shows as a failure, the apworld approval options are laid out properly, and
+  a game page only links to minesweeper when the season has it on.
+- A season's Archive tab only offers archiving once the season is live, as it couldn't be
+  done before then.
 
 ### Changed
 
-- `config.toml` is read as TOML 1.1, so its strings can also use `\e` and `\xHH` escapes.
+- If you use forward auth, add `/seat` and `/common` to your proxy's signed-in paths
+  (`/common` replaces `/mc`). To reach private seasons' pages, also add `/board`, `/log`
+  and `/season`, then set `season_pages = true`. Until you do, nobody can read a private
+  season's pages or any season's before generation, sysadmins included. Don't set it
+  before the paths are covered: those pages would believe identity headers sent by
+  anyone. See the user guide.
+- Connection details moved from the home page to each season's live board, with its own
+  address and, for its players, moderators and sysadmins, its connect password. The
+  instance's password note setting is gone.
+- Players no longer claim or unclaim slots: a signup's host has their slot, partners
+  join by invite, and moderators assign slots in seasons with no signups. A signup can't
+  be removed once its season is generated, and nobody is removed from a seat after that.
 - A signup's `name:` has to be one plain name of at most 16 characters, without
-  placeholders. Those worked until generation, but the host then didn't get their slot.
-- Slot names ignore case when checking they're free, as Archipelago does.
+  placeholders, and slot names ignore case when checking they're free, as Archipelago
+  does.
+- A season's apworlds are locked once it's generated.
+- An account that has played can't be deleted, so history stays complete.
 - The data directory is kept to Bifrost's user. A service reading
   `connect_password.request` needs to run as Bifrost's user or root.
-- An account that has played can't be deleted, so history stays complete.
 - The database runs in write-ahead mode, so `bifrost.db-wal` sits beside `bifrost.db`
   while it runs. Keep the data directory on a local filesystem, and copy the database
   through `bifrost backup` or with Bifrost stopped.
-- A season's apworlds are locked once it's generated.
-- If you use forward auth, add `/seat` and `/common` to your proxy's signed-in paths when you upgrade
-  (`/common` replaces `/mc`).
-  To reach private seasons' pages, also add `/board`, `/log` and `/season`, then set
-  `season_pages = true`. Until you do, nobody can read a private season's pages or any
-  season's before generation, sysadmins included, and new seasons are private. Don't set
-  it before the paths are covered: those pages would believe identity headers sent by
-  anyone. See the user guide.
-- Connection details moved from the home page to each season's live board, with its own
-  address and, for its players, moderators and sysadmins, its connect password. The instance's
-  password note setting is gone.
-- Players no longer claim or unclaim slots. Moderators assign slots in seasons with no
-  signups. A signup can't be removed once its season is generated, and nobody is removed
-  from a seat after that.
+- `config.toml` is read as TOML 1.1, so its strings can also use `\e` and `\xHH`
+  escapes.
 
 ### Removed
 
-- The built-in Minecraft common game, its `[minecraft] address` setting and
-  `BIFROST_MC_ADDR`, and `mc-whitelist.json`. Set it up as a common game instead, from
-  `docs/examples/common/minecraft-26.2`: its address goes in its `game.toml` or on the
-  season console, and its allowlist is downloaded from the season console. A
-  `config.toml` that still has `[minecraft]` is refused, with a note saying so.
-- The season buttons for clearing players, the save or the world, and the full reset:
-  they could leave a running season broken. Cancel generation and deleting replace them.
 - Upgrading from 0.2 or earlier. Seasons, games, slots and seats now have generated ids,
-  in URLs and in the database and data directory, so old URLs stop working and older data
-  can't be carried over: start with an empty data directory. This is a one-time break;
-  from 0.3.0 upgrades keep working.
+  in URLs, the database and the data directory, so old URLs stop working and older data
+  can't be carried over. This is a one-time break.
+- The built-in Minecraft common game, its `[minecraft] address` setting,
+  `BIFROST_MC_ADDR` and `mc-whitelist.json`. Set it up as a common game instead, from
+  `docs/examples/common/minecraft-26.2`: its address goes in its `game.toml` or on the
+  season console, and its allowlist comes from the season console or the export. A
+  `config.toml` that still has `[minecraft]` is refused, saying so.
+- The season buttons for clearing players, the save or the world, and the full reset,
+  which could leave a running season broken. Cancelling generation and deleting replace
+  them.
 
 ## [0.2.0] - 2026-10-29
 
