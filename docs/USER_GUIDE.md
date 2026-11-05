@@ -685,8 +685,10 @@ label = "Archipelago Randomizer mod"
 
 - The YAML's `name:` has to be the `slot` it says. Once a season adds a setup,
   that name is reserved in the season, so no signup or seat can take it.
-- An apworld a setup ships is trusted like Bifrost's own, and uploads can't use
-  its file name.
+- An apworld you put in a setup's folder is trusted like Bifrost's own, and
+  uploads can't use its file name. One uploaded through the console isn't: it's
+  a custom world, so it only runs where custom worlds can (see
+  [Isolation](#isolation)), and the console only takes one there.
 - The guide is shown on the game page. `{address}` and `{slot}` in it are filled
   in with the season's address and the slot's name. HTML in it is shown as
   text, and links only go to web pages or within Bifrost.
@@ -699,7 +701,8 @@ lists each setup with the seasons using it. You can make a setup, edit its
 fields, allowlist name, guide and YAML, upload or remove its apworld and
 downloads, and delete it once no season that isn't archived includes it. Each
 change is checked like a setup on disk and refused, leaving the files as they
-were, if the setup wouldn't load after it. A setup that can't be read can be
+were, if the setup wouldn't load after it. Downloads can be up to 1 GiB, and an
+apworld up to 32 MiB. A setup that can't be read can be
 fixed there too. Saving rewrites `game.toml`, so comments in it are lost.
 A season keeps the slot name it added a setup with: if you change a setup's
 slot, the season's moderators remove it and add it again before generating.

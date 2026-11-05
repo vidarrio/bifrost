@@ -4,6 +4,10 @@
 use super::*;
 use crate::common_edit;
 
+const NO_SANDBOX: &str = "Apworlds can't be uploaded here: this host has no sandbox for custom \
+     worlds. Install bubblewrap or use the container image, or put the apworld in the \
+     setup's folder yourself.";
+
 fn root() -> std::path::PathBuf {
     config::get().common_dir()
 }
@@ -63,6 +67,12 @@ async fn setup_page(st: &AppState, key: &str, err: Option<&str>, saved: Option<&
             address: m.address.clone(),
             ident,
         },
+        uploaded: m
+            .apworld
+            .as_deref()
+            .is_some_and(|w| crate::common::uploaded_from(&r, key, w)),
+        can_upload_world: sandbox::get().custom_worlds_allowed(),
+        unreadable: crate::common::manifest_from(&r, key).is_err(),
         apworld: m.apworld.clone(),
         downloads: m
             .download
@@ -292,6 +302,10 @@ pub(crate) async fn common_setup_apworld(
     if !me.can(auth::Action::ManageInstance) {
         return sysadmin_only();
     }
+    // An apworld uploaded here is custom code, like a player's upload.
+    if !sandbox::get().custom_worlds_allowed() {
+        return setup_page(&st, &key, Some(NO_SANDBOX), None).await;
+    }
     put_upload(&st, &me, key, mp, false).await
 }
 
@@ -311,7 +325,7 @@ pub(crate) async fn common_setup_download(
 pub(crate) struct RemoveForm {
     pub(crate) what: String,
     #[serde(default)]
-    pub(crate) n: Option<usize>,
+    pub(crate) file: String,
 }
 
 pub(crate) async fn common_setup_remove(
@@ -323,13 +337,13 @@ pub(crate) async fn common_setup_remove(
     if !me.can(auth::Action::ManageInstance) {
         return sysadmin_only();
     }
-    let which = match (f.what.as_str(), f.n) {
-        ("apworld", _) => None,
-        ("download", Some(n)) => Some(n),
+    let which = match f.what.as_str() {
+        "apworld" => None,
+        "download" if !f.file.is_empty() => Some(f.file),
         _ => return setup_page(&st, &key, Some("Remove what?"), None).await,
     };
     let k = key.clone();
-    let r = tokio::task::spawn_blocking(move || common_edit::remove(&root(), &k, which))
+    let r = tokio::task::spawn_blocking(move || common_edit::remove(&root(), &k, which.as_deref()))
         .await
         .unwrap_or_else(|e| Err(e.to_string()));
     match r {

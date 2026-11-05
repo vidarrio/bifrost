@@ -218,7 +218,8 @@ pub fn load_from(root: &Path, key: &str) -> Result<Setup, String> {
         return Err(format!("yaml: its name: is {name}, not the slot {slot}"));
     }
     if let Some(w) = &m.apworld {
-        if w.contains('/') || !w.ends_with(".apworld") || w == "tracker.apworld" {
+        if w.contains('/') || !w.ends_with(".apworld") || w.eq_ignore_ascii_case("tracker.apworld")
+        {
             return Err("apworld: needs to be an .apworld file in the setup's folder".into());
         }
         inside(&dir, w).map_err(|e| format!("apworld: {e}"))?;
@@ -334,12 +335,35 @@ pub fn apworld_files() -> Vec<String> {
         .collect()
 }
 
-/// The apworlds the catalog ships, by path, for trusting them by content.
+/// The file in a setup's folder that names an apworld uploaded through the
+/// console, rather than put there by whoever runs the host.
+pub const UPLOADED: &str = ".uploaded-apworld";
+
+/// Whether a setup's apworld came in through the console. Such a world isn't
+/// trusted like Bifrost's own: it's a custom world, which needs a sandbox
+/// like any upload.
+pub fn uploaded_from(root: &Path, key: &str, apworld: &str) -> bool {
+    valid_key(key)
+        && std::fs::read_to_string(root.join(key).join(UPLOADED))
+            .map(|s| s.trim() == apworld)
+            // Unreadable: don't trust it either.
+            .unwrap_or_else(|e| e.kind() != std::io::ErrorKind::NotFound)
+}
+
+pub fn uploaded(key: &str, apworld: &str) -> bool {
+    uploaded_from(&config::get().common_dir(), key, apworld)
+}
+
+/// The apworlds the catalog ships that the host's operator put there, by
+/// path, for trusting them by content. One uploaded through the console isn't.
 pub fn apworld_paths() -> Vec<PathBuf> {
     catalog()
         .into_iter()
         .filter_map(|(k, s)| {
             let w = s.ok()?.apworld?;
+            if uploaded(&k, &w) {
+                return None;
+            }
             file(&k, &w).ok()
         })
         .collect()

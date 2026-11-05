@@ -212,6 +212,10 @@ pub struct Pin {
     /// into this season — trusted even after an upgrade changes the shipped copy.
     #[serde(default)]
     pub shipped: bool,
+    /// A common game's apworld uploaded through the console: custom, staged
+    /// with its common game and removed with it.
+    #[serde(default)]
+    pub common: bool,
 }
 
 impl Pin {

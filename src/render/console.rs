@@ -605,6 +605,12 @@ pub struct CommonSetupView {
     pub key: String,
     pub fields: crate::common_edit::Fields,
     pub apworld: Option<String>,
+    /// The apworld came in through the console, so it counts as custom.
+    pub uploaded: bool,
+    /// This host can run custom worlds, so the console can take an apworld.
+    pub can_upload_world: bool,
+    /// Its `game.toml` doesn't parse.
+    pub unreadable: bool,
     /// Each download's (file, label).
     pub downloads: Vec<(String, String)>,
     pub problem: Option<String>,
@@ -631,8 +637,13 @@ pub fn common_setup_page(
     }
     if let Some(p) = &v.problem {
         body.push_str(&format!(
-            r#"<div class="banner warn">It can't be used as it is: {}. Saving the form below rewrites <code>game.toml</code>.</div>"#,
-            esc(p)
+            r#"<div class="banner warn">It can't be used as it is: {}. Saving the form below rewrites <code>game.toml</code>{}.</div>"#,
+            esc(p),
+            if v.unreadable {
+                ": as it can't be read, its apworld and downloads have to be added again after"
+            } else {
+                ""
+            }
         ));
     }
     if !v.seasons.is_empty() {
@@ -674,8 +685,13 @@ pub fn common_setup_page(
     body.push_str(r#"<h3>Apworld</h3>"#);
     match &v.apworld {
         Some(w) => body.push_str(&format!(
-            r#"<div class="hintrow"><span><code>{}</code></span><span>{}</span></div>"#,
+            r#"<div class="hintrow"><span><code>{}</code> · {}</span><span>{}</span></div>"#,
             esc(w),
+            if v.uploaded {
+                "uploaded here, so it runs as a custom world: in the sandbox"
+            } else {
+                "put in the folder on the host, so it's trusted like Bifrost's own"
+            },
             action_btn(
                 &format!("/admin/common-games/{}/remove", v.key),
                 &[("what", "apworld")],
@@ -688,20 +704,24 @@ pub fn common_setup_page(
             body.push_str(r#"<p class="statline">None: the game is one Archipelago ships.</p>"#)
         }
     }
-    body.push_str(&format!(
-        r#"<form class="console" method="post" action="/admin/common-games/{k}/apworld" enctype="multipart/form-data"><input type="file" name="file" accept=".apworld" required style="flex:1;min-width:0"><button type="submit">{}</button></form>"#,
-        if v.apworld.is_some() { "Replace apworld" } else { "Add apworld" }
-    ));
+    if v.can_upload_world {
+        body.push_str(&format!(
+            r#"<form class="console" method="post" action="/admin/common-games/{k}/apworld" enctype="multipart/form-data"><input type="file" name="file" accept=".apworld" required style="flex:1;min-width:0"><button type="submit">{}</button></form><p class="statline">An apworld uploaded here is a custom world, run in the sandbox like a player's upload.</p>"#,
+            if v.apworld.is_some() { "Replace apworld" } else { "Add apworld" }
+        ));
+    } else {
+        body.push_str(r#"<p class="statline">This host has no sandbox for custom worlds, so an apworld can't be uploaded here. Put it in the setup's folder on the host instead, and name it in <code>game.toml</code>.</p>"#);
+    }
 
     body.push_str(r#"<h3>Downloads</h3><p class="statline">Client files the game page offers, such as a mod or its loader.</p>"#);
-    for (n, (file, label)) in v.downloads.iter().enumerate() {
+    for (file, label) in &v.downloads {
         body.push_str(&format!(
             r#"<div class="hintrow"><span>{} · <code>{}</code></span><span>{}</span></div>"#,
             esc(label),
             esc(file),
             action_btn(
                 &format!("/admin/common-games/{}/remove", v.key),
-                &[("what", "download"), ("n", &n.to_string())],
+                &[("what", "download"), ("file", file)],
                 "remove",
                 true,
                 &format!("Remove {file}?")

@@ -96,6 +96,15 @@ impl Undo {
     }
 }
 
+/// A setup's folder: a valid key, and a folder of its own, not a link.
+fn folder(root: &Path, key: &str) -> Result<PathBuf, String> {
+    let dir = root.join(key);
+    if !common::valid_key(key) || !std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
+        return Err("not in the catalog".into());
+    }
+    Ok(dir)
+}
+
 fn manifest_text(m: &Manifest) -> Result<String, String> {
     toml::to_string(m).map_err(|e| format!("writing game.toml: {e}"))
 }
@@ -158,7 +167,7 @@ pub struct Fields {
 /// Save a setup's fields, its guide and its YAML.
 pub fn save(root: &Path, key: &str, f: &Fields) -> Result<(), String> {
     let _g = lock();
-    let dir = root.join(key);
+    let dir = folder(root, key)?;
     let mut m = common::manifest_from(root, key).unwrap_or_default();
     m.name = f.name.trim().to_string();
     m.slot = f.slot.trim().to_string();
@@ -192,7 +201,9 @@ pub fn save(root: &Path, key: &str, f: &Fields) -> Result<(), String> {
 }
 
 /// Put an uploaded file (already on disk at `upload`, in the setup's folder)
-/// in place as the setup's apworld (`label` `None`) or as a download.
+/// in place as the setup's apworld (`label` `None`) or as a download. An
+/// apworld put here is marked as uploaded (see [`common::UPLOADED`]): it's
+/// never trusted like one the host's operator put in the folder.
 pub fn put(
     root: &Path,
     key: &str,
@@ -201,14 +212,22 @@ pub fn put(
     label: Option<&str>,
 ) -> Result<(), String> {
     let _g = lock();
-    let dir = root.join(key);
+    let dir = folder(root, key)?;
     let mut m = common::manifest_from(root, key)?;
     let rel = match label {
         None => {
-            if !file.to_ascii_lowercase().ends_with(".apworld") || file == "tracker.apworld" {
+            let lower = file.to_ascii_lowercase();
+            if !lower.ends_with(".apworld") || lower == "tracker.apworld" {
                 return Err("An apworld is an .apworld file, and not tracker.apworld.".into());
             }
-            file.to_string()
+            let mut head = [0u8; 4];
+            let zip = std::fs::File::open(upload)
+                .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut head))
+                .is_ok_and(|_| crate::worlds::looks_like_apworld(&head));
+            if !zip {
+                return Err("That doesn't look like an .apworld (zip) file.".into());
+            }
+            format!("{}.apworld", &file[..file.len() - ".apworld".len()])
         }
         Some(_) => format!("client/{file}"),
     };
@@ -233,7 +252,14 @@ pub fn put(
         undo.restore();
         return Err(e.to_string());
     }
-    if let Err(e) = manifest_text(&m).and_then(|t| undo.write(&dir.join("game.toml"), t.as_bytes()))
+    let marked = if label.is_none() {
+        undo.write(&dir.join(common::UPLOADED), rel.as_bytes())
+    } else {
+        Ok(())
+    };
+    if let Err(e) = marked
+        .and_then(|_| manifest_text(&m))
+        .and_then(|t| undo.write(&dir.join("game.toml"), t.as_bytes()))
     {
         undo.restore();
         return Err(e);
@@ -249,17 +275,20 @@ pub fn put(
     Ok(())
 }
 
-/// Drop the setup's apworld, or its `n`th download, with its file.
-pub fn remove(root: &Path, key: &str, download: Option<usize>) -> Result<(), String> {
+/// Drop the setup's apworld, or the download of that file, with its file.
+pub fn remove(root: &Path, key: &str, download: Option<&str>) -> Result<(), String> {
     let _g = lock();
-    let dir = root.join(key);
+    let dir = folder(root, key)?;
     let mut m = common::manifest_from(root, key)?;
     let rel = match download {
         None => m.apworld.take(),
-        Some(n) if n < m.download.len() => Some(m.download.remove(n).file),
-        Some(_) => None,
+        Some(file) => m
+            .download
+            .iter()
+            .position(|d| d.file == file)
+            .map(|n| m.download.remove(n).file),
     }
-    .ok_or("There's nothing there to remove.")?;
+    .ok_or("That isn't there to remove: reload the page.")?;
     let mut undo = Undo::new();
     manifest_text(&m).and_then(|t| undo.write(&dir.join("game.toml"), t.as_bytes()))?;
     settle(root, key, undo)?;
@@ -267,6 +296,9 @@ pub fn remove(root: &Path, key: &str, download: Option<usize>) -> Result<(), Str
         && !m.download.iter().any(|d| d.file == rel)
     {
         let _ = std::fs::remove_file(p);
+    }
+    if download.is_none() {
+        let _ = std::fs::remove_file(dir.join(common::UPLOADED));
     }
     Ok(())
 }
@@ -286,15 +318,20 @@ pub fn delete(root: &Path, key: &str) -> Result<(), String> {
 
 /// A temporary file in the setup's folder for an upload to stream into, so
 /// putting it in place is a rename.
+/// Uploads a crash or a dropped connection left behind are cleared after a day.
 pub fn upload_path(root: &Path, key: &str) -> Result<PathBuf, String> {
-    if !common::valid_key(key)
-        || !std::fs::symlink_metadata(root.join(key)).is_ok_and(|m| m.is_dir())
-    {
-        return Err("not in the catalog".into());
+    let dir = folder(root, key)?;
+    let day = std::time::Duration::from_secs(24 * 3600);
+    for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let stale = e.file_name().to_string_lossy().starts_with(".upload-")
+            && e.metadata()
+                .and_then(|m| m.modified())
+                .is_ok_and(|t| t.elapsed().is_ok_and(|a| a > day));
+        if stale {
+            let _ = std::fs::remove_file(e.path());
+        }
     }
-    Ok(root
-        .join(key)
-        .join(format!(".upload-{}", crate::auth::new_token())))
+    Ok(dir.join(format!(".upload-{}", crate::auth::new_token())))
 }
 
 #[cfg(test)]
@@ -339,8 +376,21 @@ mod tests {
         assert_eq!(s.identifier.unwrap().kind, "minecraft");
 
         let up = upload_path(&r, "vanilla").unwrap();
-        std::fs::write(&up, "zip").unwrap();
-        put(&r, "vanilla", &up, "minecraft.apworld", None).unwrap();
+        std::fs::write(&up, "not a zip").unwrap();
+        assert!(put(&r, "vanilla", &up, "minecraft.apworld", None).is_err());
+        let up = upload_path(&r, "vanilla").unwrap();
+        std::fs::write(&up, "PK\x03\x04old").unwrap();
+        put(&r, "vanilla", &up, "old.apworld", None).unwrap();
+        assert!(
+            common::uploaded_from(&r, "vanilla", "old.apworld"),
+            "marked as uploaded"
+        );
+        // Replacing it with another name drops the old file.
+        let up = upload_path(&r, "vanilla").unwrap();
+        std::fs::write(&up, "PK\x03\x04zip").unwrap();
+        put(&r, "vanilla", &up, "minecraft.APWORLD", None).unwrap();
+        assert!(!r.join("vanilla/old.apworld").exists());
+        assert!(common::uploaded_from(&r, "vanilla", "minecraft.apworld"));
         let up = upload_path(&r, "vanilla").unwrap();
         std::fs::write(&up, "jar").unwrap();
         put(&r, "vanilla", &up, "mod.jar", Some("The mod")).unwrap();
@@ -348,8 +398,10 @@ mod tests {
         assert_eq!(s.apworld.as_deref(), Some("minecraft.apworld"));
         assert_eq!(s.downloads[0].file, "client/mod.jar");
 
-        remove(&r, "vanilla", Some(0)).unwrap();
+        assert!(remove(&r, "vanilla", Some("client/other.jar")).is_err());
+        remove(&r, "vanilla", Some("client/mod.jar")).unwrap();
         remove(&r, "vanilla", None).unwrap();
+        assert!(!r.join("vanilla").join(common::UPLOADED).exists());
         let s = common::load_from(&r, "vanilla").unwrap();
         assert!(s.apworld.is_none() && s.downloads.is_empty());
         assert!(!r.join("vanilla/client/mod.jar").exists());
@@ -392,8 +444,26 @@ mod tests {
         assert!(create(&r, "bad", "X", "{player}", b"name: X\n").is_err());
         assert!(!r.join("bad").exists());
         let up = upload_path(&r, "vanilla").unwrap();
-        std::fs::write(&up, "x").unwrap();
-        assert!(put(&r, "vanilla", &up, "tracker.apworld", None).is_err());
+        std::fs::write(&up, "PK\x03\x04").unwrap();
+        assert!(put(&r, "vanilla", &up, "Tracker.apworld", None).is_err());
+        // A put that would break the setup leaves what was there.
+        let up = upload_path(&r, "vanilla").unwrap();
+        std::fs::write(&up, "PK\x03\x04good").unwrap();
+        put(&r, "vanilla", &up, "w.apworld", None).unwrap();
+        std::fs::write(r.join("vanilla/player.yaml"), "name: Other\n").unwrap();
+        let up = upload_path(&r, "vanilla").unwrap();
+        std::fs::write(&up, "PK\x03\x04new").unwrap();
+        assert!(put(&r, "vanilla", &up, "w.apworld", None).is_err());
+        assert_eq!(
+            std::fs::read(r.join("vanilla/w.apworld")).unwrap(),
+            b"PK\x03\x04good"
+        );
+        // Saving to a setup that isn't there, or through a link, is refused.
+        assert!(save(&r, "missing", &fields()).is_err());
+        assert!(!r.join("missing").exists());
+        assert!(save(&r, "Bad", &fields()).is_err());
+        std::os::unix::fs::symlink(r.join("vanilla"), r.join("linked")).unwrap();
+        assert!(save(&r, "linked", &fields()).is_err());
         let _ = std::fs::remove_dir_all(&r);
     }
 

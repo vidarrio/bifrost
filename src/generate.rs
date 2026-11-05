@@ -284,12 +284,15 @@ async fn stage_tracker_apworld(season: Id) {
 }
 
 /// Stage the season's common games for the roll: each setup's YAML into
-/// `Players/`, and the apworld it ships, if any, into `worlds/`, pinned as
-/// shipped. Apworlds an earlier roll staged for a common game the season no
+/// `Players/`, and the apworld it ships, if any, into `worlds/`: pinned as
+/// shipped when the host's operator put it in the catalog, or as an approved
+/// custom world, which needs a sandbox like any upload, when it came in through
+/// the console. Apworlds an earlier roll staged for a common game the season no
 /// longer has are removed. Returns each one's (slot name, key).
 async fn stage_commons(db: &Db, season: Id) -> Result<Vec<(String, String)>, String> {
     let dirs = config::get().season(season);
-    let mut worlds: std::collections::BTreeMap<String, Vec<u8>> = Default::default();
+    // By file: its bytes, and whether it came in through the console.
+    let mut worlds: std::collections::BTreeMap<String, (Vec<u8>, bool)> = Default::default();
     let mut out = Vec::new();
     for c in db.season_commons(season).await {
         let setup =
@@ -311,34 +314,47 @@ async fn stage_commons(db: &Db, season: Id) -> Result<Vec<(String, String)>, Str
             let bytes = crate::common::file(&c.key, w)
                 .and_then(|p| std::fs::read(p).map_err(|e| e.to_string()))
                 .map_err(|e| format!("the common game {}'s apworld: {e}", c.name))?;
-            if worlds.get(w).is_some_and(|b| *b != bytes) {
+            if worlds.get(w).is_some_and(|(b, _)| *b != bytes) {
                 return Err(format!(
                     "two of the season's common games ship different apworlds named {w}"
                 ));
             }
-            worlds.insert(w.clone(), bytes);
+            let uploaded =
+                crate::common::uploaded(&c.key, w) || worlds.get(w).is_some_and(|(_, u)| *u);
+            worlds.insert(w.clone(), (bytes, uploaded));
         }
         out.push((c.slot_name, c.key));
     }
     let pins = ap_adapter::world_pins(&dirs);
     for w in worlds.keys() {
-        if dirs.worlds.join(w).exists() && !pins.get(w).is_some_and(|p| p.shipped) {
+        if dirs.worlds.join(w).exists() && !pins.get(w).is_some_and(|p| p.shipped || p.common) {
             return Err(format!(
                 "the season has a custom world named {w}, which a common game ships too"
             ));
         }
     }
     for (file, pin) in &pins {
-        if pin.shipped && file != TRACKER_APWORLD && !worlds.contains_key(file) {
+        if (pin.shipped || pin.common) && file != TRACKER_APWORLD && !worlds.contains_key(file) {
             let _ = tokio::fs::remove_file(dirs.worlds.join(file)).await;
             ap_adapter::unpin_world(&dirs, Some(file))?;
         }
     }
-    for (w, bytes) in &worlds {
-        tokio::fs::write(dirs.worlds.join(w), bytes)
-            .await
-            .map_err(|e| format!("staging {w}: {e}"))?;
-        ap_adapter::pin_shipped(&dirs, w)?;
+    for (w, (bytes, uploaded)) in &worlds {
+        if *uploaded {
+            let pin = ap_adapter::Pin {
+                uploaded_by: "a sysadmin".into(),
+                approved_by: "a sysadmin (common game)".into(),
+                uploaded_at: crate::web::now_secs(),
+                common: true,
+                ..ap_adapter::Pin::default()
+            };
+            ap_adapter::install_world(&dirs, w, bytes, pin)?;
+        } else {
+            tokio::fs::write(dirs.worlds.join(w), bytes)
+                .await
+                .map_err(|e| format!("staging {w}: {e}"))?;
+            ap_adapter::pin_shipped(&dirs, w)?;
+        }
     }
     Ok(out)
 }

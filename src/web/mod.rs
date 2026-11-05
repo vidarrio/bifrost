@@ -215,7 +215,7 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         )
         .route(
             "/admin/common-games/{key}/apworld",
-            post(common_setup_apworld).layer(common_upload_limit()),
+            post(common_setup_apworld).layer(upload_limit()),
         )
         .route(
             "/admin/common-games/{key}/download",
@@ -298,12 +298,13 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         .with_state(state)
 }
 
-/// Body limit for the file-upload routes (apworlds, PopTracker packs).
-/// A common game's client files can be large (a modpack); they stream to disk.
+/// Body limit for a common game's client downloads, which can be large (a
+/// modpack); they stream to disk.
 pub(crate) fn common_upload_limit() -> axum::extract::DefaultBodyLimit {
     axum::extract::DefaultBodyLimit::max(1 << 30)
 }
 
+/// Body limit for the file-upload routes (apworlds, PopTracker packs).
 pub(crate) fn upload_limit() -> axum::extract::DefaultBodyLimit {
     axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024)
 }
