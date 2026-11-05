@@ -66,7 +66,6 @@ pub struct CommonView {
 #[derive(Debug, Default)]
 pub struct CommonIdent {
     pub label: String,
-    pub pattern: String,
     pub hint: String,
     /// The viewer's, if they've registered one.
     pub current: Option<String>,
@@ -651,13 +650,12 @@ fn common_join(c: &CommonView, can_register: bool, back: &str) -> String {
         r#"<p class="empty">The server only lets in this season's players. Register the exact {label} you'll join with{hint}: the admins put it on the server's allowlist.</p>
 <form method="post" action="common/{key}/ident" class="hintform">
 <input type="hidden" name="back" value="{back}">
-<input name="name" value="{cur}" pattern="{pattern}" maxlength="100" autocomplete="off" aria-label="{label}" required>
+<input name="name" value="{cur}" maxlength="64" autocomplete="off" aria-label="{label}" required>
 <button type="submit">{btn}</button></form>"#,
         label = esc(&id.label),
         key = esc(&c.key),
         back = esc(back),
         cur = esc(cur),
-        pattern = esc(&id.pattern),
         btn = if cur.is_empty() { "Register" } else { "Update" },
     ));
     out

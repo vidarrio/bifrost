@@ -135,18 +135,40 @@ fn read_text(path: &Path) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| format!("{name}: {e}"))
 }
 
+/// A YAML's top-level `name:`, when it's a plain one-line value. A YAML that
+/// says it some other way is checked once the seed is rolled.
+fn yaml_name(text: &str) -> Option<String> {
+    let line = text.lines().find(|l| l.starts_with("name:"))?;
+    let v = line["name:".len()..].trim();
+    let v = v.split(" #").next().unwrap_or(v).trim();
+    let v = v
+        .strip_prefix('"')
+        .and_then(|x| x.strip_suffix('"'))
+        .or_else(|| v.strip_prefix('\'').and_then(|x| x.strip_suffix('\'')))
+        .unwrap_or(v);
+    (!v.is_empty() && !v.contains(['"', '\'', '{', '['])).then(|| v.to_string())
+}
+
 /// The identifier's pattern as a whole-name match.
 pub fn name_rule(pattern: &str) -> Result<regex::Regex, String> {
     regex::RegexBuilder::new(&format!("^(?:{pattern})$"))
         .size_limit(1 << 20)
         .build()
-        .map_err(|_| "identifier.pattern isn't a valid regular expression".to_string())
+        .map_err(|e| {
+            let why = e.to_string();
+            let why = why.lines().last().unwrap_or("").trim().to_string();
+            format!("identifier.pattern isn't a valid regular expression ({why})")
+        })
 }
 
 impl Identifier {
-    /// Whether a player's name fits the setup's rule.
+    /// Whether a player's name fits the setup's rule. Whatever the rule, a
+    /// name is one line of at most 64 characters, without control characters,
+    /// as the allowlist goes out one name per line.
     pub fn accepts(&self, name: &str) -> bool {
-        name_rule(&self.pattern).is_ok_and(|r| r.is_match(name))
+        (1..=64).contains(&name.chars().count())
+            && !name.chars().any(char::is_control)
+            && name_rule(&self.pattern).is_ok_and(|r| r.is_match(name))
     }
 }
 
@@ -175,7 +197,12 @@ pub fn load_from(root: &Path, key: &str) -> Result<Setup, String> {
     }
     let slot = crate::worlds::slot_name_of(&m.slot).map_err(|e| format!("slot: {e}"))?;
     let yaml = m.yaml.unwrap_or_else(|| "player.yaml".into());
-    inside(&dir, &yaml).map_err(|e| format!("yaml: {e}"))?;
+    let yaml_text = read_text(&inside(&dir, &yaml).map_err(|e| format!("yaml: {e}"))?)?;
+    if let Some(name) = yaml_name(&yaml_text)
+        && name != slot
+    {
+        return Err(format!("yaml: its name: is {name}, not the slot {slot}"));
+    }
     if let Some(w) = &m.apworld {
         if w.contains('/') || !w.ends_with(".apworld") || w == "tracker.apworld" {
             return Err("apworld: needs to be an .apworld file in the setup's folder".into());
@@ -386,6 +413,17 @@ label = "The mod"
         assert!(id.accepts("Steve_01"));
         assert!(!id.accepts("St"));
         assert!(!id.accepts("Steve; rm"));
+        let loose = Identifier {
+            pattern: ".{3,90}".into(),
+            ..id.clone()
+        };
+        assert!(!loose.accepts("Ann\rBob"), "one line");
+        assert!(!loose.accepts(&"x".repeat(65)), "at most 64");
+        let unicode = Identifier {
+            pattern: "(?i)\\p{L}+".into(),
+            ..id.clone()
+        };
+        assert!(unicode.accepts("Åsa"));
         assert_eq!(s.downloads.len(), 1);
         let _ = std::fs::remove_dir_all(&r);
     }
@@ -420,6 +458,7 @@ label = "The mod"
             ),
             (&format!("{base}surprise = 1\n"), "game.toml"),
             ("name = \"X\"\nslot = \"{player}\"\n", "slot"),
+            ("name = \"X\"\nslot = \"Other\"\n", "not the slot"),
         ] {
             setup(&r, "s", toml);
             let e = load_from(&r, "s").unwrap_err();

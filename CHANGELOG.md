@@ -137,7 +137,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while it runs. Keep the data directory on a local filesystem, and copy the database
   through `bifrost backup` or with Bifrost stopped.
 - A season's apworlds are locked once it's generated.
-- If you use forward auth, add `/seat` to your proxy's signed-in paths when you upgrade.
+- If you use forward auth, add `/seat` and `/common` to your proxy's signed-in paths when you upgrade
+  (`/common` replaces `/mc`).
   To reach private seasons' pages, also add `/board`, `/log` and `/season`, then set
   `season_pages = true`. Until you do, nobody can read a private season's pages or any
   season's before generation, sysadmins included, and new seasons are private. Don't set

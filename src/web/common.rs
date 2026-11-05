@@ -58,7 +58,6 @@ pub(crate) async fn common_view(
     let ident = match &setup.identifier {
         Some(id) => Some(render::CommonIdent {
             label: id.label.clone(),
-            pattern: id.pattern.clone(),
             hint: id.hint.clone(),
             current: st.db.game_ident(account, &id.kind).await,
         }),
@@ -67,7 +66,15 @@ pub(crate) async fn common_view(
     render::CommonView {
         key: key.to_string(),
         name,
-        guide_html: crate::common::guide_html(&setup.guide, &address, &slot),
+        guide_html: crate::common::guide_html(
+            &setup.guide,
+            if address.is_empty() {
+                "the address an admin gives you"
+            } else {
+                &address
+            },
+            &slot,
+        ),
         address,
         downloads: setup.downloads.iter().map(|d| d.label.clone()).collect(),
         ident,
@@ -288,8 +295,21 @@ pub(crate) async fn admin_common_allowlist(
         return render::notice("That common game doesn't take names.", false, &admin)
             .into_response();
     };
-    let names = st.db.season_allowlist(ctx.id, &id.kind).await;
+    let names = allowlist(&st, ctx.id, &id).await;
     allowlist_response(ctx.id, &key, &names, &q.format)
+}
+
+/// A season's allowlist for a setup: the names its players registered for its
+/// kind of game that fit this setup's own rule, as another setup of the kind
+/// may take names this one wouldn't.
+pub(crate) async fn allowlist(
+    st: &AppState,
+    season: crate::id::Id,
+    id: &crate::common::Identifier,
+) -> Vec<String> {
+    let mut names = st.db.season_allowlist(season, &id.kind).await;
+    names.retain(|n| id.accepts(n));
+    names
 }
 
 pub(crate) fn allowlist_response(
@@ -348,10 +368,7 @@ pub(crate) async fn common_admin(st: &AppState, ctx: &scope::SeasonCtx) -> rende
             None => (Some("it isn't in the catalog anymore".to_string()), None),
         };
         let allowlist = match setup.as_ref().and_then(|s| s.identifier.as_ref()) {
-            Some(id) => Some((
-                id.label.clone(),
-                st.db.season_allowlist(ctx.id, &id.kind).await.len(),
-            )),
+            Some(id) => Some((id.label.clone(), allowlist(st, ctx.id, id).await.len())),
             None => None,
         };
         chosen.push(render::CommonAdminRow {

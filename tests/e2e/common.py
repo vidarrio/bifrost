@@ -87,6 +87,11 @@ try:
     check("nor by posting", "Play a game this season first" in r.text, r.text[-300:])
     r = get(carl, f"/s/{sid}/common/vanilla.1/file/0")
     check("a listed download is served", r.content == b"JARBYTES" and "mod.jar" in r.headers.get("content-disposition", ""), r.headers)
+    anon = srv.session()
+    r = get(anon, f"/s/{sid}/common/vanilla.1/file/0")
+    check("downloads need a sign-in", r.content != b"JARBYTES", r.status_code)
+    r = post(anon, f"/s/{sid}/common/vanilla.1/ident", data=dict(name="Anon1"))
+    check("and so does registering", "Anon1" not in get(root, f"/s/{sid}/admin/common/vanilla.1/allowlist").text)
     r = get(carl, f"/s/{sid}/common/vanilla.1/file/1")
     check("only what the setup lists", r.content != b"not listed" and "isn't available" in r.text)
     r = get(carl, f"/s/{sid}/common/broken/file/0")
@@ -125,6 +130,17 @@ try:
     a = admin()
     check("a setup gone from the catalog is flagged", "isn't in the catalog anymore" in a, a[-1500:])
     check("its card stays", "Foo Modded" in board())
+
+    # Back to signups without it: its apworld goes with it.
+    post(root, f"/s/{sid}/admin/cancel", data=dict(name="Commons"))
+    post(root, f"/s/{sid}/admin/common", data={"do": "remove", "key": "modded"})
+    check("before generation a common game can be removed", "plays as <b>Modded</b>" not in admin())
+    post(root, f"/s/{sid}/admin/generate")
+    t = wait_for(lambda: (x := admin()) and ("Generated seed" in x or "Failed" in x) and x, 300, 3)
+    gen = re.search(r"(Generated seed[^<]*|Failed[^<]*)", t or "")
+    check("the season generates again", gen and "1 common game:" in gen.group(1), gen and gen.group(1))
+    installed = (t or "").split("<h2>Installed apworlds</h2>")[-1].split("<h2>")[0]
+    check("without the removed one's apworld", t and "foo.apworld" not in installed, installed[:600])
 finally:
     srv.stop()
 raise SystemExit(summary())

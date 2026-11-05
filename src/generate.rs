@@ -701,12 +701,10 @@ async fn run_inner(
             .map_err(|e| format!("staging {}'s YAML: {e}", sub.slot_name))?;
     }
 
-    let commons = if db.season_commons(season_id).await.is_empty() {
-        Vec::new()
-    } else {
-        set(state, true, "Adding the common games…");
-        stage_commons(db, season_id).await?
-    };
+    // Always: it also removes what an earlier roll staged for common games
+    // the season no longer has.
+    set(state, true, "Staging the common games…");
+    let commons = stage_commons(db, season_id).await?;
 
     // Always keep the Universal Tracker apworld present for the in-logic feature.
     stage_tracker_apworld(season_id).await;

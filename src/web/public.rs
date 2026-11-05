@@ -83,7 +83,11 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
                     .unwrap_or_default();
                 (
                     format!("{} — who's playing what", season.name),
-                    render::landing_roster(&slots, &ap_names),
+                    render::landing_roster(
+                        &slots,
+                        &ap_names,
+                        &st.db.season_commons(season.id).await,
+                    ),
                 )
             }
         }

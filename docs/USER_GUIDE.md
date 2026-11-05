@@ -689,7 +689,7 @@ label = "Archipelago Randomizer mod"
   its file name.
 - The guide is shown on the game page. `{address}` and `{slot}` in it are filled
   in with the season's address and the slot's name. HTML in it is shown as
-  text, and links only go to web pages.
+  text, and links only go to web pages or within Bifrost.
 - Downloads are only the files the setup lists, from inside its folder.
 - The season console flags a setup it can't read and says why. Bifrost reads the
   catalog as it goes, so there's nothing to restart.
@@ -819,11 +819,11 @@ The proxy must run forward-auth on every signed-in path. That includes the
 season-scoped forms under `/s/<id>/`, not only the plain prefixes. Otherwise a
 client can send its own identity headers through the proxy. The signed-in
 prefixes are `/admin`, `/board`, `/log`, `/season`, `/claim`, `/hint`, `/signup`, `/seat`, `/game`, `/prioritize`,
-`/minesweeper`, `/api` and `/mc`. Everything else is public. A Traefik rule
+`/minesweeper`, `/api` and `/common`. Everything else is public. A Traefik rule
 covering both forms looks like:
 
 ```
-PathRegexp(`^(/s/[^/]*/+|/)(admin|board|log|season|claim|hint|signup|seat|game|prioritize|minesweeper|api|mc)`)
+PathRegexp(`^(/s/[^/]*/+|/)(admin|board|log|season|claim|hint|signup|seat|game|prioritize|minesweeper|api|common)`)
 ```
 
 Match any season id there, not just digits, so that no spelling of a season
