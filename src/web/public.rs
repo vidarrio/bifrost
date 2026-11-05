@@ -8,7 +8,11 @@ pub(crate) async fn health() -> &'static str {
 
 pub(crate) async fn favicon() -> impl IntoResponse {
     (
-        [(axum::http::header::CONTENT_TYPE, "image/svg+xml")],
+        [
+            (axum::http::header::CONTENT_TYPE, "image/svg+xml"),
+            // Every page header shows it, so let browsers keep it for a day.
+            (axum::http::header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
         render::FAVICON,
     )
 }
