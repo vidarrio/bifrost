@@ -91,6 +91,18 @@ impl Db {
         Ok(r.rows_affected() > 0)
     }
 
+    /// The seasons not yet archived that include a catalog setup, by name.
+    pub async fn common_in_use(&self, key: &str) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT se.name FROM season_common c JOIN season se ON se.id = c.season_id
+             WHERE c.key = ? AND se.state <> 'archived' ORDER BY se.name COLLATE NOCASE",
+        )
+        .bind(key)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default()
+    }
+
     /// The name this player registered for a kind of common game.
     pub async fn game_ident(&self, account: i64, kind: &str) -> Option<String> {
         sqlx::query_scalar("SELECT name FROM game_ident WHERE account_id = ? AND kind = ?")

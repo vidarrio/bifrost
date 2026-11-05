@@ -47,6 +47,7 @@ const INSTANCE_ROUTES: &[&str] = &[
     "/admin/seasons",
     "/admin/settings",
     "/admin/catalog",
+    "/admin/common-games",
     "/admin/users",
     "/admin/links",
     "/api",

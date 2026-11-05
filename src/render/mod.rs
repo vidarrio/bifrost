@@ -540,6 +540,7 @@ fn console_nav_with(
         ("/admin/seasons", "Seasons"),
         ("/admin/users", "Users &amp; links"),
         ("/admin/catalog", "Apworlds"),
+        ("/admin/common-games", "Common games"),
         ("/admin/settings", "Settings"),
     ] {
         if !sysadmin && href != "/admin/seasons" {

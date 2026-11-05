@@ -26,6 +26,7 @@ mod bundle;
 mod checker;
 mod cli;
 mod common;
+mod common_edit;
 mod config;
 mod db;
 mod generate;

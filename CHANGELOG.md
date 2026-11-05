@@ -56,7 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   played as one shared slot with its own address. Players register the name they play
   under once per kind of game, and moderators download each common game's allowlist
   for the season, as text or JSON. `docs/examples/common` has a Minecraft setup to
-  start from.
+  start from. Sysadmins can also make, edit and delete setups, with their apworld and
+  downloads, under Console → Common games.
 - A read-only export token for common games, made by a sysadmin on the settings page,
   so their own script can fetch every live season's common games, allowlists and seed
   files from `/export/...` with `curl`.
