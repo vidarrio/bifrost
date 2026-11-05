@@ -47,7 +47,7 @@ pub(crate) async fn board_view(
     let season = ctx.id;
     let slots = st.db.slots(season).await.unwrap_or_default();
     let prios = live_priorities(&st, &snap, season).await;
-    let addr = mc_addr();
+    let commons = season_commons(&st, season).await;
     // Board shows the latest slice of the persistent log (journal-sourced).
     let acts = st.db.activity_latest(season, BOARD_ACTIVITY).await;
     let inlogic = st.db.inlogic_counts(season).await;
@@ -70,16 +70,7 @@ pub(crate) async fn board_view(
         &password,
         may_join,
     );
-    render::board_page(
-        &snap,
-        &slots,
-        &prios,
-        addr.as_deref(),
-        &acts,
-        &inlogic,
-        &connect,
-    )
-    .into_response()
+    render::board_page(&snap, &slots, &prios, &commons, &acts, &inlogic, &connect).into_response()
 }
 
 /// The board's live-update payload: the `.boardcols` inner HTML (`body`) + the
@@ -95,13 +86,13 @@ pub(crate) async fn board_fragment_view(
     let season = ctx.id;
     let slots = st.db.slots(season).await.unwrap_or_default();
     let prios = live_priorities(&st, &snap, season).await;
-    let addr = mc_addr();
+    let commons = season_commons(&st, season).await;
     let acts = st.db.activity_latest(season, BOARD_ACTIVITY).await;
     let inlogic = st.db.inlogic_counts(season).await;
     Json(serde_json::json!({
         "conn": render::conn_line(&snap),
         "progress": render::season_progress(&snap, &slots),
-        "body": render::board_fragment(&snap, &slots, &prios, addr.as_deref(), &acts, &inlogic),
+        "body": render::board_fragment(&snap, &slots, &prios, &commons, &acts, &inlogic),
     }))
 }
 

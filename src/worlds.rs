@@ -16,9 +16,10 @@ use crate::ap_adapter::{self, Pin};
 use crate::config::{self, SeasonDirs};
 use crate::db::{Approval, CatalogWorld, Db, WorldRequest};
 
-/// File names an upload may not take: worlds Bifrost ships (Universal
-/// Tracker, the common game), which are trusted by content.
-const RESERVED: &[&str] = &["tracker", "minecraft"];
+/// File names an upload may not take: the world Bifrost ships (Universal
+/// Tracker), which is trusted by content. The catalog's common games' apworlds
+/// are reserved too (see [`upload_file`]).
+const RESERVED: &[&str] = &["tracker"];
 
 /// The name an uploaded apworld installs as, from the uploaded file's name.
 pub fn world_file(upload_name: &str) -> Result<String, &'static str> {
@@ -31,6 +32,19 @@ pub fn world_file(upload_name: &str) -> Result<String, &'static str> {
         return Err("That apworld name is reserved — rename the file and try again.");
     }
     Ok(format!("{base}.apworld"))
+}
+
+/// [`world_file`] for an upload, which can't take the name of an apworld one
+/// of the catalog's common games ships either.
+pub fn upload_file(upload_name: &str) -> Result<String, &'static str> {
+    let file = world_file(upload_name)?;
+    if crate::common::apworld_files()
+        .iter()
+        .any(|w| w.eq_ignore_ascii_case(&file))
+    {
+        return Err("That apworld name is reserved — rename the file and try again.");
+    }
+    Ok(file)
 }
 
 /// `.apworld`s are zips; a quick magic-byte check rejects obvious mistakes.
@@ -564,7 +578,6 @@ mod tests {
             "Pokemon_Crystal.apworld"
         );
         assert!(world_file("tracker.apworld").is_err());
-        assert!(world_file("Minecraft.apworld").is_err());
     }
 
     #[test]

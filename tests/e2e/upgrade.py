@@ -72,16 +72,12 @@ open(outside, "w").close()
 os.chmod(loose, 0o644)
 os.chmod(outside, 0o644)
 os.symlink(outside, link)
-whitelist = os.path.join(srv.data, "mc-whitelist.json")
-open(whitelist, "w").close()
-os.chmod(whitelist, 0o600)
 srv = server()
 srv.start()
 srv.stop()
-check("the Minecraft whitelist stays readable", mode("mc-whitelist.json") == 0o644, oct(mode("mc-whitelist.json")))
 check("a loose file is tightened", mode("loose.txt") == 0o600, oct(mode("loose.txt")))
 check("a link isn't followed", stat.S_IMODE(os.stat(outside).st_mode) == 0o644, oct(os.stat(outside).st_mode))
-for f in (loose, link, outside, whitelist):
+for f in (loose, link, outside):
     os.remove(f)
 check("the data dir is kept to Bifrost's user",
       (mode(), mode("bifrost.db"), mode("seasons")) == (0o711, 0o600, 0o700), (oct(mode()), oct(mode("bifrost.db")), oct(mode("seasons"))))

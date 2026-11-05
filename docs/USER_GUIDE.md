@@ -169,8 +169,8 @@ them with your game's client or patcher.
 - After a re-roll, the page offers the new seed's files; the old ones no
   longer fit the new game.
 - The spoiler log and the server's own file are never offered to players.
-- The common game's page shows its own setup steps (client and mod
-  downloads) instead.
+- A common game's page shows how to join its server instead, with any
+  client files it needs.
 - If your game needs a file and none is listed, ask the season's moderators.
   A world that names its files unusually can't be matched to a slot; the
   moderators see such files in the season console's *Player files* tab and
@@ -189,13 +189,19 @@ A season's minesweeper is for its players. The minesweeper linked from the home
 page is for any account, and is free play: it counts toward the
 all-time leaderboard but earns no hints.
 
-### The common game
+### Common games
 
-A season can include a shared **common game**: a Minecraft world anyone with
-a claimed game this season can join. It has its own hint points, earned as the
-group checks its locations, which any player with a slot can spend. The common
-game's page explains the exact client setup it needs. The server is
-whitelisted, so register your Minecraft username there before joining.
+A season can include **common games**: co-op games the sysadmin hosts, such as
+a Minecraft or Factorio server, that anyone with a game this season can join.
+Each one is a single slot the whole group plays. It has its own hint points,
+earned as the group checks its locations, which any player with a game of their
+own can spend.
+
+A common game's page says how to join its server, with any client files it
+needs. If the server only lets in the season's players, the page also asks for
+the name you play it under, such as your Minecraft username. Register it there
+before joining. One name covers every setup of its kind, so your Minecraft
+username serves every Minecraft server, and nobody else can register it.
 
 ### Past seasons
 
@@ -251,10 +257,15 @@ The season console has six tabs:
   only people with the link shown there can reach them. Non-members don't see a
   private season on the home page or in past seasons. Seasons from before this
   setting stay open until you change them, and so do imported seasons.
-  Turn the season's minesweeper and the common game on or off,
+  Turn the season's minesweeper on or off,
   and set how many bonus hints a player can earn from minesweeper in any
   24 hours (5 by default; 0 means no limit). Also set how many games a player
   can sign up with (0, the default, means no limit); signups already made stay.
+  Under **Common games**, add any of the catalog's common games before
+  generating (see [Common games](#common-games-1)), and set the address each
+  one's players join at. Once generated, the season keeps its common games, and
+  each one's **allowlist** can be downloaded here, as text or JSON: the names
+  this season's players registered for it.
 - **Archive.** What you can do depends on the stage. Destructive actions ask you
   to type the season's name.
   - **Before generation: delete this season.** Removes it and everything in it.
@@ -517,10 +528,9 @@ run from it.
 **Permissions.** Bifrost keeps its data directory to its own user, as it holds password
 hashes, tokens, spoilers and Archipelago passwords. Each start, it tightens the directory
 to at most `0711` and its own files in it to at most `0700` (it won't touch files another
-user owns, such as a `config.toml` you own, or do this when run as root). The exception is `mc-whitelist.json`, for the host's service that
-applies it. If that service isn't Bifrost's user or root, it also needs to pass through
-the directory: `chmod 711` it, as Bifrost creates it `700`. That service also needs to run as Bifrost's user, or as root, to read
-`connect_password.request` on an external server.
+user owns, such as a `config.toml` you own, or do this when run as root). A host's
+service that reads `connect_password.request`, for an external server, needs to run as
+Bifrost's user, or as root.
 
 **Copying the data directory.** The database runs in write-ahead mode, so while
 Bifrost runs, recent changes live in `bifrost.db-wal` beside `bifrost.db`. Keep the data
@@ -642,6 +652,57 @@ The **approval toggle** decides what happens to other uploads:
 Every installed world is pinned by its SHA-256. A world file that changes
 after upload, or appears without going through Bifrost, is refused.
 
+### Common games
+
+A **common game** is a co-op game you host yourself, such as a Minecraft,
+Factorio or Terraria server, that a season includes as one slot everyone plays.
+You keep a catalog of them, and each season's moderators pick from it. A season
+can have several, including two setups of one game, such as a vanilla
+Minecraft server and a modpack one.
+
+Each setup is a folder under `common/` in the data directory, named by its key:
+lower-case letters, digits, `.`, `_` or `-`, such as `vanilla.26.2` or
+`atm10`. It holds a `game.toml`:
+
+```toml
+name = "Minecraft 26.2"         # shown on the board and the game page
+slot = "Vanilla"                # the player name its YAML declares
+yaml = "player.yaml"            # its player options (this is the default)
+apworld = "minecraft.apworld"   # only for a world Archipelago doesn't ship
+address = "mc.example:25565"    # where players join; a season can change it
+guide = "guide.md"              # how to join, in Markdown (this is the default)
+
+[identifier]                    # if the server only lets in the season's players
+kind = "minecraft"              # setups of one kind share players' names
+label = "Minecraft username"
+pattern = "[A-Za-z0-9_]{3,16}"  # a regular expression the whole name must match
+hint = "3 to 16 letters, digits or underscores"
+
+[[download]]                    # client files the game page offers, if any
+file = "client/aprandomizer-2.2.1-26.2.jar"
+label = "Archipelago Randomizer mod"
+```
+
+- The YAML's `name:` has to be the `slot` it says. Once a season adds a setup,
+  that name is reserved in the season, so no signup or seat can take it.
+- An apworld a setup ships is trusted like Bifrost's own, and uploads can't use
+  its file name.
+- The guide is shown on the game page. `{address}` and `{slot}` in it are filled
+  in with the season's address and the slot's name. HTML in it is shown as
+  text, and links only go to web pages or within Bifrost.
+- Downloads are only the files the setup lists, from inside its folder.
+- The season console flags a setup it can't read and says why. Bifrost reads the
+  catalog as it goes, so there's nothing to restart.
+
+[docs/examples/common](examples/common) has a Minecraft setup to start from.
+
+Bifrost never reaches the game's server. Once a season is generated:
+
+1. Set the server up with the slot's file from the season console's **Player
+   files** tab, such as the `.apmc` for Minecraft.
+2. Apply the **allowlist** from the season console's options, and update it
+   when players register. Players see the address the season gives.
+
 ### Archipelago versions
 
 The image and bundle ship a pinned Archipelago. **Settings → Archipelago**
@@ -758,11 +819,11 @@ The proxy must run forward-auth on every signed-in path. That includes the
 season-scoped forms under `/s/<id>/`, not only the plain prefixes. Otherwise a
 client can send its own identity headers through the proxy. The signed-in
 prefixes are `/admin`, `/board`, `/log`, `/season`, `/claim`, `/hint`, `/signup`, `/seat`, `/game`, `/prioritize`,
-`/minesweeper`, `/api` and `/mc`. Everything else is public. A Traefik rule
+`/minesweeper`, `/api` and `/common`. Everything else is public. A Traefik rule
 covering both forms looks like:
 
 ```
-PathRegexp(`^(/s/[^/]*/+|/)(admin|board|log|season|claim|hint|signup|seat|game|prioritize|minesweeper|api|mc)`)
+PathRegexp(`^(/s/[^/]*/+|/)(admin|board|log|season|claim|hint|signup|seat|game|prioritize|minesweeper|api|common)`)
 ```
 
 Match any season id there, not just digits, so that no spelling of a season

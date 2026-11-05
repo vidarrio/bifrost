@@ -10,6 +10,7 @@ use super::*;
 pub fn landing_roster(
     slots: &[SlotRow],
     ap_names: &std::collections::HashMap<i64, String>,
+    commons: &[crate::db::SeasonCommon],
 ) -> String {
     if slots.is_empty() {
         return r#"<div class="empty" style="grid-column:1/-1">The roster fills in once the season's game is running.</div>"#
@@ -23,11 +24,17 @@ pub fn landing_roster(
     let mut entries: Vec<Entry> = group_by_ap(slots)
         .into_iter()
         .map(|g| {
-            // The common game is shared — show it as everyone's, sorted first.
+            // A common game is shared: show it as everyone's, by its name as on
+            // the board, sorted first.
             if g.is_common {
+                let name = g.rows[0]
+                    .common_key
+                    .as_deref()
+                    .and_then(|k| commons.iter().find(|c| c.key == k))
+                    .map_or(g.game, |c| c.name.as_str());
                 return Entry {
-                    key: String::new(),
-                    game: g.game.to_string(),
+                    key: format!("\u{0}{}", name.to_lowercase()),
+                    game: name.to_string(),
                     who: "Everyone".to_string(),
                 };
             }

@@ -117,6 +117,126 @@ pub(super) fn season_load_line(season: &crate::db::SeasonRow) -> String {
     }
 }
 
+/// A season's common games, for the admin page.
+#[derive(Debug, Default)]
+pub struct CommonAdmin {
+    pub chosen: Vec<CommonAdminRow>,
+    /// Catalog setups it could add: (key, name, slot name).
+    pub available: Vec<(String, String, String)>,
+    /// Catalog setups that can't be read: (key, why).
+    pub broken: Vec<(String, String)>,
+    /// Before generation, when the lineup can still change.
+    pub lineup_open: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct CommonAdminRow {
+    pub key: String,
+    pub name: String,
+    pub slot: String,
+    /// The season's own address (empty for the default).
+    pub address: String,
+    pub default_address: String,
+    /// The identifier's label and how many names are on the allowlist.
+    pub allowlist: Option<(String, usize)>,
+    pub problem: Option<String>,
+}
+
+/// The Common games section: the season's, with their addresses and
+/// allowlists, and the catalog's others to add before generation.
+fn common_section(c: &CommonAdmin) -> String {
+    let mut b = String::from(r#"<h2>Common games</h2>"#);
+    b.push_str(r#"<p class="empty">Co-op games the sysadmin hosts, each played as one slot by everyone in the season. They're set up in the catalog (<code>common/</code> in the data folder) and chosen here before generating. Bifrost doesn't reach their servers: set each one up with its seed file, and keep its allowlist up to date from here.</p>"#);
+    if c.chosen.is_empty() {
+        b.push_str(r#"<div class="statline">This season has no common games.</div>"#);
+    }
+    for r in &c.chosen {
+        b.push_str(&format!(
+            r#"<div class="statline"><b>{}</b> <span class="by free">{}</span> · plays as <b>{}</b></div>"#,
+            esc(&r.name),
+            esc(&r.key),
+            esc(&r.slot)
+        ));
+        if let Some(p) = &r.problem {
+            b.push_str(&format!(r#"<p class="warnnote">{}</p>"#, esc(p)));
+        }
+        let shown = if r.address.is_empty() {
+            &r.default_address
+        } else {
+            &r.address
+        };
+        let placeholder = if r.default_address.is_empty() {
+            "host:port players join at".to_string()
+        } else {
+            format!("default: {}", r.default_address)
+        };
+        b.push_str(&format!(
+            r#"<form class="console" method="post" action="admin/common" autocomplete="off"><input type="hidden" name="do" value="address"><input type="hidden" name="key" value="{key}"><input type="text" name="address" value="{addr}" placeholder="{ph}" maxlength="200" style="flex:1;min-width:0" aria-label="Server address"><button type="submit">Set address</button></form>"#,
+            key = esc(&r.key),
+            addr = esc(&r.address),
+            ph = esc(&placeholder),
+        ));
+        if !shown.is_empty() {
+            b.push_str(&format!(
+                r#"<p class="empty">Players see <b>{}</b>. Leave it empty for the setup's default.</p>"#,
+                esc(shown)
+            ));
+        }
+        let mut btns = String::new();
+        if let Some((label, n)) = &r.allowlist {
+            b.push_str(&format!(
+                r#"<p class="empty">Allowlist: {n} {label}{s} registered by this season's players. Download it <a href="admin/common/{k}/allowlist">as text</a> (one per line) or <a href="admin/common/{k}/allowlist?format=json">as JSON</a>.</p>"#,
+                label = esc(label),
+                s = if *n == 1 { "" } else { "s" },
+                k = esc(&r.key),
+            ));
+        }
+        if c.lineup_open {
+            btns.push_str(&action_btn(
+                "admin/common",
+                &[("do", "remove"), ("key", &r.key)],
+                "Remove",
+                true,
+                "",
+            ));
+        }
+        if !btns.is_empty() {
+            b.push_str(&format!(r#"<div class="btnrow">{btns}</div>"#));
+        }
+    }
+    if c.lineup_open {
+        if !c.available.is_empty() {
+            let opts: String = c
+                .available
+                .iter()
+                .map(|(k, n, slot)| {
+                    format!(
+                        r#"<option value="{}">{} (plays as {})</option>"#,
+                        esc(k),
+                        esc(n),
+                        esc(slot)
+                    )
+                })
+                .collect();
+            b.push_str(&format!(
+                r#"<form class="console" method="post" action="admin/common"><input type="hidden" name="do" value="add"><select name="key" style="flex:1;min-width:0" aria-label="Common game">{opts}</select><button type="submit">Add common game</button></form>"#
+            ));
+        } else if c.broken.is_empty() {
+            b.push_str(r#"<p class="empty">The catalog has no other setups.</p>"#);
+        }
+    } else {
+        b.push_str(r#"<p class="empty">The season is generated, so its common games stay as they are. Addresses can still change.</p>"#);
+    }
+    for (k, e) in &c.broken {
+        b.push_str(&format!(
+            r#"<p class="warnnote">Catalog setup <code>{}</code> can't be used: {}.</p>"#,
+            esc(k),
+            esc(e)
+        ));
+    }
+    b
+}
+
 /// The admin control centre: generate, open/close signups, manage the deployed
 /// players + apworlds, and run server commands. Assumes the caller has
 /// already confirmed the viewer is an admin.
@@ -128,7 +248,7 @@ pub fn admin_page(
     seed: Option<&str>,
     signups_open: bool,
     minesweeper_on: bool,
-    mc_on: bool,
+    commons: &CommonAdmin,
     connect_pw: &str,
     running: bool,
     gen_msg: &str,
@@ -576,34 +696,7 @@ pub fn admin_page(
         )),
     }
 
-    // Common game (shared Minecraft server) — read at generation time to decide
-    // whether the communal in-pool slot is included. Toggle it before generating.
-    b.push_str(r#"<h2>Common game (Minecraft)</h2>"#);
-    if mc_on {
-        b.push_str(r#"<div class="statline">The shared Minecraft common game is <b>enabled</b> — the next season generated will include the communal slot.</div>"#);
-        b.push_str(&format!(
-            r#"<div class="btnrow">{}</div>"#,
-            action_btn(
-                "admin/mc",
-                &[("open", "0")],
-                "Disable common game",
-                false,
-                ""
-            )
-        ));
-    } else {
-        b.push_str(r#"<div class="statline">The shared Minecraft common game is <b>disabled</b> — toggle this <b>before generating</b> to include it in the season.</div>"#);
-        b.push_str(&format!(
-            r#"<div class="btnrow">{}</div>"#,
-            action_btn(
-                "admin/mc",
-                &[("open", "1")],
-                "Enable common game",
-                false,
-                ""
-            )
-        ));
-    }
+    b.push_str(&common_section(commons));
 
     b.push_str("</div>");
 

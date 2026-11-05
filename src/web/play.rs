@@ -82,18 +82,14 @@ pub(crate) async fn claim_post(
         return render::notice("There's no account with that name.", false, &back).into_response();
     };
     let slots = st.db.slots(season).await.unwrap_or_default();
-    if slots.iter().any(|r| r.id == f.slot_id && r.is_common) {
+    if slots.iter().any(|r| r.id == f.slot_id && r.is_common()) {
         return render::notice("The common game is everyone's.", false, &back).into_response();
     }
     match st.db.claim_one(season, f.slot_id, account.id).await {
         Ok(db::ClaimOutcome::SlotTaken) => {
             render::notice("That slot already has a player.", false, &back).into_response()
         }
-        Ok(_) => {
-            // Claimant set changed → refresh the MC whitelist export.
-            export_mc_whitelist(&st).await;
-            Redirect::to(&back).into_response()
-        }
+        Ok(_) => Redirect::to(&back).into_response(),
         Err(e) => {
             tracing::warn!("assigning a slot in season {season}: {e}");
             render::notice("Couldn't assign the slot.", false, &back).into_response()

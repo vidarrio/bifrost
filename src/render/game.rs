@@ -47,13 +47,29 @@ hform.addEventListener('submit',function(e){
  }).catch(function(){hbtn.disabled=false;hstatus.className='inlinemsg bad';hstatus.textContent='Request failed.';});
 });"#;
 
-/// Client requirements for the shared Minecraft common game — these MUST match
-/// what's installed on the Minecraft LXC (120). Update all three together when
-/// the common game's versions change.
-pub(super) const MC_GAME_VERSION: &str = "26.2"; // Minecraft Java Edition version
-pub(super) const MC_LOADER: &str = "NeoForge 26.2.0.90"; // mod loader build
-// The AP mod jar name is `crate::generate::MC_MOD_JAR` (shared with the download
-// route that serves it), so the displayed name and the served file can't drift.
+/// A common game's page: what its setup in the catalog says about joining it.
+#[derive(Debug, Default)]
+pub struct CommonView {
+    pub key: String,
+    pub name: String,
+    /// Where players join its server (empty if nobody said).
+    pub address: String,
+    pub guide_html: String,
+    /// The labels of its client downloads, in order.
+    pub downloads: Vec<String>,
+    pub ident: Option<CommonIdent>,
+    /// False if its setup can't be read from the catalog.
+    pub in_catalog: bool,
+}
+
+/// The name a common game's players register for its server's allowlist.
+#[derive(Debug, Default)]
+pub struct CommonIdent {
+    pub label: String,
+    pub hint: String,
+    /// The viewer's, if they've registered one.
+    pub current: Option<String>,
+}
 
 /// The per-game page: its players, hint with live item search,
 /// and all hints in this world with a "prioritize" toggle.
@@ -573,6 +589,78 @@ pub fn inlogic_body(inlogic: Option<&crate::db::InLogic>) -> String {
     s
 }
 
+/// A common game's heading, join guide, downloads and allowlist form.
+fn common_join(c: &CommonView, can_register: bool, back: &str) -> String {
+    let mut out = format!(
+        r#"<h2>Common game</h2><p class="empty"><b>{}</b> is shared by everyone this season: drop in when you're stuck, taking a break or done with your own game. Its checks send items to the rest of the group.</p>"#,
+        esc(&c.name)
+    );
+    if !c.address.is_empty() {
+        out.push_str(&format!(
+            r#"<p class="statline">Server: <b>{}</b></p>"#,
+            esc(&c.address)
+        ));
+    }
+    if !c.in_catalog {
+        out.push_str(
+            r#"<p class="empty">How to join isn't available right now: ask an admin.</p>"#,
+        );
+        return out;
+    }
+    if !c.guide_html.is_empty() {
+        out.push_str(r#"<h3>How to join</h3><div class="guide">"#);
+        out.push_str(&c.guide_html);
+        out.push_str("</div>");
+    }
+    if !c.downloads.is_empty() {
+        out.push_str(r#"<h3>Downloads</h3><ul class="downloads">"#);
+        for (n, label) in c.downloads.iter().enumerate() {
+            out.push_str(&format!(
+                r#"<li><a href="common/{}/file/{n}">{}</a></li>"#,
+                esc(&c.key),
+                esc(label)
+            ));
+        }
+        out.push_str("</ul>");
+    }
+    let Some(id) = &c.ident else {
+        return out;
+    };
+    out.push_str(&format!(r#"<h3>Your {}</h3>"#, esc(&id.label)));
+    if !can_register {
+        out.push_str(&format!(
+            r#"<p class="empty">The server only lets in this season's players. Play a game this season, then come back here to register your {}.</p>"#,
+            esc(&id.label)
+        ));
+        return out;
+    }
+    let cur = id.current.as_deref().unwrap_or("");
+    if !cur.is_empty() {
+        out.push_str(&format!(
+            r#"<p class="statline">On the allowlist as <b>{}</b>.</p>"#,
+            esc(cur)
+        ));
+    }
+    let hint = if id.hint.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", esc(&id.hint))
+    };
+    out.push_str(&format!(
+        r#"<p class="empty">The server only lets in this season's players. Register the exact {label} you'll join with{hint}: the admins put it on the server's allowlist.</p>
+<form method="post" action="common/{key}/ident" class="hintform">
+<input type="hidden" name="back" value="{back}">
+<input name="name" value="{cur}" maxlength="64" autocomplete="off" aria-label="{label}" required>
+<button type="submit">{btn}</button></form>"#,
+        label = esc(&id.label),
+        key = esc(&c.key),
+        back = esc(back),
+        cur = esc(cur),
+        btn = if cur.is_empty() { "Register" } else { "Update" },
+    ));
+    out
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn game_page(
     ap_slot: i64,
@@ -589,8 +677,7 @@ pub fn game_page(
     credits: i64,
     minesweeper_on: bool,
     can_hint_common: bool,
-    mc_username: Option<&str>,
-    mc_addr: Option<&str>,
+    common: Option<&CommonView>,
     files: &[crate::generate::OutputFile],
     inlogic: Option<&crate::db::InLogic>,
     log: &[crate::db::ActivityRow],
@@ -602,7 +689,6 @@ pub fn game_page(
     let live = snap.ap.get(&ap_slot).cloned().unwrap_or_default();
     let back = format!("/game/{game_id}");
     let here: Vec<&SlotRow> = slots.iter().filter(|r| r.ap_slot == ap_slot).collect();
-    let is_common = here.iter().any(|r| r.is_common);
     let mut out = page_head(Some(me));
     out.push_str(GAME_STYLE);
     out.push_str(TABS_CSS);
@@ -637,92 +723,14 @@ pub fn game_page(
         }
     }
 
-    // The common game: shared by everyone, no per-person claim. Show how to join
-    // the Minecraft server instead of claim/hint controls.
-    if is_common {
-        out.push_str(r#"<h2>Common game</h2>"#);
-        out.push_str(r#"<p class="empty">A shared Minecraft world, open to everyone this season — drop in when you're softlocked, taking a break, or done with your own game. Its checks feed the common pool, so playing here releases items to the rest of the group.</p>"#);
-        // How to join: the client must match the server exactly, or
-        // NeoForge refuses the connection. Address comes last as the final step.
-        let addr_step = match mc_addr {
-            Some(addr) => format!(
-                r#"Set your Minecraft username below so you're whitelisted, then open <b>Multiplayer</b> and connect to <b>{}</b>."#,
-                esc(addr)
-            ),
-            None => "Open <b>Multiplayer</b> and connect — ask an admin for the server address."
-                .to_string(),
-        };
-        // Bare address for the Prism steps (the full sentence above is addr_step).
-        let addr = mc_addr
-            .map(esc)
-            .unwrap_or_else(|| "ask an admin".to_string());
-        // Just the NeoForge version (MC_LOADER is "NeoForge 26.2.0.90") for the
-        // Prism "Install Loader → NeoForge → <version>" step.
-        let loader_ver = MC_LOADER.strip_prefix("NeoForge ").unwrap_or(MC_LOADER);
-        out.push_str(&format!(
-            r#"<h3>How to join</h3>
-<ol class="mcjoin">
-<li>Get <b>Minecraft: Java Edition {ver}</b> on a genuine Mojang/Microsoft account (the server runs online-mode).</li>
-<li>Install <b>{loader}</b> — <a href="game/mc/neoforge">download the installer</a>, run it, and it creates a launch profile set to the matching Minecraft version.</li>
-<li>Drop the mod <code>{mod_jar}</code> — <a href="game/mc/mod">download</a> — into that profile's <code>mods/</code> folder. It's the <b>exact</b> jar the server runs; NeoForge drops you on any version mismatch.</li>
-<li>{addr_step}</li>
-</ol>
-<p class="statline">The official Minecraft launcher and Prism both fetch the right Java for you; only a bare manual setup needs you to install <b>Java 25</b> yourself.</p>
-<details class="prism"><summary>Step-by-step with Prism Launcher (recommended)</summary>
-<ol class="mcjoin">
-<li>Install <b>Prism Launcher</b> from <b>prismlauncher.org</b> and open it.</li>
-<li>Top-right accounts button → <b>Manage Accounts</b> → <b>Add Microsoft</b> and sign in (the server is online-mode, so a genuine account is required).</li>
-<li><b>Add Instance</b> → pick Minecraft <b>{ver}</b>, then in the <b>Mod Loader</b> section below the version list choose <b>NeoForge</b> → <b>{loader_ver}</b> → create. Prism downloads the matching Java (25) itself — accept if it offers. <i>(Already made the instance? Instead: <b>Edit → Version → Install Loader</b> in the right panel → NeoForge → {loader_ver}.)</i></li>
-<li>Select the instance → <b>Edit</b> → <b>Mods</b> → <b>Add file…</b> and choose <code>{mod_jar}</code> (grab it from the <a href="game/mc/mod">download</a> above). Nothing else goes in there.</li>
-<li><b>Launch</b> the instance → <b>Multiplayer</b> → <b>Add Server</b> → address <b>{addr}</b> → join.</li>
-</ol></details>"#,
-            ver = MC_GAME_VERSION,
-            loader = MC_LOADER,
-            loader_ver = loader_ver,
-            mod_jar = crate::generate::MC_MOD_JAR,
-            addr = addr,
-        ));
-
-        // Whitelist self-service: the server is whitelisted, so a player with a
-        // claimed game this season registers the exact Minecraft username they'll
-        // join on; the host-side `mc-whitelist-sync` applies it to the server
-        // itself. Same "must own a slot" gate as hinting.
-        out.push_str(r#"<h3>Your Minecraft username</h3>"#);
-        if can_hint_common {
-            let cur = mc_username.unwrap_or("");
-            let status = if cur.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    r#"<p class="statline">Whitelisted as <b>{}</b>.</p>"#,
-                    esc(cur)
-                )
-            };
-            let btn = if cur.is_empty() {
-                "Whitelist me"
-            } else {
-                "Update"
-            };
-            out.push_str(&format!(
-                r#"<p class="empty">The server is whitelisted. Set the exact username of the Mojang/Microsoft account you'll join on — you'll be let in within a minute or so.</p>
-{status}<form method="post" action="mc/username" class="hintform">
-<input type="hidden" name="back" value="{back}">
-<input name="mc_username" value="{cur}" placeholder="YourMinecraftName" pattern="[A-Za-z0-9_]{{3,16}}" maxlength="16" autocomplete="off" required>
-<button type="submit">{btn}</button></form>"#,
-                status = status,
-                back = esc(&back),
-                cur = esc(cur),
-                btn = btn,
-            ));
-        } else {
-            out.push_str(
-                r#"<p class="empty">The server is whitelisted. Play a game this season, then come back here to register your Minecraft username and get let in.</p>"#,
-            );
-        }
+    // A common game: shared by everyone, with no claim. Show how to join its
+    // server instead of the claim and hint controls.
+    if let Some(c) = common {
+        out.push_str(&common_join(c, can_hint_common, &back));
 
         // Tabs: everything hint-related goes in the Hints panel; the Universal
-        // Tracker panel (built above) sits beside it. The join/whitelist info
-        // above stays outside the tabs.
+        // Tracker panel (built above) sits beside it. The join and allowlist
+        // info above stays outside the tabs.
         out.push_str(tabs_open());
 
         // Communal hinting: only players with a claimed game this season may spend

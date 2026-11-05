@@ -21,7 +21,7 @@ pub(crate) async fn render_admin(
         .unwrap_or((false, None, "{}".into()));
     let signups_open = ctx.state().accepts_signups();
     let minesweeper_on = ctx.row.minesweeper_enabled;
-    let mc_on = ctx.row.mc_enabled;
+    let commons = common_admin(st, ctx).await;
     let connect_pw = if config::get().ap_managed {
         st.db.ap_passwords(ctx.id).await.0
     } else {
@@ -57,7 +57,7 @@ pub(crate) async fn render_admin(
         seed.as_deref(),
         signups_open,
         minesweeper_on,
-        mc_on,
+        &commons,
         &connect_pw,
         running,
         &gen_msg,
@@ -417,7 +417,6 @@ pub(crate) async fn admin_archive_season(
     }
     st.seasons.stop(ctx.id).await;
     apinstall::pin(ctx.id, None);
-    export_mc_whitelist(&st).await;
 
     Redirect::to(&ctx.url("/season")).into_response()
 }
@@ -981,7 +980,6 @@ pub(crate) async fn admin_cancel(
         }
         ptrack::remove_season(ctx.id);
         apinstall::pin(ctx.id, None);
-        export_mc_whitelist(&st).await;
         claim.say("Cancelled: back to signups.");
         tracing::info!("season {} cancelled back to signups by {who}", ctx.id);
         Redirect::to(&ctx.url("/admin")).into_response()
@@ -1057,7 +1055,6 @@ pub(crate) async fn admin_delete_season(
         if let Some(p) = ctx.row.seed.as_deref().and_then(archive::bundle_path) {
             let _ = tokio::fs::remove_file(p).await;
         }
-        export_mc_whitelist(&st).await;
         tracing::info!("season {} “{}” deleted by {who}", ctx.id, ctx.row.name);
         Redirect::to("/admin/seasons").into_response()
     });

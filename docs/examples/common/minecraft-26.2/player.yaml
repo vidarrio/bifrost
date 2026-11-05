@@ -1,0 +1,4 @@
+# The common game's player options. `name` has to be game.toml's `slot`.
+name: Commons
+game: Minecraft
+Minecraft: {}

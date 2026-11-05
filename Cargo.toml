@@ -34,6 +34,8 @@ libc = "0.2"  # sandbox floor: setrlimit / setsid / killpg for AP helper process
 toml = { version = "1.1", default-features = false, features = ["std", "serde", "parse"] }  # $BIFROST_DATA/config.toml
 tower = { version = "0.5", default-features = false }  # Layer: the season-URL rewrite wraps the router
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }  # verifies signed release checksums (bifrost update)
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }  # common-game join guides (Markdown) on the game page
+regex = { version = "1", default-features = false, features = ["std", "unicode"] }  # a common game's rule for its players' names
 
 [profile.release]
 strip = true

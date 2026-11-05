@@ -809,7 +809,7 @@ const LOGGED_IN_PREFIXES: &[&str] = &[
     "/prioritize",
     "/minesweeper",
     "/api",
-    "/mc",
+    "/common",
 ];
 
 pub fn tier(path: &str) -> Tier {
@@ -1066,7 +1066,8 @@ mod tests {
             "/prioritize",
             "/minesweeper/new",
             "/api/me",
-            "/mc/username",
+            "/common/vanilla/ident",
+            "/common/vanilla/file/0",
         ] {
             assert_eq!(tier(p), Tier::LoggedIn, "{p}");
         }

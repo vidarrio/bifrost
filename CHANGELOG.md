@@ -49,6 +49,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Packs that track hints or a game's
   own progress there now show them, and hinted locations are outlined on the map.
   Nothing a pack does can write to the server.
+- Common games. A sysadmin keeps a catalog of co-op games they host, such as a
+  Minecraft, Factorio or Terraria server, one folder each under `common/` in the data
+  directory, with its YAML, any apworld, a join guide in Markdown and client files to
+  download. A season can include several, including two setups of one game, each
+  played as one shared slot with its own address. Players register the name they play
+  under once per kind of game, and moderators download each common game's allowlist
+  for the season, as text or JSON. `docs/examples/common` has a Minecraft setup to
+  start from.
 
 ### Security
 
@@ -122,14 +130,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A signup's `name:` has to be one plain name of at most 16 characters, without
   placeholders. Those worked until generation, but the host then didn't get their slot.
 - Slot names ignore case when checking they're free, as Archipelago does.
-- The data directory is kept to Bifrost's user. `mc-whitelist.json` stays readable; a
-  service reading `connect_password.request` needs to run as Bifrost's user or root.
+- The data directory is kept to Bifrost's user. A service reading
+  `connect_password.request` needs to run as Bifrost's user or root.
 - An account that has played can't be deleted, so history stays complete.
 - The database runs in write-ahead mode, so `bifrost.db-wal` sits beside `bifrost.db`
   while it runs. Keep the data directory on a local filesystem, and copy the database
   through `bifrost backup` or with Bifrost stopped.
 - A season's apworlds are locked once it's generated.
-- If you use forward auth, add `/seat` to your proxy's signed-in paths when you upgrade.
+- If you use forward auth, add `/seat` and `/common` to your proxy's signed-in paths when you upgrade
+  (`/common` replaces `/mc`).
   To reach private seasons' pages, also add `/board`, `/log` and `/season`, then set
   `season_pages = true`. Until you do, nobody can read a private season's pages or any
   season's before generation, sysadmins included, and new seasons are private. Don't set
@@ -144,6 +153,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The built-in Minecraft common game, its `[minecraft] address` setting and
+  `BIFROST_MC_ADDR`, and `mc-whitelist.json`. Set it up as a common game instead, from
+  `docs/examples/common/minecraft-26.2`: its address goes in its `game.toml` or on the
+  season console, and its allowlist is downloaded from the season console. A
+  `config.toml` that still has `[minecraft]` is refused, with a note saying so.
 - The season buttons for clearing players, the save or the world, and the full reset:
   they could leave a running season broken. Cancel generation and deleting replace them.
 - Upgrading from 0.2 or earlier. Seasons, games, slots and seats now have generated ids,

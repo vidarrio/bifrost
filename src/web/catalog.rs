@@ -48,7 +48,7 @@ pub(crate) async fn catalog_upload(
         if !worlds::looks_like_apworld(&bytes) {
             return Err("That doesn't look like a valid .apworld (zip) file.".to_string());
         }
-        let file = worlds::world_file(&fname).map_err(str::to_string)?;
+        let file = worlds::upload_file(&fname).map_err(str::to_string)?;
         let who = me.username();
         worlds::catalog_add(&st.db, &file, &bytes, &game, &version, &note, &who).await
     }

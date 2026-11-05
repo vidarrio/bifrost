@@ -1,0 +1,23 @@
+# A Minecraft common game: Minecraft Java Edition 26.2 with NeoForge and the
+# Archipelago Randomizer mod. Copy this folder into the data directory's
+# common/, add the apworld and the client files it names, and change what
+# doesn't match your server. The versions here must match what your server
+# runs, or NeoForge refuses the connection.
+name = "Minecraft 26.2"
+slot = "Commons"
+apworld = "minecraft.apworld"
+address = "mc.example:25565"
+
+[identifier]
+kind = "minecraft"
+label = "Minecraft username"
+pattern = "[A-Za-z0-9_]{3,16}"
+hint = "3 to 16 letters, digits or underscores"
+
+[[download]]
+file = "client/neoforge-26.2.0.90-installer.jar"
+label = "NeoForge 26.2.0.90 installer"
+
+[[download]]
+file = "client/aprandomizer-2.2.1-26.2.jar"
+label = "Archipelago Randomizer mod 2.2.1"
