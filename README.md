@@ -1,3 +1,5 @@
+<img src="static/logo.svg" alt="" width="96" align="right">
+
 # Bifrost
 
 > [!WARNING]

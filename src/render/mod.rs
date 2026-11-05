@@ -89,12 +89,9 @@ fn human_size(n: u64) -> String {
     }
 }
 
-/// The signature favicon — a dark rounded square with a gold `›` caret,
-/// matching the home launcher. Served at `/favicon.svg`.
-pub const FAVICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <rect width="32" height="32" rx="7" fill="#121a26"/>
-  <path d="M13 9.5 L21 16 L13 22.5" fill="none" stroke="#d8b46b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>"##;
+/// The logo: six islands joined by three bridges through a shared middle.
+/// Served at `/favicon.svg`, and shown beside the name in every header.
+pub const FAVICON: &str = include_str!("../../static/logo.svg");
 
 fn status_label(status: i64) -> (&'static str, &'static str) {
     match status {
@@ -191,7 +188,7 @@ details.identedit{margin:-4px 0 8px}details.identedit summary{cursor:pointer;fon
 .players .who{font-family:inherit;font-size:15px;font-weight:600;color:var(--fg)}.players .by{font-size:12px;color:var(--muted)}.players .by.mine{color:var(--ok)}
 header{width:100%;border-bottom:1px solid var(--bd);background:var(--panel)}
 header .hwrap{max-width:900px;margin:0 auto;padding:0 16px;height:52px;display:flex;align-items:center;gap:14px}
-header .brand{font-weight:700;font-size:16px;color:var(--fg);text-decoration:none}header .brand:hover{text-decoration:none}
+header .brand{font-weight:700;font-size:16px;color:var(--fg);text-decoration:none;display:flex;align-items:center;gap:8px}header .brand img{width:22px;height:22px}header .brand:hover{text-decoration:none}
 header .spacer{flex:1}
 .who{font-family:var(--mono);font-size:12px;color:var(--muted)}.who b{color:var(--fg)}.who a{color:var(--accent)}
 .pill{white-space:nowrap;display:inline-flex;align-items:center;font-family:var(--mono);font-size:11px;line-height:1;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);text-decoration:none;border:1px solid var(--bd);border-radius:999px;padding:4px 11px}.pill:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
@@ -290,7 +287,7 @@ pre.out{background:#0b0f14;border:1px solid var(--bd);border-radius:8px;padding:
 #conlog{max-height:320px;overflow:auto;margin-bottom:8px}
 .warnnote{color:var(--warn);font-size:12px;margin:4px 0}
 </style></head><body>
-<header><div class="hwrap"><a class="brand" href="/">Bifrost</a><span class="spacer"></span><span class="who" id="who"></span><span id="adminslot"></span><span id="homeslot"></span></div></header>
+<header><div class="hwrap"><a class="brand" href="/"><img src="/favicon.svg" alt="">Bifrost</a><span class="spacer"></span><span class="who" id="who"></span><span id="adminslot"></span><span id="homeslot"></span></div></header>
 <script>
 "#,
     identity_js!(),
