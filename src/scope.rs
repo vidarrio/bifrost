@@ -50,6 +50,7 @@ const INSTANCE_ROUTES: &[&str] = &[
     "/admin/users",
     "/admin/links",
     "/api",
+    "/export",
     "/login",
     "/logout",
     "/setup",

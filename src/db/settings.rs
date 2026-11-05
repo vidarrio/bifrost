@@ -89,6 +89,24 @@ impl Db {
         Ok(())
     }
 
+    /// The common-game export token's hash, if the sysadmin made one.
+    pub async fn export_token_hash(&self) -> Option<String> {
+        self.setting("export_token").await.filter(|h| !h.is_empty())
+    }
+
+    /// Set the export token's hash, or drop it (`None`).
+    pub async fn set_export_token_hash(&self, hash: Option<&str>) -> Result<(), sqlx::Error> {
+        match hash {
+            Some(h) => self.set_setting("export_token", h).await,
+            None => {
+                sqlx::query("DELETE FROM setting WHERE key = 'export_token'")
+                    .execute(&self.pool)
+                    .await?;
+                Ok(())
+            }
+        }
+    }
+
     /// The key for known-device cookies: made once, then kept.
     pub async fn device_key(&self) -> String {
         if let Some(k) = self.setting("device_key").await.filter(|k| !k.is_empty()) {

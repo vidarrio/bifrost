@@ -5,10 +5,13 @@ guide is shown safely with the season's address filled in; its downloads are
 only the files it lists; players with a game of their own register a name per
 kind of game, unique per kind; and the admin downloads the season's allowlist.
 The lineup is fixed once generated, and a re-roll keeps it."""
+import io
 import json
 import os
 import re
 import shutil
+import sqlite3
+import zipfile
 
 from lib import Server, check, fixture, get, new_season, post, summary, wait_for
 
@@ -114,6 +117,62 @@ try:
     r = get(ann, f"/s/{sid}/admin/common/vanilla.1/allowlist")
     check("only admins get it", "Steve" not in r.text)
     check("the admin page counts it", "Allowlist: 2 Minecraft usernames" in admin())
+
+    # The export, for a sysadmin's own sync.
+    export = lambda path, tok, scheme="Bearer", **kw: srv.session().get(srv.base + path, headers={"Authorization": f"{scheme} {tok}"} if tok else {}, **kw)
+    # A season that isn't live, with a common game: it stays out of the export.
+    other = new_season(root, "Not yet")
+    post(root, f"/s/{other}/admin/common", data={"do": "add", "key": "vanilla.1"})
+    check("the export is off without a token", export("/export/commons", None).status_code == 401)
+    r = post(ann, "/admin/settings/export", data={"do": "new"})
+    check("only a sysadmin makes a token", "Sysadmins only" in r.text)
+    r = root.post(srv.base + "/admin/settings/export", data={"do": "new"})
+    token = re.search(r'<code class="token">([0-9a-f]+)</code>', r.text).group(1)
+    check("a wrong token is refused", export("/export/commons", "0" * 64).status_code == 401)
+    check("a session isn't a token", get(root, "/export/commons").status_code == 401)
+    # A per-slot file for the common game and one for a player, as a world that
+    # makes files would leave in the seed.
+    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+        slot_of = dict(db.execute("SELECT name, ap_slot FROM slot WHERE season_id = ?", (sid,)).fetchall())
+    zpath = os.path.join(srv.data, "seasons", sid, "output", "current.zip")
+    seed = next(n for n in zipfile.ZipFile(zpath).namelist() if n.endswith(".archipelago")).rsplit(".", 1)[0]
+    with zipfile.ZipFile(zpath, "a") as z:
+        # In a folder, as some worlds keep theirs.
+        z.writestr(f"Vanilla/{seed}_P{slot_of['Vanilla']}_Vanilla.apmc", b"VANILLA-SEED")
+        z.writestr(f"{seed}_P{slot_of['Ann']}_Ann.apmc", b"ANN-SEED")
+    r = export("/export/commons", token)
+    idx = r.json()
+    mine = [s for s in idx["seasons"] if s["id"] == sid]
+    commons = {c["key"]: c for c in mine[0]["commons"]} if mine else {}
+    check("the index lists the live season's common games", set(commons) == {"vanilla.1", "modded"} and mine[0]["seed"], r.text[:600])
+    check("and only live seasons'", [s["id"] for s in idx["seasons"]] == [sid], [s["id"] for s in idx["seasons"]])
+    v = commons.get("vanilla.1", {})
+    al = v.get("allowlist") or {}
+    check("with their address and allowlist", v.get("address") == "vanilla.example:25565" and al.get("count") == 2 and al.get("kind") == "minecraft", v)
+    vfile = f"Vanilla/{seed}_P{slot_of['Vanilla']}_Vanilla.apmc"
+    files = v.get("files") or []
+    check("and their slot's files only", [(f["name"], f["filename"]) for f in files] == [(vfile, vfile.split("/")[-1])], files)
+    r = export(files[0]["url"], token) if files else None
+    check("a file downloads by its url", r is not None and r.content == b"VANILLA-SEED", r and r.status_code)
+    r = export(f"/export/{sid}/vanilla.1/file", token, params={"name": files[0]["name"]}) if files else None
+    check("and by its name as listed", r is not None and r.content == b"VANILLA-SEED", r and r.status_code)
+    check("the scheme's case doesn't matter", export("/export/commons", token, scheme="bearer").status_code == 200)
+    check("a malformed request without a token is refused, not parsed", export("/export/nope/vanilla.1/file", None).status_code == 401)
+    r = export(f"/export/{sid}/vanilla.1/file", token, params={"name": f"{seed}_P{slot_of['Ann']}_Ann.apmc"})
+    check("not another slot's file", r.status_code == 404 and b"ANN-SEED" not in r.content, r.status_code)
+    r = export(f"/export/{sid}/vanilla.1/file", token, params={"name": f"{seed}.archipelago"})
+    check("nor the server's", r.status_code == 404)
+    r = export(f"/export/{sid}/vanilla.1/allowlist", token)
+    check("the allowlist downloads with the token", r.text == "Alex_2\nSteve\n", repr(r.text))
+    check("not without it", export(f"/export/{sid}/vanilla.1/allowlist", None).status_code == 401)
+    check("only a season's own common games", export(f"/export/{sid}/broken/allowlist", token).status_code == 404)
+    check("settings say a token is set", "A token is set" in get(root, "/admin/settings").text)
+    r = root.post(srv.base + "/admin/settings/export", data={"do": "new"})
+    token2 = re.search(r'<code class="token">([0-9a-f]+)</code>', r.text).group(1)
+    check("replacing it stops the old one", export("/export/commons", token).status_code == 401)
+    check("and the new one works", export("/export/commons", token2).status_code == 200)
+    root.post(srv.base + "/admin/settings/export", data={"do": "revoke"})
+    check("revoking turns the export off", "No token is set" in get(root, "/admin/settings").text and export("/export/commons", token2).status_code == 401)
 
     r = post(root, f"/s/{sid}/admin/common", data={"do": "remove", "key": "modded"})
     check("a generated season keeps its common games", "keeps its common games" in r.text and "plays as <b>Modded</b>" in admin(), r.text[-300:])

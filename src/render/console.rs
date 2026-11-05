@@ -133,6 +133,61 @@ pub struct SettingsStatus {
     pub backup_last: Option<(i64, String, bool)>,
     /// The live-load panel's contents ([`load_panel`]).
     pub load_html: String,
+    /// Whether there's a common-game export token.
+    pub export_token: bool,
+}
+
+/// The common-game export token: make, replace or revoke it.
+pub(super) fn export_panel(status: &SettingsStatus) -> String {
+    let mut b = String::from(
+        r#"<h2 id="export">Common-game export</h2><p class="statline">For your own sync to the common games' servers: a read-only token that fetches every live season's common games, their allowlists and their seed files from <code>/export/commons</code>. It reads nothing else.</p>"#,
+    );
+    if status.export_token {
+        b.push_str(r#"<p class="statline">A token is set. Replacing it stops the old one working.</p><div class="btnrow">"#);
+        b.push_str(&action_btn(
+            "/admin/settings/export",
+            &[("do", "new")],
+            "Replace token",
+            false,
+            "Replace the export token? Anything using the old one stops working.",
+        ));
+        b.push_str(&action_btn(
+            "/admin/settings/export",
+            &[("do", "revoke")],
+            "Revoke",
+            true,
+            "Revoke the export token?",
+        ));
+    } else {
+        b.push_str(
+            r#"<p class="statline">No token is set, so the export is off.</p><div class="btnrow">"#,
+        );
+        b.push_str(&action_btn(
+            "/admin/settings/export",
+            &[("do", "new")],
+            "Make a token",
+            false,
+            "",
+        ));
+    }
+    b.push_str("</div>");
+    b
+}
+
+/// The new export token, shown once, with how to use it.
+pub fn export_token_page(token: &str) -> Html<String> {
+    let mut b = page_head(None);
+    b.push_str(&format!(
+        r#"<h1>Export token</h1><div class="crumb"><a href="/admin/settings#export">← settings</a></div>
+<div class="banner ok">Copy it now: it isn't shown again, and only its hash is kept.</div>
+<p><code class="token">{t}</code></p>
+<p class="statline">Send it as a bearer token. The index lists every live season's common games, each with its allowlist's and files' URLs:</p>
+<pre>curl -H "Authorization: Bearer {t}" https://&lt;bifrost&gt;/export/commons</pre>
+<p class="statline">An allowlist is one name per line, or JSON with <code>?format=json</code>. A season's seed name changes when it's re-rolled, which is when its servers need their new files.</p>"#,
+        t = esc(token)
+    ));
+    b.push_str("</main></body></html>");
+    Html(b)
 }
 
 pub(super) fn backups_panel(status: &SettingsStatus) -> String {
@@ -359,6 +414,7 @@ pub fn settings_page(
     ));
     body.push_str(&ap_panel(status));
     body.push_str(&backups_panel(status));
+    body.push_str(&export_panel(status));
     let discords: String = inst
         .discords
         .iter()

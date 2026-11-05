@@ -30,6 +30,7 @@ pub(crate) async fn settings_status(st: &AppState) -> render::SettingsStatus {
         .collect();
     let names = seasons.iter().map(|s| (s.id, s.name.clone())).collect();
     render::SettingsStatus {
+        export_token: st.db.export_token_hash().await.is_some(),
         load_html: render::load_panel(load::snapshot().as_ref(), &names),
         installs,
         active_ap: apinstall::active().version,
