@@ -83,6 +83,16 @@ try:
     j = get(root, f"/s/{sid}/game/{game}/inlogic").json()
     check("…and gets the latest result", "Somewhere New" in j.get("body", "") and j.get("avail") == " · 1 available", j)
 
+    # Its header figures and hints list follow the game too.
+    check("the game page polls its figures and hints", 'id="gamestats"' in page and f"game/'+slot+'/live" in page)
+    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
+        (hinted,) = c.execute("SELECT game_id FROM slot WHERE id = ?", (ids[0],)).fetchone()
+    live = lambda: get(root, f"/s/{sid}/game/{hinted}/live").json()
+    j = wait_for(lambda: (x := live()) and "Map Width" in x.get("hints", "") and x, 60, 3) or live()
+    check("…which carry the slot's hints", "Map Width" in j.get("hints", ""), j)
+    stats = re.search(r'id="gamestats"[^>]*>([^<]*)<', get(root, f"/s/{sid}/game/{hinted}").text)
+    check("…and the header's figures", stats and re.fullmatch(r"\d+ locations · sent \d+ · received \d+ · \d+ left", j.get("stats", "")) and j["stats"] == stats.group(1), (j.get("stats"), stats and stats.group(1)))
+
     # A real player: AP's own client library, no Bifrost tag.
     port = re.search(r"127\.0\.0\.1:(391\d\d)", get(root, f"/s/{sid}/admin").text + srv.logtext()).group(1)
     def connect_as(name, extra):

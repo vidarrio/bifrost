@@ -81,6 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A game page's figures (locations, sent, received, left) and its list of hints for the slot's
+  items keep themselves current while the page is open, as the board does.
 - A game page's Universal Tracker tab keeps itself current while it's open, as the
   PopTracker and activity tabs do, and the "available" count at the top updates with it.
   Before, it showed the result from when the page loaded.

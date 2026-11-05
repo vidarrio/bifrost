@@ -565,26 +565,57 @@ pub(crate) async fn game_hints(
     ctx: scope::SeasonCtx,
     me: auth::Me,
 ) -> Html<String> {
-    let my_id = me.id();
-    let (_me, is_admin) = ctx.ident(&me);
-    let season = ctx.id;
     let Some(snap) = ctx.rt.with_board(|b| b.snapshot()) else {
         return Html(String::new());
     };
-    let prios = live_priorities(&st, &snap, season).await;
-    let can_prioritize = is_admin || st.db.claims_ap_slot(season, my_id, ap_slot).await;
+    Html(hints_html(&st, &ctx, &me, &snap, game_id, ap_slot).await)
+}
+
+/// The game page's list of hints for the slot's items.
+async fn hints_html(
+    st: &AppState,
+    ctx: &scope::SeasonCtx,
+    me: &auth::Me,
+    snap: &crate::ap::BoardSnapshot,
+    game_id: crate::id::Id,
+    ap_slot: i64,
+) -> String {
+    let (_me, is_admin) = ctx.ident(me);
+    let prios = live_priorities(st, snap, ctx.id).await;
+    let can_prioritize = is_admin || st.db.claims_ap_slot(ctx.id, me.id(), ap_slot).await;
     let (views, found_items) = snap
         .ap
         .get(&ap_slot)
         .map(|a| (a.hint_views.clone(), a.found_items.clone()))
         .unwrap_or_default();
-    Html(render::hint_rows(
+    render::hint_rows(
         &views,
         &found_items,
         &prios,
         &format!("/game/{game_id}"),
         can_prioritize,
-    ))
+    )
+}
+
+/// What the game page keeps up to date while it's open: the header's figures
+/// and the hints for the slot's items.
+pub(crate) async fn game_live(
+    scope::GameRef {
+        id: game_id,
+        ap_slot,
+    }: scope::GameRef,
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+) -> Json<serde_json::Value> {
+    let Some(snap) = ctx.rt.with_board(|b| b.snapshot()) else {
+        return Json(serde_json::json!({}));
+    };
+    let live = snap.ap.get(&ap_slot).cloned().unwrap_or_default();
+    Json(serde_json::json!({
+        "stats": render::game_stats(&live),
+        "hints": hints_html(&st, &ctx, &me, &snap, game_id, ap_slot).await,
+    }))
 }
 
 /// The Universal Tracker tab's latest contents and the header's count, which
