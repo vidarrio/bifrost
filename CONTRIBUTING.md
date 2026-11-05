@@ -293,6 +293,22 @@ the tables that reference it, and the references are checked before the step
 commits. The first start of a new version takes a pre-upgrade backup before
 migrating; restoring it and running the old version undoes the upgrade.
 
+Two checks hold this in place:
+
+- `STEP_SHA256` and `BASELINE_SHA256` in `src/db/migrate.rs` pin the SHA-256 of
+  each step and of the baseline, and a unit test fails if one of them changes.
+  A new step appends its hash.
+- From the 0.3.0 release on, CI's `lint` job also compares with the latest
+  release tag (`.github/scripts/schema_frozen.py`). `schema.sql` has to be the
+  same, and that release's step hashes have to come first in today's list. So
+  changing a pinned hash doesn't get a change past it.
+
+The `upgrade` suite opens `tests/e2e/fixtures/baseline.db`, a database at the
+baseline that Bifrost wrote through its own pages, and checks what it holds
+after every step since. It's made by `tests/e2e/fixtures/make_baseline.py`.
+Remake it only before 0.3.0 is tagged, from the build that gets tagged. After
+that it stands for what 0.3.0 wrote, and stays as it is.
+
 ### End-to-end tests
 
 The suites in `tests/e2e/` start real Bifrost instances on throwaway data

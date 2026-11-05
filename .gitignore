@@ -1,6 +1,7 @@
 /target
 /data
 *.db
+!tests/e2e/fixtures/baseline.db
 *.db-*
 
 # commit-message scratch

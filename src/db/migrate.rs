@@ -25,6 +25,18 @@ const STEPS: &[&str] = &[];
 /// The schema at version 1.
 const BASELINE: &str = include_str!("schema.sql");
 
+/// SHA-256 of [`BASELINE`] and of each of [`STEPS`], as released. From 0.3.0
+/// these never change: a schema change is a new step, whose hash is appended
+/// here. CI also checks them against the latest release
+/// (`.github/scripts/schema_frozen.py`), so editing a hash doesn't get a
+/// change past it.
+#[cfg(test)]
+const BASELINE_SHA256: &str = "1b68101bf129b84bb4000b35f85920e12b991ea395bda368206ea2a1f367b981";
+// schema-steps-begin
+#[cfg(test)]
+const STEP_SHA256: &[&str] = &[];
+// schema-steps-end
+
 /// The schema version this build writes.
 pub const SCHEMA_VERSION: i64 = 1 + STEPS.len() as i64;
 
@@ -220,6 +232,30 @@ mod tests {
         db.migrate().await.unwrap();
         assert_eq!(db.stamp().await.unwrap(), stamp);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_released_schema_doesnt_change() {
+        let hash = |s: &str| crate::auth::token_hash(s);
+        assert_eq!(
+            hash(BASELINE),
+            BASELINE_SHA256,
+            "schema.sql changed: from 0.3.0 the baseline is frozen, so add a step to STEPS \
+             instead (before then, update BASELINE_SHA256)"
+        );
+        for (i, (step, want)) in STEPS.iter().zip(STEP_SHA256).enumerate() {
+            assert_eq!(
+                hash(step),
+                *want,
+                "STEPS[{i}] changed: a released step is never edited, add another"
+            );
+        }
+        assert_eq!(
+            STEPS.len(),
+            STEP_SHA256.len(),
+            "STEPS and STEP_SHA256 differ in length: a step is only ever appended, with its \
+             hash appended to STEP_SHA256"
+        );
     }
 
     #[tokio::test]
