@@ -736,11 +736,16 @@ It only reads, and only these:
 Send the token as a bearer token:
 
 ```sh
-curl -H "Authorization: Bearer $TOKEN" https://bifrost.example/export/commons
+printf 'Authorization: Bearer %s\n' "$TOKEN" > bifrost-export.hdr    # chmod 600
+curl -H @bifrost-export.hdr https://bifrost.example/export/commons
 ```
 
 Behind forward auth, `/export` is one of the public paths: leave it out of the
 proxy's sign-in, and let the `Authorization` header through.
+
+[docs/examples/common/sync](examples/common/sync) shows two ways to go about
+it: copying the allowlist into place on a timer, and applying it to a running
+Minecraft server over RCON.
 
 ### Archipelago versions
 
