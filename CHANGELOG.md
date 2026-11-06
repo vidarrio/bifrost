@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The home page lists your seasons instead of showcasing one: every season you can see
+  that isn't archived (drafts only for those who run them), public ones and private
+  ones you're in, live ones first, each
+  with its state, its games and players, and your own games in it. The "Join the
+  current game" section and the "Live board" card are gone.
+- How to join a season is a tab on its live board, next to the board itself: its
+  address, its password for those who may see it, the Archipelago version its server
+  runs, which can differ between seasons, and your games in it. The board's heading is
+  the season's name.
 - Bifrost has a logo: six islands joined by bridges. It replaces the gold caret as the
   favicon, shows beside the name in the page header and on the home page.
 

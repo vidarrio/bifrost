@@ -26,7 +26,6 @@ srv.start()
 try:
     check("runs the expected build", f"Archipelago {VERSION} bundled" in srv.logtext())
     root = srv.setup_sysadmin()
-    check("landing shows the upstream version", f"Archipelago {BASE}<" in get(root, "/").text or f"Archipelago {BASE} " in get(root, "/").text)
     sid = new_season(root, "Quiet")
     post(root, f"/s/{sid}/admin/signups", data=dict(open="1"))
     for y in YAMLS:
@@ -35,6 +34,7 @@ try:
     t = wait_for(lambda: (x := get(root, f"/s/{sid}/admin").text) and ("Generated seed" in x or "Failed" in x) and x, 300, 3)
     check("generation", t and "Generated seed" in t)
     check("tracker connects", wait_for(lambda: "Ann" in get(root, f"/s/{sid}/board").text, 60))
+    check("the board's join tab shows the upstream version", f"Archipelago {BASE}</strong>" in get(root, f"/s/{sid}/board").text)
 
     claim = get(root, f"/s/{sid}/claim").text
     ids = re.findall(r'name="slot_id" value="([0-9a-z]+)"', claim)

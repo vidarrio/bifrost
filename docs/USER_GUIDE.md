@@ -33,9 +33,12 @@ A season moves through four states:
 4. **Archived**: finished. Its summary stays on the home page under *Past seasons*.
 
 Several seasons can be live at once. Each live season has its own server on
-its own port. When a page isn't tied to a particular season (the home page,
-`/board`, `/signup`), it means the live season. If none is live, it means the
-newest season in progress, and failing that the most recently archived one.
+its own port. The home page lists the seasons you can see that aren't
+archived, live ones first, with your own games on their cards. A draft is
+listed only for those who run it. When a page isn't tied to a particular
+season (`/board`, `/signup`), it means the live season. If none is live, it
+means the newest season in progress, and failing that the most recently
+archived one.
 Every season also has its own addresses under `/s/<id>/…`, such as
 `/s/4kzp9mwq2xhtc7jn/board`. Its id is generated, so an address says nothing about
 what other seasons exist.
@@ -127,11 +130,14 @@ moderator assigns each slot to an account from the **Slots** page.
 
 ### Connecting
 
-Each live season's board shows its address (`host:port`) and, if one is set, its
-connect password. The password only shows to the season's players, its moderators
-and sysadmins. Under forward auth that needs `season_pages`: without it the board
-has no identity, so it says who the password is for and doesn't show it.
-In your game's Archipelago client, connect to that address using your slot name.
+Open the season from the home page: a live season opens on its board. The
+board's **How to join** tab gives the season's address (`host:port`), its
+connect password if one is set, the Archipelago version its server runs, which
+can differ from season to season, and links to your own games. The password
+only shows to the season's players, its moderators and sysadmins. Under forward
+auth that needs `season_pages`: without it the board has no identity, so it
+says who the password is for and doesn't show it. Install that version's
+client, and connect it to that address using your slot name.
 
 If your game needs a patch or output file (a ROM patch, a mod file, a save to
 load), it's usually waiting on your slot's game page: see

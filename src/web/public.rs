@@ -39,121 +39,88 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
     for season in st.db.seasons().await {
         let mods = st.db.season_mods(season.id).await;
         if scope::can_view(&st, &season, &mods, &me).await {
-            seen.push(season);
+            let manage = me.can(auth::Action::ManageSeason { mods: &mods });
+            seen.push((season, manage));
         }
     }
-    // The roster is rendered live so it never needs hand-editing between
-    // seasons: AP slot names from the default season's live board, the people
-    // (incl. co-op) from the DB. Before its seed exists, the section shows the
-    // season's sign-up queue, filling in live as people register.
-    // The season the page is about: the default, or if this viewer can't see that,
-    // the one of theirs that's furthest along.
-    let default = match st.db.default_season().await {
-        Some(d) if seen.iter().any(|s| s.id == d.id) => Some(d),
-        _ => seen
+    // The signed-in player's own games in live seasons, linked from their cards.
+    let mut mine = if me.id() == 0 {
+        Vec::new()
+    } else {
+        st.db.live_games_of(me.id()).await
+    };
+    let mut cards = Vec::new();
+    // A draft isn't open to anyone yet, so only those who run it see its card.
+    let current = seen.iter().filter(|(s, manage)| match s.state() {
+        db::State::Archived => false,
+        db::State::Draft => *manage,
+        _ => true,
+    });
+    for (s, _) in current {
+        let subs = st.db.submissions(s.id).await.unwrap_or_default();
+        let players = subs
             .iter()
-            .filter(|s| s.state() != db::State::Archived)
-            .min_by_key(|s| match s.state() {
-                db::State::Live => 0,
-                db::State::Generating => 1,
-                db::State::Signup => 2,
-                _ => 3,
-            })
-            .cloned(),
+            .map(|s| s.account_id)
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        let href = match s.state() {
+            db::State::Live => format!("/s/{}/board", s.id),
+            db::State::Draft => format!("/s/{}/admin", s.id),
+            _ => format!("/s/{}/signup", s.id),
+        };
+        let member = me.id() != 0 && st.db.is_season_member(s.id, me.id()).await;
+        let (own, rest): (Vec<_>, Vec<_>) = mine.into_iter().partition(|g| g.0 == s.id);
+        mine = rest;
+        cards.push(render::SeasonCard {
+            id: s.id,
+            name: s.name.clone(),
+            state: s.state(),
+            href,
+            games: subs.len(),
+            players,
+            member,
+            mine: own
+                .into_iter()
+                .map(|(season, game_id, slot, game)| render::MyGame {
+                    season,
+                    game_id,
+                    slot,
+                    game,
+                })
+                .collect(),
+        });
+    }
+    // Live first, then what's coming; the newest first within each.
+    let rank = |s: db::State| match s {
+        db::State::Live => 0,
+        db::State::Generating => 1,
+        db::State::Signup => 2,
+        _ => 3,
     };
-    // The board card needs a season. If there is one but this viewer can't see any,
-    // it would only lead to a refusal; a visitor who can still sign in may turn out
-    // to be a member.
-    let can_sign_in = me.principal().is_none() && st.auth.mode == auth::AuthMode::Native;
-    let season_cards = default.is_some() || can_sign_in || st.db.default_season().await.is_none();
-    let season_base = default
-        .as_ref()
-        .map(|d| format!("/s/{}", d.id))
-        .unwrap_or_default();
-    let (label, roster) = match default {
-        Some(season) if season.state() != db::State::Archived => {
-            let slots = st.db.slots(season.id).await.unwrap_or_default();
-            if slots.is_empty() {
-                let subs = st.db.submissions(season.id).await.unwrap_or_default();
-                (
-                    format!("{} — who's signed up", season.name),
-                    render::landing_signups(&subs),
-                )
-            } else {
-                let ap_names: std::collections::HashMap<i64, String> = st
-                    .seasons
-                    .get(season.id)
-                    .with_board(|b| b.slots.iter().map(|(k, s)| (*k, s.name.clone())).collect())
-                    .unwrap_or_default();
-                (
-                    format!("{} — who's playing what", season.name),
-                    render::landing_roster(
-                        &slots,
-                        &ap_names,
-                        &st.db.season_commons(season.id).await,
-                    ),
-                )
-            }
-        }
-        _ => ("No season under way".to_string(), String::new()),
-    };
+    let created: std::collections::HashMap<Id, i64> =
+        seen.iter().map(|(s, _)| (s.id, s.created_at)).collect();
+    cards.sort_by_key(|c| (rank(c.state), std::cmp::Reverse(created[&c.id])));
+    // A visitor who can still sign in may turn out to be in a private season.
+    let sign_in = (me.principal().is_none() && st.auth.mode == auth::AuthMode::Native)
+        .then(|| st.auth.sign_in_url());
     let past: Vec<(Id, String, i64)> = seen
         .iter()
+        .map(|(s, _)| s)
         .filter(|s| s.state() == db::State::Archived)
         .cloned()
         .map(|s| (s.id, s.name, s.archived_at.unwrap_or(s.created_at)))
         .collect();
     let past_html = render::past_seasons_section(&past);
-    // Everything operator-specific comes from the instance settings; the AP
-    // version from the install Bifrost actually runs.
+    // Everything operator-specific comes from the instance settings.
     let inst = st.db.instance().await;
-    let live: Vec<(Id, String)> = seen
-        .iter()
-        .filter(|s| s.state() == db::State::Live)
-        .map(|s| (s.id, s.name.clone()))
-        .collect();
-    // The signed-in player's own games in live seasons, to link from the top.
-    let mine: Vec<render::MyGame> = if me.id() == 0 {
-        Vec::new()
-    } else {
-        st.db
-            .live_games_of(me.id())
-            .await
-            .into_iter()
-            // Only seasons the viewer can see, as listed above.
-            .filter(|(sid, ..)| live.iter().any(|(id, _)| id == sid))
-            .map(|(season, game_id, slot, game)| render::MyGame {
-                season,
-                game_id,
-                slot,
-                game,
-            })
-            .collect()
-    };
-    let mut landing = LANDING.to_string();
-    if !season_cards {
-        while let (Some(i), Some(j)) = (
-            landing.find("<!--SEASONCARD-->"),
-            landing.find("<!--/SEASONCARD-->"),
-        ) {
-            landing.replace_range(i..j + "<!--/SEASONCARD-->".len(), "");
-        }
-    }
     Html(
-        landing
+        LANDING
             // Constant first, so no data inserted below can be read as it.
             .replace("<!--IDENTITYJS-->", render::IDENTITY_JS)
-            .replace("<!--SEASONBASE-->", &season_base)
-            .replace("<!--SEASONLABEL-->", &render::escape(&label))
-            .replace("<!--ROSTER-->", &roster)
+            .replace("<!--SEASONS-->", &render::landing_seasons(&cards, sign_in))
             .replace("<!--PASTSEASONS-->", &past_html)
-            .replace("<!--CONNECT-->", &render::landing_connect(&live, &mine))
             .replace("<!--HOMEPILL-->", &render::home_pill(&inst.home_url))
             .replace("<!--TAG-->", &render::landing_tag(&inst.domain))
-            .replace(
-                "<!--APVERSION-->",
-                &render::escape(&format!("Archipelago {}", apinstall::active().upstream())),
-            )
             .replace("<!--DISCORDS-->", &render::landing_discords(&inst.discords)),
     )
 }

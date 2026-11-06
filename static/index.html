@@ -43,13 +43,6 @@
   .signup-link{font-size:13px; text-transform:none; letter-spacing:0; color:var(--accent); text-decoration:none; white-space:nowrap}
   .signup-link:hover{text-decoration:underline}
   .card{background:var(--panel); border:1px solid var(--bd); border-radius:14px; padding:18px 20px}
-  .join{display:flex; flex-wrap:wrap; gap:18px 26px; align-items:center}
-  .join .cs{font-family:var(--mono); font-size:22px; color:var(--fg)}
-  .join .lbl{font-family:var(--mono); font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin-bottom:4px}
-  .join .pw{color:var(--muted); font-size:14px}
-  .join .cs + .lbl{margin-top:12px}
-  .steps{margin:14px 0 0; padding-left:18px; color:var(--muted); font-size:14px}
-  .steps li{margin:3px 0}
   .grid{display:grid; gap:12px}
   .roster{grid-template-columns:repeat(3,1fr)}
   @media (max-width:640px){.roster{grid-template-columns:repeat(2,1fr)}}
@@ -57,6 +50,18 @@
   .slot{background:var(--panel); border:1px solid var(--bd); border-radius:10px; padding:10px 12px}
   .slot .who{font-family:var(--mono); font-size:13px; color:var(--accent)}
   .slot .game{font-size:14px}
+  .slot.stretch{position:relative}
+  .stretch .cover{color:inherit; text-decoration:none; font-weight:600}
+  .stretch .cover::after{content:""; position:absolute; inset:0}
+  .stretch:hover{border-color:var(--accent)}
+  .stretch:hover .cover{color:var(--accent)}
+  .slot .st{float:right; font-family:var(--mono); font-size:11px; color:var(--muted); margin-left:8px}
+  .slot.live .st{color:var(--ok)}
+  .slot.signup .st{color:var(--accent)}
+  .slot .meta{font-family:var(--mono); font-size:12px; color:var(--muted)}
+  .slot .you{font-size:13px; color:var(--muted); margin-top:4px}
+  .slot .you a{position:relative; z-index:1}
+  .empty{grid-column:1/-1; color:var(--muted); font-size:14px}
   .cols{display:grid; grid-template-columns:1fr 1fr; gap:16px}
   @media (max-width:640px){.cols{grid-template-columns:1fr}}
   ul.links{list-style:none; padding:0; margin:0; display:grid; gap:10px}
@@ -80,22 +85,10 @@
     <h1>Bifrost</h1>
     <span class="tag"><!--TAG--></span>
   </div>
-  <p class="lede">The bridge between the worlds — a home for Archipelago multiworlds. How to connect, who's playing what, and where to track your run.</p>
+  <p class="lede">The bridge between worlds — a home for Archipelago multiworlds. Your seasons, how to join them, and where to track your run.</p>
 
-  <h2 class="sec">Join the current game</h2>
-  <div class="card join">
-    <div>
-      <!--CONNECT-->
-    </div>
-    <ol class="steps">
-      <li>Install the <strong><!--APVERSION--></strong> client and your game's AP mod/patch.</li>
-      <li>If your game needs a patch or output file, download it from <strong>your game page</strong>: open it from the live board. Most games connect directly and need none.</li>
-      <li>Connect the client to the address on your season's live board, with your slot name.</li>
-    </ol>
-  </div>
-
-  <h2 class="sec seasonhdr"><span><!--SEASONLABEL--></span><a class="signup-link" href="/signups">Sign up for a season →</a></h2>
-  <div class="grid roster"><!--ROSTER--></div>
+  <h2 class="sec seasonhdr"><span>Seasons</span><a class="signup-link" href="/signups">Sign up for a season →</a></h2>
+  <div class="grid roster"><!--SEASONS--></div>
 
   <!--PASTSEASONS-->
 
@@ -118,7 +111,7 @@
       <li><a href="https://github.com/FarisTheAncient/Archipelago/releases" target="_blank" rel="noopener">Universal Tracker</a> — drop-in tracker showing which of your locations are in logic right now. Works with almost any game.</li>
       <li><a href="https://github.com/black-sliver/PopTracker" target="_blank" rel="noopener">PopTracker</a> — visual map/item auto-tracker; grab your game's pack.</li>
     </ul>
-    <div class="hint">Several games also ship their own tracker (e.g. the BG3 and Pokémon packs, the PoE web tracker). Point it at your season's address, on its live board, with your slot name.</div>
+    <div class="hint">Several games also ship their own tracker (e.g. the BG3 and Pokémon packs, the PoE web tracker). Point it at your season's address, under <em>How to join</em> on its live board, with your slot name.</div>
   </div>
 
   <h2 class="sec">Tools</h2>
@@ -127,10 +120,6 @@
       <strong>YAML checker →</strong>
       <div class="hint">Validate your options file against the installed worlds before you submit it — catches version drift and bad option values.</div>
     </a>
-    <!--SEASONCARD--><a class="card" href="<!--SEASONBASE-->/board" style="display:block; color:inherit">
-      <strong>Live board →</strong>
-      <div class="hint">Everyone's slots, hints, goals and DeathLinks, live in one place.</div>
-    </a><!--/SEASONCARD-->
   </div>
 
   <h2 class="sec">Minigames</h2>
@@ -141,7 +130,7 @@
     </a>
   </div>
 
-  <footer>Bifrost · the bridge between the worlds</footer>
+  <footer>Bifrost · the bridge between worlds</footer>
 </main>
 </body>
 </html>

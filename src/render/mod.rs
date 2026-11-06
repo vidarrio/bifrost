@@ -32,11 +32,6 @@ pub use mine::*;
 pub use season::*;
 pub use signup::*;
 
-/// HTML-escape (for callers outside this module).
-pub fn escape(s: &str) -> String {
-    esc(s)
-}
-
 /// Make JSON safe to embed in a `<script>` element: `<`, `>` and `&` (which
 /// only occur inside JSON strings) become `\u` escapes, so no data, such as an
 /// item name from an uploaded world, can end the element or open a comment.
