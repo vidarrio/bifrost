@@ -192,7 +192,8 @@ try:
     with sqlite3.connect(os.path.join(again.data, "bifrost.db")) as db:
         mine = db.execute("SELECT id FROM submission WHERE season_id = ? AND id != ?", (winter, seeded)).fetchone()[0]
     post(player, f"/s/{winter}/signup/delete", data=dict(id=mine))
-    post(player, f"/s/{winter}/signup/delete", data=dict(id=seeded))
+    r = post(player, f"/s/{winter}/signup/delete", data=dict(id=seeded))
+    check("withdrawing a seeded signup says why it can't", "stay as they are" in r.text, re.findall(r'class="banner[^"]*">[^<]*', r.text))
     with sqlite3.connect(os.path.join(again.data, "bifrost.db")) as db:
         left = {r[0] for r in db.execute("SELECT id FROM submission WHERE season_id = ?", (winter,))}
     check("…and withdraw their own signup, but not the seeded one", left == {seeded}, left)

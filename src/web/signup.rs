@@ -622,17 +622,17 @@ pub(crate) async fn signup_delete(
     ctx: scope::SeasonCtx,
     me: auth::Me,
     Form(f): Form<DelForm>,
-) -> Redirect {
+) -> Response {
     let my_id = me.id();
     let (_me, is_admin) = ctx.ident(&me);
     #[cfg(feature = "demo")]
     if crate::demo::is_seeded(&f.id) {
-        return Redirect::to(&ctx.url("/signup"));
+        return render::signup_result(crate::demo::SEEDED_OFF, false).into_response();
     }
     if let Ok(Some(yaml_file)) = st.db.delete_submission(ctx.id, f.id, my_id, is_admin).await {
         remove_yaml(&yaml_file).await;
     }
-    Redirect::to(&ctx.url("/signup"))
+    Redirect::to(&ctx.url("/signup")).into_response()
 }
 
 #[derive(Deserialize)]
