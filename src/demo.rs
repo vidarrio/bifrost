@@ -76,8 +76,20 @@ pub async fn ensure_accounts(db: &Db, mode: auth::AuthMode) {
     reset_interval();
     // Started from a snapshot: its seasons are the demo's own.
     if std::env::var_os("BIFROST_DEMO_SNAPSHOT").is_some() {
-        let ids = db.seasons().await.into_iter().map(|s| s.id).collect();
+        let ids: std::collections::HashSet<_> =
+            db.seasons().await.into_iter().map(|s| s.id).collect();
+        let mut subs = std::collections::HashSet::new();
+        for id in &ids {
+            subs.extend(
+                db.submissions(*id)
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|s| s.id),
+            );
+        }
         let _ = PROTECTED.set(ids);
+        let _ = SEEDED.set(subs);
     }
     tracing::warn!(
         "DEMO BUILD: anyone who can reach this instance can act as any account, sysadmin \
@@ -197,6 +209,19 @@ pub fn locked(method: &Method, path: &str) -> bool {
 /// until the reset. Everything works on a season a visitor makes.
 static PROTECTED: OnceLock<std::collections::HashSet<crate::id::Id>> = OnceLock::new();
 
+/// The signups in the demo's own seasons when it started. Visitors can add
+/// signups to them, and withdraw, replace or annotate those, but not touch
+/// these (see `web::signup`).
+static SEEDED: OnceLock<std::collections::HashSet<crate::id::Id>> = OnceLock::new();
+
+/// Was this signup in the demo's snapshot?
+pub fn is_seeded(submission: &crate::id::Id) -> bool {
+    SEEDED.get().is_some_and(|s| s.contains(submission))
+}
+
+/// The refusal for a change to a seeded signup.
+pub const SEEDED_OFF: &str = "The demo's own signups stay as they are. You can withdraw, replace or annotate a signup you made.";
+
 /// Is this one of the demo's own seasons?
 pub fn is_protected(id: &crate::id::Id) -> bool {
     PROTECTED.get().is_some_and(|p| p.contains(id))
@@ -228,15 +253,15 @@ async fn season_of(
 fn allowed_on_own(path: &str) -> bool {
     matches!(
         path,
-        "/hint" | "/prioritize" | "/signup" | "/signup/check" | "/admin/console"
+        "/hint" | "/prioritize" | "/signup" | "/signup/check" | "/signup/delete" | "/admin/console"
     ) || path.starts_with("/minesweeper/")
         || path.starts_with("/seat/")
         || path
             .strip_prefix("/common/")
             .is_some_and(|r| r.ends_with("/ident") && r.matches('/').count() == 1)
-        || path
-            .strip_prefix("/signup/game/")
-            .is_some_and(|r| r.ends_with("/notes") && r.matches('/').count() == 1)
+        || path.strip_prefix("/signup/game/").is_some_and(|r| {
+            (r.ends_with("/notes") || r.ends_with("/yaml")) && r.matches('/').count() == 1
+        })
 }
 
 /// Console commands that only read, the ones the demo's own seasons take.
@@ -254,14 +279,19 @@ pub fn console_ok(cmd: &str) -> bool {
 
 /// Refuses what [`locked`] says, and changes to the demo's own seasons,
 /// whoever asks.
-pub async fn guard(State(st): State<AppState>, req: Request, next: Next) -> Response {
+pub async fn guard(State(st): State<AppState>, mut req: Request, next: Next) -> Response {
     let changes = req.method() != Method::GET && req.method() != Method::HEAD;
-    let own = if changes && !allowed_on_own(req.uri().path()) {
+    let mut own = None;
+    if changes {
         let (selected, path) = (crate::scope::selected(&req), req.uri().path().to_string());
-        season_of(&st, selected, &path).await.filter(is_protected)
-    } else {
-        None
-    };
+        let season = season_of(&st, selected, &path).await;
+        // Pin it, so the handler acts on the season checked here, not on a
+        // default season that has changed since.
+        if let (None, Some(id)) = (selected, season) {
+            crate::scope::select(&mut req, id);
+        }
+        own = season.filter(|id| is_protected(id) && !allowed_on_own(&path));
+    }
     let mut r = if let Some(id) = own {
         (
             StatusCode::FORBIDDEN,
@@ -461,6 +491,8 @@ mod tests {
             "/seat/abc",
             "/common/minecraft/ident",
             "/signup/game/ab12/notes",
+            "/signup/game/ab12/yaml",
+            "/signup/delete",
         ] {
             assert!(allowed_on_own(p), "{p}");
         }
@@ -474,8 +506,6 @@ mod tests {
             "/game/ab12/poptracker/remove",
             "/game/ab12/invite",
             "/claim",
-            "/signup/delete",
-            "/signup/game/ab12/yaml",
             "/signup/game/ab12/seat/remove",
             "/common/minecraft/file/0",
         ] {

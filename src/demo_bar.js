@@ -8,13 +8,15 @@
  var locked=[/^\/admin\/settings(\/|$)/,/^\/admin\/catalog\//,/^\/admin\/common-games(\/|$)/,/^\/admin\/users\//,/^\/admin\/links\//,/^\/admin\/worlds\/(approve|to-catalog)$/,/^\/signup\/apworld$/,/^\/admin\/seasons\/import$/,/^\/game\/[^\/]+\/poptracker$/];
  function tail(u){var p=new URL(u,location.href).pathname;var m=p.match(/^\/s\/[0-9a-z]+(\/.*)?$/);return m?(m[1]||'/board'):p}
  function isLocked(u){var t=tail(u);return locked.some(function(r){return r.test(t)})}
+ // What the server still takes on the demo's own seasons (src/demo.rs, allowed_on_own).
+ var ownOk=[/^\/(hint|prioritize|signup|signup\/check|signup\/delete|admin\/console)$/,/^\/minesweeper\//,/^\/seat\//,/^\/common\/[^\/]+\/ident$/,/^\/signup\/game\/[^\/]+\/(notes|yaml)$/];
  function mark(prot){
   // The demo's own seasons: their admin forms (bar the console) are refused too.
   var sm=location.pathname.match(/^\/s\/([0-9a-z]+)\//);
   if(sm&&prot&&prot.indexOf(sm[1])>=0){
    document.querySelectorAll('form').forEach(function(f){
     var t=tail(f.action);
-    if((f.method||'get').toLowerCase()==='post'&&t.indexOf('/admin/')===0&&t!=='/admin/console')
+    if((f.method||'get').toLowerCase()==='post'&&!ownOk.some(function(r){return r.test(t)}))
      f.querySelectorAll('button,input[type=submit],input[type=file]').forEach(function(b){b.disabled=true;b.title="The demo's own seasons stay as they are: make a season of your own to try this"});
    });
   }

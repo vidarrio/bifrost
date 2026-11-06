@@ -61,6 +61,12 @@ const INSTANCE_ROUTES: &[&str] = &[
     "/favicon.svg",
 ];
 
+/// Make a request about season `id`, as if it had come under `/s/{id}/`.
+#[cfg(feature = "demo")]
+pub fn select(req: &mut Request, id: Id) {
+    req.extensions_mut().insert(Selected(id));
+}
+
 /// Is `path` an instance-level page (one of [`INSTANCE_ROUTES`])?
 #[cfg(feature = "demo")]
 pub fn is_instance(path: &str) -> bool {

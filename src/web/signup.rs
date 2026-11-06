@@ -152,6 +152,10 @@ pub(crate) async fn signup_game_notes(
     Path(id): Path<Id>,
     Form(f): Form<NotesForm>,
 ) -> Response {
+    #[cfg(feature = "demo")]
+    if crate::demo::is_seeded(&id) {
+        return render::signup_result(crate::demo::SEEDED_OFF, false).into_response();
+    }
     // Browsers send line breaks as CRLF but count them as one.
     let notes = f.notes.replace("\r\n", "\n");
     let notes = notes.trim();
@@ -185,6 +189,10 @@ pub(crate) async fn signup_game_yaml(
 ) -> Response {
     let closed = "You can't replace this YAML: it isn't yours, or signups are closed.";
     let refuse = |text: &str| render::signup_result(text, false).into_response();
+    #[cfg(feature = "demo")]
+    if crate::demo::is_seeded(&id) {
+        return refuse(crate::demo::SEEDED_OFF);
+    }
     let Some(sub) = st.db.submission(ctx.id, id).await else {
         return refuse(closed);
     };
@@ -617,6 +625,10 @@ pub(crate) async fn signup_delete(
 ) -> Redirect {
     let my_id = me.id();
     let (_me, is_admin) = ctx.ident(&me);
+    #[cfg(feature = "demo")]
+    if crate::demo::is_seeded(&f.id) {
+        return Redirect::to(&ctx.url("/signup"));
+    }
     if let Ok(Some(yaml_file)) = st.db.delete_submission(ctx.id, f.id, my_id, is_admin).await {
         remove_yaml(&yaml_file).await;
     }

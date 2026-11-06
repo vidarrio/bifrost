@@ -182,6 +182,22 @@ try:
     check("…nor items released from the console", r.json().get("ok") is False and "only runs" in r.json().get("output", ""), r.text[:200])
     r = post(admin, f"/s/{autumn}/hint", data=dict(slot_id="0", item="x"))
     check("…while playing in them still works", r.status_code != 403, r.status_code)
+    # Signups on the demo's own season: a visitor's can be withdrawn, the seeded one stays.
+    player = as_role(again, "player")
+    with sqlite3.connect(os.path.join(again.data, "bifrost.db")) as db:
+        winter = db.execute("SELECT id FROM season WHERE name = 'Winter season'").fetchone()[0]
+        seeded = db.execute("SELECT id FROM submission WHERE season_id = ?", (winter,)).fetchone()[0]
+    r = post(player, f"/s/{winter}/signup", files={"yaml": ("y.yaml", YAML.format("Visitor").encode())})
+    check("visitors can sign up to the demo's own season", 'banner ok' in r.text, re.findall(r'class="banner[^"]*">[^<]*', r.text))
+    with sqlite3.connect(os.path.join(again.data, "bifrost.db")) as db:
+        mine = db.execute("SELECT id FROM submission WHERE season_id = ? AND id != ?", (winter, seeded)).fetchone()[0]
+    post(player, f"/s/{winter}/signup/delete", data=dict(id=mine))
+    post(player, f"/s/{winter}/signup/delete", data=dict(id=seeded))
+    with sqlite3.connect(os.path.join(again.data, "bifrost.db")) as db:
+        left = {r[0] for r in db.execute("SELECT id FROM submission WHERE season_id = ?", (winter,))}
+    check("…and withdraw their own signup, but not the seeded one", left == {seeded}, left)
+    r = post(admin, f"/s/{winter}/signup/game/{seeded}/notes", data=dict(notes="defaced"))
+    check("…nor rewrite its notes", "stay as they are" in r.text, re.findall(r'class="banner[^"]*">[^<]*', r.text))
     check("…but their pages still show", get(admin, f"/s/{autumn}/admin").ok and get(admin, f"/s/{autumn}/board").ok)
     r = post(admin, f"/s/{autumn}/admin/console", data=dict(cmd="/players"))
     check("…and the console still answers", r.ok and r.json().get("ok"), r.text[:200])
