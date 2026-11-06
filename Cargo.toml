@@ -12,6 +12,11 @@ publish = false
 [workspace]
 members = ["crates/poptracker"]
 
+[features]
+# A build for a public demo: passwordless role switching, with what that
+# would make dangerous turned off (src/demo.rs). Never in a release.
+demo = []
+
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["multipart"] }

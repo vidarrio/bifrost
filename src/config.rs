@@ -237,7 +237,11 @@ impl Config {
                 .into(),
             ap_journal_unit: var("BIFROST_AP_JOURNAL_UNIT").unwrap_or_else(|| "archipelago".into()),
             ap_managed: var("BIFROST_AP_MODE").as_deref() != Some("external"),
+            // A demo build keeps game servers on localhost (src/demo.rs).
+            #[cfg(not(feature = "demo"))]
             ap_bind: var("BIFROST_AP_BIND").unwrap_or_else(|| "0.0.0.0".into()),
+            #[cfg(feature = "demo")]
+            ap_bind: crate::demo::AP_BIND.into(),
             ap_ports: var("BIFROST_AP_PORTS")
                 .map(|r| parse_port_range(&r).unwrap_or_else(|e| panic!("BIFROST_AP_PORTS: {e}")))
                 .unwrap_or(38281..=38300),

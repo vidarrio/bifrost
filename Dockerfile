@@ -23,6 +23,9 @@ ARG APT="apt-get -o APT::Sandbox::User=root"
 # ---- Bifrost ----
 FROM docker.io/library/rust:1.99.1-${DEBIAN} AS bifrost
 WORKDIR /src
+# Cargo features: empty for every release; `demo` builds the public demo's
+# image (packaging/demo/README.md).
+ARG FEATURES=""
 # The toolchain rust-toolchain.toml names, in a layer of its own.
 COPY rust-toolchain.toml ./
 RUN rustup toolchain install
@@ -32,14 +35,14 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/poptracker/Cargo.toml crates/poptracker/
 RUN mkdir -p src crates/poptracker/src \
     && echo 'fn main() {}' > src/main.rs && touch crates/poptracker/src/lib.rs \
-    && cargo build --release --locked --bin bifrost \
+    && cargo build --release --locked --bin bifrost --features "$FEATURES" \
     && rm -rf src crates/poptracker/src
 COPY crates crates
 COPY src src
 COPY static static
 # Newer than the stubs, so cargo rebuilds them.
 RUN touch src/main.rs crates/poptracker/src/lib.rs \
-    && cargo build --release --locked --bin bifrost
+    && cargo build --release --locked --bin bifrost --features "$FEATURES"
 
 # ---- Archipelago (source checkout + venv; paths match the runtime stage) ----
 FROM docker.io/library/debian:${DEBIAN}-slim AS archipelago

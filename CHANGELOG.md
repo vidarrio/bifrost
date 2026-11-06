@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A demo build (`cargo build --features demo`) for a public demo: a bar switches between
+  a player, a moderator and a sysadmin account without passwords. Since every visitor
+  can be sysadmin, it turns off what could run code, host files or change the instance,
+  caps seasons and games, keeps game servers on localhost, and resets from a snapshot.
+  Release builds don't include it. See `packaging/demo/README.md`.
+
 ### Changed
 
 - Bifrost has a logo: six islands joined by bridges. It replaces the gold caret as the
