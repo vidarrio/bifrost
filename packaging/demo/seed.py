@@ -58,6 +58,13 @@ def main(base, data):
         if 'class="banner ok"' not in r.text:
             sys.exit(f"seed: {name}'s signup failed: {r.text[:300]}")
 
+    def state(sid):
+        """The season's state, from its row in the console's season list."""
+        for row in admin.get(f"{base}/admin/seasons").text.split("<tr"):
+            if f"/s/{sid}/" in row:
+                m = re.search(r'<span class="tag">([a-z]+)</span>', row)
+                return m and m.group(1)
+
     def generate(sid):
         post(admin, f"/s/{sid}/admin/generate")
         for _ in range(120):
@@ -90,11 +97,14 @@ def main(base, data):
     signup(player, old, "Ann")
     signup(mod, old, "Mia")
     generate(old)
-    for _ in range(30):
-        if "isn't connected" not in post(admin, f"/s/{old}/admin/archive-season", data=dict(name="Summer season")).text:
+    # Archiving waits for the live board to see the game, which can take a
+    # few minutes after generation.
+    for _ in range(100):
+        post(admin, f"/s/{old}/admin/archive-season", data=dict(name="Summer season"))
+        if state(old) == "archived":
             break
         time.sleep(3)
-    if admin.get(f"{base}/s/{old}/season").status_code != 200:
+    else:
         sys.exit(f"seed: season {old} didn't archive")
 
     print("seed: a live season with a common game", flush=True)

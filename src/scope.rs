@@ -61,6 +61,21 @@ const INSTANCE_ROUTES: &[&str] = &[
     "/favicon.svg",
 ];
 
+/// Make a request about season `id`, as if it had come under `/s/{id}/`.
+#[cfg(feature = "demo")]
+pub fn select(req: &mut Request, id: Id) {
+    req.extensions_mut().insert(Selected(id));
+}
+
+/// Is `path` an instance-level page (one of [`INSTANCE_ROUTES`])?
+#[cfg(feature = "demo")]
+pub fn is_instance(path: &str) -> bool {
+    INSTANCE_ROUTES.iter().any(|r| {
+        path.strip_prefix(r)
+            .is_some_and(|after| after.is_empty() || after.starts_with('/'))
+    })
+}
+
 /// Split `/s/{id}/rest` into `(id, "/rest")`; `/s/{id}` alone is its board.
 /// `None` for an instance-level page under `/s/` (it then 404s), and for any
 /// id or tail a forward-auth proxy's path rule might not read the same way
@@ -129,6 +144,12 @@ pub async fn rewrite(mut req: Request, next: Next) -> Response {
         }
     }
     BASE.scope(RefCell::new(String::new()), next.run(req)).await
+}
+
+/// The season a request under `/s/{id}/` is about, once [`rewrite`] has run.
+#[cfg(feature = "demo")]
+pub fn selected(req: &Request) -> Option<Id> {
+    req.extensions().get::<Selected>().map(|s| s.0)
 }
 
 /// The season a request is about.

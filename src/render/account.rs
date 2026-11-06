@@ -6,7 +6,7 @@ pub(super) const AUTH_STYLE: &str = r#"<style>
 .authform{display:grid;gap:12px;max-width:380px;margin-bottom:10px}
 .authform label{display:grid;gap:4px;font-size:13px;color:var(--muted)}
 .authform input,.linkform input,.linkform select,.utable select{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:7px 9px;font-size:13px}
-.authform button,.linkform button{justify-self:start}
+.authform button,.linkform button{justify-self:start;padding:8px 14px;font-size:13px}
 .utable{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px}
 .utable th{text-align:left;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:6px 8px;border-bottom:1px solid var(--bd)}
 .utable td{padding:7px 8px;border-bottom:1px solid var(--bd);vertical-align:middle}

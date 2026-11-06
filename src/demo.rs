@@ -38,9 +38,12 @@ pub const ACCOUNTS: &[(&str, Role)] = &[
     ("sysadmin", Role::Sysadmin),
 ];
 
-/// At most this many seasons, and this many games in a season.
+/// At most this many seasons, this many games in a season, and this many
+/// seasons live (or generating) at once: each live season runs a game server
+/// of a couple of hundred MB.
 pub const MAX_SEASONS: usize = 12;
 pub const MAX_GAMES: i64 = 12;
+pub const MAX_LIVE: usize = 4;
 
 /// The bar (the header script appends it, through `render`'s `demo_js!`).
 #[cfg(test)]
@@ -71,6 +74,23 @@ pub async fn ensure_accounts(db: &Db, mode: auth::AuthMode) {
          see each visitor's address (or BIFROST_DEMO_DIRECT=1 if visitors reach it directly)"
     );
     reset_interval();
+    // Started from a snapshot: its seasons are the demo's own.
+    if std::env::var_os("BIFROST_DEMO_SNAPSHOT").is_some() {
+        let ids: std::collections::HashSet<_> =
+            db.seasons().await.into_iter().map(|s| s.id).collect();
+        let mut subs = std::collections::HashSet::new();
+        for id in &ids {
+            subs.extend(
+                db.submissions(*id)
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|s| s.id),
+            );
+        }
+        let _ = PROTECTED.set(ids);
+        let _ = SEEDED.set(subs);
+    }
     tracing::warn!(
         "DEMO BUILD: anyone who can reach this instance can act as any account, sysadmin \
          included, without a password"
@@ -145,7 +165,11 @@ pub(crate) async fn status() -> Json<serde_json::Value> {
     let reset_in = RESET_AT
         .get()
         .map(|at| at.saturating_duration_since(Instant::now()).as_secs());
-    Json(serde_json::json!({ "reset_in": reset_in }))
+    let protected: Vec<String> = PROTECTED
+        .get()
+        .map(|p| p.iter().map(|id| id.to_string()).collect())
+        .unwrap_or_default();
+    Json(serde_json::json!({ "reset_in": reset_in, "protected": protected }))
 }
 
 /// Is this request one the demo turns off? `path` is inside the season
@@ -178,9 +202,107 @@ pub fn locked(method: &Method, path: &str) -> bool {
     )
 }
 
-/// Refuses what [`locked`] says, whoever asks.
-pub async fn guard(req: Request, next: Next) -> Response {
-    let mut r = if !locked(req.method(), req.uri().path()) {
+/// The seasons the demo starts with (those in the snapshot). Visitors can look
+/// at them, administration included, and play in them (hints, minesweeper,
+/// signups, their notes), but not change them: one visitor mustn't be able to
+/// delete, regenerate, finish or empty the demo's own seasons for everyone
+/// until the reset. Everything works on a season a visitor makes.
+static PROTECTED: OnceLock<std::collections::HashSet<crate::id::Id>> = OnceLock::new();
+
+/// The signups in the demo's own seasons when it started. Visitors can add
+/// signups to them, and withdraw, replace or annotate those, but not touch
+/// these (see `web::signup`).
+static SEEDED: OnceLock<std::collections::HashSet<crate::id::Id>> = OnceLock::new();
+
+/// Was this signup in the demo's snapshot?
+pub fn is_seeded(submission: &crate::id::Id) -> bool {
+    SEEDED.get().is_some_and(|s| s.contains(submission))
+}
+
+/// The refusal for a change to a seeded signup.
+pub const SEEDED_OFF: &str = "The demo's own signups stay as they are. You can withdraw, replace or annotate a signup you made.";
+
+/// Is this one of the demo's own seasons?
+pub fn is_protected(id: &crate::id::Id) -> bool {
+    PROTECTED.get().is_some_and(|p| p.contains(id))
+}
+
+/// The season a request acts on: its `/s/<id>/`, or for a season page asked
+/// for without one, the default season (as `scope::SeasonCtx` picks it).
+async fn season_of(
+    st: &AppState,
+    selected: Option<crate::id::Id>,
+    path: &str,
+) -> Option<crate::id::Id> {
+    if selected.is_some() {
+        return selected;
+    }
+    let global = crate::scope::is_instance(path)
+        || path == "/"
+        || path == "/check"
+        || path.starts_with("/demo/");
+    if global {
+        return None;
+    }
+    st.db.default_season().await.map(|s| s.id)
+}
+
+/// What visitors can still do in the demo's own seasons: play, sign up, and
+/// look things up in the console (its commands are checked in
+/// `admin_console`, see [`console_ok`]).
+fn allowed_on_own(path: &str) -> bool {
+    matches!(
+        path,
+        "/hint" | "/prioritize" | "/signup" | "/signup/check" | "/signup/delete" | "/admin/console"
+    ) || path.starts_with("/minesweeper/")
+        || path.starts_with("/seat/")
+        || path
+            .strip_prefix("/common/")
+            .is_some_and(|r| r.ends_with("/ident") && r.matches('/').count() == 1)
+        || path.strip_prefix("/signup/game/").is_some_and(|r| {
+            (r.ends_with("/notes") || r.ends_with("/yaml")) && r.matches('/').count() == 1
+        })
+}
+
+/// Console commands that only read, the ones the demo's own seasons take.
+pub fn console_ok(cmd: &str) -> bool {
+    let first = cmd
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(
+        first.as_str(),
+        "/help" | "/players" | "/status" | "/license"
+    )
+}
+
+/// Refuses what [`locked`] says, and changes to the demo's own seasons,
+/// whoever asks.
+pub async fn guard(State(st): State<AppState>, mut req: Request, next: Next) -> Response {
+    let changes = req.method() != Method::GET && req.method() != Method::HEAD;
+    let mut own = None;
+    if changes {
+        let (selected, path) = (crate::scope::selected(&req), req.uri().path().to_string());
+        let season = season_of(&st, selected, &path).await;
+        // Pin it, so the handler acts on the season checked here, not on a
+        // default season that has changed since.
+        if let (None, Some(id)) = (selected, season) {
+            crate::scope::select(&mut req, id);
+        }
+        own = season.filter(|id| is_protected(id) && !allowed_on_own(&path));
+    }
+    let mut r = if let Some(id) = own {
+        (
+            StatusCode::FORBIDDEN,
+            render::notice(
+                "The demo's own seasons stay as they are, so every visitor sees them. Make a season of your own to try this on.",
+                false,
+                &format!("/s/{id}/admin"),
+            ),
+        )
+            .into_response()
+    } else if !locked(req.method(), req.uri().path()) {
         next.run(req).await
     } else if req.uri().path() == "/signup/apworld" {
         Json(serde_json::json!({"ok": false, "error": OFF})).into_response()
@@ -196,6 +318,26 @@ pub async fn seasons_full(db: &Db) -> Option<String> {
     (db.seasons().await.len() >= MAX_SEASONS).then(|| {
         format!(
             "The demo holds at most {MAX_SEASONS} seasons: delete one first, or wait for the reset."
+        )
+    })
+}
+
+/// Held from the live-season count to the season's move to Generating, so
+/// generate requests sent together can't all pass the cap.
+pub static GO_LIVE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// The cap on live seasons, for generating one (under [`GO_LIVE`]).
+pub async fn live_full(db: &Db) -> Option<String> {
+    use crate::db::State;
+    let live = db
+        .seasons()
+        .await
+        .iter()
+        .filter(|s| matches!(s.state(), State::Live | State::Generating))
+        .count();
+    (live >= MAX_LIVE).then(|| {
+        format!(
+            "The demo runs at most {MAX_LIVE} live seasons at once: archive or delete one first, or wait for the reset."
         )
     })
 }
@@ -334,6 +476,54 @@ mod tests {
             assert!(BAR_JS.contains(&format!("'{name}'")), "{name}");
         }
         assert!(!BAR_JS.contains("innerHTML"));
+    }
+
+    #[test]
+    fn what_visitors_can_do_in_the_demos_own_seasons() {
+        for p in [
+            "/hint",
+            "/prioritize",
+            "/signup",
+            "/signup/check",
+            "/admin/console",
+            "/minesweeper/new",
+            "/minesweeper/reveal",
+            "/seat/abc",
+            "/common/minecraft/ident",
+            "/signup/game/ab12/notes",
+            "/signup/game/ab12/yaml",
+            "/signup/delete",
+        ] {
+            assert!(allowed_on_own(p), "{p}");
+        }
+        for p in [
+            "/admin/season/delete",
+            "/admin/regenerate",
+            "/admin/archive-season",
+            "/admin/clear",
+            "/admin/signups",
+            "/game/ab12/finish",
+            "/game/ab12/poptracker/remove",
+            "/game/ab12/invite",
+            "/claim",
+            "/signup/game/ab12/seat/remove",
+            "/common/minecraft/file/0",
+        ] {
+            assert!(!allowed_on_own(p), "{p}");
+        }
+        for c in ["/players", "/status", "/HELP", "/license"] {
+            assert!(console_ok(c), "{c}");
+        }
+        for c in [
+            "/release Ann",
+            "/collect Ann",
+            "/send Ann x",
+            "/exit",
+            "/option x y",
+            "hello",
+        ] {
+            assert!(!console_ok(c), "{c}");
+        }
     }
 
     #[test]
