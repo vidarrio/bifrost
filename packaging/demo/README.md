@@ -66,6 +66,10 @@ The seeding instance needs:
   --entrypoint id <image>` shows it), and `BIFROST_BIND=127.0.0.1` if it uses
   the host's network, so a passwordless instance is never reachable from
   outside.
+- when it shares a host or network namespace with a running Bifrost (such as
+  the demo you serve), its own `BIFROST_PORT` and `BIFROST_AP_PORTS`. The seed
+  waits for the archived season's game server, which can't start on a port
+  the other instance holds.
 
 Only the seeding instance gets these. The demo you serve keeps its
 `Secure` cookie behind HTTPS.
