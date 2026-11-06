@@ -50,10 +50,13 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
         st.db.live_games_of(me.id()).await
     };
     let mut cards = Vec::new();
-    for (s, manage) in seen
-        .iter()
-        .filter(|(s, _)| s.state() != db::State::Archived)
-    {
+    // A draft isn't open to anyone yet, so only those who run it see its card.
+    let current = seen.iter().filter(|(s, manage)| match s.state() {
+        db::State::Archived => false,
+        db::State::Draft => *manage,
+        _ => true,
+    });
+    for (s, _) in current {
         let subs = st.db.submissions(s.id).await.unwrap_or_default();
         let players = subs
             .iter()
@@ -62,7 +65,7 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
             .len();
         let href = match s.state() {
             db::State::Live => format!("/s/{}/board", s.id),
-            db::State::Draft if *manage => format!("/s/{}/admin", s.id),
+            db::State::Draft => format!("/s/{}/admin", s.id),
             _ => format!("/s/{}/signup", s.id),
         };
         let member = me.id() != 0 && st.db.is_season_member(s.id, me.id()).await;

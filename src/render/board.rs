@@ -134,16 +134,23 @@ pub fn board_join(j: &BoardJoin) -> String {
             games.join(", ")
         ));
     }
+    let page = if j.mine.is_empty() {
+        "open it from its card on the live board"
+    } else {
+        "it's linked above"
+    };
+    let connect = if !j.live {
+        "Once the season is live, connect the client to the address that shows here, with your slot name."
+    } else if j.password.is_empty() {
+        "Connect the client to the address above, with your slot name."
+    } else {
+        "Connect the client to the address above, with your slot name and the password."
+    };
     out.push_str(&format!(
         r#"<ol class="steps"><li>Install the <strong>Archipelago {}</strong> client and your game's AP mod or patch.</li>
-<li>If your game needs a patch or output file, download it from your game's page: open it from its card on the live board. Most games connect directly and need none.</li>
-<li>Connect the client to the address above, with your slot name{}.</li></ol>"#,
+<li>If your game needs a patch or output file, download it from your game's page: {page}. Most games connect directly and need none.</li>
+<li>{connect}</li></ol>"#,
         esc(j.ap_version),
-        if j.password.is_empty() {
-            ""
-        } else {
-            " and the password"
-        },
     ));
     if j.commons {
         out.push_str(r#"<p class="empty">A common game runs a server of its own: its card on the live board says where, and its page how to join it.</p>"#);

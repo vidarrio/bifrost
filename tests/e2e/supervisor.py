@@ -218,6 +218,8 @@ try:
     check("a moderator who isn't in it doesn't see it listed", r.status_code == 200 and "Super" not in r.text, r.status_code)
     check("a signed-in player who can't see any season gets no season cards", 'class="cover"' not in get(stranger, "/").text)
     vis = new_season(root, "Visible")
+    check("a draft isn't on the home page for those who don't run it", "Visible" not in get(stranger, "/").text and f'href="/s/{vis}/admin">Visible<' in get(root, "/").text)
+    post(root, f"/s/{vis}/admin/signups", data=dict(open="1"))
     check("the home page shows the seasons the viewer can see", f'href="/s/{vis}/signup">Visible<' in get(stranger, "/").text)
     check("a visitor who can't see any isn't sent to a season", f"/s/{sid}/board" not in get(anon, "/").text)
     check("…and can't hint", post(stranger, f"/s/{sid}/hint", data=dict(slot_id=1, item="x")).status_code == 404)

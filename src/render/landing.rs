@@ -15,8 +15,8 @@ pub struct SeasonCard {
     pub id: Id,
     pub name: String,
     pub state: crate::db::State,
-    /// Where the card leads: the board once live, else the signup page (the
-    /// season's administration for a draft its admins open).
+    /// Where the card leads: the board once live, the administration for a
+    /// draft (only those who run it see one), else the signup page.
     pub href: String,
     pub games: usize,
     pub players: usize,
@@ -77,6 +77,12 @@ pub fn landing_seasons(cards: &[SeasonCard], sign_in: Option<&str>) -> String {
             esc(&c.name),
             count(c.games, "game"),
             count(c.players, "player"),
+        ));
+    }
+    if let Some(url) = sign_in {
+        out.push_str(&format!(
+            r#"<div class="empty"><a href="{}">Sign in</a> to see the seasons you're in.</div>"#,
+            esc(url)
         ));
     }
     out

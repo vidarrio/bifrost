@@ -19,7 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The home page lists your seasons instead of showcasing one: every season you can see
-  that isn't archived, public ones and private ones you're in, live ones first, each
+  that isn't archived (drafts only for those who run them), public ones and private
+  ones you're in, live ones first, each
   with its state, its games and players, and your own games in it. The "Join the
   current game" section and the "Live board" card are gone.
 - How to join a season is a tab on its live board, next to the board itself: its

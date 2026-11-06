@@ -34,10 +34,11 @@ A season moves through four states:
 
 Several seasons can be live at once. Each live season has its own server on
 its own port. The home page lists the seasons you can see that aren't
-archived, live ones first, with your own games on their cards. When a page
-isn't tied to a particular season (`/board`, `/signup`), it means the live
-season. If none is live, it means the
-newest season in progress, and failing that the most recently archived one.
+archived, live ones first, with your own games on their cards. A draft is
+listed only for those who run it. When a page isn't tied to a particular
+season (`/board`, `/signup`), it means the live season. If none is live, it
+means the newest season in progress, and failing that the most recently
+archived one.
 Every season also has its own addresses under `/s/<id>/…`, such as
 `/s/4kzp9mwq2xhtc7jn/board`. Its id is generated, so an address says nothing about
 what other seasons exist.
