@@ -237,10 +237,7 @@ async fn season_of(
     if selected.is_some() {
         return selected;
     }
-    let global = crate::scope::is_instance(path)
-        || path == "/"
-        || path == "/check"
-        || path.starts_with("/demo/");
+    let global = crate::scope::is_instance(path) || path == "/" || path.starts_with("/demo/");
     if global {
         return None;
     }

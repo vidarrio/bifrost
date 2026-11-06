@@ -1,4 +1,4 @@
-//! The public pages: home, health, favicon, `/api/me`, the YAML checker, season summaries.
+//! The public pages: home, health, favicon, `/api/me`, season summaries.
 
 use super::*;
 
@@ -123,30 +123,6 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
             .replace("<!--TAG-->", &render::landing_tag(&inst.domain))
             .replace("<!--DISCORDS-->", &render::landing_discords(&inst.discords)),
     )
-}
-
-#[derive(Deserialize)]
-pub(crate) struct CheckForm {
-    pub(crate) yaml: String,
-}
-
-pub(crate) async fn check_form(_ctx: Option<scope::SeasonCtx>) -> Html<String> {
-    checker::form_page()
-}
-
-/// Check a YAML against the season's worlds (core worlds only when there's no
-/// season at all).
-pub(crate) async fn check_run(
-    ctx: Option<scope::SeasonCtx>,
-    Form(form): Form<CheckForm>,
-) -> Html<String> {
-    let dirs = ctx
-        .map(|c| c.dirs())
-        .unwrap_or_else(|| config::get().core_season());
-    match checker::check_yaml(&dirs, &form.yaml).await {
-        Ok(res) => checker::result_page(&res),
-        Err(e) => checker::error_page(&e),
-    }
 }
 
 /// Render an archived season's detail page.

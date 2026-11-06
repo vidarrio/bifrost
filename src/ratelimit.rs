@@ -51,7 +51,7 @@ pub fn rule_for(method: &Method, path: &str) -> Option<Rule> {
         #[cfg(feature = "demo")]
         p if p.starts_with("/demo/as/") => r("demo", 30, 10, true),
         // Each check runs a sandboxed AP process loading every world.
-        "/check" | "/signup/check" => r("check", 10, 10, false),
+        "/signup/check" => r("check", 10, 10, false),
         p if p.starts_with("/signup/game/") && p.ends_with("/yaml") => r("check", 10, 10, false),
         "/signup" => r("signup", 10, 10, false),
         p if p.starts_with("/seat/") => r("seat", 20, 10, true),
@@ -258,7 +258,6 @@ mod tests {
     fn rules_cover_the_expensive_and_auth_endpoints() {
         let post = Method::POST;
         for p in [
-            "/check",
             "/signup/check",
             "/signup",
             "/signup/apworld",
@@ -274,7 +273,7 @@ mod tests {
         ] {
             assert!(rule_for(&post, p).is_some(), "{p}");
         }
-        assert!(rule_for(&Method::GET, "/check").is_none());
+        assert!(rule_for(&Method::GET, "/signup/check").is_none());
         assert!(rule_for(&post, "/claim").is_none());
         assert!(rule_for(&post, "/login").unwrap().by_ip);
     }
