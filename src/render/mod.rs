@@ -163,9 +163,13 @@ const HEAD: &str = concat!(
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Bifrost</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg"><style>
 :root{--bg:#0d1117;--panel:#161c26;--bd:#2a3542;--fg:#e6e9ef;--muted:#98a3b6;--accent:#5aa9e6;--ok:#28a56d;--bad:#e24d5f;--warn:#d98324;
---font:"IBM Plex Sans",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+--font:"IBM Plex Sans",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;color-scheme:dark;accent-color:var(--accent)}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);line-height:1.5;
 display:flex;flex-direction:column;align-items:center}main{width:100%;max-width:900px;padding:16px;padding-block:24px 40px}
+input[type=file]{background:var(--bg);color:var(--muted);border:1px solid var(--bd);border-radius:7px;padding:3px 8px 3px 3px;font-family:var(--font);font-size:12.5px;max-width:100%;cursor:pointer}
+input[type=file]::file-selector-button{background:transparent;border:1px solid var(--bd);color:var(--muted);border-radius:6px;padding:4px 10px;margin-right:10px;font-family:var(--font);font-size:12px;font-weight:600;cursor:pointer}
+input[type=file]:hover::file-selector-button{border-color:var(--accent);color:var(--accent)}
+input[type=file]:disabled{cursor:not-allowed;opacity:.55}input[type=file]:disabled::file-selector-button{cursor:not-allowed}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 h1{font-size:30px;margin:0 0 2px}.crumb{font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:20px}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}.on{background:var(--ok)}.off{background:var(--bad)}
@@ -276,9 +280,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .choice label{display:flex;gap:10px;align-items:flex-start;background:var(--bg);border:1px solid var(--bd);border-radius:9px;padding:11px 13px;cursor:pointer;font-size:14px}
 .choice label:has(input:checked){border-color:var(--accent)}
 .wstep input[type=file],.wstep input[type=text]{width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:9px 11px;font-size:13px;margin:2px 0}
-.wstep input[type=file]{cursor:pointer}
-.wstep input[type=file]::file-selector-button{background:transparent;border:1px solid var(--bd);color:var(--muted);border-radius:6px;padding:5px 11px;margin-right:12px;font-family:var(--font);font-size:12px;font-weight:600;cursor:pointer}
-.wstep input[type=file]::file-selector-button:hover{border-color:var(--accent);color:var(--accent)}
+
 #apbtn,#checkbtn{margin-top:12px}
 .nav{display:flex;justify-content:space-between;gap:10px;margin-top:18px}.nav:has(>:only-child){justify-content:flex-end}
 .nav .back{background:transparent;border:1px solid var(--bd);color:var(--muted)}

@@ -122,6 +122,18 @@ pub(crate) async fn admin_generate(
     me: auth::Me,
 ) -> Redirect {
     let (_me, is_admin) = ctx.ident(&me);
+    #[cfg(feature = "demo")]
+    if is_admin
+        && !ctx.state().is_live()
+        && let Some(e) = crate::demo::live_full(&st.db).await
+    {
+        ctx.rt.with_genstate(|g| {
+            if !g.0 {
+                g.1 = e;
+            }
+        });
+        return Redirect::to(&ctx.url("/admin"));
+    }
     if is_admin {
         let start = ctx.rt.with_genstate(|g| {
             if g.0 {

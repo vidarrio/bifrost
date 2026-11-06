@@ -13,8 +13,13 @@ every visitor can be sysadmin:
   - role changes, disabling accounts, and invite and reset links.
 
   The pages still show these, with their buttons greyed out.
-- **Capped:** at most 12 seasons, and 12 games in a season. Generation runs one
+- **Capped:** at most 12 seasons, 12 games in a season and 4 seasons live at
+  once (each runs a game server of a couple of hundred MB). Generation runs one
   at a time, as always.
+- **The demo's own seasons stay as they are.** When it starts from a snapshot,
+  the seasons in it can be looked at, administration included, but not
+  changed: no deleting, regenerating, archiving or closing them. Everything
+  works on a season a visitor makes.
 - **Game servers listen on localhost only**, whatever `BIFROST_AP_BIND` says.
   The boards and trackers work; visitors can't connect a game client.
 - **Native sign-in and managed game servers only.** A demo build refuses to

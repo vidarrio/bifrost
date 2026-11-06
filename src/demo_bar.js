@@ -5,10 +5,19 @@
 (function(){
  var roles=['player','moderator','sysadmin'];
  // Cosmetic only: src/demo.rs refuses these whatever the page shows.
- var locked=[/^\/admin\/settings(\/|$)/,/^\/admin\/catalog\//,/^\/admin\/common-games(\/|$)/,/^\/admin\/users\//,/^\/admin\/links\//,/^\/admin\/worlds\/(approve|to-catalog)$/,/^\/signup\/apworld$/,/^\/game\/[^\/]+\/poptracker$/];
+ var locked=[/^\/admin\/settings(\/|$)/,/^\/admin\/catalog\//,/^\/admin\/common-games(\/|$)/,/^\/admin\/users\//,/^\/admin\/links\//,/^\/admin\/worlds\/(approve|to-catalog)$/,/^\/signup\/apworld$/,/^\/admin\/seasons\/import$/,/^\/game\/[^\/]+\/poptracker$/];
  function tail(u){var p=new URL(u,location.href).pathname;var m=p.match(/^\/s\/[0-9a-z]+(\/.*)?$/);return m?(m[1]||'/board'):p}
  function isLocked(u){var t=tail(u);return locked.some(function(r){return r.test(t)})}
- function mark(){
+ function mark(prot){
+  // The demo's own seasons: their admin forms (bar the console) are refused too.
+  var sm=location.pathname.match(/^\/s\/([0-9a-z]+)\//);
+  if(sm&&prot&&prot.indexOf(sm[1])>=0){
+   document.querySelectorAll('form').forEach(function(f){
+    var t=tail(f.action);
+    if((f.method||'get').toLowerCase()==='post'&&t.indexOf('/admin/')===0&&t!=='/admin/console')
+     f.querySelectorAll('button,input[type=submit],input[type=file]').forEach(function(b){b.disabled=true;b.title="The demo's own seasons stay as they are: make a season of your own to try this"});
+   });
+  }
   document.querySelectorAll('form').forEach(function(f){
    // f.action is resolved against the page's <base>, as the browser would.
    if((f.method||'get').toLowerCase()!=='post'||!isLocked(f.action))return;
@@ -38,11 +47,10 @@
   document.body.style.paddingBottom='64px';
  }
  function go(){
-  mark();
   Promise.all([
    fetch('/api/me').then(function(r){return r.json()}).catch(function(){return null}),
    fetch('/demo/status').then(function(r){return r.json()}).catch(function(){return null})
-  ]).then(function(v){bar(v[0]&&v[0].user,v[1]&&v[1].reset_in)});
+  ]).then(function(v){mark(v[1]&&v[1].protected);bar(v[0]&&v[0].user,v[1]&&v[1].reset_in)});
  }
  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',go);else go();
 })();

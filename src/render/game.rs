@@ -100,8 +100,6 @@ pub(super) const GAME_STYLE: &str = r#"<style>
 .ptmk.d{transform:rotate(45deg)}
 .ptform{margin:10px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .ptform input[type=file]{color:var(--muted);font-size:12.5px;max-width:100%}
-.ptform input[type=file]::file-selector-button{background:transparent;border:1px solid var(--bd);color:var(--muted);border-radius:6px;padding:5px 11px;margin-right:10px;font-family:var(--font);font-size:12px;font-weight:600;cursor:pointer}
-.ptform input[type=file]::file-selector-button:hover{border-color:var(--accent);color:var(--accent)}
 .ptmanage{margin-top:16px;text-align:center}.ptmanage>summary{cursor:pointer;color:var(--muted);font-size:13px}
 .ptmanage .ptform{justify-content:center}
 .ptnest{margin:4px 0}

@@ -138,7 +138,7 @@ const HEAD: &str = r#"<!doctype html><html lang="en"><head><meta charset="utf-8"
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Bifrost · YAML checker</title>
 <style>
 :root{--bg:#0d1117;--panel:#161c26;--bd:#2a3542;--fg:#e6e9ef;--muted:#98a3b6;--accent:#5aa9e6;--ok:#28a56d;--bad:#e24d5f;
---font:"IBM Plex Sans",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+--font:"IBM Plex Sans",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;color-scheme:dark;accent-color:var(--accent)}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);line-height:1.55;
 display:flex;flex-direction:column;align-items:center}main{width:100%;max-width:760px;padding:16px;padding-block:6vh 40px}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}

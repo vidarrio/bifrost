@@ -114,6 +114,31 @@ try:
     r = signup("P12")
     check("a season takes 12 games", oks == 12, oks)
     check("at most 12 games in a season", "at most 12 games" in r.text, re.findall(r'class="banner[^"]*">[^<]*', r.text))
+
+    # Live seasons: the seed leaves one; three more reach the cap of four.
+    check("the seed archives its archived season", "archived" in get(admin, "/admin/seasons").text)
+    extra = [re.search(r"/s/([0-9a-z]+)/admin", m.url).group(1) for m in made[:4]]
+    for i, e in enumerate(extra[:3]):
+        post(admin, f"/s/{e}/admin/signups", data=dict(open="1"))
+        # From an address of its own: the caps above used up this one's signups.
+        post(admin, f"/s/{e}/signup", files={"yaml": ("y.yaml", YAML.format(f"L{i}").encode())},
+             headers={"X-Forwarded-For": f"198.51.100.{i + 1}"})
+        post(admin, f"/s/{e}/admin/generate")
+        check(f"live season {i + 2} of 4 generates", wait_for(lambda: "Generated seed" in get(admin, f"/s/{e}/admin").text, 300, 3))
+    post(admin, f"/s/{extra[3]}/admin/signups", data=dict(open="1"))
+    post(admin, f"/s/{extra[3]}/admin/generate")
+    t = get(admin, f"/s/{extra[3]}/admin").text
+    check("at most 4 live seasons", "at most 4 live seasons" in t, re.findall(r'class="banner[^"]*">[^<]*', t))
+
+    # Leave room under the season cap for the snapshot below: delete the
+    # extras that aren't live.
+    for i, m in enumerate(made):
+        e = re.search(r"/s/([0-9a-z]+)/admin", m.url).group(1)
+        if e not in extra[:3]:
+            post(admin, f"/s/{e}/admin/season/delete", data=dict(name=f"Extra {i}"))
+    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+        left = db.execute("SELECT COUNT(*) FROM season").fetchone()[0]
+    check("the extras that aren't live can be deleted", left == have + 3, left)
 finally:
     srv.stop()
 
@@ -130,6 +155,20 @@ try:
     admin = as_role(again, "sysadmin")
     check("a start restores the snapshot", "Autumn season" in get(admin, "/admin/seasons").text
           and not os.path.exists(os.path.join(again.data, "leftover")))
+    with sqlite3.connect(os.path.join(again.data, "bifrost.db")) as db:
+        autumn = db.execute("SELECT id FROM season WHERE name = 'Autumn season'").fetchone()[0]
+    st = get(admin, "/demo/status").json()
+    check("the bar learns which seasons are the demo's own", autumn in st.get("protected", []), st)
+    r = post(admin, f"/s/{autumn}/admin/season/delete", data=dict(name="Autumn season"))
+    check("the demo's own seasons can't be deleted", r.status_code == 403 and "stay as they are" in r.text, r.status_code)
+    r = post(admin, f"/s/{autumn}/admin/regenerate")
+    check("…or regenerated", r.status_code == 403)
+    check("…but their pages still show", get(admin, f"/s/{autumn}/admin").ok and get(admin, f"/s/{autumn}/board").ok)
+    r = post(admin, f"/s/{autumn}/admin/console", data=dict(cmd="/players"))
+    check("…and the console still answers", r.ok and r.json().get("ok"), r.text[:200])
+    mine = re.search(r"/s/([0-9a-z]+)/admin", post(admin, "/admin/seasons", data=dict(name="Mine")).url).group(1)
+    r = post(admin, f"/s/{mine}/admin/season/delete", data=dict(name="Mine"))
+    check("a visitor's own season can be deleted", r.status_code != 403 and "Mine" not in get(admin, "/admin/seasons").text, r.status_code)
     left = get(admin, "/demo/status").json().get("reset_in")
     check("the bar learns when it resets", isinstance(left, int) and 0 < left <= 30, left)
     post(admin, "/admin/seasons", data=dict(name="Made after the snapshot"))

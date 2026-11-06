@@ -131,6 +131,12 @@ pub async fn rewrite(mut req: Request, next: Next) -> Response {
     BASE.scope(RefCell::new(String::new()), next.run(req)).await
 }
 
+/// The season a request under `/s/{id}/` is about, once [`rewrite`] has run.
+#[cfg(feature = "demo")]
+pub fn selected(req: &Request) -> Option<Id> {
+    req.extensions().get::<Selected>().map(|s| s.0)
+}
+
 /// The season a request is about.
 #[derive(Clone)]
 pub struct SeasonCtx {

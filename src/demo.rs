@@ -38,9 +38,12 @@ pub const ACCOUNTS: &[(&str, Role)] = &[
     ("sysadmin", Role::Sysadmin),
 ];
 
-/// At most this many seasons, and this many games in a season.
+/// At most this many seasons, this many games in a season, and this many
+/// seasons live (or generating) at once: each live season runs a game server
+/// of a couple of hundred MB.
 pub const MAX_SEASONS: usize = 12;
 pub const MAX_GAMES: i64 = 12;
+pub const MAX_LIVE: usize = 4;
 
 /// The bar (the header script appends it, through `render`'s `demo_js!`).
 #[cfg(test)]
@@ -71,6 +74,11 @@ pub async fn ensure_accounts(db: &Db, mode: auth::AuthMode) {
          see each visitor's address (or BIFROST_DEMO_DIRECT=1 if visitors reach it directly)"
     );
     reset_interval();
+    // Started from a snapshot: its seasons are the demo's own.
+    if std::env::var_os("BIFROST_DEMO_SNAPSHOT").is_some() {
+        let ids = db.seasons().await.into_iter().map(|s| s.id).collect();
+        let _ = PROTECTED.set(ids);
+    }
     tracing::warn!(
         "DEMO BUILD: anyone who can reach this instance can act as any account, sysadmin \
          included, without a password"
@@ -145,7 +153,11 @@ pub(crate) async fn status() -> Json<serde_json::Value> {
     let reset_in = RESET_AT
         .get()
         .map(|at| at.saturating_duration_since(Instant::now()).as_secs());
-    Json(serde_json::json!({ "reset_in": reset_in }))
+    let protected: Vec<String> = PROTECTED
+        .get()
+        .map(|p| p.iter().map(|id| id.to_string()).collect())
+        .unwrap_or_default();
+    Json(serde_json::json!({ "reset_in": reset_in, "protected": protected }))
 }
 
 /// Is this request one the demo turns off? `path` is inside the season
@@ -178,9 +190,35 @@ pub fn locked(method: &Method, path: &str) -> bool {
     )
 }
 
-/// Refuses what [`locked`] says, whoever asks.
+/// The seasons the demo starts with (those in the snapshot). Visitors can look
+/// at their administration but not change it, so one visitor can't delete,
+/// regenerate or close the demo's own seasons for everyone until the reset;
+/// every season admin action works on a season they make themselves.
+static PROTECTED: OnceLock<std::collections::HashSet<crate::id::Id>> = OnceLock::new();
+
+fn protected(req: &Request) -> bool {
+    req.method() != Method::GET
+        && req.method() != Method::HEAD
+        && req.uri().path().starts_with("/admin/")
+        && req.uri().path() != "/admin/console"
+        && crate::scope::selected(req)
+            .is_some_and(|id| PROTECTED.get().is_some_and(|p| p.contains(&id)))
+}
+
+/// Refuses what [`locked`] says, and changes to the demo's own seasons,
+/// whoever asks.
 pub async fn guard(req: Request, next: Next) -> Response {
-    let mut r = if !locked(req.method(), req.uri().path()) {
+    let mut r = if protected(&req) {
+        (
+            StatusCode::FORBIDDEN,
+            render::notice(
+                "The demo's own seasons stay as they are, so every visitor sees them. Make a season of your own to try this on.",
+                false,
+                "admin",
+            ),
+        )
+            .into_response()
+    } else if !locked(req.method(), req.uri().path()) {
         next.run(req).await
     } else if req.uri().path() == "/signup/apworld" {
         Json(serde_json::json!({"ok": false, "error": OFF})).into_response()
@@ -196,6 +234,22 @@ pub async fn seasons_full(db: &Db) -> Option<String> {
     (db.seasons().await.len() >= MAX_SEASONS).then(|| {
         format!(
             "The demo holds at most {MAX_SEASONS} seasons: delete one first, or wait for the reset."
+        )
+    })
+}
+
+/// The cap on live seasons, for generating one.
+pub async fn live_full(db: &Db) -> Option<String> {
+    use crate::db::State;
+    let live = db
+        .seasons()
+        .await
+        .iter()
+        .filter(|s| matches!(s.state(), State::Live | State::Generating))
+        .count();
+    (live >= MAX_LIVE).then(|| {
+        format!(
+            "The demo runs at most {MAX_LIVE} live seasons at once: archive or delete one first, or wait for the reset."
         )
     })
 }
