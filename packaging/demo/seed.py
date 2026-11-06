@@ -33,6 +33,10 @@ def main(base, data):
         r = s.post(f"{base}/demo/as/{role}", allow_redirects=False)
         if r.status_code != 303 or not r.headers.get("x-bifrost-demo"):
             sys.exit(f"seed: {base} isn't a demo build (/demo/as/{role} answered {r.status_code})")
+        # Over plain HTTP, a Secure session cookie is never sent back.
+        if s.get(f"{base}/api/me").status_code != 200:
+            sys.exit("seed: the session cookie didn't come back. Over plain HTTP, start the "
+                     "instance you seed with BIFROST_INSECURE_COOKIES=1")
         return s
 
     player, mod, admin = (session(r) for r in ("player", "moderator", "sysadmin"))
