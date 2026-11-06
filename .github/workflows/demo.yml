@@ -24,6 +24,8 @@ env:
 
 jobs:
   image:
+    # Only main's code becomes :demo, even when started by hand from another branch.
+    if: github.ref == 'refs/heads/main'
     # GitHub-hosted: this repository is public.
     runs-on: ubuntu-26.04
     timeout-minutes: 60
