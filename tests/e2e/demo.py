@@ -10,6 +10,7 @@ import re
 import shutil
 import socket
 import sqlite3
+import threading
 import subprocess
 import sys
 import time
@@ -115,26 +116,35 @@ try:
     check("a season takes 12 games", oks == 12, oks)
     check("at most 12 games in a season", "at most 12 games" in r.text, re.findall(r'class="banner[^"]*">[^<]*', r.text))
 
-    # Live seasons: the seed leaves one; three more reach the cap of four.
-    check("the seed archives its archived season", "archived" in get(admin, "/admin/seasons").text)
+    # Live seasons: the seed leaves one, so of four generated at once, three
+    # go live and one is refused.
+    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+        summer = db.execute("SELECT state FROM season WHERE name = 'Summer season'").fetchone()[0]
+    check("the seed archives its archived season", summer == "archived", summer)
     extra = [re.search(r"/s/([0-9a-z]+)/admin", m.url).group(1) for m in made[:4]]
-    for i, e in enumerate(extra[:3]):
+    for i, e in enumerate(extra):
         post(admin, f"/s/{e}/admin/signups", data=dict(open="1"))
         # From an address of its own: the caps above used up this one's signups.
         post(admin, f"/s/{e}/signup", files={"yaml": ("y.yaml", YAML.format(f"L{i}").encode())},
              headers={"X-Forwarded-For": f"198.51.100.{i + 1}"})
-        post(admin, f"/s/{e}/admin/generate")
-        check(f"live season {i + 2} of 4 generates", wait_for(lambda: "Generated seed" in get(admin, f"/s/{e}/admin").text, 300, 3))
-    post(admin, f"/s/{extra[3]}/admin/signups", data=dict(open="1"))
-    post(admin, f"/s/{extra[3]}/admin/generate")
-    t = get(admin, f"/s/{extra[3]}/admin").text
-    check("at most 4 live seasons", "at most 4 live seasons" in t, re.findall(r'class="banner[^"]*">[^<]*', t))
+    gens = [threading.Thread(target=post, args=(admin, f"/s/{e}/admin/generate")) for e in extra]
+    for g in gens:
+        g.start()
+    for g in gens:
+        g.join()
+    def outcome(e):
+        t = get(admin, f"/s/{e}/admin").text
+        return "live" if "Generated seed" in t else "capped" if "at most 4 live seasons" in t else None
+    wait_for(lambda: all(outcome(e) for e in extra), 600, 5)
+    outcomes = [outcome(e) for e in extra]
+    check("at most 4 live seasons, even generated at once", sorted(outcomes) == ["capped", "live", "live", "live"], outcomes)
+    went_live = {e for e, o in zip(extra, outcomes) if o == "live"}
 
     # Leave room under the season cap for the snapshot below: delete the
     # extras that aren't live.
     for i, m in enumerate(made):
         e = re.search(r"/s/([0-9a-z]+)/admin", m.url).group(1)
-        if e not in extra[:3]:
+        if e not in went_live:
             post(admin, f"/s/{e}/admin/season/delete", data=dict(name=f"Extra {i}"))
     with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
         left = db.execute("SELECT COUNT(*) FROM season").fetchone()[0]
@@ -163,6 +173,15 @@ try:
     check("the demo's own seasons can't be deleted", r.status_code == 403 and "stay as they are" in r.text, r.status_code)
     r = post(admin, f"/s/{autumn}/admin/regenerate")
     check("…or regenerated", r.status_code == 403)
+    r = post(admin, "/admin/season/delete", data=dict(name="Autumn season"))
+    check("…not even without the season in the address", r.status_code == 403 and "stay as they are" in r.text, r.status_code)
+    game = re.search(r'href="game/([0-9a-z]+)"', get(admin, f"/s/{autumn}/board").text).group(1)
+    r = post(admin, f"/s/{autumn}/game/{game}/finish")
+    check("…nor a game in them finished", r.status_code == 403, r.status_code)
+    r = post(admin, f"/s/{autumn}/admin/console", data=dict(cmd="/release Ann"))
+    check("…nor items released from the console", r.json().get("ok") is False and "only runs" in r.json().get("output", ""), r.text[:200])
+    r = post(admin, f"/s/{autumn}/hint", data=dict(slot_id="0", item="x"))
+    check("…while playing in them still works", r.status_code != 403, r.status_code)
     check("…but their pages still show", get(admin, f"/s/{autumn}/admin").ok and get(admin, f"/s/{autumn}/board").ok)
     r = post(admin, f"/s/{autumn}/admin/console", data=dict(cmd="/players"))
     check("…and the console still answers", r.ok and r.json().get("ok"), r.text[:200])

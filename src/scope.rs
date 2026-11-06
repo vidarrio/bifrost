@@ -61,6 +61,15 @@ const INSTANCE_ROUTES: &[&str] = &[
     "/favicon.svg",
 ];
 
+/// Is `path` an instance-level page (one of [`INSTANCE_ROUTES`])?
+#[cfg(feature = "demo")]
+pub fn is_instance(path: &str) -> bool {
+    INSTANCE_ROUTES.iter().any(|r| {
+        path.strip_prefix(r)
+            .is_some_and(|after| after.is_empty() || after.starts_with('/'))
+    })
+}
+
 /// Split `/s/{id}/rest` into `(id, "/rest")`; `/s/{id}` alone is its board.
 /// `None` for an instance-level page under `/s/` (it then 404s), and for any
 /// id or tail a forward-auth proxy's path rule might not read the same way

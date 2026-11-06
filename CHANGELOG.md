@@ -27,7 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uploads, season import and replacing a signup's YAML showed the browser's plain
   "Choose File" button.
 - Date pickers, dropdown lists and radio buttons follow the dark theme.
-- The console's one-line forms line their buttons up with their fields.
+- The console's one-line forms line their buttons up with their fields, and the sign-in,
+  setup, invite and reset forms' buttons match their fields' size.
 
 ## [0.3.0] - 2026-11-05
 

@@ -510,8 +510,18 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
     if let Err(e) = db.can_go_live(season).await {
         return set(&state, false, format!("Failed — {e}"));
     }
-    if let Err(e) = db.transition(season, State::Generating, now()).await {
-        return set(&state, false, format!("Failed — {e}"));
+    {
+        // A demo build caps live seasons; counting and moving to Generating
+        // under one lock keeps requests sent together from all passing.
+        #[cfg(feature = "demo")]
+        let _gate = crate::demo::GO_LIVE.lock().await;
+        #[cfg(feature = "demo")]
+        if let Some(e) = crate::demo::live_full(&db).await {
+            return set(&state, false, e);
+        }
+        if let Err(e) = db.transition(season, State::Generating, now()).await {
+            return set(&state, false, format!("Failed — {e}"));
+        }
     }
     match run_inner(&db, &rts, &state, season).await {
         Ok(msg) => match db.transition(season, State::Live, now()).await {

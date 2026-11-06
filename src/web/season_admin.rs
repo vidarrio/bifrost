@@ -122,18 +122,6 @@ pub(crate) async fn admin_generate(
     me: auth::Me,
 ) -> Redirect {
     let (_me, is_admin) = ctx.ident(&me);
-    #[cfg(feature = "demo")]
-    if is_admin
-        && !ctx.state().is_live()
-        && let Some(e) = crate::demo::live_full(&st.db).await
-    {
-        ctx.rt.with_genstate(|g| {
-            if !g.0 {
-                g.1 = e;
-            }
-        });
-        return Redirect::to(&ctx.url("/admin"));
-    }
     if is_admin {
         let start = ctx.rt.with_genstate(|g| {
             if g.0 {
@@ -594,6 +582,14 @@ pub(crate) async fn admin_console(
         return Json(serde_json::json!({"ok": false, "output": "Admins only."}));
     }
     let cmd = f.cmd.trim().to_string();
+    #[cfg(feature = "demo")]
+    if crate::demo::is_protected(&ctx.id) && !crate::demo::console_ok(&cmd) {
+        return Json(serde_json::json!({
+            "cmd": cmd,
+            "ok": false,
+            "output": "On the demo's own seasons the console only runs /help, /players, /status and /license. Make a season of your own to try the rest."
+        }));
+    }
     // A plain `/send <player> <item>` grants a duplicate and leaves the item's
     // location (and any hint) untouched. If that item has an active hint, deliver
     // it from its real location instead (`/send_location`), which also marks the

@@ -265,7 +265,10 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         // Authenticate + enforce the route tiers before any handler runs.
         .layer(axum::middleware::from_fn_with_state(auth, auth::middleware))
         // The demo build turns some of it off, whoever asks (src/demo.rs).
-        .layer(axum::middleware::from_fn(demo_guard))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            demo_guard,
+        ))
         // Small bodies everywhere (YAMLs are capped at 512 KiB); only the two
         // file-upload routes get `upload_limit`.
         .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024))
@@ -309,7 +312,11 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
 use crate::demo::guard as demo_guard;
 /// Any other build passes everything through.
 #[cfg(not(feature = "demo"))]
-async fn demo_guard(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+async fn demo_guard(
+    State(_): State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
     next.run(req).await
 }
 

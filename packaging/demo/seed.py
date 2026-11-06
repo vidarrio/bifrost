@@ -60,7 +60,7 @@ def main(base, data):
 
     def state(sid):
         """The season's state, from its row in the console's season list."""
-        for row in admin.get(f"{base}/admin/seasons").text.split("<tr>"):
+        for row in admin.get(f"{base}/admin/seasons").text.split("<tr"):
             if f"/s/{sid}/" in row:
                 m = re.search(r'<span class="tag">([a-z]+)</span>', row)
                 return m and m.group(1)
