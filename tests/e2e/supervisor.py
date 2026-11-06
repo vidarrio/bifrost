@@ -216,9 +216,9 @@ try:
         db.execute("UPDATE account SET role = 'moderator' WHERE username = 'othermod'")
     r = get(other_mod, "/admin/seasons")
     check("a moderator who isn't in it doesn't see it listed", r.status_code == 200 and "Super" not in r.text, r.status_code)
-    check("a signed-in player who can't see any season gets no board card", 'Live board' not in get(stranger, "/").text)
+    check("a signed-in player who can't see any season gets no season cards", 'class="cover"' not in get(stranger, "/").text)
     vis = new_season(root, "Visible")
-    check("the home page falls back to a season the viewer can see", f"/s/{vis}/board" in get(stranger, "/").text)
+    check("the home page shows the seasons the viewer can see", f'href="/s/{vis}/signup">Visible<' in get(stranger, "/").text)
     check("a visitor who can't see any isn't sent to a season", f"/s/{sid}/board" not in get(anon, "/").text)
     check("…and can't hint", post(stranger, f"/s/{sid}/hint", data=dict(slot_id=1, item="x")).status_code == 404)
     check("the home page hides it from them", "Super" not in get(stranger, "/").text and "Super" not in get(anon, "/").text)
@@ -271,8 +271,11 @@ try:
     page = get(bob, f"/s/{sid}/board").text
     check("a player sees the address and password on the board", re.search(r"ap\.example\.org:\d+", page) and "sesame-1" in page, page[:800])
     check("so does a partner", "sesame-1" in get(cat, f"/s/{sid}/board").text)
+    check("…under the board's How to join tab", 'data-tab="tab-join">How to join<' in page and re.search(r'id="tab-join" hidden>.*sesame-1', page, re.S))
+    check("…which links the player's own game", f'href="game/{game}"' in page.split('id="tab-join"')[1])
     home = get(bob, "/").text
-    check("the home page points there instead", f'<a href="/s/{sid}/board">Super</a>' in home and "sesame-1" not in home and not re.search(r"ap\.example\.org:\d+", home))
+    check("the home page names a player's own game on its season's card", re.search(rf'href="/s/{sid}/board">Super</a>.*?You play <a href="/s/{sid}/game/{game}">', home, re.S))
+    check("the home page points there instead", f'<a class="cover" href="/s/{sid}/board">Super</a>' in home and "sesame-1" not in home and not re.search(r"ap\.example\.org:\d+", home))
     post(root, f"/s/{sid}/admin/privacy", data=dict(what="live", private="0"))
     page = get(stranger, f"/s/{sid}/board").text
     check("on an open season others see the address, not the password", re.search(r"ap\.example\.org:\d+", page) and "sesame-1" not in page, page[:800])

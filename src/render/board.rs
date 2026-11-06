@@ -22,6 +22,11 @@ header .hwrap{max-width:none;padding-inline:clamp(20px,4vw,80px)}
 .seasonprog .sptrack{height:10px;border-radius:999px;background:var(--panel);border:1px solid var(--bd);overflow:hidden}
 .seasonprog .spfill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent),#c58af9);transition:width .6s ease;min-width:2px}
 .slot .cardprog{height:5px;border-radius:999px;background:var(--bg);overflow:hidden;margin:2px 0 9px}
+.joincard{max-width:760px}
+.joincard .kv{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;margin:0 0 8px;font-size:14px}
+.joincard .k{flex:0 0 110px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.joincard .steps{margin:16px 0 0;padding-left:18px;color:var(--muted);font-size:14px}
+.joincard .steps li{margin:4px 0}
 .slot .cardprog .cpfill{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent),#c58af9);transition:width .6s ease}
 </style>"#;
 
@@ -70,51 +75,114 @@ pub(super) fn card_progress(sent: u64, world_size: u32) -> String {
     )
 }
 
-/// The board's connection details: the season's address and connect password.
-pub fn connect_line(live: bool, addr: Option<&str>, password: &str, may_join: bool) -> String {
-    if !live {
-        return String::new();
-    }
-    let mut out = format!(
-        r#" · AP server <b class="mono">{}</b>"#,
-        esc(addr.unwrap_or("ask an admin"))
-    );
-    if !password.is_empty() {
-        if may_join {
-            out.push_str(&format!(
-                r#" · password <b class="mono">{}</b>"#,
-                esc(password)
-            ));
-        } else {
-            out.push_str(" · the password is for this season's players");
+/// What the board's "How to join" tab needs.
+pub struct BoardJoin<'a> {
+    pub live: bool,
+    pub addr: Option<&'a str>,
+    pub password: &'a str,
+    /// The viewer plays in the season or runs it, so may see its password.
+    pub may_join: bool,
+    /// The Archipelago version the season's server runs, as clients see it.
+    pub ap_version: &'a str,
+    /// The viewer's own games in the season.
+    pub mine: &'a [MyGame],
+    /// A common game has a server of its own.
+    pub commons: bool,
+}
+
+/// The board's "How to join" tab: the season's address and password, the
+/// Archipelago version its server runs, and the steps to connect.
+pub fn board_join(j: &BoardJoin) -> String {
+    let mut out = String::from(r#"<div class="joincard">"#);
+    if !j.live {
+        out.push_str(r#"<p class="empty">This season isn't live yet. Its address and password show here once it is.</p>"#);
+    } else {
+        out.push_str(&format!(
+            r#"<div class="kv"><span class="k">Address</span><b class="mono">{}</b></div>"#,
+            esc(j.addr.unwrap_or("ask an admin"))
+        ));
+        if !j.password.is_empty() {
+            if j.may_join {
+                out.push_str(&format!(
+                    r#"<div class="kv"><span class="k">Password</span><b class="mono">{}</b></div>"#,
+                    esc(j.password)
+                ));
+            } else {
+                out.push_str(r#"<div class="kv"><span class="k">Password</span><span>for this season's players</span></div>"#);
+            }
         }
     }
+    out.push_str(&format!(
+        r#"<div class="kv"><span class="k">Archipelago</span><b class="mono">{}</b></div>"#,
+        esc(j.ap_version)
+    ));
+    if !j.mine.is_empty() {
+        let games: Vec<String> = j
+            .mine
+            .iter()
+            .map(|g| {
+                format!(
+                    r#"<a href="game/{}">{} · {}</a>"#,
+                    g.game_id,
+                    esc(&g.slot),
+                    esc(&g.game)
+                )
+            })
+            .collect();
+        out.push_str(&format!(
+            r#"<div class="kv"><span class="k">Your games</span><span>{}</span></div>"#,
+            games.join(", ")
+        ));
+    }
+    out.push_str(&format!(
+        r#"<ol class="steps"><li>Install the <strong>Archipelago {}</strong> client and your game's AP mod or patch.</li>
+<li>If your game needs a patch or output file, download it from your game's page: open it from its card on the live board. Most games connect directly and need none.</li>
+<li>Connect the client to the address above, with your slot name{}.</li></ol>"#,
+        esc(j.ap_version),
+        if j.password.is_empty() {
+            ""
+        } else {
+            " and the password"
+        },
+    ));
+    if j.commons {
+        out.push_str(r#"<p class="empty">A common game runs a server of its own: its card on the live board says where, and its page how to join it.</p>"#);
+    }
+    out.push_str("</div>");
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn board_page(
+    name: &str,
     snap: &BoardSnapshot,
     slots: &[SlotRow],
     prios: &std::collections::HashSet<(i64, i64, i64)>,
     commons: &[crate::db::SeasonCommon],
     activity: &[crate::db::ActivityRow],
     inlogic: &std::collections::HashMap<i64, i64>,
-    connect: &str,
+    join: &str,
 ) -> Html<String> {
     let mut out = page_head(None);
     out.push_str(BOARD_STYLE);
+    out.push_str(TABS_CSS);
     out.push_str(&format!(
-        r#"<h1>Live board</h1><div class="crumb"><a href="/">← Bifrost</a> · <span id="connline">{}</span>{connect}</div>"#,
+        r#"<h1>{}</h1><div class="crumb"><a href="/">← Bifrost</a> · <span id="connline">{}</span></div>"#,
+        esc(name),
         conn_line(snap)
     ));
-
+    out.push_str(r#"<div class="gtabs"><button type="button" class="gtab on" data-tab="tab-board">Live board</button><button type="button" class="gtab" data-tab="tab-join">How to join</button></div><div class="gtabpanel" id="tab-board">"#);
     out.push_str(&format!(
         r#"<div id="seasonprog">{}</div>"#,
         season_progress(snap, slots)
     ));
     out.push_str(r#"<div class="boardcols">"#);
     board_inner(&mut out, snap, slots, prios, commons, activity, inlogic);
-    out.push_str("</div></main></body></html>");
+    out.push_str(r#"</div></div><div class="gtabpanel" id="tab-join" hidden>"#);
+    out.push_str(join);
+    out.push_str("</div>");
+    out.push_str(TABS_JS);
+    out.push_str("</main></body></html>");
     Html(out)
 }
 

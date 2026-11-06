@@ -64,13 +64,43 @@ pub(crate) async fn board_view(
         ctx.rt.ap_cfg().map(|c| c.password).unwrap_or_default()
     };
     let may_join = ctx.can_manage(&me) || st.db.is_season_member(season, me.id()).await;
-    let connect = render::connect_line(
-        ctx.state().is_live(),
-        connect.as_deref(),
-        &password,
+    let mine: Vec<render::MyGame> = if me.id() == 0 {
+        Vec::new()
+    } else {
+        st.db
+            .live_games_of(me.id())
+            .await
+            .into_iter()
+            .filter(|g| g.0 == season)
+            .map(|(season, game_id, slot, game)| render::MyGame {
+                season,
+                game_id,
+                slot,
+                game,
+            })
+            .collect()
+    };
+    let ap = apinstall::for_season(season);
+    let join = render::board_join(&render::BoardJoin {
+        live: ctx.state().is_live(),
+        addr: connect.as_deref(),
+        password: &password,
         may_join,
-    );
-    render::board_page(&snap, &slots, &prios, &commons, &acts, &inlogic, &connect).into_response()
+        ap_version: ap.upstream(),
+        mine: &mine,
+        commons: slots.iter().any(|s| s.common_key.is_some()),
+    });
+    render::board_page(
+        &ctx.row.name,
+        &snap,
+        &slots,
+        &prios,
+        &commons,
+        &acts,
+        &inlogic,
+        &join,
+    )
+    .into_response()
 }
 
 /// The board's live-update payload: the `.boardcols` inner HTML (`body`) + the

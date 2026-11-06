@@ -65,13 +65,14 @@ try:
     row = lambda v: re.search(rf"<tr><td class=\"mono\">{re.escape(v)}.*?</tr>", page, re.S).group(0)
     check("new version active", "active" in row(TAG))
     check("Alpha still pinned to the bundled version", "Alpha (live)" in row(BUNDLED))
-    check("home page shows the active version", f"Archipelago {TAG.split('-bifrost.')[0]}" in get(srv.session(), "/").text)
 
     b = live_season("Beta", "Bea")
     tag_py = os.path.join(srv.data, "ap", TAG, "venv/bin/python")
     check("Beta's server runs the new install", wait_for(lambda: tag_py in server_pythons(), 30), server_pythons())
     page = get(root, "/admin/settings").text
     check("Beta pinned to the new version", "Beta (live)" in row(TAG))
+    check("Beta's join tab names the new version", f"Archipelago {TAG.split('-bifrost.')[0]}</strong>" in get(root, f"/s/{b}/board").text)
+    check("…and Alpha's the one it runs", f"Archipelago {BUNDLED.split('-bifrost.')[0]}</strong>" in get(root, f"/s/{a}/board").text)
 
     r = post(root, "/admin/settings/ap/remove", data={"version": TAG})
     check("can't remove the active version", "active version" in r.text)

@@ -1,77 +1,8 @@
-//! The home page's live parts: roster, connect info, links, past seasons.
+//! The home page's live parts: seasons, links, past seasons.
 
 use super::*;
 
-/// Build the landing page's season roster grid from live data: one card per AP
-/// slot (game + its player(s)), co-op slots listing every player with the AP
-/// slot's own player first, ordered alphabetically by that lead player's name.
-/// `ap_names` maps an AP slot to its connect name (from the live board) so we
-/// can tell which co-op member is the slot's primary.
-pub fn landing_roster(
-    slots: &[SlotRow],
-    ap_names: &std::collections::HashMap<i64, String>,
-    commons: &[crate::db::SeasonCommon],
-) -> String {
-    if slots.is_empty() {
-        return r#"<div class="empty" style="grid-column:1/-1">The roster fills in once the season's game is running.</div>"#
-            .to_string();
-    }
-    struct Entry {
-        key: String,
-        game: String,
-        who: String,
-    }
-    let mut entries: Vec<Entry> = group_by_ap(slots)
-        .into_iter()
-        .map(|g| {
-            // A common game is shared: show it as everyone's, by its name as on
-            // the board, sorted first.
-            if g.is_common {
-                let name = g.rows[0]
-                    .common_key
-                    .as_deref()
-                    .and_then(|k| commons.iter().find(|c| c.key == k))
-                    .map_or(g.game, |c| c.name.as_str());
-                return Entry {
-                    key: format!("\u{0}{}", name.to_lowercase()),
-                    game: name.to_string(),
-                    who: "Everyone".to_string(),
-                };
-            }
-            let mut names: Vec<String> = g.rows.iter().map(|r| r.name.clone()).collect();
-            names.sort_by_key(|n| n.to_ascii_lowercase());
-            // Put the AP slot's own player (the primary) first, rest alphabetical.
-            if let Some(lead) = ap_names.get(&g.ap_slot)
-                && let Some(pos) = names.iter().position(|n| n.eq_ignore_ascii_case(lead))
-            {
-                let p = names.remove(pos);
-                names.insert(0, p);
-            }
-            let key = names
-                .first()
-                .map(|n| n.to_ascii_lowercase())
-                .unwrap_or_default();
-            Entry {
-                key,
-                game: g.game.to_string(),
-                who: names.join(" & "),
-            }
-        })
-        .collect();
-    entries.sort_by(|a, b| a.key.cmp(&b.key));
-
-    let mut out = String::new();
-    for e in &entries {
-        out.push_str(&format!(
-            r#"<div class="slot"><div class="who">{}</div><div class="game">{}</div></div>"#,
-            esc(&e.who),
-            esc(&e.game)
-        ));
-    }
-    out
-}
-
-/// One of the signed-in player's games in a live season, for the home page.
+/// One of the signed-in player's games in a live season.
 pub struct MyGame {
     pub season: Id,
     pub game_id: Id,
@@ -79,41 +10,73 @@ pub struct MyGame {
     pub game: String,
 }
 
-/// The home page's "Join" block: the signed-in player's own games, each
-/// linking to its page, then where each live season's connection details are
-/// (its own address and password, on its board).
-pub fn landing_connect(live: &[(Id, String)], mine: &[MyGame]) -> String {
+/// A season on the home page: one the viewer can see that isn't archived.
+pub struct SeasonCard {
+    pub id: Id,
+    pub name: String,
+    pub state: crate::db::State,
+    /// Where the card leads: the board once live, else the signup page (the
+    /// season's administration for a draft its admins open).
+    pub href: String,
+    pub games: usize,
+    pub players: usize,
+    /// The viewer plays in it, or has signed up.
+    pub member: bool,
+    /// The viewer's own games in it, while it's live.
+    pub mine: Vec<MyGame>,
+}
+
+fn count(n: usize, one: &str) -> String {
+    format!("{n} {one}{}", if n == 1 { "" } else { "s" })
+}
+
+/// The home page's seasons: a card each, the viewer's own games linked from
+/// theirs. `sign_in` is where a visitor who isn't signed in can, since the
+/// seasons they're in may be private.
+pub fn landing_seasons(cards: &[SeasonCard], sign_in: Option<&str>) -> String {
+    if cards.is_empty() {
+        return match sign_in {
+            Some(url) => format!(
+                r#"<div class="empty">No season is open to visitors right now. <a href="{}">Sign in</a> to see the ones you're in.</div>"#,
+                esc(url)
+            ),
+            None => r#"<div class="empty">No season under way right now.</div>"#.to_string(),
+        };
+    }
     let mut out = String::new();
-    if !mine.is_empty() {
-        out.push_str(r#"<div class="lbl">Your games</div>"#);
-        for g in mine {
-            let season = live
+    for c in cards {
+        let (cls, label) = match c.state {
+            crate::db::State::Live => ("live", "live"),
+            crate::db::State::Generating => ("gen", "generating"),
+            crate::db::State::Signup => ("signup", "signups open"),
+            _ => ("draft", "draft"),
+        };
+        let you = if !c.mine.is_empty() {
+            let games: Vec<String> = c
+                .mine
                 .iter()
-                .find(|(id, _)| *id == g.season)
-                .map(|(_, n)| n.as_str())
-                .unwrap_or("");
-            out.push_str(&format!(
-                r#"<div class="pw"><a href="/s/{}/game/{}">{} · {}</a> in {}</div>"#,
-                g.season,
-                g.game_id,
-                esc(&g.slot),
-                esc(&g.game),
-                esc(season)
-            ));
-        }
-    }
-    out.push_str(if mine.is_empty() {
-        r#"<div class="lbl">Connect to</div>"#
-    } else {
-        r#"<div class="lbl" style="margin-top:12px">Connect to</div>"#
-    });
-    if live.is_empty() {
-        out.push_str(r#"<div class="cs">no season is live</div>"#);
-    }
-    for (id, name) in live {
+                .map(|g| {
+                    format!(
+                        r#"<a href="/s/{}/game/{}">{} · {}</a>"#,
+                        g.season,
+                        g.game_id,
+                        esc(&g.slot),
+                        esc(&g.game)
+                    )
+                })
+                .collect();
+            format!(r#"<div class="you">You play {}</div>"#, games.join(", "))
+        } else if c.member {
+            r#"<div class="you">You're in</div>"#.to_string()
+        } else {
+            String::new()
+        };
         out.push_str(&format!(
-            r#"<div class="pw"><a href="/s/{id}/board">{}</a>: connection details on its live board</div>"#,
-            esc(name)
+            r#"<div class="slot stretch {cls}"><span class="st">{label}</span><div class="game"><a class="cover" href="{}">{}</a></div><div class="meta">{} · {}</div>{you}</div>"#,
+            esc(&c.href),
+            esc(&c.name),
+            count(c.games, "game"),
+            count(c.players, "player"),
         ));
     }
     out
@@ -188,52 +151,6 @@ pub fn landing_discords(discords: &[crate::db::Discord]) -> String {
     format!(
         r#"<div><h2 class="sec">Discords</h2><div class="card"><ul class="links">{items}</ul></div></div>"#
     )
-}
-
-/// Frontpage roster for the gap between seasons (no live game yet): the people
-/// signed up for the *next* season, straight from the submission queue, so the
-/// section fills in live as they register. Mirrors `landing_roster`'s card style
-/// (who + game) so the section looks identical whether a season is live or not.
-pub fn landing_signups(subs: &[SubmissionRow]) -> String {
-    if subs.is_empty() {
-        return r#"<div class="empty" style="grid-column:1/-1">No sign-ups yet — be the first to <a href="/signups">sign up for next season</a>.</div>"#
-            .to_string();
-    }
-    struct Entry {
-        key: String,
-        game: String,
-        who: String,
-    }
-    let mut entries: Vec<Entry> = subs
-        .iter()
-        .map(|s| {
-            // Primary player first, then any co-op seats, matching the live roster.
-            let mut names = vec![s.slot_name.clone()];
-            names.extend(
-                s.seat_names
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|n| !n.is_empty())
-                    .map(str::to_string),
-            );
-            Entry {
-                key: s.slot_name.to_ascii_lowercase(),
-                game: s.game.clone(),
-                who: names.join(" & "),
-            }
-        })
-        .collect();
-    entries.sort_by(|a, b| a.key.cmp(&b.key));
-
-    let mut out = String::new();
-    for e in &entries {
-        out.push_str(&format!(
-            r#"<div class="slot"><div class="who">{}</div><div class="game">{}</div></div>"#,
-            esc(&e.who),
-            esc(&e.game)
-        ));
-    }
-    out
 }
 
 /// The frontpage "Past seasons" block — a card per archived season linking to
