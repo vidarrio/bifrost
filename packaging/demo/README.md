@@ -52,9 +52,21 @@ demo build: never run it as a real instance. Release tags (`latest`, `X.Y.Z`,
 
 Start the demo build on an empty data dir, seed it, stop it and keep a copy.
 Use the build you'll run: for the image, seed a container of it the same way.
+The seeding instance needs:
+
+- `BIFROST_DEMO_DIRECT=1`, since nothing proxies it;
+- `BIFROST_INSECURE_COOKIES=1`, since the seed talks to it over plain HTTP and
+  a `Secure` session cookie isn't sent back there;
+- for a container, a data dir owned by the image's user (`podman run --rm
+  --entrypoint id <image>` shows it), and `BIFROST_BIND=127.0.0.1` if it uses
+  the host's network, so a passwordless instance is never reachable from
+  outside.
+
+Only the seeding instance gets these. The demo you serve keeps its
+`Secure` cookie behind HTTPS.
 
 ```sh
-export BIFROST_DATA=/srv/bifrost-demo/seed BIFROST_DEMO_DIRECT=1
+export BIFROST_DATA=/srv/bifrost-demo/seed BIFROST_DEMO_DIRECT=1 BIFROST_INSECURE_COOKIES=1
 target/release/bifrost &                        # wait for "listening"
 packaging/demo/seed.py http://127.0.0.1:8080 "$BIFROST_DATA"
 kill %1; wait
