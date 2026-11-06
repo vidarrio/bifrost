@@ -93,7 +93,7 @@ try:
     stats = re.search(r'id="gamestats"[^>]*>([^<]*)<', get(root, f"/s/{sid}/game/{hinted}").text)
     j0 = get(root, f"/s/{sid}/game/{hinted}/live", params={"hints": "0"}).json()
     check("…and leaves the hints out when their tab is hidden", j0.get("hints") is None and j0.get("stats") == j.get("stats"), j0)
-    check("…and the header's figures", stats and re.fullmatch(r"\d+ locations · sent \d+ · received \d+ · \d+ left", j.get("stats", "")) and j["stats"] == stats.group(1), (j.get("stats"), stats and stats.group(1)))
+    check("…and the header's figures", stats and re.fullmatch(r"\d+ locations · \d+ left · sent \d+ · received \d+", j.get("stats", "")) and j["stats"] == stats.group(1), (j.get("stats"), stats and stats.group(1)))
 
     # A real player: AP's own client library, no Bifrost tag.
     port = re.search(r"127\.0\.0\.1:(391\d\d)", get(root, f"/s/{sid}/admin").text + srv.logtext()).group(1)

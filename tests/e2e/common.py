@@ -82,7 +82,7 @@ try:
 
     page = wait_for(lambda: (x := get(carl, van).text) and "isn't up yet" not in x and x, 60)
     j = get(carl, van + "/live").json()
-    check("a common game's page keeps its figures and hints live too", re.fullmatch(r"\d+ locations · sent \d+ · received \d+ · \d+ left", j.get("stats", "")) and isinstance(j.get("hints"), str), j)
+    check("a common game's page keeps its figures and hints live too", re.fullmatch(r"\d+ locations · \d+ left · sent \d+ · received \d+", j.get("stats", "")) and isinstance(j.get("hints"), str), j)
     check("a common game's page goes by its setup's name", "<h1>Clique Vanilla</h1>" in page, (h := re.search(r"<h1>[^<]*</h1>", page)) and h.group(0))
     regular = get(carl, f"/s/{sid}/game/{re.search(r'href=\"game/([0-9a-z]+)\"><span class=\"st\">[^<]*</span><div class=\"game\">ChecksFinder<', board()).group(1)}").text
     check("…and a regular game's by its game", "<h1>ChecksFinder</h1>" in regular, (h := re.search(r"<h1>[^<]*</h1>", regular)) and h.group(0))

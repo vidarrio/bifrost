@@ -224,13 +224,13 @@ pub(super) fn board_inner(
                 .and_then(|k| commons.iter().find(|c| c.key == k));
             out.push_str(&format!(
                 r#"<a class="slot cardlink {cls}" href="game/{}"><span class="st">{label}</span><div class="game">{}</div>
-<div class="meta">{} locations · sent {} · recv {} · {} left{avail}</div>"#,
+<div class="meta">{} locations · {} left · sent {} · recv {}{avail}</div>"#,
                 g.rows[0].game_id,
                 esc(common.map_or(g.game, |c| c.name.as_str())),
                 live.world_size,
+                live.still_to_find,
                 live.sent,
                 live.received,
-                live.still_to_find,
             ));
             out.push_str(&card_progress(live.sent, live.world_size));
             if g.is_common {
