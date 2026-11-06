@@ -1073,7 +1073,6 @@ mod tests {
         }
         for p in [
             "/",
-            "/check",
             "/health",
             "/favicon.svg",
             "/export/commons",

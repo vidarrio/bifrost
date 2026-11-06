@@ -18,7 +18,7 @@ This guide has a part for each role:
 | **Moderator** | Everything a user can, plus create seasons and run the ones they created or co-moderate. |
 | **Sysadmin** | Everything, on every season, plus users, invites, the apworld catalog, Archipelago versions, backups and instance settings. |
 
-The home page and the YAML checker are public. A season before generation is for
+The home page is public. A season before generation is for
 signed-in users. After generation, a new season's board, log and pages are for its
 players, its moderators and sysadmins, unless a moderator opens them to anyone.
 Everything else needs you to be signed in.
@@ -72,7 +72,9 @@ have no game there yet, the signup wizard is on the page too, with two steps:
    worlds with Archipelago's own code, and has to pass before you can
    continue. Its `name:` has to be one plain name of at most 16 characters, without
    placeholders such as `{number}`, as that's how your slot is found once the seed is
-   rolled. Errors are shown as Archipelago reports them.
+   rolled. Errors are shown as Archipelago reports them. Nothing is saved
+   until you submit, so while signups are open you can use this step to try
+   out options.
 
 Signing up takes you to your game's page, where you can invite co-op partners.
 
@@ -116,10 +118,6 @@ game. You can replace it while it waits. It's checked properly once the world is
 approved. If that fails, or the world is rejected, the season's page says so: replace
 the YAML from your game's page, or remove the signup. A moderator can do either too,
 because the season can't be generated until it's sorted out.
-
-The **YAML checker** (`/check`) runs the same check without signing up. It's
-useful when you're tuning options. It checks against the worlds of the current
-season if you can see that season, and otherwise against the core worlds only.
 
 ### After generation: your slot
 
@@ -864,7 +862,7 @@ season's pages, or any season's before generation, sysadmins included, and since
 new seasons are private that means every new season once it's generated. Open
 seasons' pages work without it, as long as the proxy lets those paths through. The
 home page never sees an identity under forward auth, so it lists only seasons open
-to anyone, and a season's `/s/<id>/check` needs a sign-in the proxy can't give it.
+to anyone.
 
 The proxy must run forward-auth on every signed-in path. That includes the
 season-scoped forms under `/s/<id>/`, not only the plain prefixes. Otherwise a

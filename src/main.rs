@@ -1,8 +1,7 @@
 //! Bifrost — the hub for all things Archipelago.
 //!
-//! Public: the hub (`/`), the YAML checker (`/check`), and the live board
-//! (`/board`). Behind sign-in: claiming slots, signups, game pages, hints; and
-//! `/admin` for sysadmins. Who's signed in, and which routes need it, is
+//! Public: the hub (`/`) and the live board (`/board`). Behind sign-in:
+//! claiming slots, signups, game pages, hints; and `/admin` for sysadmins. Who's signed in, and which routes need it, is
 //! decided once per request by the `auth` middleware.
 //!
 //! This file is startup and shutdown; the handlers and the route table live in

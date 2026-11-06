@@ -354,37 +354,6 @@ impl FromRequestParts<AppState> for GameRef {
     }
 }
 
-/// `Option<SeasonCtx>`: `None` when no season exists at all (an explicitly
-/// selected unknown season is still a 404).
-impl axum::extract::OptionalFromRequestParts<AppState> for SeasonCtx {
-    type Rejection = Response;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        st: &AppState,
-    ) -> Result<Option<Self>, Response> {
-        if parts.extensions.get::<Selected>().is_none() {
-            // An unscoped page with a fallback (the YAML checker) doesn't answer
-            // for a default season its visitor can't see.
-            let Some(row) = st.db.default_season().await else {
-                return Ok(None);
-            };
-            let me = parts
-                .extensions
-                .get::<crate::auth::Me>()
-                .cloned()
-                .unwrap_or_default();
-            let mods = st.db.season_mods(row.id).await;
-            if !can_view(st, &row, &mods, &me).await {
-                return Ok(None);
-            }
-        }
-        <SeasonCtx as FromRequestParts<AppState>>::from_request_parts(parts, st)
-            .await
-            .map(Some)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
