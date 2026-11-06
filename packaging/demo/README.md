@@ -99,5 +99,10 @@ closed too.
 Visitors see what the console shows any sysadmin: the data and backup paths,
 the host's load, and the Archipelago versions installed.
 
-Put it behind your usual HTTPS reverse proxy. Only Bifrost's web port needs to
+Put it behind your usual HTTPS reverse proxy. `BIFROST_TRUSTED_PROXIES` is the
+proxy's address as Bifrost sees it. In a container published with `-p`, that's
+often the bridge's gateway (such as `172.17.0.1`) rather than the proxy host's
+own address. A wrong value still starts, but every visitor then shares one rate
+limit again: the sign that it's wrong is that "Too many requests" reaches
+everyone at once. Only Bifrost's web port needs to
 be reachable. Leave the game port range closed.
