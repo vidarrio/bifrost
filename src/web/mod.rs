@@ -123,7 +123,7 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
     let r = Router::new();
     #[cfg(feature = "demo")]
     let r = r
-        .route("/demo/as/{role}", get(crate::demo::switch))
+        .route("/demo/as/{role}", axum::routing::post(crate::demo::switch))
         .route("/demo/status", get(crate::demo::status));
     r.fallback(page_not_found)
         .route("/health", get(health))

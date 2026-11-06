@@ -10,7 +10,8 @@
  function isLocked(u){var t=tail(u);return locked.some(function(r){return r.test(t)})}
  function mark(){
   document.querySelectorAll('form').forEach(function(f){
-   if((f.method||'get').toLowerCase()!=='post'||!isLocked(f.getAttribute('action')||location.href))return;
+   // f.action is resolved against the page's <base>, as the browser would.
+   if((f.method||'get').toLowerCase()!=='post'||!isLocked(f.action))return;
    f.querySelectorAll('button,input[type=submit],input[type=file]').forEach(function(b){b.disabled=true;b.title='Turned off in the demo'});
   });
   document.querySelectorAll('a[href*="/backups/download"]').forEach(function(a){a.removeAttribute('href');a.title='Turned off in the demo'});
@@ -26,8 +27,9 @@
   d.appendChild(t);
   var rd=location.pathname+location.search;
   roles.forEach(function(r){
-   var a=document.createElement('a');a.textContent=r;a.title='View the demo as its '+r;
-   a.href='/demo/as/'+r+'?rd='+encodeURIComponent(rd);
+   // A POST, which src/demo.rs requires: no link elsewhere can switch you.
+   var a=document.createElement('a');a.textContent=r;a.title='View the demo as its '+r;a.href='#';
+   a.onclick=function(e){e.preventDefault();var f=document.createElement('form');f.method='post';f.action='/demo/as/'+r+'?rd='+encodeURIComponent(rd);document.body.appendChild(f);f.submit()};
    a.style.cssText='white-space:nowrap;padding:5px 11px;border-radius:999px;text-decoration:none;'+(user===r?'background:#7b8cff;color:#000':'color:#dde');
    d.appendChild(a);
   });

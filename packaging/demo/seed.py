@@ -30,7 +30,7 @@ def main(base, data):
 
     def session(role):
         s = requests.Session()
-        r = s.get(f"{base}/demo/as/{role}", allow_redirects=False)
+        r = s.post(f"{base}/demo/as/{role}", allow_redirects=False)
         if r.status_code != 303 or not r.headers.get("x-bifrost-demo"):
             sys.exit(f"seed: {base} isn't a demo build (/demo/as/{role} answered {r.status_code})")
         return s
@@ -60,7 +60,7 @@ def main(base, data):
             t = admin.get(f"{base}/s/{sid}/admin").text
             if "Generated seed" in t:
                 return
-            if "Failed" in t:
+            if re.search(r'class="banner bad">\s*Failed', t):
                 sys.exit(f"seed: generation failed in season {sid}")
             time.sleep(3)
         sys.exit(f"seed: season {sid} didn't generate in time")
@@ -90,6 +90,8 @@ def main(base, data):
         if "isn't connected" not in post(admin, f"/s/{old}/admin/archive-season", data=dict(name="Summer season")).text:
             break
         time.sleep(3)
+    if admin.get(f"{base}/s/{old}/season").status_code != 200:
+        sys.exit(f"seed: season {old} didn't archive")
 
     print("seed: a live season with a common game", flush=True)
     live = season(admin, "Autumn season")

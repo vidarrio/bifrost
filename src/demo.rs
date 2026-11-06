@@ -56,6 +56,12 @@ pub async fn ensure_accounts(db: &Db, mode: auth::AuthMode) {
         mode == auth::AuthMode::Native,
         "a demo build only runs with native sign-in: `bifrost auth mode native`"
     );
+    // An external server is shared, and outside what the demo can keep to
+    // localhost; season consoles would reach it too.
+    assert!(
+        crate::config::get().ap_managed,
+        "a demo build only runs with managed game servers: unset BIFROST_AP_MODE"
+    );
     tracing::warn!(
         "DEMO BUILD: anyone who can reach this instance can act as any account, sysadmin \
          included, without a password"
@@ -87,11 +93,15 @@ pub(crate) struct Rd {
     rd: Option<String>,
 }
 
-/// `/demo/as/<role>`: sign in as that role's demo account and go back.
+/// `POST /demo/as/<role>`: sign in as that role's demo account and go back.
+/// A POST, so the cross-site check applies and a link elsewhere can't switch
+/// a visitor's account; it ends the session it replaces, and it's rate
+/// limited per address (`ratelimit`).
 pub(crate) async fn switch(
     State(st): State<AppState>,
     UrlPath(role): UrlPath<String>,
     Query(q): Query<Rd>,
+    headers: HeaderMap,
 ) -> Response {
     let Some(&(name, _)) = ACCOUNTS.iter().find(|(n, _)| *n == role) else {
         return (
@@ -108,6 +118,9 @@ pub(crate) async fn switch(
         )
         .into_response();
     };
+    if let Some(t) = st.auth.session_token(&headers) {
+        st.db.end_session(&auth::token_hash(&t)).await;
+    }
     match st.auth.start_session(account.id).await {
         Ok(cookie) => {
             let mut r = Redirect::to(&auth::safe_redirect(q.rd.as_deref())).into_response();
@@ -135,6 +148,8 @@ pub fn locked(method: &Method, path: &str) -> bool {
             .is_some_and(|r| r.is_empty() || r.starts_with('/'))
     };
     // A download of the instance's whole database.
+    // (Imports are below: a season bundle is an upload of up to 2 GiB that is
+    // kept and served back as the season's download.)
     if path.starts_with("/admin/settings/backups/download") {
         return true;
     }
@@ -146,6 +161,8 @@ pub fn locked(method: &Method, path: &str) -> bool {
         || seg("/admin/common-games")
         || matches!(path, "/admin/worlds/approve" | "/admin/worlds/to-catalog" | "/signup/apworld")
         || path.strip_prefix("/game/").is_some_and(|r| r.split('/').nth(1) == Some("poptracker") && r.split('/').count() == 2)
+        // Season bundles: any file, kept and served from the demo.
+        || path == "/admin/seasons/import"
         // Accounts: roles, disabling, invite and reset links.
         || path.starts_with("/admin/users/")
         || path.starts_with("/admin/links/")
@@ -180,10 +197,8 @@ pub async fn games_full(db: &Db, season: crate::id::Id) -> Option<String> {
         .then(|| format!("A demo season holds at most {MAX_GAMES} games."))
 }
 
-/// Game servers listen on localhost only.
-pub fn ap_bind(_configured: String) -> String {
-    "127.0.0.1".into()
-}
+/// Where game servers listen in a demo build, whatever `BIFROST_AP_BIND` says.
+pub const AP_BIND: &str = "127.0.0.1";
 
 static RESET_AT: OnceLock<Instant> = OnceLock::new();
 
@@ -247,15 +262,41 @@ pub async fn reset_due() {
         .ok()
         .and_then(|v| v.trim().parse::<f64>().ok())
         .filter(|m| *m > 0.0);
-    let Some(minutes) = minutes else {
+    // At most a week; anything longer (or not a number) means no reset.
+    let after = minutes
+        .filter(|m| *m <= 7.0 * 24.0 * 60.0)
+        .and_then(|m| Duration::try_from_secs_f64(m * 60.0).ok());
+    let Some(after) = after else {
+        if minutes.is_some() {
+            tracing::warn!("demo: BIFROST_DEMO_RESET_MINUTES is over a week; not resetting");
+        }
         return std::future::pending().await;
     };
-    let after = Duration::from_secs_f64(minutes * 60.0);
     let _ = RESET_AT.set(Instant::now() + after);
-    tracing::info!("demo: resetting in {minutes} minute(s)");
+    tracing::info!(
+        "demo: resetting in {} minute(s)",
+        after.as_secs_f64() / 60.0
+    );
     tokio::time::sleep(after).await;
     tracing::info!("demo: time for the reset");
+    // A graceful shutdown waits for every open request, so one that trickles
+    // in forever would keep the demo from resetting. The snapshot is restored
+    // on the next start anyway, so after a grace period, stop hard.
+    tokio::spawn(async {
+        tokio::time::sleep(RESET_GRACE).await;
+        tracing::warn!("demo: still not stopped; stopping now");
+        for pid in crate::apserver::server_pids().into_values() {
+            // SAFETY: signalling a game server this process started.
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGKILL);
+            }
+        }
+        std::process::exit(0);
+    });
 }
+
+/// How long a reset waits for open requests and game servers.
+const RESET_GRACE: Duration = Duration::from_secs(30);
 
 /// A demo build announces itself on every response, so a test (or a curious
 /// operator) can tell builds apart without signing in.
@@ -298,6 +339,7 @@ mod tests {
             "/admin/worlds/to-catalog",
             "/signup/apworld",
             "/game/ab12/poptracker",
+            "/admin/seasons/import",
             "/admin/users/role",
             "/admin/users/disable",
             "/admin/links/invite",
@@ -320,6 +362,8 @@ mod tests {
         }
         for p in [
             "/admin/generate",
+            "/admin/seasons",
+            "/admin/bundle",
             "/admin/signups",
             "/admin/common",
             "/admin/season/delete",

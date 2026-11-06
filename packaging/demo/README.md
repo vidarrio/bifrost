@@ -9,6 +9,7 @@ every visitor can be sysadmin:
   - the instance settings, including the links shown on every page, Archipelago
     installs, backups and the export token;
   - apworld uploads, common-game edits and PopTracker pack uploads;
+  - season imports;
   - role changes, disabling accounts, and invite and reset links.
 
   The pages still show these, with their buttons greyed out.
@@ -16,7 +17,9 @@ every visitor can be sysadmin:
   at a time, as always.
 - **Game servers listen on localhost only**, whatever `BIFROST_AP_BIND` says.
   The boards and trackers work; visitors can't connect a game client.
-- **Native sign-in only.** A demo build refuses to start in forward-auth mode.
+- **Native sign-in and managed game servers only.** A demo build refuses to
+  start in forward-auth mode or with `BIFROST_AP_MODE=external`.
+- **Rate limits are per address**, since visitors share three accounts.
 - **Reset from a snapshot.** With `BIFROST_DEMO_SNAPSHOT`, every start replaces
   the data dir with a copy of the snapshot. With `BIFROST_DEMO_RESET_MINUTES`,
   Bifrost stops after that long, and the service manager starts it again. The
@@ -69,6 +72,7 @@ With systemd:
 Environment=BIFROST_DATA=/srv/bifrost-demo/data
 Environment=BIFROST_DEMO_SNAPSHOT=/srv/bifrost-demo/snapshot
 Environment=BIFROST_DEMO_RESET_MINUTES=60
+Environment=BIFROST_UPDATE_CHECK=off
 ExecStart=/usr/local/bin/bifrost
 Restart=always
 ```
@@ -79,8 +83,16 @@ With the image, mount the snapshot read-only and let the container restart:
 docker run -d --restart always -p 8080:8080 \
   -v /srv/bifrost-demo/snapshot:/snapshot:ro \
   -e BIFROST_DEMO_SNAPSHOT=/snapshot -e BIFROST_DEMO_RESET_MINUTES=60 \
+  -e BIFROST_UPDATE_CHECK=off \
   bifrost:demo
 ```
+
+Give the demo a machine, VM or container of its own: no other services, no
+real Bifrost data, no keys, and CPU, memory and disk limits of its own. With
+`BIFROST_UPDATE_CHECK=off` it fetches nothing, so its outbound network can stay
+closed too.
+Visitors see what the console shows any sysadmin: the data and backup paths,
+the host's load, and the Archipelago versions installed.
 
 Put it behind your usual HTTPS reverse proxy. Only Bifrost's web port needs to
 be reachable. Leave the game port range closed.

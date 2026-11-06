@@ -43,7 +43,13 @@ pub fn rule_for(method: &Method, path: &str) -> Option<Rule> {
             by_ip,
         })
     };
+    // A demo build's visitors share three accounts, so a per-account limit
+    // would let one visitor lock out everyone: key them all by address.
+    #[cfg(feature = "demo")]
+    let r = |name, n, mins: u64, _by_ip: bool| r(name, n, mins, true);
     match path {
+        #[cfg(feature = "demo")]
+        p if p.starts_with("/demo/as/") => r("demo", 30, 10, true),
         // Each check runs a sandboxed AP process loading every world.
         "/check" | "/signup/check" => r("check", 10, 10, false),
         p if p.starts_with("/signup/game/") && p.ends_with("/yaml") => r("check", 10, 10, false),

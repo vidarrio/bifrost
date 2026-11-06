@@ -2,12 +2,13 @@
 passwords, what it turns off, its caps, localhost-only game servers, and the
 reset from a snapshot. Seeds itself with packaging/demo/seed.py.
 
-Runs the binary at BIFROST_E2E_DEMO_BIN (default target/debug/bifrost-demo):
-  cargo build --features demo && cp target/debug/bifrost target/debug/bifrost-demo && cargo build
+Runs the demo binary at BIFROST_E2E_DEMO_BIN, or else builds one into
+target/demo (`cargo build --features demo --target-dir target/demo`).
 """
 import os
 import re
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -17,16 +18,17 @@ import requests
 
 from lib import DEV, REPO, Server, check, get, post, summary, wait_for
 
-BIN = os.environ.get("BIFROST_E2E_DEMO_BIN") or os.path.join(REPO, "target/debug/bifrost-demo")
-if not os.path.exists(BIN):
-    sys.exit(f"demo: no demo build at {BIN}; see this suite's docstring")
+BIN = os.environ.get("BIFROST_E2E_DEMO_BIN")
+if not BIN:  # build it, in a target dir of its own so it never replaces the normal build
+    subprocess.run(["cargo", "build", "-q", "--features", "demo", "--target-dir", "target/demo"], cwd=REPO, check=True)
+    BIN = os.path.join(REPO, "target/demo/debug/bifrost")
 YAML = "name: {}\ngame: ChecksFinder\nChecksFinder: {{}}\n"
 
 
 def as_role(srv, role):
     s = requests.Session()
     s.base = srv.base
-    r = s.get(f"{srv.base}/demo/as/{role}?rd=/signups", allow_redirects=False)
+    r = s.post(f"{srv.base}/demo/as/{role}?rd=/signups", allow_redirects=False)
     assert r.status_code == 303, (role, r.status_code, r.text[:200])
     return s
 
@@ -45,9 +47,16 @@ try:
     for s, name, is_admin in ((admin, "sysadmin", True), (mod, "moderator", True), (player, "player", False)):
         me = get(s, "/api/me").json()
         check(f"/demo/as/{name} signs in as {name}", me.get("user") == name and me.get("admin") == is_admin, me)
-    r = requests.get(srv.base + "/demo/as/player?rd=//evil.example", allow_redirects=False)
+    r = requests.post(srv.base + "/demo/as/player?rd=//evil.example", allow_redirects=False)
     check("…and only sends you back to a local page", r.headers.get("Location") == "/", r.headers.get("Location"))
-    check("no other accounts to switch to", requests.get(srv.base + "/demo/as/root", allow_redirects=False).status_code == 404)
+    check("no other accounts to switch to", requests.post(srv.base + "/demo/as/root", allow_redirects=False).status_code == 404)
+    check("switching isn't a link", requests.get(srv.base + "/demo/as/player", allow_redirects=False).status_code == 405)
+    r = requests.post(srv.base + "/demo/as/sysadmin", headers={"Origin": "https://elsewhere.example", "Sec-Fetch-Site": "cross-site"}, allow_redirects=False)
+    check("…nor a form on another site", r.status_code == 403 and "set-cookie" not in r.headers, r.status_code)
+    s = as_role(srv, "player")
+    old = s.cookies.get("bifrost_session")
+    s.post(srv.base + "/demo/as/moderator", allow_redirects=False)
+    check("switching ends the session it replaces", requests.get(srv.base + "/api/me", cookies={"bifrost_session": old}).status_code == 401)
     check("a player is still no sysadmin", get(player, "/admin/users").status_code in (302, 303, 401, 403)
           or "Sysadmins only" in get(player, "/admin/users").text)
     check("the moderator can't reach the instance settings", "Sysadmins only" in get(mod, "/admin/settings").text
@@ -64,6 +73,7 @@ try:
     check("no backups", off(post(admin, "/admin/settings/backups/now")))
     check("no backup downloads", off(get(admin, "/admin/settings/backups/download?name=x")))
     check("no export token", off(post(admin, "/admin/settings/export")))
+    check("no season imports", off(post(admin, "/admin/seasons/import", files={"bundle": ("x.tar.gz", b"x")})))
     check("no apworld uploads", off(post(admin, "/admin/catalog/add", files={"file": ("x.apworld", b"PK")})))
     check("no common-game edits", off(post(admin, "/admin/common-games/new", data=dict(key="x", name="x", slot="x", yaml="x"))))
     r = post(player, "/signup/apworld", files={"file": ("x.apworld", b"PK")})
@@ -118,10 +128,14 @@ try:
     left = get(admin, "/demo/status").json().get("reset_in")
     check("the bar learns when it resets", isinstance(left, int) and 0 < left <= 30, left)
     post(admin, "/admin/seasons", data=dict(name="Made after the snapshot"))
+    # A request that never finishes arriving mustn't hold the reset off.
+    slow = socket.create_connection(("127.0.0.1", again.port))
+    slow.sendall(b"POST /login HTTP/1.1\r\nHost: x\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 1000000\r\n\r\nu")
     t = time.time()
-    wait_for(lambda: again.proc.poll() is not None, 90, 1)
+    wait_for(lambda: again.proc.poll() is not None, 120, 1)
     code = again.proc.poll()
-    check("Bifrost stops itself for the reset", code == 0 and time.time() - t < 60, (code, again.logtext()[-400:]))
+    slow.close()
+    check("Bifrost stops itself for the reset, even mid-request", code == 0 and time.time() - t < 90, (code, again.logtext()[-400:]))
     again.log.close()
     again.start()
     admin = as_role(again, "sysadmin")
@@ -129,6 +143,17 @@ try:
           and "Autumn season" in get(admin, "/admin/seasons").text)
 finally:
     again.stop()
+
+# Game servers Bifrost doesn't run are out of the demo's reach.
+ext = Server("demo-ext", port=18203, ap_ports="39223-39225", bin=BIN, extra_env={"BIFROST_AP_MODE": "external"})
+try:
+    ext.start()
+    ext_started = True
+except RuntimeError:
+    ext_started = False
+check("a demo build won't use an external game server", not ext_started and "managed game servers" in ext.logtext(), ext.logtext()[-400:])
+if ext_started:
+    ext.stop()
 
 # A demo build signs in natively only.
 fwd = Server("demo-fwd", port=18202, ap_ports="39220-39222", bin=BIN)
