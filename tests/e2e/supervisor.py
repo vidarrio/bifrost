@@ -205,7 +205,7 @@ try:
     anon = srv.session()
     check("anonymous gets the sign-in", get(anon, f"/s/{sid}/board", allow_redirects=False).status_code in (302, 303))
     check("a stranger's told there's no such season", get(stranger, f"/s/{sid}/board").status_code == 404)
-    pages = ("log", "log/fragment", "board/fragment", f"game/{game}", f"game/{game}/hints", f"game/{game}/items", f"game/{game}/inlogic", f"game/{game}/live", f"game/{game}/output", f"game/{game}/poptracker/state", f"game/{game}/poptracker/asset?path=x", f"game/{game}/log/fragment", "signup", "claim", "minesweeper", "minesweeper/leaderboard", "season", "check")
+    pages = ("log", "log/fragment", "board/fragment", f"game/{game}", f"game/{game}/hints", f"game/{game}/items", f"game/{game}/inlogic", f"game/{game}/live", f"game/{game}/output", f"game/{game}/poptracker/state", f"game/{game}/poptracker/asset?path=x", f"game/{game}/log/fragment", "signup", "claim", "minesweeper", "minesweeper/leaderboard", "season")
     check("…on every page", all(get(stranger, f"/s/{sid}/{p}").status_code == 404 for p in pages), [p for p in pages if get(stranger, f"/s/{sid}/{p}").status_code != 404])
     check("a bare season URL goes to the board", get(anon, f"/s/{sid}", allow_redirects=False).headers.get("location") == f"/s/{sid}/board")
     check("there's no standalone YAML checker", get(anon, "/check").status_code == 404 and get(root, f"/s/{sid}/check").status_code == 404)

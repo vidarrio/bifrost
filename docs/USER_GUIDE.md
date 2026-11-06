@@ -72,7 +72,9 @@ have no game there yet, the signup wizard is on the page too, with two steps:
    worlds with Archipelago's own code, and has to pass before you can
    continue. Its `name:` has to be one plain name of at most 16 characters, without
    placeholders such as `{number}`, as that's how your slot is found once the seed is
-   rolled. Errors are shown as Archipelago reports them.
+   rolled. Errors are shown as Archipelago reports them. Nothing is saved
+   until you submit, so while signups are open you can use this step to try
+   out options.
 
 Signing up takes you to your game's page, where you can invite co-op partners.
 
@@ -116,9 +118,6 @@ game. You can replace it while it waits. It's checked properly once the world is
 approved. If that fails, or the world is rejected, the season's page says so: replace
 the YAML from your game's page, or remove the signup. A moderator can do either too,
 because the season can't be generated until it's sorted out.
-
-The check runs before anything is saved, so you can use the signup's YAML step
-to try out options: a YAML that fails leaves no signup behind.
 
 ### After generation: your slot
 
