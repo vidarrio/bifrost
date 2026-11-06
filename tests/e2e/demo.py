@@ -33,7 +33,8 @@ def as_role(srv, role):
     return s
 
 
-srv = Server("demo", port=18200, ap_ports="39200-39209", bin=BIN, extra_env={"BIFROST_AP_BIND": "0.0.0.0"})
+PROXIED = {"BIFROST_TRUSTED_PROXIES": "127.0.0.1"}
+srv = Server("demo", port=18200, ap_ports="39200-39209", bin=BIN, extra_env={"BIFROST_AP_BIND": "0.0.0.0", **PROXIED})
 srv.start()
 try:
     log = srv.logtext()
@@ -56,6 +57,10 @@ try:
     s = as_role(srv, "player")
     old = s.cookies.get("bifrost_session")
     s.post(srv.base + "/demo/as/moderator", allow_redirects=False)
+    xff = lambda ip: requests.post(srv.base + "/demo/as/player", headers={"X-Forwarded-For": ip}, allow_redirects=False).status_code
+    codes = [xff("203.0.113.7") for _ in range(31)]
+    check("switching is rate limited per visitor", codes[:29].count(303) == 29 and codes[-1] == 429, codes)
+    check("…by the address the proxy forwards", xff("203.0.113.8") == 303)
     check("switching ends the session it replaces", requests.get(srv.base + "/api/me", cookies={"bifrost_session": old}).status_code == 401)
     check("a player is still no sysadmin", get(player, "/admin/users").status_code in (302, 303, 401, 403)
           or "Sysadmins only" in get(player, "/admin/users").text)
@@ -117,7 +122,7 @@ snap = os.path.join(DEV, "run", "demo-snapshot")
 shutil.rmtree(snap, ignore_errors=True)
 shutil.copytree(srv.data, snap, symlinks=True)
 again = Server("demo-reset", port=18201, ap_ports="39210-39219", bin=BIN,
-               extra_env={"BIFROST_DEMO_SNAPSHOT": snap, "BIFROST_DEMO_RESET_MINUTES": "0.5"})
+               extra_env={"BIFROST_DEMO_SNAPSHOT": snap, "BIFROST_DEMO_RESET_MINUTES": "0.5", "BIFROST_DEMO_DIRECT": "1"})
 with open(os.path.join(again.data, "leftover"), "w") as f:
     f.write("from before the reset\n")
 again.start()
@@ -145,7 +150,7 @@ finally:
     again.stop()
 
 # Game servers Bifrost doesn't run are out of the demo's reach.
-ext = Server("demo-ext", port=18203, ap_ports="39223-39225", bin=BIN, extra_env={"BIFROST_AP_MODE": "external"})
+ext = Server("demo-ext", port=18203, ap_ports="39223-39225", bin=BIN, extra_env={"BIFROST_AP_MODE": "external", **PROXIED})
 try:
     ext.start()
     ext_started = True
@@ -154,6 +159,19 @@ except RuntimeError:
 check("a demo build won't use an external game server", not ext_started and "managed game servers" in ext.logtext(), ext.logtext()[-400:])
 if ext_started:
     ext.stop()
+
+def refuses(tag, port, env, says):
+    x = Server(tag, port=port, ap_ports=f"{port + 21100}-{port + 21102}", bin=BIN, extra_env=env)
+    try:
+        x.start()
+    except RuntimeError:
+        return check(f"a demo build won't start: {says}", says in x.logtext(), x.logtext()[-400:])
+    x.stop()
+    return check(f"a demo build won't start: {says}", False, "it started")
+
+
+refuses("demo-noproxy", 18204, {}, "BIFROST_TRUSTED_PROXIES")
+refuses("demo-badreset", 18205, {**PROXIED, "BIFROST_DEMO_RESET_MINUTES": "60m"}, "BIFROST_DEMO_RESET_MINUTES")
 
 # A demo build signs in natively only.
 fwd = Server("demo-fwd", port=18202, ap_ports="39220-39222", bin=BIN)

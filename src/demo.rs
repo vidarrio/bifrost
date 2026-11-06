@@ -62,6 +62,15 @@ pub async fn ensure_accounts(db: &Db, mode: auth::AuthMode) {
         crate::config::get().ap_managed,
         "a demo build only runs with managed game servers: unset BIFROST_AP_MODE"
     );
+    // Rate limits are per address in a demo build. Behind a proxy that Bifrost
+    // doesn't trust, every visitor has the proxy's address and one shared limit.
+    assert!(
+        !crate::config::get().trusted_proxies.is_empty()
+            || std::env::var("BIFROST_DEMO_DIRECT").as_deref() == Ok("1"),
+        "a demo build needs BIFROST_TRUSTED_PROXIES set to its reverse proxy, so rate limits \
+         see each visitor's address (or BIFROST_DEMO_DIRECT=1 if visitors reach it directly)"
+    );
+    reset_interval();
     tracing::warn!(
         "DEMO BUILD: anyone who can reach this instance can act as any account, sysadmin \
          included, without a password"
@@ -258,18 +267,7 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
 /// never without it. Bifrost then shuts down as on SIGTERM, for the service
 /// manager to start it again.
 pub async fn reset_due() {
-    let minutes = std::env::var("BIFROST_DEMO_RESET_MINUTES")
-        .ok()
-        .and_then(|v| v.trim().parse::<f64>().ok())
-        .filter(|m| *m > 0.0);
-    // At most a week; anything longer (or not a number) means no reset.
-    let after = minutes
-        .filter(|m| *m <= 7.0 * 24.0 * 60.0)
-        .and_then(|m| Duration::try_from_secs_f64(m * 60.0).ok());
-    let Some(after) = after else {
-        if minutes.is_some() {
-            tracing::warn!("demo: BIFROST_DEMO_RESET_MINUTES is over a week; not resetting");
-        }
+    let Some(after) = reset_interval() else {
         return std::future::pending().await;
     };
     let _ = RESET_AT.set(Instant::now() + after);
@@ -293,6 +291,24 @@ pub async fn reset_due() {
         }
         std::process::exit(0);
     });
+}
+
+/// `BIFROST_DEMO_RESET_MINUTES`: unset means no reset; otherwise it must be a
+/// number of minutes above 0 and at most a week, or Bifrost won't start (a
+/// typo mustn't quietly turn the reset off).
+fn reset_interval() -> Option<Duration> {
+    let v = std::env::var("BIFROST_DEMO_RESET_MINUTES").ok()?;
+    let after = v
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|m| *m > 0.0 && *m <= 7.0 * 24.0 * 60.0)
+        .and_then(|m| Duration::try_from_secs_f64(m * 60.0).ok());
+    Some(after.unwrap_or_else(|| {
+        panic!(
+            "BIFROST_DEMO_RESET_MINUTES={v:?}: give a number of minutes, above 0 and at most a week"
+        )
+    }))
 }
 
 /// How long a reset waits for open requests and game servers.
