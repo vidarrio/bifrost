@@ -43,6 +43,11 @@ cargo build --release --features demo          # target/release/bifrost
 docker build --build-arg FEATURES=demo -t bifrost:demo .
 ```
 
+Every push to `main` also publishes the image as `ghcr.io/vidarrio/bifrost:demo`
+(and `:demo-<short commit>`), built by `.github/workflows/demo.yml`. It's a
+demo build: never run it as a real instance. Release tags (`latest`, `X.Y.Z`,
+`X.Y`) are never demo builds.
+
 ## Make the snapshot
 
 Start the demo build on an empty data dir, seed it, stop it and keep a copy.

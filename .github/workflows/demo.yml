@@ -1,0 +1,63 @@
+name: Demo image
+
+# The public demo's image (packaging/demo/README.md): a demo build, published on
+# every push to main as ghcr.io/vidarrio/bifrost:demo (a moving tag the demo's
+# host follows) and :demo-<short sha>. Separate from release.yml: it never
+# touches the version tags or latest.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push supersedes an older build.
+concurrency:
+  group: demo-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/vidarrio/bifrost
+  # docker/build-push-action would upload a build record artifact every run.
+  DOCKER_BUILD_RECORD_UPLOAD: false
+
+jobs:
+  image:
+    # GitHub-hosted: this repository is public.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Short commit
+        id: sha
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to ghcr.io
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build and push the demo image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          build-args: FEATURES=demo
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:demo
+            ${{ env.IMAGE }}:demo-${{ steps.sha.outputs.short }}
+          labels: |
+            org.opencontainers.image.title=Bifrost (demo build)
+            org.opencontainers.image.description=A demo build for a public demo; not for real instances
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.revision=${{ github.sha }}
+          # Its own cache: the demo build's Bifrost layer differs from the release image's.
+          cache-from: type=gha,scope=demo
+          cache-to: type=gha,mode=max,scope=demo
