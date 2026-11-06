@@ -1,14 +1,19 @@
-<img src="static/logo.svg" alt="" width="96" align="right">
+<p align="center">
+  <img src="static/logo.svg" alt="" width="128">
+</p>
 
-# Bifrost
+<h1 align="center">Bifrost</h1>
+
+<p align="center">
+  <a href="https://github.com/vidarrio/bifrost/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush"><img src="https://github.com/vidarrio/bifrost/actions/workflows/ci.yml/badge.svg?branch=main&event=push" alt="CI"></a>
+  <a href="https://github.com/vidarrio/bifrost/releases"><img src="https://badgen.net/github/tag/vidarrio/bifrost?label=release" alt="Release"></a>
+  <a href="LICENSE"><img src="https://badgen.net/github/license/vidarrio/bifrost" alt="License: MIT"></a>
+  <a href="https://demo.bifrost.vidarr.io"><img src="https://badgen.net/badge/demo/live/7b8cff" alt="Live demo"></a>
+</p>
 
 > [!WARNING]
 > Bifrost is in very early development. Expect breaking changes between versions,
 > and read the [changelog](CHANGELOG.md) before you update.
-
-[![CI](https://github.com/vidarrio/bifrost/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/vidarrio/bifrost/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush)
-[![Release](https://img.shields.io/github/v/release/vidarrio/bifrost?sort=semver)](https://github.com/vidarrio/bifrost/releases)
-[![License: MIT](https://img.shields.io/github/license/vidarrio/bifrost)](LICENSE)
 
 A self-hosted season manager for [Archipelago](https://archipelago.gg)
 multiworlds. It's built for a friend group or community running recurring
@@ -16,6 +21,8 @@ seasons. One program runs the whole thing: signups with live YAML checks, seed
 generation, the Archipelago servers, a live board with hints and trackers, and
 an archive of past seasons.
 
+- **[Live demo](https://demo.bifrost.vidarr.io)**: try it as a player, a
+  moderator or a sysadmin, no account needed. It resets every so often.
 - **[User guide](docs/USER_GUIDE.md)**: how to play, run seasons and operate an
   instance.
 - **[AI disclaimer](AI_DISCLAIMER.md)**: Bifrost is largely AI-written. Read
