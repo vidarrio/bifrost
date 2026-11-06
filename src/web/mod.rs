@@ -132,7 +132,6 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         .route("/export/{season}/{key}/file", get(export_file))
         .route("/", get(landing))
         .route("/favicon.svg", get(favicon))
-        .route("/check", get(check_form).post(check_run))
         .route("/board", get(board_view))
         .route("/board/fragment", get(board_fragment_view))
         .route("/log", get(log_view))

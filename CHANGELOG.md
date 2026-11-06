@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bifrost has a logo: six islands joined by bridges. It replaces the gold caret as the
   favicon, shows beside the name in the page header and on the home page.
 
+### Removed
+
+- The standalone YAML checker (`/check`) and the home page's Tools section that linked
+  it. Signing up checks a YAML against the season's own worlds before anything is saved,
+  along with its slot name, so it covers what the checker did. The checker could also
+  check against the wrong season, and anyone could run it without signing in.
+
 ### Fixed
 
 - File pickers look like the fields around them on every page. Before, the console's
