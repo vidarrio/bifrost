@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   address, its password for those who may see it, the Archipelago version its server
   runs, which can differ between seasons, and your games in it. The board's heading is
   the season's name.
+- A game's figures, on its card on the live board and at the top of its page, give how
+  many locations are left right after how many there are, before what was sent and
+  received.
 - Bifrost has a logo: six islands joined by bridges. It replaces the gold caret as the
   favicon, shows beside the name in the page header and on the home page.
 

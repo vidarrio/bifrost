@@ -524,8 +524,8 @@ pub(super) fn inlogic_panel(game_id: Id, inlogic: Option<&crate::db::InLogic>) -
 /// The header's figures for a slot.
 pub fn game_stats(live: &crate::ap::ApLive) -> String {
     format!(
-        "{} locations · sent {} · received {} · {} left",
-        live.world_size, live.sent, live.received, live.still_to_find
+        "{} locations · {} left · sent {} · received {}",
+        live.world_size, live.still_to_find, live.sent, live.received
     )
 }
 
