@@ -488,6 +488,10 @@ pub(crate) async fn signup_post(
     if let Some(e) = at_games_limit(&st, &ctx, my_id).await {
         return refuse(&e);
     }
+    #[cfg(feature = "demo")]
+    if let Some(e) = crate::demo::games_full(&st.db, ctx.id).await {
+        return refuse(&e);
+    }
     let mut yaml: Option<Vec<u8>> = None;
     let mut is_custom = false;
     let mut pending_world = String::new();

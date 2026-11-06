@@ -29,6 +29,8 @@ mod common;
 mod common_edit;
 mod config;
 mod db;
+#[cfg(feature = "demo")]
+mod demo;
 mod generate;
 mod inlogic;
 mod load;
@@ -101,6 +103,10 @@ async fn main() {
         std::process::exit(1);
     }
 
+    #[cfg(feature = "demo")]
+    if args.is_empty() {
+        demo::restore_snapshot();
+    }
     let cfg = config::init(config::Config::load());
     // Everything Bifrost writes is its own, unless it says otherwise.
     // SAFETY: umask only sets this process's file creation mask.
@@ -401,7 +407,14 @@ async fn shutdown_signal() {
     // future non-`Send`, and this one is handed to `axum::serve`.
     let term = std::pin::pin!(term.recv());
     let ctrl_c = std::pin::pin!(tokio::signal::ctrl_c());
+    #[cfg(not(feature = "demo"))]
     futures_util::future::select(term, ctrl_c).await;
+    #[cfg(feature = "demo")]
+    futures_util::future::select(
+        futures_util::future::select(term, ctrl_c),
+        std::pin::pin!(demo::reset_due()),
+    )
+    .await;
     tracing::info!("shutting down");
 }
 
@@ -409,6 +422,9 @@ async fn shutdown_signal() {
 /// print the one-time first-run setup link.
 async fn init_auth(db: &db::Db) -> auth::Auth {
     let mode = db.auth_mode().await;
+    // Before the forward-auth checks, so a demo build says why it won't start.
+    #[cfg(feature = "demo")]
+    demo::ensure_accounts(db, mode).await;
     let fwd = match auth::ForwardAuth::from_env(config::get().trusted_proxies.clone()) {
         Ok(f) => f,
         Err(e) if mode == auth::AuthMode::ForwardAuth => panic!("forward-auth config: {e}"),

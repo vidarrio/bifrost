@@ -1241,6 +1241,16 @@ impl Db {
             .unwrap_or(0)
     }
 
+    /// How many games a season has signed up (the demo's cap).
+    #[cfg(feature = "demo")]
+    pub async fn games_in(&self, season: Id) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM submission WHERE season_id = ?")
+            .bind(season)
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or(0)
+    }
+
     /// Delete a submission (its own submitter, or an admin). Returns the deleted
     /// row's YAML path so the caller can clean it up.
     pub async fn delete_submission(

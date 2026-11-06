@@ -38,6 +38,8 @@ try:
     assert wait_for(up, 60), "the container didn't come up"
     logs = lambda: re.sub(r"\x1b\[[0-9;]*m", "", sh("podman", "logs", "bfc").stdout + sh("podman", "logs", "bfc").stderr)
     check("strong isolation in the container", "isolation: strong" in logs())
+    r = requests.get(BASE + "/demo/as/sysadmin", allow_redirects=False)
+    check("the image isn't a demo build", r.status_code == 404 and "x-bifrost-demo" not in r.headers, (r.status_code, dict(r.headers)))
     tok = re.search(r"/setup\?token=([0-9a-f]+)", logs()).group(1)
     s = requests.Session()
     s.headers["Origin"] = BASE

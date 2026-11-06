@@ -120,8 +120,12 @@ async fn method_not_allowed() -> axum::response::Response {
 /// Every route, behind the auth and rate-limit middleware and the baseline
 /// response headers. `main` wraps it in the season-URL rewrite.
 pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net::Cidr>) -> Router {
-    Router::new()
-        .fallback(page_not_found)
+    let r = Router::new();
+    #[cfg(feature = "demo")]
+    let r = r
+        .route("/demo/as/{role}", get(crate::demo::switch))
+        .route("/demo/status", get(crate::demo::status));
+    r.fallback(page_not_found)
         .route("/health", get(health))
         .route("/export/commons", get(export_commons))
         .route("/export/{season}/{key}/allowlist", get(export_allowlist))
@@ -260,6 +264,8 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         ))
         // Authenticate + enforce the route tiers before any handler runs.
         .layer(axum::middleware::from_fn_with_state(auth, auth::middleware))
+        // The demo build turns some of it off, whoever asks (src/demo.rs).
+        .layer(axum::middleware::from_fn(demo_guard))
         // Small bodies everywhere (YAMLs are capped at 512 KiB); only the two
         // file-upload routes get `upload_limit`.
         .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024))
@@ -297,6 +303,14 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+#[cfg(feature = "demo")]
+use crate::demo::guard as demo_guard;
+/// Any other build passes everything through.
+#[cfg(not(feature = "demo"))]
+async fn demo_guard(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    next.run(req).await
 }
 
 /// Body limit for a common game's client downloads, which can be large (a

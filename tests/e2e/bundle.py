@@ -35,6 +35,8 @@ try:
     rtdir = os.path.dirname(rt[0])
     check("runs on the bundled AP", f"bundled at {rtdir}/archipelago" in log, re.findall(r"Archipelago.*bundled at.*", log))
     check("strong isolation (host bwrap)", "isolation: strong" in log)
+    r = requests.get(srv.base + "/demo/as/sysadmin", allow_redirects=False)
+    check("the bundle isn't a demo build", r.status_code == 404 and "x-bifrost-demo" not in r.headers, (r.status_code, dict(r.headers)))
 
     root = srv.setup_sysadmin()
     sid = new_season(root, "Native")

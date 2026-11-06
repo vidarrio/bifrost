@@ -115,11 +115,25 @@ pub fn card_status(live: &crate::ap::ApLive) -> (&'static str, &'static str) {
     }
 }
 
+/// The demo build's bar (`src/demo_bar.js`), run with the header script.
+#[cfg(feature = "demo")]
+macro_rules! demo_js {
+    () => {
+        include_str!("../demo_bar.js")
+    };
+}
+#[cfg(not(feature = "demo"))]
+macro_rules! demo_js {
+    () => {
+        ""
+    };
+}
+
 /// The header's identity script, shared by every page (`HEAD`) and the landing
 /// page (`static/index.html`'s `<!--IDENTITYJS-->`), so the two can't drift.
 macro_rules! identity_js {
     () => {
-        r#"// Fill the header from a cached identity synchronously (before paint) so it
+        concat!(r#"// Fill the header from a cached identity synchronously (before paint) so it
 // doesn't flicker empty→filled on reload, then confirm/update from /api/me.
 function bifApplyMe(m){
  var w=document.getElementById('who');
@@ -137,7 +151,7 @@ fetch('/api/me').then(function(r){return r.json()}).then(function(m){
  bifApplyMe(m);
  try{localStorage.setItem('bifme',JSON.stringify({user:(m&&m.user)||null,admin:!!(m&&m.admin),sign_in:m&&m.sign_in,sign_out:m&&m.sign_out}));}catch(e){}
 }).catch(function(){});
-"#
+"#, demo_js!())
     };
 }
 

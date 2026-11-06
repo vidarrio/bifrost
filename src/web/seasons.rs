@@ -132,6 +132,10 @@ pub(crate) async fn seasons_create(
     if !me.can(auth::Action::CreateSeason) {
         return render::notice("Moderators only.", false, "/").into_response();
     }
+    #[cfg(feature = "demo")]
+    if let Some(e) = crate::demo::seasons_full(&st.db).await {
+        return seasons_page(&st, &me, &f.name, Some(&e)).await;
+    }
     let name: String = f.name.trim().chars().take(80).collect();
     if name.is_empty() {
         return seasons_page(
