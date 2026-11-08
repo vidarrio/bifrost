@@ -94,8 +94,12 @@ It plays the first two through their season console, which the demo allows
 only on seasons it didn't start with, and it reads which locations to check
 from the spoiler in the data dir. It also writes a few weeks of minesweeper
 results, general and for both seasons, straight into the database, since a
-result's time is how long the board took to play. All this takes about five
+result's time is how long the board took to play. All this takes about eight
 minutes.
+
+Since it reads the data dir and writes to the database, run the seed as a user
+who can: the instance's own user, or root. Bifrost keeps the data dir to
+itself. For a container, run the seed as root on the host.
 
 ## Run it
 

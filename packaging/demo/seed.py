@@ -23,6 +23,7 @@ Generating the seasons and playing them takes a few minutes.
 import os
 import random
 import re
+import shlex
 import shutil
 import sqlite3
 import sys
@@ -59,6 +60,7 @@ WINTER = [
 # command takes a second or so: keep the numbers small.
 SUMMER_PLAY = {"Ann": "goal", "Mia": "goal", "Sam": "goal", "AnnDice": 30}
 AUTUMN_PLAY = {"SamDash": "goal", "Mia": 30, "Ann": 25, "Sam": 20, "AnnTunic": 12, "Commons": 5}
+HINTS = 4
 LINE = re.compile(r"^\s*(?P<loc>.+) \((?P<finder>[^()]+)\): (?P<item>.+) \((?P<owner>[^()]+)\)\s*$")
 rng = random.Random(26)
 
@@ -154,15 +156,23 @@ def main(base, data):
         sys.exit(f"seed: season {sid}'s console kept failing: {out}")
 
     def spoiler(sid):
-        """The seed's (finder, location, item, owner) placements: the playthrough's
-        first, in the order it finds them, then the rest. Events are left out."""
+        """The seed's (finder, location, item, owner, progression) placements: the
+        playthrough's first, in the order it finds them, then the rest. Events
+        are left out. Stops the seed if the spoiler isn't there or reads as
+        nothing, as it would if a new Archipelago changed its format."""
         z = zipfile.ZipFile(os.path.join(data, "seasons", sid, "output", "current.zip"))
-        name = next(n for n in z.namelist() if n.endswith("_Spoiler.txt"))
+        name = next((n for n in z.namelist() if n.endswith("_Spoiler.txt")), None)
+        if not name:
+            sys.exit(f"seed: season {sid}'s seed has no spoiler")
         text = z.read(name).decode("utf-8", "replace")
+        if "\nLocations:" not in text:
+            sys.exit(f"seed: season {sid}'s spoiler has no Locations section")
         locs = text[text.rfind("\nLocations:"):]
         play = text[text.find("\nPlaythrough:"):] if "\nPlaythrough:" in text else ""
         seen, out = set(), []
-        for line in play.splitlines() + locs.splitlines():
+        # The playthrough lists only the placements of progression items.
+        lines = [(l, True) for l in play.splitlines()] + [(l, False) for l in locs.splitlines()]
+        for line, progression in lines:
             m = LINE.match(line)
             # Events (an item named for its location) and Hollow Knight's room
             # transitions ("Room_01[left1]") aren't locations anyone checks.
@@ -171,7 +181,9 @@ def main(base, data):
             key = (m["finder"], m["loc"])
             if key not in seen:
                 seen.add(key)
-                out.append((m["finder"], m["loc"], m["item"], m["owner"]))
+                out.append((m["finder"], m["loc"], m["item"], m["owner"], progression))
+        if not out:
+            sys.exit(f"seed: read no placements from season {sid}'s spoiler")
         return out
 
     def play(sid, plan):
@@ -201,28 +213,30 @@ def main(base, data):
                 continue
             mine = [p for p in places if p[0] == slot]
             sent, missed = 0, []
-            for finder, loc, _, _ in mine:
+            for finder, loc, _, _, _ in mine:
                 if sent >= want:
                     break
-                out = console(sid, f"/send_location {slot} {loc}")
+                out = console(sid, f"/send_location {shlex.quote(slot)} {shlex.quote(loc)}")
                 # "Ann sent X to Mia (loc)", or "Ann found their X (loc)".
                 if re.match(rf"{re.escape(slot)} (sent|found) ", out):
                     sent += 1
                     done.add((finder, loc))
-                else:
+                elif not out.startswith("(command accepted"):
+                    # Silence means it was checked already, by a goal's collect.
                     missed.append(f"{loc}: {out}")
             print(f"seed:   {slot}: {sent} of {len(mine)} locations checked", flush=True)
-            if sent < want:
-                print("seed:     missed " + "; ".join(missed[:3]), flush=True)
-        # A few hints: progression items still to find, in others' games.
-        hinted = 0
-        for finder, loc, item, owner in places:
-            if hinted >= 4:
-                break
-            if owner in plan and finder != owner and plan.get(owner) != "goal" \
-                    and plan.get(finder) != "goal" and (finder, loc) not in done:
-                if console(sid, f"/hint {owner} {item}").startswith("[Hint]"):
-                    hinted += 1
+            # Far short of the plan, mostly through names the server didn't know,
+            # means the spoiler's names no longer match the server's.
+            if sent < want / 2 and len(missed) > sent:
+                sys.exit(f"seed: {slot} checked only {sent} of {want}: " + "; ".join(missed[:3]))
+        # A few hints: progression items still to find, in others' games. The
+        # console doesn't always see a hint's reply (the server sends it to the
+        # two slots involved only), so this counts the commands, not replies.
+        wanted = [(owner, item) for finder, loc, item, owner, progression in places
+                  if progression and owner in plan and finder != owner and plan.get(owner) != "goal"
+                  and plan.get(finder) != "goal" and (finder, loc) not in done]
+        for owner, item in wanted[:HINTS]:
+            console(sid, f"/hint {shlex.quote(owner)} {shlex.quote(item)}")
 
     def minesweeper(sid, games):
         """Write a history of finished boards: (account, kind, boards, win share)."""
