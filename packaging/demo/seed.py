@@ -242,10 +242,13 @@ def main(base, data):
                   and plan.get(finder) != "goal" and (finder, loc) not in done]
         # Each is between two people, so a starred hint shows as wanted on
         # someone else's card, and each item is hinted once: a /hint names every
-        # copy. Spread out where there are enough (each slot owning and holding
-        # one at most), then any. The checks above use up the playthrough's
-        # locations first, so there may not be many to pick from.
-        wanted = [w for w in wanted if ACCOUNT.get(w[0]) != ACCOUNT.get(w[2])]
+        # copy. Only between games with a card of their own: the common game's
+        # card shows "Everyone", so its hints can't be starred from a player's
+        # game page. Spread out where there are enough (each slot owning and
+        # holding one at most), then any. The checks above use up the
+        # playthrough's locations first, so there may not be many to pick from.
+        wanted = [w for w in wanted if w[0] in ids and w[2] in ids
+                  and ACCOUNT.get(w[0]) != ACCOUNT.get(w[2])]
         hinted, owners, finders, items = [], set(), set(), set()
         for spread in (True, False):
             for owner, item, finder, loc in wanted:
@@ -268,12 +271,9 @@ def main(base, data):
                     return r.split("</div>", 1)[0]
 
         # Star a few of them, as their owners would, from the owner's game page
-        # (where the hint shows once the board has seen it). The common game's
-        # card has no slot name, so its hints are left as they are.
+        # (where the hint shows once the board has seen it).
         starred = 0
-        for owner, item, finder, loc in hinted:
-            if starred >= PRIORITIZED or owner not in ids:
-                continue
+        for owner, item, finder, loc in hinted[:PRIORITIZED]:
             page = f"/s/{sid}/game/{ids[owner]}"
             for _ in range(20):
                 row = hint_row(page, item, finder, loc)
