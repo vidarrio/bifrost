@@ -53,8 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A re-roll or a generation that failed while it set up the season's games no longer
   leaves it with some games missing or their players unassigned: the games are set up
-  all at once or not at all. A failure to read a season's game server passwords now
-  stops the server from starting, where before it started with none.
+  all at once or not at all. If a season's game server passwords can't be read, its
+  server doesn't start, where before it started without a password.
 - When a game's file couldn't be downloaded (not your game, or no such file), the
   notice's "back" link went to that game in the default season instead of the game's
   own season.

@@ -107,7 +107,8 @@ impl Runtimes {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::error!(
-                        "season {id}: reading its AP passwords: {e}; not starting its server"
+                        "season {id}: reading its AP passwords: {e}; not starting its server \
+                         (restart Bifrost once the database reads again)"
                     );
                     return;
                 }

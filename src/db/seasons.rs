@@ -480,16 +480,13 @@ impl Db {
     }
 
     /// The season's AP server (connect, admin) passwords.
-    /// A read error is an error, not empty passwords: a server must not
-    /// start without the ones it was given.
+    /// A read error, or no such season, is an error, not empty passwords: a
+    /// server must not start without the ones it was given.
     pub async fn ap_passwords(&self, id: Id) -> Result<(String, String), sqlx::Error> {
-        Ok(
-            sqlx::query_as("SELECT ap_password, ap_admin_password FROM season WHERE id = ?")
-                .bind(id)
-                .fetch_optional(&self.pool)
-                .await?
-                .unwrap_or_default(),
-        )
+        sqlx::query_as("SELECT ap_password, ap_admin_password FROM season WHERE id = ?")
+            .bind(id)
+            .fetch_one(&self.pool)
+            .await
     }
 
     pub async fn set_ap_password(&self, id: Id, password: &str) -> Result<(), sqlx::Error> {

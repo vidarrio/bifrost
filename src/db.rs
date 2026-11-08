@@ -903,7 +903,12 @@ impl Db {
         new_ap_slots: &[(i64, String, String)],
     ) -> Result<(), sqlx::Error> {
         use std::collections::{HashMap, HashSet};
-        let old = self.slots(season).await?;
+        // Read inside the transaction, so a claim made meanwhile isn't lost.
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let old: Vec<SlotRow> = sqlx::query_as(SLOTS)
+            .bind(season)
+            .fetch_all(&mut *tx)
+            .await?;
         let now = crate::clock::now();
         let roster: HashSet<&str> = new_ap_slots.iter().map(|(_, n, _)| n.as_str()).collect();
         // Common games' slots stay theirs, by name.
@@ -924,7 +929,6 @@ impl Db {
                     .or_insert_with(|| s.name.clone());
             }
         }
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         sqlx::query("DELETE FROM slot WHERE season_id = ?")
             .bind(season)
             .execute(&mut *tx)
@@ -999,17 +1003,10 @@ impl Db {
     }
 
     pub async fn slots(&self, season: Id) -> Result<Vec<SlotRow>, sqlx::Error> {
-        sqlx::query_as::<_, SlotRow>(
-            r#"SELECT s.id, s.game_id, s.is_seat, s.name, s.ap_slot, s.game, a.username AS claimed_by,
-                      c.account_id AS claimed_by_id, s.common_key
-               FROM slot s LEFT JOIN claim c ON c.slot_id = s.id
-               LEFT JOIN account a ON a.id = c.account_id
-               WHERE s.season_id = ?
-               ORDER BY s.ap_slot, s.name"#,
-        )
-        .bind(season)
-        .fetch_all(&self.pool)
-        .await
+        sqlx::query_as::<_, SlotRow>(SLOTS)
+            .bind(season)
+            .fetch_all(&self.pool)
+            .await
     }
 
     /// Claim `slot_id` — only if it's one of `season`'s slots.
@@ -1303,6 +1300,14 @@ impl Db {
         .await
     }
 }
+
+/// A season's slots with who claims each (bind: the season).
+const SLOTS: &str = r#"SELECT s.id, s.game_id, s.is_seat, s.name, s.ap_slot, s.game, a.username AS claimed_by,
+          c.account_id AS claimed_by_id, s.common_key
+   FROM slot s LEFT JOIN claim c ON c.slot_id = s.id
+   LEFT JOIN account a ON a.id = c.account_id
+   WHERE s.season_id = ?
+   ORDER BY s.ap_slot, s.name"#;
 
 /// Claim the season's slot named `name` for `account`, if it has one and it's
 /// unclaimed: one statement, so it can run inside a transaction.
