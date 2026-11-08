@@ -10,10 +10,9 @@ import json
 import os
 import re
 import shutil
-import sqlite3
 import zipfile
 
-from lib import Server, check, fixture, get, new_season, post, summary, wait_for
+from lib import Server, check, fixture, generate, get, new_season, post, summary, wait_for
 
 srv = Server("common", port=18198, ap_ports="39187-39189")
 cat = os.path.join(srv.data, "common")
@@ -67,10 +66,9 @@ try:
     check("an upload can't take a common game's apworld name", "reserved" in r.text, r.text[-300:])
     for who, name in ((ann, "Ann"), (bob, "Bob")):
         post(who, f"/s/{sid}/signup", files={"yaml": ("y.yaml", f"name: {name}\ngame: ChecksFinder\nChecksFinder: {{}}\n".encode())})
-    post(root, f"/s/{sid}/admin/generate")
-    t = wait_for(lambda: (x := admin()) and ("Generated seed" in x or "Failed" in x) and x, 300, 3)
-    gen = re.search(r"(Generated seed[^<]*|Failed[^<]*)", t or "")
-    check("the season generates with both", gen and "2 common games" in gen.group(1), gen and gen.group(1))
+    gen = generate(root, sid)
+    check("the season generates with both", gen and "2 common games" in gen, gen)
+    t = admin()
     m = re.search(r"foo\.apworld <span class=\"statline\">· ([^<]*)<", t or "")
     check("a common game's apworld is staged and trusted", m and "shipped with Bifrost" in m.group(1), m and m.group(1))
     board = lambda: get(root, f"/s/{sid}/board").text
@@ -139,7 +137,7 @@ try:
     check("a session isn't a token", get(root, "/export/commons").status_code == 401)
     # A per-slot file for the common game and one for a player, as a world that
     # makes files would leave in the seed.
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+    with srv.db() as db:
         slot_of = dict(db.execute("SELECT name, ap_slot FROM slot WHERE season_id = ?", (sid,)).fetchall())
     zpath = os.path.join(srv.data, "seasons", sid, "output", "current.zip")
     seed = next(n for n in zipfile.ZipFile(zpath).namelist() if n.endswith(".archipelago")).rsplit(".", 1)[0]
@@ -250,16 +248,12 @@ try:
     post(root, f"/s/{other}/admin/common", data={"do": "add", "key": "upl"})
     post(root, f"/s/{other}/admin/signups", data=dict(open="1"))
     post(ann, f"/s/{other}/signup", files={"yaml": ("y.yaml", b"name: Ann\ngame: ChecksFinder\nChecksFinder: {}\n")})
-    gen_of = lambda s: (lambda t: re.search(r"(Generated seed[^<]*|Failed[^<]*)", t or ""))(
-        wait_for(lambda: (x := get(root, f"/s/{s}/admin").text) and ("Generated seed" in x or "Failed" in x) and x, 300, 3))
-    post(root, f"/s/{other}/admin/generate")
-    g = gen_of(other)
-    check("a console-uploaded apworld doesn't run without a sandbox", g and "can't run without a sandbox" in g.group(1) and "bar.apworld" in g.group(1), g and g.group(1))
+    g = generate(root, other)
+    check("a console-uploaded apworld doesn't run without a sandbox", g and "can't run without a sandbox" in g and "bar.apworld" in g, g)
     post(root, f"/s/{other}/admin/common", data={"do": "remove", "key": "upl"})
     post(root, f"/s/{other}/admin/common", data={"do": "add", "key": "hand"})
-    post(root, f"/s/{other}/admin/generate")
-    g = gen_of(other)
-    check("one the operator put in place does", g and "Generated seed" in g.group(1), g and g.group(1))
+    g = generate(root, other)
+    check("one the operator put in place does", g and g.startswith("Generated"), g)
     installed = get(root, f"/s/{other}/admin").text.split("<h2>Installed apworlds</h2>")[-1].split("<h2>")[0]
     check("and the uploaded one was cleared out", "bar.apworld" not in installed and "baz.apworld" in installed, installed[:600])
 
@@ -267,10 +261,9 @@ try:
     post(root, f"/s/{sid}/admin/cancel", data=dict(name="Commons"))
     post(root, f"/s/{sid}/admin/common", data={"do": "remove", "key": "modded"})
     check("before generation a common game can be removed", "plays as <b>Modded</b>" not in admin())
-    post(root, f"/s/{sid}/admin/generate")
-    t = wait_for(lambda: (x := admin()) and ("Generated seed" in x or "Failed" in x) and x, 300, 3)
-    gen = re.search(r"(Generated seed[^<]*|Failed[^<]*)", t or "")
-    check("the season generates again", gen and "1 common game:" in gen.group(1), gen and gen.group(1))
+    gen = generate(root, sid)
+    check("the season generates again", gen and "1 common game:" in gen, gen)
+    t = admin()
     installed = (t or "").split("<h2>Installed apworlds</h2>")[-1].split("<h2>")[0]
     check("without the removed one's apworld", t and "foo.apworld" not in installed, installed[:600])
 finally:

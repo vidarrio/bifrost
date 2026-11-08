@@ -15,7 +15,7 @@ import zipfile
 
 import requests
 
-from lib import AP_DIR as AP, BIN, DEV, REPO, Server, check, descendants, first_game, get, new_season, post, summary, wait_for
+from lib import AP_DIR as AP, BIN, DEV, REPO, Server, check, descendants, first_game, generate, get, new_season, post, summary, wait_for
 
 YAML = b"name: Ann\ngame: ChecksFinder\nChecksFinder: {}\n"
 ITEMS = """[{"name":"Key","type":"toggle","img":"x.png","codes":"key"},
@@ -64,8 +64,7 @@ def live_season(srv):
     sid = new_season(root, "Packs")
     post(root, f"/s/{sid}/admin/signups", data=dict(open="1"))
     post(root, f"/s/{sid}/signup", files={"yaml": ("y.yaml", YAML)})
-    post(root, f"/s/{sid}/admin/generate")
-    wait_for(lambda: "Generated seed" in get(root, f"/s/{sid}/admin").text, 300, 3)
+    generate(root, sid)
     wait_for(lambda: "Ann" in get(root, f"/s/{sid}/board").text, 60, 2)
     gid = wait_for(lambda: first_game(root, sid), 60, 2)
     return root

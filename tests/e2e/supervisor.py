@@ -3,13 +3,12 @@
 Bifrost down cleanly, stopping the server first."""
 import os
 import re
-import sqlite3
 import signal
 import subprocess
 import sys
 import time
 
-from lib import Server, ap_servers, check, first_game, get, new_season, post, summary, wait_for
+from lib import Server, ap_servers, check, first_game, generate, get, new_season, post, summary, wait_for
 
 YAML = b"name: Ann\ngame: ChecksFinder\nChecksFinder: {}\n"
 
@@ -188,8 +187,7 @@ try:
     r = post(root, f"/s/{sid}/admin/signups/limit", data=dict(games="-1"))
     check("a bad limit is refused", "must be a whole number" in r.text)
     post(root, f"/s/{sid}/admin/signups/limit", data=dict(games="0"))
-    post(root, f"/s/{sid}/admin/generate")
-    wait_for(lambda: "Generated seed" in get(root, f"/s/{sid}/admin").text, 300, 3)
+    generate(root, sid)
     r = post(bob, f"{url}/notes", data=dict(notes="too late"))
     check("once generated the notes are read-only", "can't change" in r.text and "Save notes" not in get(bob, url).text, r.text[-300:])
     r = post(bob, f"{url}/yaml", files={"yaml": ("y.yaml", b"name: Late\ngame: ChecksFinder\nChecksFinder: {}\n")})
@@ -210,7 +208,7 @@ try:
     check("a bare season URL goes to the board", get(anon, f"/s/{sid}", allow_redirects=False).headers.get("location") == f"/s/{sid}/board")
     check("there's no standalone YAML checker", get(anon, "/check").status_code == 404 and get(root, f"/s/{sid}/check").status_code == 404)
     other_mod = srv.invite_user(root, "othermod")
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+    with srv.db() as db:
         db.execute("UPDATE account SET role = 'moderator' WHERE username = 'othermod'")
     r = get(other_mod, "/admin/seasons")
     check("a moderator who isn't in it doesn't see it listed", r.status_code == 200 and "Super" not in r.text, r.status_code)
@@ -285,7 +283,7 @@ try:
     check("the season's moderators do", "sesame-1" in get(root, f"/s/{sid}/board").text)
     post(root, f"/s/{sid}/admin/privacy", data=dict(what="live", private="1"))
     # A slot with no player: a moderator assigns it.
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+    with srv.db() as db:
         free = "abcdefghjkmnpqrs"
         db.execute("INSERT INTO slot (id, season_id, game_id, name, ap_slot, game) SELECT ?, season_id, game_id, 'Free', ap_slot, game FROM slot WHERE game_id = ? LIMIT 1", (free, ap))
     post(bob, f"/s/{sid}/claim", data=dict(slot_id=free, op="assign", account="bob"))
