@@ -116,6 +116,7 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
     Html(
         LANDING
             // Constant first, so no data inserted below can be read as it.
+            .replace("/*THEMECSS*/", render::THEME_CSS)
             .replace("<!--IDENTITYJS-->", render::IDENTITY_JS)
             .replace("<!--SEASONS-->", &render::landing_seasons(&cards, sign_in))
             .replace("<!--PASTSEASONS-->", &past_html)
