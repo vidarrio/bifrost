@@ -83,13 +83,19 @@ kill %1; wait
 cp -a /srv/bifrost-demo/seed /srv/bifrost-demo/snapshot
 ```
 
-The seed makes three seasons:
+The seed makes three seasons, with real games that need no ROM:
 
-- an archived one;
-- a live one with a common game and minesweeper;
+- an archived one, where three of the four games finished;
+- a live one with a common game: one game finished, the others part played,
+  with a few hints out;
 - one taking signups, run by the moderator.
 
-It generates the first two, which takes a minute or two.
+It plays the first two through their season console, which the demo allows
+only on seasons it didn't start with, and it reads which locations to check
+from the spoiler in the data dir. It also writes a few weeks of minesweeper
+results, general and for both seasons, straight into the database, since a
+result's time is how long the board took to play. All this takes about five
+minutes.
 
 ## Run it
 

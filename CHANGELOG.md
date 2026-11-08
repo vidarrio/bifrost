@@ -14,7 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to it until a visitor picks one or closes it. Since every visitor can be sysadmin,
   it turns off what could run code, host files or change the instance, caps seasons,
   games and live seasons, keeps the seasons it starts with as they are, keeps game
-  servers on localhost, and resets from a snapshot. Release builds don't include it. See `packaging/demo/README.md`.
+  servers on localhost, and resets from a snapshot. Its seed fills it with seasons of
+  real games, some finished and some part played, and minesweeper leaderboards.
+  Release builds don't include it. See `packaging/demo/README.md`.
 
 ### Changed
 
