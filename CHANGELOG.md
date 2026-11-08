@@ -39,7 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   many locations are left right after how many there are, before what was sent and
   received.
 - Bifrost has a logo: six islands joined by bridges. It replaces the gold caret as the
-  favicon, shows beside the name in the page header and on the home page.
+  favicon, shows beside the name in the page header and on the home page. The home
+  page's title and the live board's progress bars fade through its colour.
 
 ### Removed
 
