@@ -6,13 +6,7 @@
 <title>Bifrost</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
-  :root{
-    color-scheme:dark; accent-color:var(--accent);
-    --bg:#0d1117; --panel:#161c26; --panel2:#1b2330; --bd:#2a3542; --fg:#e6e9ef; --muted:#98a3b6;
-    --accent:#5aa9e6; --accent2:#c58af9; --logo:#7b8cff; --ok:#28a56d;
-    --font:"IBM Plex Sans", system-ui, -apple-system, Segoe UI, sans-serif;
-    --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  }
+  /*THEMECSS*/
   *{box-sizing:border-box}
   body{margin:0; background:
       radial-gradient(1200px 520px at 50% -10%, rgba(90,169,230,.14), transparent 60%),
@@ -24,7 +18,7 @@
   .brand{display:flex; align-items:center; gap:14px; flex-wrap:wrap}
   .brand img{width:56px; height:56px}
   h1{font-size:46px; margin:0; letter-spacing:-.02em;
-     background:linear-gradient(90deg,var(--accent),var(--logo),var(--accent2));
+     background:var(--brand);
      -webkit-background-clip:text; background-clip:text; color:transparent}
   .tag{font-family:var(--mono); font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted)}
   .lede{color:var(--muted); font-size:16px; max-width:62ch; margin:14px 0 18px}

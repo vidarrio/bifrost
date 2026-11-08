@@ -211,7 +211,7 @@ header .hwrap{max-width:1180px}
 .mstab{background:transparent;border:1px solid var(--bd);border-radius:8px;color:var(--muted);font-weight:600;padding:7px 13px;cursor:pointer;font-size:13px}
 .mstab small{font-weight:400;opacity:.7;margin-left:6px;font-size:11px}
 .mstab:hover{color:var(--fg);border-color:var(--accent)}
-.mstab.active{color:#0d1117;background:var(--accent);border-color:var(--accent)}
+.mstab.active{color:var(--bg);background:var(--accent);border-color:var(--accent)}
 .mstabgap{width:1px;align-self:stretch;background:var(--bd);margin:2px 4px}
 .lbview{margin-top:14px;max-width:560px}
 .lbhead{font-size:15px;margin:0 0 6px}
@@ -232,9 +232,9 @@ table.lb tr:first-child td.rank{color:var(--accent);font-weight:700}
 .cell.open{background:var(--bg);cursor:default}
 .cell.mine{background:var(--bad);color:#fff;border-color:var(--bad)}
 .cell.flag{color:var(--warn)}
-.cell[data-n="1"]{color:#5aa9e6}.cell[data-n="2"]{color:#28a56d}.cell[data-n="3"]{color:#e24d5f}
-.cell[data-n="4"]{color:#c58af9}.cell[data-n="5"]{color:#d98324}.cell[data-n="6"]{color:#3fbfbf}
-.cell[data-n="7"]{color:#e6e9ef}.cell[data-n="8"]{color:#98a3b6}
+.cell[data-n="1"]{color:var(--accent)}.cell[data-n="2"]{color:var(--ok)}.cell[data-n="3"]{color:var(--bad)}
+.cell[data-n="4"]{color:var(--accent2)}.cell[data-n="5"]{color:var(--warn)}.cell[data-n="6"]{color:#3fbfbf}
+.cell[data-n="7"]{color:var(--fg)}.cell[data-n="8"]{color:var(--muted)}
 </style>"#;
 
 pub(super) const MINE_JS: &str = r#"<script>
