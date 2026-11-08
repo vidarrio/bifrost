@@ -20,14 +20,14 @@ header .hwrap{max-width:none;padding-inline:clamp(20px,4vw,80px)}
 .seasonprog .splabel{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-family:var(--mono);font-size:12px;letter-spacing:.04em;color:var(--muted);margin-bottom:7px}
 .seasonprog .splabel b{color:var(--fg);font-weight:600}
 .seasonprog .sptrack{height:10px;border-radius:999px;background:var(--panel);border:1px solid var(--bd);overflow:hidden}
-.seasonprog .spfill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent),#7b8cff,#c58af9);transition:width .6s ease;min-width:2px}
+.seasonprog .spfill{height:100%;border-radius:999px;background:var(--brand);transition:width .6s ease;min-width:2px}
 .slot .cardprog{height:5px;border-radius:999px;background:var(--bg);overflow:hidden;margin:2px 0 9px}
 .joincard{max-width:760px}
 .joincard .kv{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;margin:0 0 8px;font-size:14px}
 .joincard .k{flex:0 0 110px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .joincard .steps{margin:16px 0 0;padding-left:18px;color:var(--muted);font-size:14px}
 .joincard .steps li{margin:4px 0}
-.slot .cardprog .cpfill{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent),#7b8cff,#c58af9);transition:width .6s ease}
+.slot .cardprog .cpfill{display:block;height:100%;border-radius:999px;background:var(--brand);transition:width .6s ease}
 </style>"#;
 
 /// Season-wide location-check progress: the sum of every world's checked
