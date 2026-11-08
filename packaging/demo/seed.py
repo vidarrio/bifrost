@@ -235,7 +235,8 @@ def main(base, data):
         wanted = [(owner, item) for finder, loc, item, owner, progression in places
                   if progression and owner in plan and finder != owner and plan.get(owner) != "goal"
                   and plan.get(finder) != "goal" and (finder, loc) not in done]
-        for owner, item in wanted[:HINTS]:
+        # Each item once: a progressive item has several copies.
+        for owner, item in list(dict.fromkeys(wanted))[:HINTS]:
             console(sid, f"/hint {shlex.quote(owner)} {shlex.quote(item)}")
 
     def minesweeper(sid, games):
