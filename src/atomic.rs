@@ -68,7 +68,19 @@ fn sweep(path: &Path) {
                 .and_then(|m| m.modified())
                 .is_ok_and(|t| t.elapsed().is_ok_and(|a| a > hour))
         };
-        if n.starts_with(&prefix) && n.ends_with(".tmp") && old() {
+        // Only this helper's own names (`<pid>-<n>.tmp` after the prefix), not
+        // a longer file name's temps.
+        let ours = n
+            .strip_prefix(&prefix)
+            .and_then(|r| r.strip_suffix(".tmp"))
+            .is_some_and(|r| {
+                r.split_once('-').is_some_and(|(a, b)| {
+                    [a, b]
+                        .iter()
+                        .all(|x| !x.is_empty() && x.bytes().all(|c| c.is_ascii_digit()))
+                })
+            });
+        if ours && old() {
             let _ = std::fs::remove_file(e.path());
         }
     }
@@ -165,11 +177,12 @@ mod tests {
         let old = d.join(".f.1-0.tmp");
         let new = d.join(".f.1-1.tmp");
         let other = d.join(".g.1-0.tmp");
-        for x in [&old, &new, &other] {
+        let longer = d.join(".f.x.1-0.tmp");
+        for x in [&old, &new, &other, &longer] {
             std::fs::write(x, b"left").unwrap();
         }
         let day_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(86400);
-        for x in [&old, &other] {
+        for x in [&old, &other, &longer] {
             std::fs::File::options()
                 .write(true)
                 .open(x)
@@ -178,20 +191,31 @@ mod tests {
                 .unwrap();
         }
         write(&p, b"ok").unwrap();
-        assert_eq!(entries(&d), [".f.1-1.tmp", ".g.1-0.tmp", "f"]);
+        assert_eq!(
+            entries(&d),
+            [".f.1-1.tmp", ".f.x.1-0.tmp", ".g.1-0.tmp", "f"]
+        );
     }
 
     #[test]
     fn steps_past_a_taken_name() {
         let d = dir("taken");
         let p = d.join("f");
-        // The next 8 names this process would try, as if a crash left them.
+        // The next names this process would try, as if a crash left them.
+        // (Tests running alongside take numbers too, so the write may land
+        // past them without retrying; it must not open one either way.)
         let start = NEXT.load(Ordering::Relaxed);
-        for n in start..start + 8 {
-            std::fs::write(d.join(format!(".f.{}-{n}.tmp", std::process::id())), b"").unwrap();
+        let taken: Vec<PathBuf> = (start..start + 15)
+            .map(|n| d.join(format!(".f.{}-{n}.tmp", std::process::id())))
+            .collect();
+        for t in &taken {
+            std::fs::write(t, b"left").unwrap();
         }
         write(&p, b"ok").unwrap();
         assert_eq!(std::fs::read(&p).unwrap(), b"ok");
+        for t in &taken {
+            assert_eq!(std::fs::read(t).unwrap(), b"left");
+        }
     }
 
     #[tokio::test]
