@@ -122,8 +122,14 @@ async fn supervise(
         if running.is_none() && dirs.current_zip().exists() {
             // The passwords as they are now (a moderator may have changed the
             // connect password since the last start).
-            (launch.password, launch.admin_password) = db.ap_passwords(season).await;
-            match start(&launch, &dirs, &db, &board) {
+            let started = match db.ap_passwords(season).await {
+                Ok((password, admin_password)) => {
+                    (launch.password, launch.admin_password) = (password, admin_password);
+                    start(&launch, &dirs, &db, &board)
+                }
+                Err(e) => Err(format!("reading its passwords: {e}")),
+            };
+            match started {
                 Ok(r) => {
                     running = Some(r);
                     failed = false;

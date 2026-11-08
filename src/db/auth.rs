@@ -235,10 +235,13 @@ impl Db {
     }
 
     pub async fn end_session(&self, token_hash: &str) {
-        let _ = sqlx::query("DELETE FROM session WHERE token_hash = ?")
+        if let Err(e) = sqlx::query("DELETE FROM session WHERE token_hash = ?")
             .bind(token_hash)
             .execute(&self.pool)
-            .await;
+            .await
+        {
+            tracing::warn!("ending a session: {e}");
+        }
     }
 
     pub async fn end_sessions(&self, account_id: i64) -> Result<(), sqlx::Error> {
@@ -258,10 +261,13 @@ impl Db {
     }
 
     pub async fn purge_expired_sessions(&self, now: i64) {
-        let _ = sqlx::query("DELETE FROM session WHERE expires_at <= ?")
+        if let Err(e) = sqlx::query("DELETE FROM session WHERE expires_at <= ?")
             .bind(now)
             .execute(&self.pool)
-            .await;
+            .await
+        {
+            tracing::warn!("purging expired sessions: {e}");
+        }
     }
 
     // ---- IdP-provisioned accounts ----

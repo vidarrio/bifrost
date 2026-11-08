@@ -103,7 +103,15 @@ impl Runtimes {
                 tracing::error!("season {id}: live but holds no AP port; not starting its server");
                 return;
             };
-            let (password, admin_password) = self.db.ap_passwords(id).await;
+            let (password, admin_password) = match self.db.ap_passwords(id).await {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!(
+                        "season {id}: reading its AP passwords: {e}; not starting its server"
+                    );
+                    return;
+                }
+            };
             let server = ApServer::spawn(
                 Launch {
                     season: id,

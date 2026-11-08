@@ -59,7 +59,11 @@ pub(crate) async fn board_view(
     let password = if !ctx.state().is_live() {
         String::new()
     } else if config::get().ap_managed {
-        st.db.ap_passwords(season).await.0
+        st.db
+            .ap_passwords(season)
+            .await
+            .map(|p| p.0)
+            .unwrap_or_default()
     } else {
         ctx.rt.ap_cfg().map(|c| c.password).unwrap_or_default()
     };

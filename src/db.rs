@@ -459,7 +459,7 @@ impl Db {
         receiver: Option<&str>,
         item_class: Option<&str>,
     ) {
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
             "INSERT INTO activity (season_id, ts, kind, text, sender, receiver, item_class)
              VALUES (?,?,?,?,?,?,?)",
         )
@@ -471,7 +471,10 @@ impl Db {
         .bind(receiver)
         .bind(item_class)
         .execute(&self.pool)
-        .await;
+        .await
+        {
+            tracing::warn!("recording activity for season {season}: {e}");
+        }
     }
 
     /// Whether any activity rows exist for a season (guards the one-time backfill).
@@ -538,7 +541,7 @@ impl Db {
         locations: &str,
         err: Option<&str>,
     ) {
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
             "INSERT INTO inlogic (season_id, ap_slot, ts, sent, received, count, locations, err)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(season_id, ap_slot) DO UPDATE SET
@@ -555,7 +558,10 @@ impl Db {
         .bind(locations)
         .bind(err)
         .execute(&self.pool)
-        .await;
+        .await
+        {
+            tracing::warn!("storing in-logic counts for season {season}: {e}");
+        }
     }
 
     /// The newest `limit` activity rows for a season (board preview).
@@ -753,16 +759,24 @@ impl Db {
     /// Remove priority rows for the given (finding, location, item) hints — used
     /// to drop the star from hints whose item has since been found.
     pub async fn unprioritize_many(&self, season: Id, hints: &[(i64, i64, i64)]) {
-        for (finding, location, item) in hints {
-            let _ = sqlx::query(
-                "DELETE FROM hint_priority WHERE season_id=? AND finding=? AND location=? AND item=?",
-            )
-            .bind(season)
-            .bind(finding)
-            .bind(location)
-            .bind(item)
-            .execute(&self.pool)
-            .await;
+        let res = async {
+            let mut tx = self.pool.begin().await?;
+            for (finding, location, item) in hints {
+                sqlx::query(
+                    "DELETE FROM hint_priority WHERE season_id=? AND finding=? AND location=? AND item=?",
+                )
+                .bind(season)
+                .bind(finding)
+                .bind(location)
+                .bind(item)
+                .execute(&mut *tx)
+                .await?;
+            }
+            tx.commit().await
+        }
+        .await;
+        if let Err(e) = res {
+            tracing::warn!("unstarring found hints in season {season}: {e}");
         }
     }
 
@@ -805,7 +819,7 @@ impl Db {
 
     /// Seed a freshly-generated season from submissions: 1:1 Bifrost slots from
     /// the AP roster, each matching submission's uploader auto-claimed, and a
-    /// co-op Bifrost slot minted per seat, also claimed.
+    /// co-op Bifrost slot minted per seat, also claimed. All or nothing.
     pub async fn seed_from_submissions(
         &self,
         season: Id,
@@ -814,22 +828,27 @@ impl Db {
         commons: &[(&str, &str)],
     ) -> Result<(), sqlx::Error> {
         let now = crate::clock::now();
+        let mut seats = Vec::with_capacity(subs.len());
+        for sub in subs {
+            seats.push(self.try_seats_of(sub.id).await?);
+        }
         // A seat's name was free when it was picked, so an AP slot with that name
         // is a clash: fail rather than seat them on another game.
-        for sub in subs {
-            for seat in self.try_seats_of(sub.id).await? {
-                if ap_slots.iter().any(|(_, name, _)| *name == seat.name) {
-                    return Err(sqlx::Error::Protocol(format!(
-                        "seat name {} is already another slot's",
-                        seat.name
-                    )));
-                }
-            }
+        if let Some(seat) = seats
+            .iter()
+            .flatten()
+            .find(|seat| ap_slots.iter().any(|(_, name, _)| *name == seat.name))
+        {
+            return Err(sqlx::Error::Protocol(format!(
+                "seat name {} is already another slot's",
+                seat.name
+            )));
         }
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         for (num, name, game) in ap_slots {
             // A signup's game keeps its id; any other gets its own.
-            let sub = subs.iter().find(|s| &s.slot_name == name);
-            let game_id = sub.map_or_else(Id::new, |s| s.id);
+            let i = subs.iter().position(|s| &s.slot_name == name);
+            let game_id = i.map_or_else(Id::new, |i| subs[i].id);
             sqlx::query(
                 "INSERT OR IGNORE INTO slot (id, season_id, game_id, name, ap_slot, game)
                  VALUES (?, ?, ?, ?, ?, ?)",
@@ -840,23 +859,11 @@ impl Db {
             .bind(name)
             .bind(num)
             .bind(game)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
-            let id: Id = sqlx::query_scalar("SELECT id FROM slot WHERE season_id = ? AND name = ?")
-                .bind(season)
-                .bind(name)
-                .fetch_one(&self.pool)
-                .await?;
-            let Some(sub) = sub else { continue };
-            sqlx::query(
-                "INSERT OR IGNORE INTO claim (slot_id, account_id, claimed_at) VALUES (?, ?, ?)",
-            )
-            .bind(id)
-            .bind(sub.account_id)
-            .bind(now)
-            .execute(&self.pool)
-            .await?;
-            for seat in self.try_seats_of(sub.id).await? {
+            let Some(i) = i else { continue };
+            claim_by_name(&mut tx, season, name, subs[i].account_id, now).await?;
+            for seat in &seats[i] {
                 sqlx::query(
                     "INSERT OR IGNORE INTO slot (id, season_id, game_id, name, ap_slot, game, is_seat)
                      VALUES (?, ?, ?, ?, ?, ?, 1)",
@@ -867,18 +874,9 @@ impl Db {
                 .bind(&seat.name)
                 .bind(num)
                 .bind(game)
-                .execute(&self.pool)
+                .execute(&mut *tx)
                 .await?;
-                sqlx::query(
-                    "INSERT OR IGNORE INTO claim (slot_id, account_id, claimed_at)
-                     SELECT id, ?, ? FROM slot WHERE season_id = ? AND name = ?",
-                )
-                .bind(seat.account_id)
-                .bind(now)
-                .bind(season)
-                .bind(&seat.name)
-                .execute(&self.pool)
-                .await?;
+                claim_by_name(&mut tx, season, &seat.name, seat.account_id, now).await?;
             }
         }
         // Mark the common games' slots (no claim; shared by everyone), by
@@ -888,16 +886,17 @@ impl Db {
                 .bind(key)
                 .bind(season)
                 .bind(name)
-                .execute(&self.pool)
+                .execute(&mut *tx)
                 .await?;
         }
-        Ok(())
+        tx.commit().await
     }
 
     /// After a re-roll: rebuild the season's Bifrost slots (1:1 AP slots +
     /// co-op seats) on the new seed's AP slot numbers by name, carrying each
     /// claim over. Player names are stable across a re-roll, so claims and
-    /// co-op grouping survive.
+    /// co-op grouping survive. All or nothing: a failure part-way leaves the
+    /// old slots and claims as they were.
     pub async fn remap_season(
         &self,
         season: Id,
@@ -905,8 +904,6 @@ impl Db {
     ) -> Result<(), sqlx::Error> {
         use std::collections::{HashMap, HashSet};
         let old = self.slots(season).await?;
-        self.clear_all_slots(season).await?;
-        let new_season = season;
         let now = crate::clock::now();
         let roster: HashSet<&str> = new_ap_slots.iter().map(|(_, n, _)| n.as_str()).collect();
         // Common games' slots stay theirs, by name.
@@ -927,6 +924,11 @@ impl Db {
                     .or_insert_with(|| s.name.clone());
             }
         }
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        sqlx::query("DELETE FROM slot WHERE season_id = ?")
+            .bind(season)
+            .execute(&mut *tx)
+            .await?;
         // 1:1 AP slots.
         for (num, name, game) in new_ap_slots {
             // The same game keeps its id on the new seed.
@@ -939,13 +941,13 @@ impl Db {
                  VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(Id::new())
-            .bind(new_season)
+            .bind(season)
             .bind(game_id)
             .bind(name)
             .bind(num)
             .bind(game)
             .bind(common_keys.get(name.as_str()).copied())
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
         }
         // Co-op seats (names not in the AP roster) → their base's new AP slot.
@@ -964,37 +966,21 @@ impl Db {
                  VALUES (?, ?, ?, ?, ?, ?, 1)",
             )
             .bind(s.id)
-            .bind(new_season)
+            .bind(season)
             .bind(s.game_id)
             .bind(&s.name)
             .bind(new_ap)
             .bind(&s.game)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
         }
         // Carry claims over by name.
         for s in &old {
-            let Some(account) = s.claimed_by_id else {
-                continue;
-            };
-            let id: Option<Id> =
-                sqlx::query_scalar("SELECT id FROM slot WHERE season_id = ? AND name = ?")
-                    .bind(new_season)
-                    .bind(&s.name)
-                    .fetch_optional(&self.pool)
-                    .await?;
-            if let Some(id) = id {
-                sqlx::query(
-                    "INSERT OR IGNORE INTO claim (slot_id, account_id, claimed_at) VALUES (?, ?, ?)",
-                )
-                .bind(id)
-                .bind(account)
-                .bind(now)
-                .execute(&self.pool)
-                .await?;
+            if let Some(account) = s.claimed_by_id {
+                claim_by_name(&mut tx, season, &s.name, account, now).await?;
             }
         }
-        Ok(())
+        tx.commit().await
     }
 
     /// An account's games in live seasons: (season, game id, slot name, game),
@@ -1316,4 +1302,26 @@ impl Db {
         .fetch_optional(&self.pool)
         .await
     }
+}
+
+/// Claim the season's slot named `name` for `account`, if it has one and it's
+/// unclaimed: one statement, so it can run inside a transaction.
+async fn claim_by_name(
+    conn: &mut sqlx::SqliteConnection,
+    season: Id,
+    name: &str,
+    account: i64,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO claim (slot_id, account_id, claimed_at)
+         SELECT id, ?, ? FROM slot WHERE season_id = ? AND name = ?",
+    )
+    .bind(account)
+    .bind(now)
+    .bind(season)
+    .bind(name)
+    .execute(conn)
+    .await?;
+    Ok(())
 }
