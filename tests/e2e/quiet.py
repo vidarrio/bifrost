@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 
-from lib import AP_DIR, DEV, Server, ap_servers, check, first_game, get, new_season, post, summary, wait_for
+from lib import AP_DIR, DEV, Server, ap_servers, check, first_game, generate, get, new_season, post, summary, wait_for
 
 UPSTREAM = sys.argv[1:] == ["upstream"]  # control run: the plain release announces everything
 AP = os.environ.get("QUIET_AP") or (os.path.join(DEV, "archipelago") if UPSTREAM else AP_DIR)
@@ -30,9 +30,8 @@ try:
     post(root, f"/s/{sid}/admin/signups", data=dict(open="1"))
     for y in YAMLS:
         post(root, f"/s/{sid}/signup", files={"yaml": ("y.yaml", y)})
-    post(root, f"/s/{sid}/admin/generate")
-    t = wait_for(lambda: (x := get(root, f"/s/{sid}/admin").text) and ("Generated seed" in x or "Failed" in x) and x, 300, 3)
-    check("generation", t and "Generated seed" in t)
+    gen = generate(root, sid)
+    check("generation", gen and gen.startswith("Generated"), gen)
     check("tracker connects", wait_for(lambda: "Ann" in get(root, f"/s/{sid}/board").text, 60))
     check("the board's join tab shows the upstream version", f"Archipelago {BASE}</strong>" in get(root, f"/s/{sid}/board").text)
 
@@ -45,12 +44,11 @@ try:
 
     # Bonus hints: out of AP points, a credit places exactly one hint; a name
     # that isn't one of this world's items is refused and the credit kept.
-    import sqlite3
     def credits():
-        with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
+        with srv.db() as c:
             row = c.execute("SELECT credits FROM hint_credit WHERE season_id = ?", (sid,)).fetchone()
             return row[0] if row else 0
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
+    with srv.db() as c:
         acct = c.execute("SELECT id FROM account WHERE username = 'root'").fetchone()[0]
         c.execute("INSERT INTO hint_credit (season_id, account_id, credits) VALUES (?, ?, 1)", (sid, acct))
     j = post(root, f"/s/{sid}/hint", data=dict(slot_id=ids[0], item="Everything")).json()
@@ -66,8 +64,7 @@ try:
     check("admin relay works", r.get("ok"), r)
 
     def inlogic_rows():
-        import sqlite3
-        with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
+        with srv.db() as c:
             return c.execute("SELECT count(*) FROM inlogic WHERE season_id = ?", (sid,)).fetchone()[0]
     check("in-logic tracker ran", wait_for(lambda: inlogic_rows() >= 2, 120, 3))
 
@@ -75,7 +72,7 @@ try:
     game = first_game(root, sid)
     page = get(root, f"/s/{sid}/game/{game}").text
     check("the UT tab polls for its contents", 'id="utbody"' in page and f"game/'+slot+'/inlogic" in page)
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
+    with srv.db() as c:
         (slot,) = c.execute("SELECT ap_slot FROM slot WHERE season_id = ? AND game_id = ?", (sid, game)).fetchone()
         # (The tracker only rewrites a row when the slot's items or checks change.)
         n = c.execute("UPDATE inlogic SET locations = '[\"Somewhere New\"]', count = 1, err = NULL WHERE season_id = ? AND ap_slot = ?", (sid, slot)).rowcount
@@ -85,7 +82,7 @@ try:
 
     # Its header figures and hints list follow the game too.
     check("the game page polls its figures and hints", 'id="gamestats"' in page and f"game/'+slot+'/live" in page)
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
+    with srv.db() as c:
         (hinted,) = c.execute("SELECT game_id FROM slot WHERE id = ?", (ids[0],)).fetchone()
     live = lambda: get(root, f"/s/{sid}/game/{hinted}/live").json()
     j = wait_for(lambda: (x := live()) and "Map Width" in x.get("hints", "") and x, 60, 3) or live()
@@ -152,7 +149,7 @@ async def main():
 asyncio.run(main())
 '''])
     time.sleep(2)
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
+    with srv.db() as c:
         c.execute("UPDATE hint_credit SET credits = 1 WHERE season_id = ?", (sid,))
     j = post(root, f"/s/{sid}/hint", data=dict(slot_id=ids[0], item="Map Height")).json()
     spam.wait(30)
@@ -160,7 +157,7 @@ asyncio.run(main())
 
     if not UPSTREAM:
         # A slot's status is its player's. The tracker sits on the lowest slot.
-        with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as c:
+        with srv.db() as c:
             (tracked, _, _), (other, other_slot, other_id) = c.execute(
                 "SELECT name, ap_slot, id FROM slot WHERE season_id = ? ORDER BY ap_slot", (sid,)).fetchall()
         print("tracker on", tracked, "- watching", other, other_slot)

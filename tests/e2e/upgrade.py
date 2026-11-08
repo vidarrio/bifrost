@@ -21,7 +21,7 @@ ENV = {"BIFROST_BACKUP_HOUR": "off"}
 
 
 def stamp(srv, version=None, schema=None):
-    with contextlib.closing(sqlite3.connect(os.path.join(srv.data, "bifrost.db"))) as db, db:
+    with srv.db() as db:
         if version is not None:
             db.execute("UPDATE setting SET value = ? WHERE key = 'bifrost_version'", (version,))
         if schema is not None:
@@ -62,7 +62,7 @@ check("a fresh data dir is stamped with a schema version and this Bifrost's", sc
 
 def schema_of(srv):
     """A database's schema: what an upgraded one has to match a fresh one in."""
-    with contextlib.closing(sqlite3.connect(os.path.join(srv.data, "bifrost.db"))) as db:
+    with srv.db() as db:
         return db.execute("SELECT type, name, tbl_name, sql FROM sqlite_master "
                           "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name").fetchall()
 
@@ -163,7 +163,7 @@ def remove_db():
 
 for old in (0, 2, 6):
     remove_db()
-    with contextlib.closing(sqlite3.connect(os.path.join(srv.data, "bifrost.db"))) as db, db:
+    with srv.db() as db:
         db.execute("CREATE TABLE season (id INTEGER PRIMARY KEY, name TEXT)")
         db.execute(f"PRAGMA user_version = {old}")
     srv = server()
@@ -186,13 +186,13 @@ os.rename(os.path.join(srv.data + ".unpack", "data"), srv.data)
 os.rmdir(srv.data + ".unpack")
 # It was made in another directory, as a moved or restored data directory is:
 # what it keeps names its files from inside it, so nothing needs rewriting.
-with contextlib.closing(sqlite3.connect(os.path.join(srv.data, "bifrost.db"))) as db:
+with srv.db() as db:
     stored = [r[0] for r in db.execute("SELECT yaml_file FROM submission")]
 check("signups name their files from inside the data directory",
       stored and all(not p.startswith("/") and ".." not in p.split("/") and os.path.isfile(os.path.join(srv.data, p)) for p in stored), stored)
 srv.start()
 try:
-    with contextlib.closing(sqlite3.connect(os.path.join(srv.data, "bifrost.db"))) as db:
+    with srv.db() as db:
         version = db.execute("PRAGMA user_version").fetchone()[0]
         ids = dict(db.execute("SELECT name, id FROM season").fetchall())
         signup = db.execute("SELECT id FROM submission WHERE slot_name = 'Ann' AND season_id = ?", (ids["Signups"],)).fetchone()[0]
@@ -211,10 +211,10 @@ try:
     check("its seasons are all there", all(n in seasons for n in ("Draft", "Signups", "Live", "Archived")), seasons[-1500:])
     page = get(root, f"/s/{ids['Signups']}/signup/game/{signup}").text
     check("with their signups, notes and seats", "Ann" in page and "Bring snacks" in page and "Cat" in page, page[-1200:])
-    with contextlib.closing(sqlite3.connect(os.path.join(srv.data, "bifrost.db"))) as db:
+    with srv.db() as db:
         (ann_yaml,) = db.execute("SELECT yaml_file FROM submission WHERE id = ?", (signup,)).fetchone()
     post(root, f"/s/{ids['Signups']}/signup/delete", data=dict(id=signup))
-    with contextlib.closing(sqlite3.connect(os.path.join(srv.data, "bifrost.db"))) as db:
+    with srv.db() as db:
         left = db.execute("SELECT count(*) FROM submission WHERE id = ?", (signup,)).fetchone()[0]
     check("and deleting one in the moved directory removes its file", left == 0 and not os.path.exists(os.path.join(srv.data, ann_yaml)), (left, ann_yaml))
     check("an archived season keeps its summary", "Cat" in get(root, f"/s/{ids['Archived']}/season").text)

@@ -6,7 +6,7 @@ import re
 import subprocess
 import sys
 
-from lib import Server, ap_servers, bundled_ap_version, check, get, new_season, post, summary, wait_for
+from lib import Server, ap_servers, bundled_ap_version, check, generate, get, new_season, post, summary, wait_for
 
 TAG = os.environ.get("AP_TAG", "0.6.7-bifrost.2")  # a release of the fork
 BUNDLED = bundled_ap_version()
@@ -51,10 +51,8 @@ try:
         post(root, f"/s/{sid}/admin/signups", data=dict(open="1"))
         r = post(root, f"/s/{sid}/signup", files={"yaml": ("p.yaml", yaml(player))})
         assert "Signed up" in r.text, r.text[-300:]
-        post(root, f"/s/{sid}/admin/generate")
-        t = wait_for(lambda: (x := get(root, f"/s/{sid}/admin").text) and ("Generated seed" in x or "Failed" in x) and x, 300, 3)
-        m = re.search(r"(Generated seed[^<]*|Failed[^<]*)", t or "")
-        check(f"{name} generated", m and m.group(0).startswith("Generated"), m and m.group(0))
+        gen = generate(root, sid)
+        check(f"{name} generated", gen and gen.startswith("Generated"), gen)
         return sid
 
     a = live_season("Alpha", "Ann")

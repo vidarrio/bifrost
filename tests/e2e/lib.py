@@ -8,6 +8,7 @@ Paths (environment):
                       $BIFROST_E2E_WORK/archipelago-bifrost; setup-ap.sh makes it)
   BIFROST_E2E_BIN     the Bifrost binary (default target/debug/bifrost)
 """
+import contextlib
 import io
 import zipfile
 import html
@@ -15,6 +16,7 @@ import os
 import re
 import shutil
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
@@ -106,6 +108,17 @@ class Server:
     def cli(self, *args):
         return subprocess.run([self.bin, *args], env=self.env, capture_output=True, text=True)
 
+    @contextlib.contextmanager
+    def db(self):
+        """The instance's database: commits if the block succeeds, and closes
+        either way (`with sqlite3.connect(...)` alone never closes)."""
+        conn = sqlite3.connect(os.path.join(self.data, "bifrost.db"))
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
     def session(self):
         s = requests.Session()
         s.headers["Origin"] = self.base
@@ -148,6 +161,14 @@ def new_season(s, name):
     """Create a season and return its id."""
     r = post(s, "/admin/seasons", data=dict(name=name))
     return re.search(r"/s/([0-9a-z]+)/admin", r.url).group(1)
+
+
+def generate(s, sid, timeout=300):
+    """Generate a season's seed and wait for the outcome: the admin page's
+    "Generated seed …" or "Failed …" line, or None if neither shows in time."""
+    post(s, f"/s/{sid}/admin/generate")
+    status = lambda t: (m := re.search(r"(Generated seed[^<]*|Failed[^<]*)", t)) and m.group(1)
+    return wait_for(lambda: status(get(s, f"/s/{sid}/admin").text), timeout, 3)
 
 
 def first_game(s, sid):

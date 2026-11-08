@@ -3,12 +3,11 @@ generation, cancel a live one back to signups, delete an archived one (sysadmins
 only), and nothing that wipes part of a running season."""
 import os
 import re
-import sqlite3
 import sys
 
 import requests
 
-from lib import Server, ap_servers, check, first_game, get, new_season, post, summary, wait_for
+from lib import Server, ap_servers, check, first_game, generate, get, new_season, post, summary, wait_for
 
 YAML = b"name: %s\ngame: ChecksFinder\nChecksFinder: {}\n"
 srv = Server("season_actions", port=18185, ap_ports="39208-39210")
@@ -16,7 +15,7 @@ srv.start()
 try:
     root = srv.setup_sysadmin()
     mod, other, ann, cat, late = (srv.invite_user(root, n) for n in ("mod", "other", "ann", "cat", "late"))
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+    with srv.db() as db:
         db.execute("UPDATE account SET role = 'moderator' WHERE username IN ('mod', 'other')")
     dirs = lambda s: os.path.join(srv.data, "seasons", s)
 
@@ -52,8 +51,7 @@ try:
     token = re.search(r"/seat/([0-9a-f]+)", get(ann, url).text).group(1)
     post(cat, f"/s/{sid}/seat/{token}", data=dict(name="Cat"))
     apworld = os.path.join(srv.data, "seasons", sid, "worlds", "x.apworld")
-    post(mod, f"/s/{sid}/admin/generate")
-    wait_for(lambda: "Generated seed" in get(mod, f"/s/{sid}/admin").text, 300, 3)
+    generate(mod, sid)
     check("the board comes up", wait_for(lambda: first_game(mod, sid) == game, 60, 2))
     live_url = f"/s/{sid}/game/{game}"
     a = get(mod, f"/s/{sid}/admin").text
@@ -66,11 +64,11 @@ try:
     post(late, f"/s/{sid}/seat/{token}", data=dict(name="Late"))
     check("someone joined mid-season", "Late" in get(mod, f"/s/{sid}/claim").text)
 
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+    with srv.db() as db:
         db.execute("INSERT INTO world_request (season_id, file, sha256, uploaded_by, uploaded_at) VALUES (?, 'y.apworld', 'x', 'ann', 0)", (sid,))
     r = post(mod, f"/s/{sid}/admin/worlds/approve", data=dict(name="y.apworld"))
     check("approving one is locked too", "locked" in r.text and not os.path.exists(apworld.replace("x.apworld", "y.apworld")), r.text[-200:])
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+    with srv.db() as db:
         db.execute("DELETE FROM world_request WHERE season_id = ?", (sid,))
     open(apworld, "wb").close()
     r = post(mod, f"/s/{sid}/admin/delete-apworld", data=dict(name="x.apworld"))
@@ -106,7 +104,7 @@ try:
     check("…the slots are gone", first_game(mod, sid) is None)
     output = os.path.join(dirs(sid), "output")
     check("…and the seed", not [n for n in os.listdir(output) if n.endswith(".zip")], os.listdir(output))
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+    with srv.db() as db:
         row = db.execute("SELECT state, seed, ap_port FROM season WHERE id = ?", (sid,)).fetchone()
     check("…and its claim on a port", row == ("signup", None, None), row)
     logs = os.path.join(dirs(sid), "logs")
@@ -114,8 +112,7 @@ try:
     check("the server has stopped", wait_for(lambda: not ap_servers(srv), 30, 1), ap_servers(srv))
 
     # It can go round again, then be archived.
-    post(mod, f"/s/{sid}/admin/generate")
-    wait_for(lambda: "Generated seed" in get(mod, f"/s/{sid}/admin").text, 300, 3)
+    generate(mod, sid)
     check("it generates again, as the same game", wait_for(lambda: first_game(mod, sid) == game, 60, 2))
     check("the partner still has their seat", "Cat" in get(mod, f"/s/{sid}/claim").text)
     archived = wait_for(lambda: "isn't connected" not in post(mod, f"/s/{sid}/admin/archive-season", data=dict(name="Live one")).text, 60, 3)
@@ -127,7 +124,7 @@ try:
     post(mod, f"/s/{sid}/admin/season/delete", data=dict(name="Live one"))
     check("…and can't", os.path.isdir(dirs(sid)))
     check("a sysadmin is", "Delete this season" in get(root, f"/s/{sid}/admin").text)
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+    with srv.db() as db:
         seed = db.execute("SELECT seed FROM season WHERE id = ?", (sid,)).fetchone()[0]
     bundle = os.path.join(srv.data, "archives", f"{seed}.tar.gz")
     check("it has a bundle", os.path.isfile(bundle), bundle)
