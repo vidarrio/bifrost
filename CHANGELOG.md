@@ -11,11 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A demo build (`cargo build --features demo`) for a public demo: a bar switches between
   a player, a moderator and a sysadmin account without passwords, with a note pointing
-  to it until a visitor picks one. Since every visitor
-  can be sysadmin, it turns off what could run code, host files or change the instance,
-  caps seasons, games and live seasons, keeps the seasons it starts with as they are,
-  keeps game servers on localhost, and resets from a snapshot. Release builds don't
-  include it. See `packaging/demo/README.md`.
+  to it until a visitor picks one or closes it. Since every visitor can be sysadmin,
+  it turns off what could run code, host files or change the instance, caps seasons,
+  games and live seasons, keeps the seasons it starts with as they are, keeps game
+  servers on localhost, and resets from a snapshot. Release builds don't include it. See `packaging/demo/README.md`.
 
 ### Changed
 
