@@ -47,6 +47,27 @@
   document.body.appendChild(d);
   // Room for the bar below the page's last line.
   document.body.style.paddingBottom='64px';
+  if(!user)hint(d,left);
+ }
+ // Until a visitor picks an account (or closes it), a note above the bar says
+ // what it's for: a small pill in a corner is easy to miss.
+ function hint(d,left){
+  var old=document.getElementById('demohint');if(old)old.remove();
+  try{if(localStorage.getItem('bifrost-demo-hint')==='closed')return}catch(e){}
+  var h=document.createElement('div');h.id='demohint';h.setAttribute('role','note');
+  h.style.cssText='position:fixed;right:12px;bottom:'+(d.offsetHeight+24)+'px;max-width:min(320px,calc(100vw - 24px));z-index:9999;padding:12px 34px 12px 14px;border-radius:12px;background:#11152a;border:1px solid #7b8cff;font:13px/1.45 system-ui,sans-serif;color:#dde;box-shadow:0 4px 18px #000a';
+  var b=document.createElement('b');b.textContent='This is a demo.';b.style.cssText='display:block;color:#fff;margin-bottom:2px';
+  h.appendChild(b);
+  h.appendChild(document.createTextNode('Pick an account below to look around as a player, a moderator or the sysadmin. No password needed. '+(left?'Everything resets in '+left+'.':'Everything resets now and then.')));
+  var x=document.createElement('button');x.type='button';x.textContent='×';x.title='Close';x.setAttribute('aria-label','Close');
+  x.style.cssText='position:absolute;top:6px;right:8px;background:none;border:0;color:#aab;font:18px/1 system-ui,sans-serif;cursor:pointer;padding:2px';
+  x.onclick=function(){h.remove();try{localStorage.setItem('bifrost-demo-hint','closed')}catch(e){}};
+  h.appendChild(x);
+  // A notch pointing down at the bar.
+  var n=document.createElement('span');
+  n.style.cssText='position:absolute;right:28px;bottom:-7px;width:12px;height:12px;background:#11152a;border-right:1px solid #7b8cff;border-bottom:1px solid #7b8cff;transform:rotate(45deg)';
+  h.appendChild(n);
+  document.body.appendChild(h);
  }
  function go(){
   Promise.all([

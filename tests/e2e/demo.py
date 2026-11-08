@@ -44,6 +44,7 @@ try:
     r = requests.get(srv.base + "/")
     check("every response says it's a demo build", r.headers.get("x-bifrost-demo") == "1")
     check("pages carry the switcher bar", "demobar" in r.text and "/demo/as/" in r.text)
+    check("and the note that points visitors to it", "demohint" in r.text and "Pick an account below" in r.text)
 
     admin, mod, player = (as_role(srv, r) for r in ("sysadmin", "moderator", "player"))
     for s, name, is_admin in ((admin, "sysadmin", True), (mod, "moderator", True), (player, "player", False)):

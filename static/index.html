@@ -27,7 +27,15 @@
      background:linear-gradient(90deg,var(--accent),var(--accent2));
      -webkit-background-clip:text; background-clip:text; color:transparent}
   .tag{font-family:var(--mono); font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted)}
-  .lede{color:var(--muted); font-size:16px; max-width:62ch; margin:14px 0 30px}
+  .lede{color:var(--muted); font-size:16px; max-width:62ch; margin:14px 0 18px}
+  .about p{margin:0 0 14px; max-width:70ch}
+  .steps{list-style:none; counter-reset:step; padding:0; margin:0; display:grid; grid-template-columns:repeat(4,1fr); gap:12px}
+  @media (max-width:760px){.steps{grid-template-columns:repeat(2,1fr)}}
+  @media (max-width:420px){.steps{grid-template-columns:1fr}}
+  .steps li{counter-increment:step; background:var(--panel); border:1px solid var(--bd); border-radius:10px; padding:10px 12px}
+  .steps b{display:block; font-size:14px}
+  .steps b::before{content:counter(step) ". "; font-family:var(--mono); color:var(--accent)}
+  .steps span{display:block; font-size:13px; color:var(--muted)}
   h2.sec{font-size:13px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted); margin:34px 0 12px}
   header{width:100%; border-bottom:1px solid var(--bd); background:var(--panel)}
   header .hwrap{max-width:900px; margin:0 auto; padding:0 16px; height:52px; display:flex; align-items:center; gap:14px}
@@ -85,7 +93,17 @@
     <h1>Bifrost</h1>
     <span class="tag"><!--TAG--></span>
   </div>
-  <p class="lede">The bridge between worlds — a home for Archipelago multiworlds. Your seasons, how to join them, and where to track your run.</p>
+  <p class="lede">The bridge between worlds — a home for Archipelago multiworlds.</p>
+
+  <div class="about">
+    <p><a href="https://archipelago.gg" target="_blank" rel="noopener">Archipelago</a> is a multiworld randomizer. Everyone plays a game of their own, but the items are shuffled across all of them, so the sword you need may be in someone else's game, and they'll find it for you. Bifrost runs those games as seasons, from signups to the last check.</p>
+    <ol class="steps">
+      <li><b>Sign up</b><span>Pick a game and upload its YAML. It's checked on the spot, so a bad option shows up now, not on generation day.</span></li>
+      <li><b>Generate</b><span>When signups close, the season's organisers generate the multiworld, and Bifrost hosts its game server.</span></li>
+      <li><b>Play</b><span>Each live season's <em>How to join</em> tab has the address, the Archipelago version and links to your games.</span></li>
+      <li><b>Follow along</b><span>The live board shows everyone's progress and hints, and your game's page shows what's in logic.</span></li>
+    </ol>
+  </div>
 
   <h2 class="sec seasonhdr"><span>Seasons</span><a class="signup-link" href="/signups">Sign up for a season →</a></h2>
   <div class="grid roster"><!--SEASONS--></div>
