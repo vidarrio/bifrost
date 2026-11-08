@@ -30,7 +30,7 @@
  function bar(user,reset){
   var old=document.getElementById('demobar');if(old)old.remove();
   var d=document.createElement('div');d.id='demobar';
-  d.style.cssText='position:fixed;right:12px;bottom:12px;max-width:calc(100vw - 24px);z-index:9999;display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:4px;padding:4px 4px 4px 12px;border-radius:18px;background:#000d;border:1px solid var(--logo)88;font:600 12px system-ui,sans-serif;color:#aab;box-shadow:0 2px 12px #0009';
+  d.style.cssText='position:fixed;right:12px;bottom:12px;max-width:calc(100vw - 24px);z-index:9999;display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:4px;padding:4px 4px 4px 12px;border-radius:18px;background:#000d;border:1px solid color-mix(in srgb,var(--logo) 53%,transparent);font:600 12px system-ui,sans-serif;color:#aab;box-shadow:0 2px 12px #0009';
   var left=reset==null?'':(reset<90?'1 min':Math.round(reset/60)+' min');
   var t=document.createElement('span');
   t.textContent='Demo'+(left?' · '+left:'');t.style.cssText='margin-right:4px;white-space:nowrap';
