@@ -118,10 +118,11 @@ async fn ensure_host_yaml(season: &SeasonDirs, ap: &Install) -> Result<(), Strin
     let cfg = config::get();
     let template = cfg.data_dir.join("host.yaml");
     if template.is_file() {
-        return tokio::fs::copy(&template, &dest)
-            .await
-            .map(|_| ())
-            .map_err(|e| format!("copying {} into the season: {e}", template.display()));
+        let copied = match tokio::fs::read(&template).await {
+            Ok(bytes) => crate::atomic::write_async(dest, bytes).await,
+            Err(e) => Err(e),
+        };
+        return copied.map_err(|e| format!("copying {} into the season: {e}", template.display()));
     }
     const INIT: &str = "import bifrost_ap, settings\nsettings.get_settings()\n";
     let scratch = scratch_dir("host-init").await?;
@@ -148,20 +149,15 @@ async fn ensure_host_yaml(season: &SeasonDirs, ap: &Install) -> Result<(), Strin
     };
     let out = sandbox::run(sandbox::get().command(&job), SETTINGS_TIMEOUT).await;
     let made = scratch.join("host.yaml");
-    // Copied under a temporary name and renamed, so a concurrent reader sees
-    // either no host.yaml or the whole file.
-    let partial = season.root.join(format!(
-        ".host.yaml.{}",
-        scratch.file_name().unwrap_or_default().to_string_lossy()
-    ));
+    // Put in place in one step, so a concurrent reader sees either no
+    // host.yaml or the whole file.
     let copied = match &out {
-        Ok(_) if made.is_file() => match tokio::fs::copy(&made, &partial).await {
-            Ok(_) => tokio::fs::rename(&partial, &dest).await,
+        Ok(_) if made.is_file() => match tokio::fs::read(&made).await {
+            Ok(bytes) => crate::atomic::write_async(dest.clone(), bytes).await,
             Err(e) => Err(e),
         },
         _ => Err(std::io::Error::other("not created")),
     };
-    let _ = tokio::fs::remove_file(&partial).await;
     let _ = tokio::fs::remove_dir_all(&scratch).await;
     if copied.is_err() {
         return Err(format!(
@@ -242,11 +238,8 @@ fn write_pins(
     pins: &std::collections::BTreeMap<String, Pin>,
 ) -> Result<(), String> {
     let path = season.worlds_lock();
-    let tmp = path.with_extension("json.tmp");
     let json = serde_json::to_vec_pretty(pins).map_err(|e| e.to_string())?;
-    std::fs::write(&tmp, json)
-        .and_then(|_| std::fs::rename(&tmp, &path))
-        .map_err(|e| format!("writing {}: {e}", path.display()))
+    crate::atomic::write(&path, &json).map_err(|e| format!("writing {}: {e}", path.display()))
 }
 
 /// Install an apworld and pin its hash (`pin.sha256` is filled in here). The
@@ -258,7 +251,7 @@ pub fn install_world(
     mut pin: Pin,
 ) -> Result<(), String> {
     let _lock = PINS.lock().unwrap_or_else(|p| p.into_inner());
-    std::fs::write(season.worlds.join(file), bytes).map_err(|e| format!("install: {e}"))?;
+    crate::atomic::write(&season.worlds.join(file), bytes).map_err(|e| format!("install: {e}"))?;
     pin.sha256 = crate::text::sha256_hex(bytes);
     let mut pins = world_pins(season);
     pins.insert(file.to_string(), pin);

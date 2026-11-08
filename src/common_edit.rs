@@ -58,11 +58,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let tmp = path.with_extension("bifrost-tmp");
-    let _ = std::fs::remove_file(&tmp);
-    std::fs::write(&tmp, bytes)
-        .and_then(|_| std::fs::rename(&tmp, path))
-        .map_err(|e| e.to_string())
+    crate::atomic::write(path, bytes).map_err(|e| e.to_string())
 }
 
 /// What a file held before a change, to put it back.

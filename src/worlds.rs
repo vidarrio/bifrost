@@ -393,15 +393,11 @@ pub async fn catalog_add(
         added_at: crate::clock::now(),
         sha256: sha,
     };
-    let path = catalog_file(&w.sha256);
-    let tmp = path.with_extension("apworld.tmp");
     let store = async {
         tokio::fs::create_dir_all(config::get().catalog_dir()).await?;
-        tokio::fs::write(&tmp, bytes).await?;
-        tokio::fs::rename(&tmp, &path).await
+        crate::atomic::write_async(catalog_file(&w.sha256), bytes.to_vec()).await
     };
     if let Err(e) = store.await {
-        let _ = tokio::fs::remove_file(&tmp).await;
         return Err(format!("storing the catalog copy: {e}"));
     }
     db.catalog_add(&w).await.map_err(|e| e.to_string())?;

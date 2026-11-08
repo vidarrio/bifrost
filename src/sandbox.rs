@@ -73,22 +73,10 @@ impl Filter {
     /// Write the program to `dir` (owner-only, written aside and renamed into
     /// place) for bubblewrap to read.
     fn new(dir: &Path) -> Option<Filter> {
-        use std::io::Write;
         use std::os::unix::ffi::OsStrExt;
-        use std::os::unix::fs::OpenOptionsExt;
         let bytes = crate::seccomp::bytes()?;
         let path = dir.join("sandbox-seccomp.bpf");
-        let partial = dir.join(format!(".sandbox-seccomp.bpf.{}", std::process::id()));
-        let _ = std::fs::remove_file(&partial);
-        let written = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&partial)
-            .and_then(|mut f| f.write_all(&bytes))
-            .and_then(|()| std::fs::rename(&partial, &path));
-        if let Err(e) = written {
-            let _ = std::fs::remove_file(&partial);
+        if let Err(e) = crate::atomic::write_private(&path, &bytes) {
             tracing::warn!(
                 "sandbox: couldn't write the syscall filter to {}: {e}",
                 dir.display()
