@@ -20,9 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- A new instance lists the AP After Dark Discord, for unrated and 18+ games, on its home
-  page next to the official Archipelago one. Existing instances keep their list; add it
-  under Settings.
+- The home page lists the AP After Dark Discord, for unrated and 18+ games, next to the
+  official Archipelago one, unless the instance has saved its own list in Settings. An
+  instance that has keeps its list; add it there.
 - The home page says what Archipelago and Bifrost are under its title, with the four
   steps of a season: sign up, generate, play, follow along.
 - The home page lists your seasons instead of showcasing one: every season you can see
