@@ -119,7 +119,8 @@ pub async fn install_pack(
     let installed = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         install(season, game, &bytes)?;
-        std::fs::write(variant_file(season, game), variant).map_err(|e| format!("write: {e}"))
+        crate::atomic::write(&variant_file(season, game), variant.as_bytes())
+            .map_err(|e| format!("write: {e}"))
     })
     .await
     .map_err(|_| "Upload failed.".to_string())?;

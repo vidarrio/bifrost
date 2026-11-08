@@ -19,6 +19,7 @@ mod apinstall;
 mod apserver;
 mod apupdate;
 mod archive;
+mod atomic;
 mod auth;
 mod backup;
 mod bundle;
