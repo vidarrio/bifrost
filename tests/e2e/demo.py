@@ -98,6 +98,7 @@ try:
         summer = json.loads(db.execute("SELECT summary FROM season WHERE name = 'Summer season'").fetchone()[0] or "{}")
         autumn = db.execute("SELECT id FROM season WHERE name = 'Autumn season'").fetchone()[0]
         mines = dict(db.execute("SELECT season_id IS NULL, COUNT(*) FROM mine_result GROUP BY 1").fetchall())
+        prios = db.execute("SELECT COUNT(*) FROM hint_priority WHERE season_id = ?", (autumn,)).fetchone()[0]
     games = summer.get("games", [])
     check("…plays real games", {"A Short Hike", "Celeste 64"} <= {g["game"] for g in games}, [g["game"] for g in games])
     check("…finishing some of the archived season's", sum(g["pct"] == 100 for g in games) >= 3, [(g["game"], g["pct"]) for g in games])
@@ -105,6 +106,7 @@ try:
     board = get(admin, f"/s/{autumn}/board").text
     sent = [int(n) for n in re.findall(r"· sent (\d+) ·", board)]
     check("…has the live season part played", "goaled" in board and sum(n > 0 for n in sent) >= 4, sent)
+    check("…with prioritized hints on its board", prios >= 2 and "wanted from you" in board, prios)
     check("…and fills the minesweeper leaderboards", mines.get(1, 0) >= 20 and mines.get(0, 0) >= 20, mines)
     check("game servers listen on localhost only", re.search(r"AP server started on 127\.0\.0\.1:\d+", srv.logtext())
           and not re.search(r"AP server started on 0\.0\.0\.0", srv.logtext()))

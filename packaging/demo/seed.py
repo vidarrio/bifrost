@@ -11,8 +11,8 @@ It signs in through /demo/as/<role>, so it only works on a demo build. The
 seasons play real games that need no ROM, and their games are part played:
 the seed checks locations, adds hints and marks some games finished through
 the season console, which a demo only allows on seasons it doesn't start
-with. It reads which locations to check from the seed's spoiler in the data
-dir.
+with, and stars a couple of the hints as priorities. It reads which
+locations to check from the seed's spoiler in the data dir.
 
 Two things go straight into the data dir: the common game's folder, since the
 demo locks the common-games console, and a history of minesweeper results for
@@ -20,6 +20,7 @@ the leaderboards, since a result's time is how long the board took to play.
 
 Generating the seasons and playing them takes a few minutes.
 """
+import html
 import os
 import random
 import re
@@ -54,6 +55,8 @@ WINTER = [
     ("player", "Ann", "Stardew Valley"),
     ("moderator", "Mia", "Terraria"),
 ]
+# Which account plays each slot.
+ACCOUNT = {slot: account for account, slot, _ in SUMMER + AUTUMN + WINTER}
 # How far each slot has got: how many of its locations it has checked, or
 # "goal" for a game marked finished, which releases the rest of its items. A
 # check goes through the season console, one location a command, and each
@@ -61,6 +64,8 @@ WINTER = [
 SUMMER_PLAY = {"Ann": "goal", "Mia": "goal", "Sam": "goal", "AnnDice": 30}
 AUTUMN_PLAY = {"SamDash": "goal", "Mia": 30, "Ann": 25, "Sam": 20, "AnnTunic": 12, "Commons": 5}
 HINTS = 4
+# How many of those hints the item's owner has starred as a priority.
+PRIORITIZED = 2
 LINE = re.compile(r"^\s*(?P<loc>.+) \((?P<finder>[^()]+)\): (?P<item>.+) \((?P<owner>[^()]+)\)\s*$")
 rng = random.Random(26)
 
@@ -232,12 +237,46 @@ def main(base, data):
         # A few hints: progression items still to find, in others' games. The
         # console doesn't always see a hint's reply (the server sends it to the
         # two slots involved only), so this counts the commands, not replies.
-        wanted = [(owner, item) for finder, loc, item, owner, progression in places
+        wanted = [(owner, item, finder) for finder, loc, item, owner, progression in places
                   if progression and owner in plan and finder != owner and plan.get(owner) != "goal"
                   and plan.get(finder) != "goal" and (finder, loc) not in done]
-        # Each item once: a progressive item has several copies.
-        for owner, item in list(dict.fromkeys(wanted))[:HINTS]:
+        # Spread them out: each slot owns at most one and holds at most one, and
+        # each is between two people, so a starred hint shows as wanted on
+        # someone else's card. Each item once: a progressive item has several
+        # copies.
+        hinted, owners, finders = [], set(), set()
+        for owner, item, finder in dict.fromkeys(wanted):
+            if len(hinted) < HINTS and owner not in owners and finder not in finders \
+                    and ACCOUNT.get(owner) != ACCOUNT.get(finder):
+                hinted.append((owner, item))
+                owners.add(owner)
+                finders.add(finder)
+        for owner, item in hinted:
             console(sid, f"/hint {shlex.quote(owner)} {shlex.quote(item)}")
+        # Star a few of them, as their owners would, from the owner's game page
+        # (where the hint shows once the board has seen it). The common game's
+        # card has no slot name, so its hints are left as they are.
+        starred = 0
+        for owner, item in hinted:
+            if starred >= PRIORITIZED or owner not in ids:
+                continue
+            page = f"/s/{sid}/game/{ids[owner]}"
+            for _ in range(20):
+                row = next((r for r in admin.get(base + page).text.split('class="hintrow"')[1:]
+                            if html.unescape(r.partition("<span>")[2].partition("</span>")[0]).startswith(f"{item} @ ")),
+                           None)
+                if row and 'action="prioritize"' in row:
+                    break
+                time.sleep(3)
+            else:
+                sys.exit(f"seed: the hint for {owner}'s {item} never showed on their game page")
+            form = dict(re.findall(r'name="(\w+)" value="([^"]*)"', row.split("</form>", 1)[0]))
+            post(admin, f"/s/{sid}/prioritize", data={k: html.unescape(v) for k, v in form.items()})
+            if "★ prioritized" not in admin.get(base + page).text:
+                sys.exit(f"seed: prioritizing the hint for {owner}'s {item} didn't take")
+            starred += 1
+        if hinted:
+            print(f"seed:   {len(hinted)} hints, {starred} prioritized", flush=True)
 
     def minesweeper(sid, games):
         """Write a history of finished boards: (account, kind, boards, win share)."""
