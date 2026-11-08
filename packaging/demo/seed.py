@@ -227,8 +227,11 @@ def main(base, data):
                 if re.match(rf"{re.escape(slot)} (sent|found) ", out):
                     sent += 1
                     done.add((finder, loc))
-                elif not out.startswith("(command accepted"):
-                    # Silence means it was checked already, by a goal's collect.
+                elif out.startswith("(command accepted"):
+                    # Silence means it was checked already, by a goal's collect:
+                    # checked all the same, so no hint for it either.
+                    done.add((finder, loc))
+                else:
                     missed.append(f"{loc}: {out}")
             print(f"seed:   {slot}: {sent} of {len(mine)} locations checked", flush=True)
             # Far short of the plan, mostly through names the server didn't know,
@@ -276,9 +279,12 @@ def main(base, data):
                     return r.split("</div>", 1)[0]
 
         # Star a few of them, as their owners would, from the owner's game page
-        # (where the hint shows once the board has seen it).
-        starred = 0
-        for owner, item, finder, loc in hinted[:stars]:
+        # (where the hint shows once the board has seen it). One that never shows
+        # as unfound there is passed over for the next.
+        starred, unshown = 0, []
+        for owner, item, finder, loc in hinted:
+            if starred >= stars:
+                break
             page = f"/s/{sid}/game/{ids[owner]}"
             for _ in range(20):
                 row = hint_row(page, item, finder, loc)
@@ -286,13 +292,17 @@ def main(base, data):
                     break
                 time.sleep(3)
             else:
-                sys.exit(f"seed: the hint for {owner}'s {item} at {loc} never showed on their game page")
+                unshown.append(f"{owner}'s {item} at {loc}")
+                continue
             form = dict(re.findall(r'name="(\w+)" value="([^"]*)"', row.split("</form>", 1)[0]))
             post(admin, f"/s/{sid}/prioritize", data={k: html.unescape(v) for k, v in form.items()})
             # The button itself: the page's stylesheet names "★ prioritized" too.
             if "★ prioritized</button>" not in (hint_row(page, item, finder, loc) or ""):
                 sys.exit(f"seed: prioritizing the hint for {owner}'s {item} didn't take")
             starred += 1
+        if starred < stars:
+            sys.exit(f"seed: only {starred} of {stars} hints starred in season {sid}; "
+                     "never shown on their game page: " + "; ".join(unshown))
         if hinted:
             print(f"seed:   {len(hinted)} hints, {starred} prioritized", flush=True)
 
