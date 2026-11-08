@@ -108,7 +108,7 @@ pub(crate) async fn admin_signups(
             db::State::Draft
         };
         if ctx.state() != to
-            && let Err(e) = st.db.transition(ctx.id, to, auth::now()).await
+            && let Err(e) = st.db.transition(ctx.id, to, crate::clock::now()).await
         {
             return render::notice(&e.to_string(), false, "admin").into_response();
         }
@@ -362,10 +362,7 @@ pub(crate) async fn admin_archive_season(
         .filter(|n| !n.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| ctx.row.name.clone());
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or_default();
+    let now = crate::clock::now();
     let summary = season::SeasonSummary {
         name: name.clone(),
         seed: seed.clone(),
@@ -702,10 +699,7 @@ pub(crate) async fn admin_connect_password(
     // Is a season actually live right now (tracker connected to a running
     // server)? Between seasons there's nothing to set the password ON — the
     // value just needs persisting so the next generated/loaded season uses it.
-    let live = ctx
-        .rt
-        .with_board(|b| b.snapshot().connected)
-        .unwrap_or(false);
+    let live = ctx.rt.with_board(|b| b.connected).unwrap_or(false);
     // Best-effort set it on the running server first (bifrost's env is still the
     // old one, so this connection still authenticates). If a season IS live and
     // this fails, bail WITHOUT persisting — otherwise bifrost would restart with

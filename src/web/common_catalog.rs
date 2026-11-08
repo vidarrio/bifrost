@@ -12,10 +12,6 @@ fn root() -> std::path::PathBuf {
     config::get().common_dir()
 }
 
-fn sysadmin_only() -> Response {
-    render::notice("Sysadmins only.", false, "/").into_response()
-}
-
 async fn list_page(st: &AppState, err: Option<&str>, saved: Option<&str>) -> Response {
     let mut rows = Vec::new();
     for (key, s) in crate::common::catalog() {

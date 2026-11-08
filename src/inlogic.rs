@@ -13,6 +13,7 @@
 //! most ONE at a time (the loop is sequential) and recompute a slot only when its
 //! `(sent, received)` state has actually moved since the last cached result.
 
+use crate::clock::now;
 use crate::id::Id;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -139,11 +140,4 @@ async fn tick(
         }
     }
     Ok(())
-}
-
-fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
 }

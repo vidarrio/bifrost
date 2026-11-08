@@ -375,14 +375,14 @@ async fn create_kind(db: &Db, p: &Policy, from: Option<&str>) -> Result<Backup, 
         Ok(b) => {
             tracing::info!("backup written: {} ({} bytes)", b.name, b.size);
             (
-                crate::auth::now(),
+                crate::clock::now(),
                 format!("Backed up to {}.", b.name),
                 true,
             )
         }
         Err(e) => {
             tracing::error!("backup failed: {e}");
-            (crate::auth::now(), format!("Backup failed: {e}"), false)
+            (crate::clock::now(), format!("Backup failed: {e}"), false)
         }
     };
     *LAST.lock().unwrap() = Some(msg);
@@ -418,7 +418,7 @@ async fn create_inner(db: &Db, p: &Policy, from: Option<&str>) -> Result<Backup,
             dir.display()
         ));
     }
-    let mut at = crate::auth::now();
+    let mut at = crate::clock::now();
     while dir.join(name_for(at, from)).exists() {
         at += 1;
     }
@@ -483,7 +483,7 @@ pub fn spawn_nightly(db: Db) {
     );
     tokio::spawn(async move {
         loop {
-            let wait = until_next(crate::auth::now(), hour);
+            let wait = until_next(crate::clock::now(), hour);
             tokio::time::sleep(std::time::Duration::from_secs(wait as u64)).await;
             let _ = create(&db, &p).await;
         }
@@ -503,7 +503,7 @@ pub fn restore(file: &Path) -> Result<String, String> {
         ));
     }
     let data = &cfg.data_dir;
-    let now = crate::auth::now();
+    let now = crate::clock::now();
     let staging = data.join(format!(".restore-{now}"));
     let aside = data.join(format!(".pre-restore-{now}"));
     let f = std::fs::File::open(file).map_err(|e| format!("{}: {e}", file.display()))?;

@@ -21,7 +21,6 @@ use std::process::Output;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
-use sha2::{Digest, Sha256};
 
 use crate::apinstall::{self, Install};
 use crate::checker::CheckResult;
@@ -184,14 +183,7 @@ fn trusted_world_hashes() -> Vec<String> {
     paths
         .iter()
         .filter_map(|p| std::fs::read(p).ok())
-        .map(|b| sha256_hex(&b))
-        .collect()
-}
-
-pub fn sha256_hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
+        .map(|b| crate::text::sha256_hex(&b))
         .collect()
 }
 
@@ -267,7 +259,7 @@ pub fn install_world(
 ) -> Result<(), String> {
     let _lock = PINS.lock().unwrap_or_else(|p| p.into_inner());
     std::fs::write(season.worlds.join(file), bytes).map_err(|e| format!("install: {e}"))?;
-    pin.sha256 = sha256_hex(bytes);
+    pin.sha256 = crate::text::sha256_hex(bytes);
     let mut pins = world_pins(season);
     pins.insert(file.to_string(), pin);
     write_pins(season, &pins)
@@ -281,7 +273,7 @@ pub fn pin_shipped(season: &SeasonDirs, file: &str) -> Result<(), String> {
     pins.insert(
         file.to_string(),
         Pin {
-            sha256: sha256_hex(&bytes),
+            sha256: crate::text::sha256_hex(&bytes),
             uploaded_by: "bifrost".into(),
             shipped: true,
             ..Pin::default()
@@ -319,7 +311,7 @@ pub fn custom_worlds(season: &SeasonDirs) -> Vec<String> {
                 .filter(|p| p.shipped);
             std::fs::read(e.path())
                 .map(|b| {
-                    let h = sha256_hex(&b);
+                    let h = crate::text::sha256_hex(&b);
                     !trusted.contains(&h) && shipped.is_none_or(|p| p.sha256 != h)
                 })
                 .unwrap_or(true)
@@ -337,7 +329,7 @@ pub fn check_worlds(season: &SeasonDirs) -> Result<(), String> {
     let custom = custom_worlds(season);
     let pins = world_pins(season);
     for file in &custom {
-        let actual = std::fs::read(season.worlds.join(file)).map(|b| sha256_hex(&b));
+        let actual = std::fs::read(season.worlds.join(file)).map(|b| crate::text::sha256_hex(&b));
         match (pins.get(file), actual) {
             (Some(pin), Ok(h)) if pin.sha256 == h => {}
             (None, _) => {

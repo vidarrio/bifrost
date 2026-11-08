@@ -83,7 +83,7 @@ async fn check() -> bool {
         .await
         .map(|rs| pick(&rs, current()));
     let ok = res.is_ok();
-    record(crate::auth::now(), res);
+    record(crate::clock::now(), res);
     ok
 }
 

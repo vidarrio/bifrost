@@ -10,7 +10,6 @@
 //! requires a guess.
 
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const W: usize = 16;
 pub const H: usize = 16;
@@ -69,12 +68,7 @@ impl Rng {
     }
 }
 
-fn now_nanos() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0)
-}
+use crate::clock::now_nanos;
 
 fn neighbors(w: usize, h: usize, i: usize) -> Vec<usize> {
     let (r, c) = (i / w, i % w);

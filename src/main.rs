@@ -24,6 +24,7 @@ mod backup;
 mod bundle;
 mod checker;
 mod cli;
+mod clock;
 mod common;
 mod common_edit;
 mod config;
@@ -46,6 +47,7 @@ mod scope;
 mod season;
 mod seccomp;
 mod selfupdate;
+mod text;
 mod web;
 mod worlds;
 
@@ -462,7 +464,7 @@ async fn init_auth(db: &db::Db) -> auth::Auth {
     let purge = db.clone();
     tokio::spawn(async move {
         loop {
-            purge.purge_expired_sessions(auth::now()).await;
+            purge.purge_expired_sessions(crate::clock::now()).await;
             tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
         }
     });

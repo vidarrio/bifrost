@@ -244,6 +244,20 @@ impl Board {
         Some((finder_name, loc_name))
     }
 
+    /// Whether the hint (finding, location, item) has been found: what the
+    /// snapshot's `HintView::found` says, without building the snapshot.
+    pub fn hint_found(&self, finding: i64, location: i64, item: i64) -> bool {
+        self.slots.iter().any(|(n, s)| {
+            s.hint_list.iter().any(|h| {
+                h.receiving == *n
+                    && h.found
+                    && h.finding == finding
+                    && h.location == location
+                    && h.item == item
+            })
+        })
+    }
+
     /// The first copy of `item_id` (in placement order) that hasn't been hinted
     /// or found — as (finder_slot, location_id). Used to hint exactly one copy.
     pub fn first_unhinted_location(&self, ap_slot: i64, item_id: i64) -> Option<(i64, i64)> {

@@ -141,6 +141,12 @@ pub enum TransitionError {
     Db(String),
 }
 
+impl From<sqlx::Error> for TransitionError {
+    fn from(e: sqlx::Error) -> Self {
+        TransitionError::Db(e.to_string())
+    }
+}
+
 impl std::fmt::Display for TransitionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -335,15 +341,13 @@ impl Db {
     }
 
     pub async fn transition(&self, id: Id, to: State, now: i64) -> Result<(), TransitionError> {
-        let db = |e: sqlx::Error| TransitionError::Db(e.to_string());
         // IMMEDIATE: this reads then writes; a deferred transaction would
         // fail outright (not wait) if another writer got in between.
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let from: Option<String> = sqlx::query_scalar("SELECT state FROM season WHERE id = ?")
             .bind(id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         let from = State::parse(&from.ok_or(TransitionError::NoSuchSeason)?);
         if !from.can_go(to) {
             return Err(TransitionError::Illegal { from, to });
@@ -354,8 +358,7 @@ impl Db {
                 .bind(port.map(i64::from))
                 .bind(id)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         }
         let sql = match to {
             State::Live => {
@@ -370,25 +373,20 @@ impl Db {
         if matches!(to, State::Live | State::Archived) {
             q = q.bind(now);
         }
-        q.bind(id).execute(&mut *tx).await.map_err(db)?;
+        q.bind(id).execute(&mut *tx).await?;
         // Remember where a generation started, for crash recovery.
         sqlx::query("UPDATE season SET gen_from = ? WHERE id = ?")
             .bind((to == State::Generating).then_some(from.as_str()))
             .bind(id)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        tx.commit().await.map_err(db)
+            .await?;
+        Ok(tx.commit().await?)
     }
 
     /// Could the season go live right now (is there room)? Lets generation
     /// refuse before doing the work.
     pub async fn can_go_live(&self, id: Id) -> Result<(), TransitionError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| TransitionError::Db(e.to_string()))?;
+        let mut tx = self.pool.begin().await?;
         self.live_slot(&mut tx, id).await.map(|_| ())
     }
 
@@ -401,15 +399,13 @@ impl Db {
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         id: Id,
     ) -> Result<Option<u16>, TransitionError> {
-        let db = |e: sqlx::Error| TransitionError::Db(e.to_string());
         let Some(range) = self.ap_ports.clone() else {
             let other: Option<String> = sqlx::query_scalar(
                 "SELECT name FROM season WHERE state = 'live' AND id <> ? LIMIT 1",
             )
             .bind(id)
             .fetch_optional(&mut **tx)
-            .await
-            .map_err(db)?;
+            .await?;
             return match other {
                 Some(name) => Err(TransitionError::AnotherLive(name)),
                 None => Ok(None),
@@ -418,8 +414,7 @@ impl Db {
         let held: Option<i64> = sqlx::query_scalar("SELECT ap_port FROM season WHERE id = ?")
             .bind(id)
             .fetch_optional(&mut **tx)
-            .await
-            .map_err(db)?
+            .await?
             .flatten();
         if let Some(p) = held.and_then(|p| u16::try_from(p).ok())
             && range.contains(&p)
@@ -430,8 +425,7 @@ impl Db {
             sqlx::query_scalar("SELECT ap_port FROM season WHERE ap_port IS NOT NULL AND id <> ?")
                 .bind(id)
                 .fetch_all(&mut **tx)
-                .await
-                .map_err(db)?
+                .await?
                 .into_iter()
                 .collect();
         range
@@ -457,21 +451,14 @@ impl Db {
                 continue;
             }
             let ok = async {
-                let mut tx = self
-                    .pool
-                    .begin_with("BEGIN IMMEDIATE")
-                    .await
-                    .map_err(|e| TransitionError::Db(e.to_string()))?;
+                let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
                 let port = self.live_slot(&mut tx, s.id).await?;
                 sqlx::query("UPDATE season SET ap_port = ? WHERE id = ?")
                     .bind(port.map(i64::from))
                     .bind(s.id)
                     .execute(&mut *tx)
-                    .await
-                    .map_err(|e| TransitionError::Db(e.to_string()))?;
-                tx.commit()
-                    .await
-                    .map_err(|e| TransitionError::Db(e.to_string()))
+                    .await?;
+                Ok::<_, TransitionError>(tx.commit().await?)
             }
             .await;
             if let Err(e) = ok {

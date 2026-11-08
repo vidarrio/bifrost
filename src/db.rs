@@ -813,10 +813,7 @@ impl Db {
         subs: &[SubmissionRow],
         commons: &[(&str, &str)],
     ) -> Result<(), sqlx::Error> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let now = crate::clock::now();
         // A seat's name was free when it was picked, so an AP slot with that name
         // is a clash: fail rather than seat them on another game.
         for sub in subs {
@@ -910,10 +907,7 @@ impl Db {
         let old = self.slots(season).await?;
         self.clear_all_slots(season).await?;
         let new_season = season;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let now = crate::clock::now();
         let roster: HashSet<&str> = new_ap_slots.iter().map(|(_, n, _)| n.as_str()).collect();
         // Common games' slots stay theirs, by name.
         let common_keys: HashMap<&str, &str> = old
@@ -1048,10 +1042,7 @@ impl Db {
         if found.is_none() {
             return Ok(ClaimOutcome::SlotTaken);
         }
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let now = crate::clock::now();
         let res = sqlx::query(
             "INSERT OR IGNORE INTO claim (slot_id, account_id, claimed_at) VALUES (?, ?, ?)",
         )
@@ -1091,10 +1082,7 @@ impl Db {
         held_for: Option<&str>,
         limit: i64,
     ) -> Result<Option<Id>, sqlx::Error> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let now = crate::clock::now();
         let id = Id::new();
         let res = sqlx::query(
             "INSERT INTO submission (id, season_id, account_id, slot_name, game, is_custom, yaml_file, held_for, created_at)
