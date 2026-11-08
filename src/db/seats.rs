@@ -381,6 +381,16 @@ mod tests {
                 .await
                 .is_err()
         );
+        // Slot names ignore case, so "other" is the same name.
+        let lower = [
+            (1, "other".to_string(), "H".to_string()),
+            (2, "Host".to_string(), "G".to_string()),
+        ];
+        assert!(
+            db.seed_from_submissions(s, &lower, &subs, &[])
+                .await
+                .is_err()
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -580,10 +590,14 @@ mod tests {
             "Ann, Bob",
             "a mid-season joiner shows too"
         );
-        // A re-roll keeps them, on the new AP slot.
-        db.remap_season(s, &[(7, "Host".into(), "G".into())])
+        // A re-roll keeps them, on the new AP slot, on the new seed, without
+        // the old seed's activity.
+        db.activity_add(s, 3, "sent", "x", None, None, None).await;
+        db.remap_season(s, "S2", &[(7, "Host".into(), "G".into())])
             .await
             .unwrap();
+        assert_eq!(db.season(s).await.unwrap().seed.as_deref(), Some("S2"));
+        assert_eq!(db.activity_count(s, &Default::default()).await, 0);
         let rerolled = db.slots(s).await.unwrap();
         assert!(rerolled.iter().find(|r| r.name == "Ann").unwrap().is_seat);
         assert!(!rerolled.iter().find(|r| r.name == "Host").unwrap().is_seat);

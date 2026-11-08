@@ -662,15 +662,10 @@ async fn regen_inner(
     let seed_zip = newest_seed(season).await.ok_or("no seed was produced")?;
     set(state, true, "Mapping slots and carrying over claims…");
     let (seed_name, ap_slots) = read_seed(&dirs, &seed_zip).await?;
-    // The new seed is the season's from here: the tracker accepts the restarted
-    // server, and data derived from the old seed is dropped.
-    db.set_season_seed(season, &seed_name)
-        .await
-        .map_err(|e| e.to_string())?;
-    db.clear_seed_data(season)
-        .await
-        .map_err(|e| e.to_string())?;
-    db.remap_season(season, &ap_slots)
+    // The new seed is the season's from here, in one go with its slots: the
+    // tracker accepts the restarted server, and data derived from the old seed
+    // is dropped. If that fails, the season stays on its old seed.
+    db.remap_season(season, &seed_name, &ap_slots)
         .await
         .map_err(|e| e.to_string())?;
 

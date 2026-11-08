@@ -722,7 +722,7 @@ impl Db {
     /// the in-logic cache. Slots/claims are remapped separately; minesweeper
     /// results and hint credits belong to the season and are kept.
     pub async fn clear_seed_data(&self, id: Id) -> Result<(), sqlx::Error> {
-        for table in ["activity", "hint_priority", "inlogic"] {
+        for table in crate::db::SEED_DATA {
             sqlx::query(sqlx::AssertSqlSafe(format!(
                 "DELETE FROM {table} WHERE season_id = ?"
             )))
