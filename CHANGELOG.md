@@ -15,8 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it turns off what could run code, host files or change the instance, caps seasons,
   games and live seasons, keeps the seasons it starts with as they are, keeps game
   servers on localhost, and resets from a snapshot. Its seed fills it with seasons of
-  real games, some finished and some part played, with hints, a couple of them
-  prioritized, and minesweeper leaderboards.
+  real games, some finished and some part played, with hints (a couple starred as
+  priorities), and minesweeper leaderboards.
   Release builds don't include it. See `packaging/demo/README.md`.
 
 ### Changed

@@ -237,42 +237,55 @@ def main(base, data):
         # A few hints: progression items still to find, in others' games. The
         # console doesn't always see a hint's reply (the server sends it to the
         # two slots involved only), so this counts the commands, not replies.
-        wanted = [(owner, item, finder) for finder, loc, item, owner, progression in places
+        wanted = [(owner, item, finder, loc) for finder, loc, item, owner, progression in places
                   if progression and owner in plan and finder != owner and plan.get(owner) != "goal"
                   and plan.get(finder) != "goal" and (finder, loc) not in done]
-        # Spread them out: each slot owns at most one and holds at most one, and
-        # each is between two people, so a starred hint shows as wanted on
-        # someone else's card. Each item once: a progressive item has several
-        # copies.
-        hinted, owners, finders = [], set(), set()
-        for owner, item, finder in dict.fromkeys(wanted):
-            if len(hinted) < HINTS and owner not in owners and finder not in finders \
-                    and ACCOUNT.get(owner) != ACCOUNT.get(finder):
-                hinted.append((owner, item))
-                owners.add(owner)
-                finders.add(finder)
-        for owner, item in hinted:
+        # Each is between two people, so a starred hint shows as wanted on
+        # someone else's card, and each item is hinted once: a /hint names every
+        # copy. Spread out where there are enough (each slot owning and holding
+        # one at most), then any. The checks above use up the playthrough's
+        # locations first, so there may not be many to pick from.
+        wanted = [w for w in wanted if ACCOUNT.get(w[0]) != ACCOUNT.get(w[2])]
+        hinted, owners, finders, items = [], set(), set(), set()
+        for spread in (True, False):
+            for owner, item, finder, loc in wanted:
+                if len(hinted) < HINTS and (owner, item) not in items \
+                        and not (spread and (owner in owners or finder in finders)):
+                    hinted.append((owner, item, finder, loc))
+                    owners.add(owner)
+                    finders.add(finder)
+                    items.add((owner, item))
+        for owner, item, _, _ in hinted:
             console(sid, f"/hint {shlex.quote(owner)} {shlex.quote(item)}")
+
+        def hint_row(page, item, finder, loc):
+            """The owner's game page's row for this copy of the item: a hint names
+            every copy, so the row is found by where it is and who holds it
+            ("item @ location · finder", as the page shows it)."""
+            for r in admin.get(base + page).text.split('class="hintrow"')[1:]:
+                text = html.unescape(r.partition("<span>")[2].partition("</span>")[0])
+                if text == f"{item} @ {loc} · {finder}":
+                    return r.split("</div>", 1)[0]
+
         # Star a few of them, as their owners would, from the owner's game page
         # (where the hint shows once the board has seen it). The common game's
         # card has no slot name, so its hints are left as they are.
         starred = 0
-        for owner, item in hinted:
+        for owner, item, finder, loc in hinted:
             if starred >= PRIORITIZED or owner not in ids:
                 continue
             page = f"/s/{sid}/game/{ids[owner]}"
             for _ in range(20):
-                row = next((r for r in admin.get(base + page).text.split('class="hintrow"')[1:]
-                            if html.unescape(r.partition("<span>")[2].partition("</span>")[0]).startswith(f"{item} @ ")),
-                           None)
+                row = hint_row(page, item, finder, loc)
                 if row and 'action="prioritize"' in row:
                     break
                 time.sleep(3)
             else:
-                sys.exit(f"seed: the hint for {owner}'s {item} never showed on their game page")
+                sys.exit(f"seed: the hint for {owner}'s {item} at {loc} never showed on their game page")
             form = dict(re.findall(r'name="(\w+)" value="([^"]*)"', row.split("</form>", 1)[0]))
             post(admin, f"/s/{sid}/prioritize", data={k: html.unescape(v) for k, v in form.items()})
-            if "★ prioritized" not in admin.get(base + page).text:
+            # The button itself: the page's stylesheet names "★ prioritized" too.
+            if "★ prioritized</button>" not in (hint_row(page, item, finder, loc) or ""):
                 sys.exit(f"seed: prioritizing the hint for {owner}'s {item} didn't take")
             starred += 1
         if hinted:
