@@ -124,6 +124,23 @@ macro_rules! demo_js {
     };
 }
 
+/// The colour and font tokens, shared by every page (`HEAD`) and the landing
+/// page (`static/index.html`'s `/*THEMECSS*/`), so the two can't drift. `--logo`
+/// is the logo's colour (`static/logo.svg`), and `--brand` the gradient the
+/// home page's title and the board's progress bars fade through.
+macro_rules! theme_css {
+    () => {
+        r#":root{--bg:#0d1117;--panel:#161c26;--bd:#2a3542;--fg:#e6e9ef;--muted:#98a3b6;
+--accent:#5aa9e6;--accent2:#c58af9;--logo:#7b8cff;--ok:#28a56d;--bad:#e24d5f;--warn:#d98324;
+--brand:linear-gradient(90deg,var(--accent),var(--logo),var(--accent2));
+--font:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+--mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;color-scheme:dark;accent-color:var(--accent)}"#
+    };
+}
+
+/// The theme tokens (see [`theme_css`]).
+pub const THEME_CSS: &str = theme_css!();
+
 /// The header's identity script, shared by every page (`HEAD`) and the landing
 /// page (`static/index.html`'s `<!--IDENTITYJS-->`), so the two can't drift.
 macro_rules! identity_js {
@@ -157,8 +174,9 @@ const HEAD: &str = concat!(
     r#"<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Bifrost</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg"><style>
-:root{--bg:#0d1117;--panel:#161c26;--bd:#2a3542;--fg:#e6e9ef;--muted:#98a3b6;--accent:#5aa9e6;--ok:#28a56d;--bad:#e24d5f;--warn:#d98324;
---font:"IBM Plex Sans",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;color-scheme:dark;accent-color:var(--accent)}
+"#,
+    theme_css!(),
+    r#"
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);line-height:1.5;
 display:flex;flex-direction:column;align-items:center}main{width:100%;max-width:900px;padding:16px;padding-block:24px 40px}
 input[type=file]{background:var(--bg);color:var(--muted);border:1px solid var(--bd);border-radius:7px;padding:3px 8px 3px 3px;font-family:var(--font);font-size:12.5px;max-width:100%;cursor:pointer}
@@ -214,7 +232,7 @@ header .spacer{flex:1}
    "☆ prioritize"), so each button sized to its own text. A shared min-width,
    set to about the longer label's natural width, makes both the same width. */
 .hintrow button{white-space:nowrap;min-width:112px}
-button{background:var(--accent);color:#0d1117;border:0;border-radius:7px;padding:5px 12px;font-weight:600;font-size:12px;cursor:pointer}
+button{background:var(--accent);color:var(--bg);border:0;border-radius:7px;padding:5px 12px;font-weight:600;font-size:12px;cursor:pointer}
 button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted)}
 .foundhints{margin:6px 0}
 .foundhints>summary{cursor:pointer;font-family:var(--mono);font-size:12px;color:var(--muted);padding:5px 2px;list-style:none;user-select:none}
@@ -235,7 +253,7 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .pager{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;margin:16px 0 4px;max-width:760px;font-family:var(--mono);font-size:12.5px}
 .pager .pg{min-width:32px;height:32px;box-sizing:border-box;line-height:1;display:inline-flex;align-items:center;justify-content:center;padding:0 8px;border:1px solid var(--bd);border-radius:7px;color:var(--muted);text-decoration:none;background:var(--panel)}
 .pager a.pg:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
-.pager .pg.cur{background:var(--accent);color:#0d1117;border-color:var(--accent);font-weight:700}
+.pager .pg.cur{background:var(--accent);color:var(--bg);border-color:var(--accent);font-weight:700}
 .pager .pg.disabled{opacity:.4}
 .pager .pgnav{font-size:16px}
 .pager .gap{display:inline-flex;align-items:center;justify-content:center;height:32px;color:var(--muted);padding:0 2px}
@@ -267,7 +285,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .stepper li{flex:1;display:flex;align-items:center;gap:8px;color:var(--muted);border-top:2px solid var(--bd);padding-top:8px}
 .stepper li.active{color:var(--fg);border-top-color:var(--accent)}.stepper li.done{color:var(--ok);border-top-color:var(--ok)}
 .stepper .n{display:inline-flex;width:20px;height:20px;border-radius:50%;background:var(--bd);color:var(--fg);align-items:center;justify-content:center;font-size:11px}
-.stepper li.active .n{background:var(--accent);color:#0d1117}.stepper li.done .n{background:var(--ok);color:#0d1117}
+.stepper li.active .n{background:var(--accent);color:var(--bg)}.stepper li.done .n{background:var(--ok);color:var(--bg)}
 .wstep{background:var(--panel);border:1px solid var(--bd);border-radius:14px;padding:20px 22px;max-width:520px}
 .wstep h2{margin:0 0 14px;color:var(--fg);font-size:16px;letter-spacing:0;text-transform:none}
 .wstep .hint{color:var(--muted);font-size:13px;margin:0 0 10px}
@@ -284,7 +302,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .authform label.chk{display:flex;flex-direction:row;align-items:flex-start;gap:9px}.authform label.chk input{width:auto;flex:none;margin-top:3px}
 .btnrow{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
 button.danger{background:var(--bad);color:#fff}
-button.finish{background:var(--ok);color:#0d1117}
+button.finish{background:var(--ok);color:var(--bg)}
 .adminfin{margin:2px 0 16px}.adminfin .finnote{font-family:var(--mono);font-size:12px;color:var(--ok)}
 .statline{font-family:var(--mono);font-size:12.5px;color:var(--muted);margin:2px 0 6px}.statline b{color:var(--fg)}
 .console{display:flex;gap:8px;margin:8px 0}
@@ -668,6 +686,9 @@ mod tests {
         assert!(HEAD.contains(IDENTITY_JS));
         let landing = include_str!("../../static/index.html");
         assert!(landing.contains("<!--IDENTITYJS-->") && !landing.contains("bifApplyMe"));
+        // The theme too: one copy of the tokens, in both.
+        assert!(HEAD.contains(THEME_CSS));
+        assert!(landing.contains("/*THEMECSS*/") && !landing.contains("--accent:#"));
     }
 
     #[test]
