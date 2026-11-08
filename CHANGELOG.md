@@ -10,14 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - A demo build (`cargo build --features demo`) for a public demo: a bar switches between
-  a player, a moderator and a sysadmin account without passwords. Since every visitor
-  can be sysadmin, it turns off what could run code, host files or change the instance,
-  caps seasons, games and live seasons, keeps the seasons it starts with as they are,
-  keeps game servers on localhost, and resets from a snapshot. Release builds don't
-  include it. See `packaging/demo/README.md`.
+  a player, a moderator and a sysadmin account without passwords, with a note pointing
+  to it until a visitor picks one or closes it. Since every visitor can be sysadmin,
+  it turns off what could run code, host files or change the instance, caps seasons,
+  games and live seasons, keeps the seasons it starts with as they are, keeps game
+  servers on localhost, and resets from a snapshot. Release builds don't include it. See `packaging/demo/README.md`.
 
 ### Changed
 
+- The home page says what Archipelago and Bifrost are under its title, with the four
+  steps of a season: sign up, generate, play, follow along.
 - The home page lists your seasons instead of showcasing one: every season you can see
   that isn't archived (drafts only for those who run them), public ones and private
   ones you're in, live ones first, each

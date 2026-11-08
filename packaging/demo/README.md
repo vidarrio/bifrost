@@ -2,7 +2,8 @@
 
 A demo build lets anyone try Bifrost without an account. A bar on every page
 switches between three accounts, `player`, `moderator` and `sysadmin`, with no
-password. It is built for a demo that is open to the internet, so it assumes
+password; until a visitor picks one, a note above the bar points to it. It is
+built for a demo that is open to the internet, so it assumes
 every visitor can be sysadmin:
 
 - **Turned off**, whoever asks:
