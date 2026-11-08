@@ -75,7 +75,7 @@ pub async fn check_releases() {
     if let Err(e) = &res {
         tracing::warn!("checking Archipelago releases: {e}");
     }
-    UPDATES.lock().unwrap().releases = Some((crate::auth::now(), res));
+    UPDATES.lock().unwrap().releases = Some((crate::clock::now(), res));
 }
 
 /// The recent releases (drafts left out) of GitHub repo `owner/name`.
@@ -167,7 +167,7 @@ pub fn start_install(tag: &str) -> Result<(), String> {
         }
         u.job = Some(Job {
             version: tag.to_string(),
-            started: crate::auth::now(),
+            started: crate::clock::now(),
             log: vec![],
             outcome: None,
         });

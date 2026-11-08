@@ -227,7 +227,7 @@ async fn setup_post(State(st): State<AppState>, Form(f): Form<SetupForm>) -> Res
         Ok(h) => st
             .auth
             .db
-            .create_account(&username, &h, Role::Sysadmin, auth::now())
+            .create_account(&username, &h, Role::Sysadmin, crate::clock::now())
             .await
             .map_err(|e| e.to_string()),
         Err(e) => Err(e),
@@ -262,7 +262,7 @@ async fn invite_get(State(st): State<AppState>, Path(token): Path<String>) -> Re
         .live_link(
             &auth::token_hash(&token),
             &[LinkKind::Invite, LinkKind::Community],
-            auth::now(),
+            crate::clock::now(),
         )
         .await;
     match live {
@@ -311,7 +311,12 @@ async fn invite_post(
     match st
         .auth
         .db
-        .redeem_invite(&auth::token_hash(&token), &username, &h, auth::now())
+        .redeem_invite(
+            &auth::token_hash(&token),
+            &username,
+            &h,
+            crate::clock::now(),
+        )
         .await
     {
         Ok(id) => {
@@ -341,7 +346,11 @@ async fn reset_get(State(st): State<AppState>, Path(token): Path<String>) -> Res
     let live = st
         .auth
         .db
-        .live_link(&auth::token_hash(&token), &[LinkKind::Reset], auth::now())
+        .live_link(
+            &auth::token_hash(&token),
+            &[LinkKind::Reset],
+            crate::clock::now(),
+        )
         .await;
     match live {
         Some(l) => {
@@ -369,7 +378,7 @@ async fn reset_post(
     let Some(link) = st
         .auth
         .db
-        .live_link(&th, &[LinkKind::Reset], auth::now())
+        .live_link(&th, &[LinkKind::Reset], crate::clock::now())
         .await
     else {
         return dead_link();
@@ -382,7 +391,7 @@ async fn reset_post(
         Ok(h) => h,
         Err(e) => return render::reset_page(&token, &username, Some(&e)).into_response(),
     };
-    match st.auth.db.redeem_reset(&th, &h, auth::now()).await {
+    match st.auth.db.redeem_reset(&th, &h, crate::clock::now()).await {
         Ok(Some(id)) => {
             st.auth.throttle.forgive(&username);
             tracing::info!("password reset for {username}");
@@ -418,18 +427,14 @@ async fn console(st: &AppState, me: &Me, minted: Option<Minted>, err: Option<&st
         idp_roles,
         minted: minted.as_ref(),
         err,
-        now: auth::now(),
+        now: crate::clock::now(),
     })
     .into_response()
 }
 
-fn forbidden() -> Response {
-    render::notice("Sysadmins only.", false, "/").into_response()
-}
-
 async fn users_get(State(st): State<AppState>, me: Me) -> Response {
     if !me.can(Action::ManageInstance) {
-        return forbidden();
+        return crate::web::sysadmin_only();
     }
     console(&st, &me, None, None).await
 }
@@ -442,7 +447,7 @@ struct RoleForm {
 
 async fn users_role(State(st): State<AppState>, me: Me, Form(f): Form<RoleForm>) -> Response {
     if !me.can(Action::ManageInstance) {
-        return forbidden();
+        return crate::web::sysadmin_only();
     }
     if st.auth.mode == AuthMode::ForwardAuth && !st.auth.fwd.role_groups.is_empty() {
         return console(
@@ -484,7 +489,7 @@ struct DisableForm {
 
 async fn users_disable(State(st): State<AppState>, me: Me, Form(f): Form<DisableForm>) -> Response {
     if !me.can(Action::ManageInstance) {
-        return forbidden();
+        return crate::web::sysadmin_only();
     }
     if me.principal().map(|p| p.account_id) == Some(f.account_id) && f.disabled {
         return console(&st, &me, None, Some("You can't disable yourself.")).await;
@@ -509,7 +514,7 @@ struct ResetLinkForm {
 
 async fn links_reset(State(st): State<AppState>, me: Me, Form(f): Form<ResetLinkForm>) -> Response {
     if !me.can(Action::ManageInstance) {
-        return forbidden();
+        return crate::web::sysadmin_only();
     }
     let accounts = st.auth.db.accounts().await;
     let Some(target) = accounts
@@ -542,7 +547,7 @@ pub async fn mint_reset(
     created_by: Option<i64>,
 ) -> Result<String, String> {
     let token = auth::new_token();
-    let now = auth::now();
+    let now = crate::clock::now();
     auth.db
         .create_link(
             &auth::token_hash(&token),
@@ -572,7 +577,7 @@ async fn links_invite(
     Form(f): Form<InviteLinkForm>,
 ) -> Response {
     if !me.can(Action::ManageInstance) {
-        return forbidden();
+        return crate::web::sysadmin_only();
     }
     if let Some(r) = native_only(&st) {
         return r;
@@ -604,7 +609,7 @@ async fn links_community(
     Form(f): Form<CommunityLinkForm>,
 ) -> Response {
     if !me.can(Action::ManageInstance) {
-        return forbidden();
+        return crate::web::sysadmin_only();
     }
     if let Some(r) = native_only(&st) {
         return r;
@@ -633,7 +638,7 @@ async fn mint_invite(
     what: String,
 ) -> Response {
     let token = auth::new_token();
-    let now = auth::now();
+    let now = crate::clock::now();
     let label: String = label.trim().chars().take(80).collect();
     let r = st
         .auth
@@ -668,7 +673,7 @@ struct RevokeForm {
 
 async fn links_revoke(State(st): State<AppState>, me: Me, Form(f): Form<RevokeForm>) -> Response {
     if !me.can(Action::ManageInstance) {
-        return forbidden();
+        return crate::web::sysadmin_only();
     }
     match st.auth.db.revoke_link(f.id).await {
         Ok(()) => Redirect::to("/admin/users").into_response(),

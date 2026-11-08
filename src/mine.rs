@@ -9,8 +9,8 @@
 //! solver can't prove is discarded and regenerated, so a served board never
 //! requires a guess.
 
+use crate::clock::now_nanos;
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const W: usize = 16;
 pub const H: usize = 16;
@@ -67,13 +67,6 @@ impl Rng {
     fn below(&mut self, n: usize) -> usize {
         (self.next() % n as u64) as usize
     }
-}
-
-fn now_nanos() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0)
 }
 
 fn neighbors(w: usize, h: usize, i: usize) -> Vec<usize> {

@@ -43,11 +43,11 @@ pub(crate) use seasons::*;
 pub(crate) use settings::*;
 pub(crate) use signup::*;
 
-pub(crate) fn now_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+pub(crate) use crate::clock::now as now_secs;
+
+/// What a page only sysadmins may use answers anyone else.
+pub(crate) fn sysadmin_only() -> Response {
+    render::notice("Sysadmins only.", false, "/").into_response()
 }
 
 /// Send a file as an attachment named `name` (ranges, conditional requests).

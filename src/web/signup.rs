@@ -14,15 +14,6 @@ pub(crate) fn parse_coop() -> Vec<(String, String)> {
         .collect()
 }
 
-/// Season `worlds/` file stems Bifrost itself stages (`generate.rs`).
-pub(crate) fn slugify(s: &str) -> String {
-    let out: String = s
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '_' })
-        .collect();
-    if out.is_empty() { "slot".into() } else { out }
-}
-
 pub(crate) async fn signup_get(
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,
@@ -445,7 +436,7 @@ pub(crate) async fn signup_check(
 /// `Config::data_file`).
 async fn store_yaml(ctx: &scope::SeasonCtx, slot_name: &str, yaml: &[u8]) -> Option<String> {
     // Names can be long, and file names can't.
-    let slug: String = slugify(slot_name).chars().take(64).collect();
+    let slug: String = crate::text::slug(slot_name).chars().take(64).collect();
     let uploads = ctx.dirs().submissions;
     let _ = tokio::fs::create_dir_all(&uploads).await;
     let nonce = &auth::new_token()[..16];

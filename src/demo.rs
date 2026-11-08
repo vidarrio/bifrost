@@ -109,7 +109,7 @@ pub async fn ensure_accounts(db: &Db, mode: auth::AuthMode) {
                 let hash = auth::hash_password_async(auth::new_token())
                     .await
                     .expect("hash a throwaway password");
-                db.create_account(name, &hash, role, auth::now())
+                db.create_account(name, &hash, role, crate::clock::now())
                     .await
                     .expect("create a demo account");
             }

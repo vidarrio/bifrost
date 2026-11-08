@@ -2,6 +2,7 @@
 //! allowlists. The setups themselves are files: see [`crate::common`].
 
 use super::Db;
+use crate::clock::now;
 use crate::id::Id;
 
 /// A common game a season includes.
@@ -20,13 +21,6 @@ pub enum SetIdentOutcome {
     Ok,
     /// Another player has registered that name for this kind of game.
     TakenByOther,
-}
-
-fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 impl Db {

@@ -733,7 +733,7 @@ pub(crate) async fn game_output(
     let i_claim = slots
         .iter()
         .any(|r| r.ap_slot == ap_slot && r.claimed_by_id == Some(my_id));
-    let back = format!("/game/{game_id}");
+    let back = ctx.url(&format!("/game/{game_id}"));
     if !(i_claim || is_admin) {
         return render::notice(
             "Only this game's players can download its files.",

@@ -12,7 +12,7 @@ pub(crate) async fn catalog_page(
 
 pub(crate) async fn catalog_view(State(st): State<AppState>, me: auth::Me) -> Response {
     if !me.can(auth::Action::ManageInstance) {
-        return render::notice("Sysadmins only.", false, "/").into_response();
+        return sysadmin_only();
     }
     catalog_page(&st, None, None).await.into_response()
 }
@@ -23,7 +23,7 @@ pub(crate) async fn catalog_upload(
     mut mp: Multipart,
 ) -> Response {
     if !me.can(auth::Action::ManageInstance) {
-        return render::notice("Sysadmins only.", false, "/").into_response();
+        return sysadmin_only();
     }
     let (mut bytes, mut fname) = (None::<Vec<u8>>, String::new());
     let (mut game, mut version, mut note) = (String::new(), String::new(), String::new());
@@ -73,7 +73,7 @@ pub(crate) async fn catalog_remove(
     Form(f): Form<CatalogRemoveForm>,
 ) -> Response {
     if !me.can(auth::Action::ManageInstance) {
-        return render::notice("Sysadmins only.", false, "/").into_response();
+        return sysadmin_only();
     }
     match worlds::catalog_remove(&st.db, &f.sha256).await {
         Ok(()) => Redirect::to("/admin/catalog").into_response(),
@@ -92,7 +92,7 @@ pub(crate) async fn catalog_approval(
     Form(f): Form<ApprovalForm>,
 ) -> Response {
     if !me.can(auth::Action::ManageInstance) {
-        return render::notice("Sysadmins only.", false, "/").into_response();
+        return sysadmin_only();
     }
     let Some(mode) = db::Approval::parse(&f.mode) else {
         return catalog_page(&st, Some("Unknown approval mode."), None)

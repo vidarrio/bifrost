@@ -27,7 +27,7 @@ pub fn world_file(upload_name: &str) -> Result<String, &'static str> {
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("world");
-    let base = crate::web::slugify(stem);
+    let base = crate::text::slug(stem);
     if RESERVED.contains(&base.to_lowercase().as_str()) {
         return Err("That apworld name is reserved — rename the file and try again.");
     }
@@ -131,13 +131,13 @@ pub async fn place_upload(
     uploader: &str,
 ) -> Result<Placed, String> {
     let dirs = config::get().season(season);
-    let sha = ap_adapter::sha256_hex(&bytes);
+    let sha = crate::text::sha256_hex(&bytes);
     if installed_conflict(&dirs, file, &sha)? {
         return Ok(Placed::Installed { catalog: false });
     }
     let base = Pin {
         uploaded_by: uploader.to_string(),
-        uploaded_at: crate::auth::now(),
+        uploaded_at: crate::clock::now(),
         ..Pin::default()
     };
     if let Some(cat) = db.catalog_world(&sha).await {
@@ -200,7 +200,7 @@ pub async fn install_from_catalog(
     let bytes = tokio::fs::read(catalog_file(&cat.sha256))
         .await
         .map_err(|e| format!("reading the catalog copy: {e}"))?;
-    if ap_adapter::sha256_hex(&bytes) != cat.sha256 {
+    if crate::text::sha256_hex(&bytes) != cat.sha256 {
         return Err(
             "The catalog copy doesn't match its hash — ask a sysadmin to re-add it.".into(),
         );
@@ -211,7 +211,7 @@ pub async fn install_from_catalog(
     }
     let pin = Pin {
         uploaded_by: by.to_string(),
-        uploaded_at: crate::auth::now(),
+        uploaded_at: crate::clock::now(),
         approved_by: cat.added_by.clone(),
         catalog: true,
         ..Pin::default()
@@ -232,7 +232,7 @@ pub async fn approve(db: &Db, season: Id, file: &str, by: &str) -> Result<WorldR
     let bytes = tokio::fs::read(&path)
         .await
         .map_err(|e| format!("reading the upload: {e}"))?;
-    if ap_adapter::sha256_hex(&bytes) != req.sha256 {
+    if crate::text::sha256_hex(&bytes) != req.sha256 {
         return Err(format!(
             "{file} changed since it was uploaded — reject it and ask for a new upload."
         ));
@@ -374,7 +374,7 @@ pub async fn catalog_add(
     note: &str,
     by: &str,
 ) -> Result<CatalogWorld, String> {
-    let sha = ap_adapter::sha256_hex(bytes);
+    let sha = crate::text::sha256_hex(bytes);
     let m = manifest(bytes);
     let pick = |typed: &str, read: String| {
         let t = typed.trim();
@@ -390,7 +390,7 @@ pub async fn catalog_add(
         version: pick(version, m.version),
         note: note.trim().chars().take(200).collect(),
         added_by: by.to_string(),
-        added_at: crate::auth::now(),
+        added_at: crate::clock::now(),
         sha256: sha,
     };
     let path = catalog_file(&w.sha256);
@@ -423,7 +423,7 @@ pub async fn catalog_add_installed(
     let bytes = tokio::fs::read(dirs.worlds.join(file))
         .await
         .map_err(|e| e.to_string())?;
-    if ap_adapter::sha256_hex(&bytes) != pin.sha256 {
+    if crate::text::sha256_hex(&bytes) != pin.sha256 {
         return Err(format!("{file} changed on disk since it was installed."));
     }
     catalog_add(db, file, &bytes, "", "", "", by).await

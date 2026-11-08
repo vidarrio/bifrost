@@ -2,11 +2,10 @@
 
 use super::*;
 
-/// Every season, plus the create form (instance level: no season scope).
-/// Moderators see them all but get admin links only for the ones they run.
+/// The instance settings page (sysadmins only).
 pub(crate) async fn settings_view(State(st): State<AppState>, me: auth::Me) -> Response {
     if !me.can(auth::Action::ManageInstance) {
-        return render::notice("Sysadmins only.", false, "/").into_response();
+        return sysadmin_only();
     }
     let inst = st.db.instance().await;
     render::settings_page(&inst, &settings_status(&st).await, None, false).into_response()
@@ -72,7 +71,7 @@ pub(crate) async fn settings_notice(st: &AppState, err: Option<&str>) -> Respons
 
 pub(crate) async fn ap_check(me: auth::Me) -> Response {
     if !me.can(auth::Action::ManageInstance) {
-        return render::notice("Sysadmins only.", false, "/").into_response();
+        return sysadmin_only();
     }
     apupdate::check_releases().await;
     Redirect::to("/admin/settings#ap").into_response()
@@ -89,7 +88,7 @@ pub(crate) async fn ap_install(
     Form(f): Form<ApVersionForm>,
 ) -> Response {
     if !me.can(auth::Action::ManageInstance) {
-        return render::notice("Sysadmins only.", false, "/").into_response();
+        return sysadmin_only();
     }
     match apupdate::start_install(f.version.trim()) {
         Ok(()) => Redirect::to("/admin/settings#ap").into_response(),
@@ -104,7 +103,7 @@ pub(crate) async fn ap_use(
     Form(f): Form<ApVersionForm>,
 ) -> Response {
     if !me.can(auth::Action::ManageInstance) {
-        return render::notice("Sysadmins only.", false, "/").into_response();
+        return sysadmin_only();
     }
     let Some(i) = apinstall::find(f.version.trim()) else {
         return settings_notice(&st, Some("That version isn't installed.")).await;
@@ -124,7 +123,7 @@ pub(crate) async fn ap_remove(
     Form(f): Form<ApVersionForm>,
 ) -> Response {
     if !me.can(auth::Action::ManageInstance) {
-        return render::notice("Sysadmins only.", false, "/").into_response();
+        return sysadmin_only();
     }
     match apupdate::remove(f.version.trim()).await {
         Ok(()) => Redirect::to("/admin/settings#ap").into_response(),
@@ -136,7 +135,7 @@ pub(crate) async fn ap_remove(
 
 pub(crate) async fn backup_now(State(st): State<AppState>, me: auth::Me) -> Response {
     if !me.can(auth::Action::ManageInstance) {
-        return render::notice("Sysadmins only.", false, "/").into_response();
+        return sysadmin_only();
     }
     if !backup::running() {
         let db = st.db.clone();
@@ -158,7 +157,7 @@ pub(crate) async fn backup_download(
     req: axum::extract::Request,
 ) -> Response {
     if !me.can(auth::Action::ManageInstance) {
-        return render::notice("Sysadmins only.", false, "/").into_response();
+        return sysadmin_only();
     }
     let Some(path) = backup::path(&q.name) else {
         return (axum::http::StatusCode::NOT_FOUND, "no such backup").into_response();
@@ -172,7 +171,7 @@ pub(crate) async fn backup_delete(
     Form(f): Form<BackupName>,
 ) -> Response {
     if !me.can(auth::Action::ManageInstance) {
-        return render::notice("Sysadmins only.", false, "/").into_response();
+        return sysadmin_only();
     }
     match backup::delete(&f.name) {
         Ok(()) => Redirect::to("/admin/settings#backups").into_response(),
@@ -197,7 +196,7 @@ pub(crate) async fn settings_save(
     Form(f): Form<SettingsForm>,
 ) -> Response {
     if !me.can(auth::Action::ManageInstance) {
-        return render::notice("Sysadmins only.", false, "/").into_response();
+        return sysadmin_only();
     }
     match parse_settings(&f) {
         Ok(inst) => match st.db.set_instance(&inst).await {

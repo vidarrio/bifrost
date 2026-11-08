@@ -21,13 +21,10 @@ pub(crate) async fn prioritize_post(
     let (_me, is_admin) = ctx.ident(&me);
     let season = ctx.id;
     // Already-found hints are non-prioritizable.
-    let is_found = ctx.rt.with_board(|b| {
-        b.snapshot().ap.values().any(|a| {
-            a.hint_views.iter().any(|h| {
-                h.found && h.finding == f.finding && h.location == f.location && h.item == f.item
-            })
-        })
-    }) == Some(true);
+    let is_found = ctx
+        .rt
+        .with_board(|b| b.hint_found(f.finding, f.location, f.item))
+        == Some(true);
     // A hint is prioritized by the item's owner: a claimant of the receiving
     // slot (whose items the hint is about), or an admin. The finder's world can
     // be someone else's, so we gate on `receiving`, not `finding`.

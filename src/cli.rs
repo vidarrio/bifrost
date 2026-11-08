@@ -248,7 +248,7 @@ async fn create_sysadmin(db: &Db, username: &str) -> i32 {
         }
     };
     match db
-        .create_account(username, &placeholder, Role::Sysadmin, auth::now())
+        .create_account(username, &placeholder, Role::Sysadmin, crate::clock::now())
         .await
     {
         Ok(_) => reset_link(db, username).await,

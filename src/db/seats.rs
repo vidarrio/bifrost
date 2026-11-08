@@ -4,6 +4,7 @@
 //! its Bifrost slot and claim. Once live, using a link mints them directly.
 
 use super::{Db, SubmissionRow};
+use crate::clock::now;
 use crate::id::Id;
 
 /// One co-op partner on a game, before generation.
@@ -51,13 +52,6 @@ pub fn seat_name_error(name: &str) -> Option<&'static str> {
 pub fn name_clash(e: &sqlx::Error) -> bool {
     e.as_database_error()
         .is_some_and(|d| d.is_unique_violation() || d.message().contains("slot name taken"))
-}
-
-fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 impl Db {
