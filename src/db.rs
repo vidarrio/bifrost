@@ -837,7 +837,12 @@ impl Db {
         if let Some(seat) = seats
             .iter()
             .flatten()
-            .find(|seat| ap_slots.iter().any(|(_, name, _)| *name == seat.name))
+            // Slot names are NOCASE: "ann" and "Ann" are the same slot.
+            .find(|seat| {
+                ap_slots
+                    .iter()
+                    .any(|(_, name, _)| name.eq_ignore_ascii_case(&seat.name))
+            })
         {
             return Err(sqlx::Error::Protocol(format!(
                 "seat name {} is already another slot's",
@@ -892,19 +897,35 @@ impl Db {
         tx.commit().await
     }
 
-    /// After a re-roll: rebuild the season's Bifrost slots (1:1 AP slots +
-    /// co-op seats) on the new seed's AP slot numbers by name, carrying each
-    /// claim over. Player names are stable across a re-roll, so claims and
-    /// co-op grouping survive. All or nothing: a failure part-way leaves the
-    /// old slots and claims as they were.
+    /// After a re-roll: make `seed` the season's, drop what was derived from
+    /// the old one (activity, starred hints, in-logic counts, the journal
+    /// cursor), and rebuild its Bifrost slots (1:1 AP slots + co-op seats) on
+    /// the new seed's AP slot numbers by name, carrying each claim over.
+    /// Player names are stable across a re-roll, so claims and co-op grouping
+    /// survive. All or nothing: a failure part-way leaves the season on its old
+    /// seed, with its old slots, claims and data.
     pub async fn remap_season(
         &self,
         season: Id,
+        seed: &str,
         new_ap_slots: &[(i64, String, String)],
     ) -> Result<(), sqlx::Error> {
         use std::collections::{HashMap, HashSet};
         // Read inside the transaction, so a claim made meanwhile isn't lost.
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        sqlx::query("UPDATE season SET seed = ?, journal_cursor = NULL WHERE id = ?")
+            .bind(seed)
+            .bind(season)
+            .execute(&mut *tx)
+            .await?;
+        for table in SEED_DATA {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DELETE FROM {table} WHERE season_id = ?"
+            )))
+            .bind(season)
+            .execute(&mut *tx)
+            .await?;
+        }
         let old: Vec<SlotRow> = sqlx::query_as(SLOTS)
             .bind(season)
             .fetch_all(&mut *tx)
@@ -1300,6 +1321,9 @@ impl Db {
         .await
     }
 }
+
+/// The tables holding what Bifrost derived from a season's current seed.
+pub(crate) const SEED_DATA: [&str; 3] = ["activity", "hint_priority", "inlogic"];
 
 /// A season's slots with who claims each (bind: the season).
 const SLOTS: &str = r#"SELECT s.id, s.game_id, s.is_seat, s.name, s.ap_slot, s.game, a.username AS claimed_by,

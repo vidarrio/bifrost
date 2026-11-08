@@ -51,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A re-roll that failed while it set up the season's games left the season on the new
+  seed's name, with its activity and starred hints already gone, while the old game
+  kept running. The new seed now only becomes the season's once its games are set up.
+- A co-op partner's name that matched a player's except for capital letters ("ann" and
+  "Ann") passed the check at generation, and the partner ended up with no game.
+  Generation now refuses it, as it does an exact match.
 - A re-roll or a generation that failed while it set up the season's games no longer
   leaves it with some games missing or their players unassigned: the games are set up
   all at once or not at all. If a season's game server passwords can't be read, its
