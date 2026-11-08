@@ -442,9 +442,12 @@ impl Db {
     /// ports; a live season whose port fell outside the configured range gets
     /// a new one. Returns the live seasons left without a port (range full).
     pub async fn reconcile_ap_ports(&self) -> Vec<String> {
-        let _ = sqlx::query("UPDATE season SET ap_port = NULL WHERE state <> 'live'")
+        if let Err(e) = sqlx::query("UPDATE season SET ap_port = NULL WHERE state <> 'live'")
             .execute(&self.pool)
-            .await;
+            .await
+        {
+            tracing::warn!("clearing AP ports of seasons that aren't live: {e}");
+        }
         let mut stranded = Vec::new();
         for s in self.seasons().await {
             if s.state() != State::Live {
@@ -463,10 +466,13 @@ impl Db {
             .await;
             if let Err(e) = ok {
                 tracing::error!("season {} ({}): no AP port — {e}", s.id, s.name);
-                let _ = sqlx::query("UPDATE season SET ap_port = NULL WHERE id = ?")
+                if let Err(e) = sqlx::query("UPDATE season SET ap_port = NULL WHERE id = ?")
                     .bind(s.id)
                     .execute(&self.pool)
-                    .await;
+                    .await
+                {
+                    tracing::warn!("clearing season {}'s AP port: {e}", s.id);
+                }
                 stranded.push(s.name);
             }
         }
@@ -474,14 +480,13 @@ impl Db {
     }
 
     /// The season's AP server (connect, admin) passwords.
-    pub async fn ap_passwords(&self, id: Id) -> (String, String) {
+    /// A read error, or no such season, is an error, not empty passwords: a
+    /// server must not start without the ones it was given.
+    pub async fn ap_passwords(&self, id: Id) -> Result<(String, String), sqlx::Error> {
         sqlx::query_as("SELECT ap_password, ap_admin_password FROM season WHERE id = ?")
             .bind(id)
-            .fetch_optional(&self.pool)
+            .fetch_one(&self.pool)
             .await
-            .ok()
-            .flatten()
-            .unwrap_or_default()
     }
 
     pub async fn set_ap_password(&self, id: Id, password: &str) -> Result<(), sqlx::Error> {
@@ -614,11 +619,14 @@ impl Db {
     }
 
     pub async fn set_journal_cursor(&self, id: Id, cursor: Option<&str>) {
-        let _ = sqlx::query("UPDATE season SET journal_cursor = ? WHERE id = ?")
+        if let Err(e) = sqlx::query("UPDATE season SET journal_cursor = ? WHERE id = ?")
             .bind(cursor)
             .bind(id)
             .execute(&self.pool)
-            .await;
+            .await
+        {
+            tracing::warn!("saving season {id}'s journal cursor: {e}");
+        }
     }
 
     /// Store a season's frozen final standings (JSON).

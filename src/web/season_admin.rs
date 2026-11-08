@@ -23,7 +23,11 @@ pub(crate) async fn render_admin(
     let minesweeper_on = ctx.row.minesweeper_enabled;
     let commons = common_admin(st, ctx).await;
     let connect_pw = if config::get().ap_managed {
-        st.db.ap_passwords(ctx.id).await.0
+        st.db
+            .ap_passwords(ctx.id)
+            .await
+            .map(|p| p.0)
+            .unwrap_or_default()
     } else {
         ctx.rt.ap_cfg().map(|c| c.password).unwrap_or_default()
     };

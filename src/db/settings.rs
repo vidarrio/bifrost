@@ -121,7 +121,11 @@ impl Db {
             return k;
         }
         let k = crate::auth::new_token();
-        let _ = self.set_setting("device_key", &k).await;
+        if let Err(e) = self.set_setting("device_key", &k).await {
+            // Without a stored key, each sign-in makes its own, and no
+            // known-device cookie matches the next one.
+            tracing::warn!("storing the known-device key: {e}");
+        }
         self.setting("device_key").await.unwrap_or(k)
     }
 
