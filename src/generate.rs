@@ -267,7 +267,11 @@ async fn stage_tracker_apworld(season: Id) {
     let src = cfg.vendor_file(TRACKER_APWORLD);
     let dirs = cfg.season(season);
     let dst = dirs.worlds.join(TRACKER_APWORLD);
-    if let Err(e) = tokio::fs::copy(&src, &dst).await {
+    let staged = match tokio::fs::read(&src).await {
+        Ok(bytes) => crate::atomic::write_async(dst.clone(), bytes).await,
+        Err(e) => Err(e),
+    };
+    if let Err(e) = staged {
         tracing::warn!(
             "staging Universal Tracker apworld ({} -> {}): {e}",
             src.display(),
@@ -355,7 +359,7 @@ async fn stage_commons(db: &Db, season: Id) -> Result<Vec<(String, String)>, Str
             };
             ap_adapter::install_world(&dirs, w, bytes, pin)?;
         } else {
-            tokio::fs::write(dirs.worlds.join(w), bytes)
+            crate::atomic::write_async(dirs.worlds.join(w), bytes.to_vec())
                 .await
                 .map_err(|e| format!("staging {w}: {e}"))?;
             ap_adapter::pin_shipped(&dirs, w)?;

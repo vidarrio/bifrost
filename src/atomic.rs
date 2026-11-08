@@ -28,6 +28,7 @@ pub async fn write_async(path: PathBuf, bytes: Vec<u8>) -> io::Result<()> {
 }
 
 fn write_mode(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
+    sweep(path);
     let (tmp, mut f) = create_temp(path, mode)?;
     let written = f
         .write_all(bytes)
@@ -46,11 +47,40 @@ fn write_mode(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
     Ok(())
 }
 
+/// Remove the temporary files of `path` that a crash left behind: any over an
+/// hour old (a write takes far less). Best effort.
+fn sweep(path: &Path) {
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+        return;
+    };
+    let prefix = format!(".{}.", name.to_string_lossy());
+    let dir = if dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        dir
+    };
+    let hour = std::time::Duration::from_secs(3600);
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let n = e.file_name();
+        let n = n.to_string_lossy();
+        let old = || {
+            e.metadata()
+                .and_then(|m| m.modified())
+                .is_ok_and(|t| t.elapsed().is_ok_and(|a| a > hour))
+        };
+        if n.starts_with(&prefix) && n.ends_with(".tmp") && old() {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+}
+
+/// Numbers the temporary files, unique within this process.
+static NEXT: AtomicU64 = AtomicU64::new(0);
+
 /// A new temporary file beside `path`. Its name is unique to this process and
 /// write, and it's created fresh (never opened if something is already there),
 /// so concurrent writes of one file can't write into each other's.
 fn create_temp(path: &Path, mode: u32) -> io::Result<(PathBuf, std::fs::File)> {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
     let name = path
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no file name"))?
@@ -126,6 +156,51 @@ mod tests {
         assert!(write(&p, b"new").is_err());
         assert_eq!(entries(d.as_path()), ["game.toml"]);
         assert_eq!(std::fs::read(p.join("inside")).unwrap(), b"kept");
+    }
+
+    #[test]
+    fn sweeps_old_leftovers_only() {
+        let d = dir("sweep");
+        let p = d.join("f");
+        let old = d.join(".f.1-0.tmp");
+        let new = d.join(".f.1-1.tmp");
+        let other = d.join(".g.1-0.tmp");
+        for x in [&old, &new, &other] {
+            std::fs::write(x, b"left").unwrap();
+        }
+        let day_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(86400);
+        for x in [&old, &other] {
+            std::fs::File::options()
+                .write(true)
+                .open(x)
+                .unwrap()
+                .set_modified(day_ago)
+                .unwrap();
+        }
+        write(&p, b"ok").unwrap();
+        assert_eq!(entries(&d), [".f.1-1.tmp", ".g.1-0.tmp", "f"]);
+    }
+
+    #[test]
+    fn steps_past_a_taken_name() {
+        let d = dir("taken");
+        let p = d.join("f");
+        // The next 8 names this process would try, as if a crash left them.
+        let start = NEXT.load(Ordering::Relaxed);
+        for n in start..start + 8 {
+            std::fs::write(d.join(format!(".f.{}-{n}.tmp", std::process::id())), b"").unwrap();
+        }
+        write(&p, b"ok").unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"ok");
+    }
+
+    #[tokio::test]
+    async fn writes_async() {
+        let d = dir("async");
+        let p = d.join("host.yaml");
+        write_async(p.clone(), b"yaml".to_vec()).await.unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"yaml");
+        assert_eq!(entries(&d), ["host.yaml"]);
     }
 
     #[test]

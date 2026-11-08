@@ -51,11 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A custom world installed into a season, and a season's `host.yaml` copied from the
-  instance's own, are put in place in one step, as Bifrost's other files already were,
-  so a generation starting at the same moment can't read part of one. Each of these
-  files is also on disk before it takes the old one's place, so a crash or power cut
-  leaves the old file or the new one, not an empty one.
+- The apworlds a season gets (custom worlds, the common games' and Universal Tracker's
+  on every roll) and a season's `host.yaml` copied from the instance's own are put in
+  place in one step, so a signup check or a generation reading one at that moment
+  can't see part of it. Every file Bifrost replaces this way is now on disk before it
+  takes the old one's place, so a crash or power cut leaves the old file or the new
+  one, not an empty one.
 - A re-roll that failed while it set up the season's games left the season on the new
   seed's name, with its activity and starred hints already gone, while the old game
   kept running. The new seed now only becomes the season's once its games are set up.
