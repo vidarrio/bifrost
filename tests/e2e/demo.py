@@ -5,6 +5,7 @@ reset from a snapshot. Seeds itself with packaging/demo/seed.py.
 Runs the demo binary at BIFROST_E2E_DEMO_BIN, or else builds one into
 target/demo (`cargo build --features demo --target-dir target/demo`).
 """
+import json
 import os
 import re
 import shutil
@@ -89,10 +90,22 @@ try:
     # The seed, which also shows the rest works: seasons, signups,
     # generation, archiving, a common game.
     seed = subprocess.run([sys.executable, os.path.join(REPO, "packaging/demo/seed.py"), srv.base, srv.data],
-                          capture_output=True, text=True, timeout=900)
+                          capture_output=True, text=True, timeout=1800)
     check("the seed script runs", seed.returncode == 0, (seed.stdout + seed.stderr)[-800:])
     seasons = get(admin, "/admin/seasons").text
     check("…and makes its seasons", all(n in seasons for n in ("Summer season", "Autumn season", "Winter season")))
+    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+        summer = json.loads(db.execute("SELECT summary FROM season WHERE name = 'Summer season'").fetchone()[0] or "{}")
+        autumn = db.execute("SELECT id FROM season WHERE name = 'Autumn season'").fetchone()[0]
+        mines = dict(db.execute("SELECT season_id IS NULL, COUNT(*) FROM mine_result GROUP BY 1").fetchall())
+    games = summer.get("games", [])
+    check("…plays real games", {"A Short Hike", "Celeste 64"} <= {g["game"] for g in games}, [g["game"] for g in games])
+    check("…finishing some of the archived season's", sum(g["pct"] == 100 for g in games) >= 3, [(g["game"], g["pct"]) for g in games])
+    check("…and freezing its minesweeper leaderboards", any(m["time"] for m in summer.get("minesweeper", [])))
+    board = get(admin, f"/s/{autumn}/board").text
+    sent = [int(n) for n in re.findall(r"· sent (\d+) ·", board)]
+    check("…has the live season part played", "goaled" in board and sum(n > 0 for n in sent) >= 4, sent)
+    check("…and fills the minesweeper leaderboards", mines.get(1, 0) >= 20 and mines.get(0, 0) >= 20, mines)
     check("game servers listen on localhost only", re.search(r"AP server started on 127\.0\.0\.1:\d+", srv.logtext())
           and not re.search(r"AP server started on 0\.0\.0\.0", srv.logtext()))
     check("the demo shows no reset time without one", get(admin, "/demo/status").json().get("reset_in") is None)
@@ -187,17 +200,20 @@ try:
     player = as_role(again, "player")
     with sqlite3.connect(os.path.join(again.data, "bifrost.db")) as db:
         winter = db.execute("SELECT id FROM season WHERE name = 'Winter season'").fetchone()[0]
-        seeded = db.execute("SELECT id FROM submission WHERE season_id = ?", (winter,)).fetchone()[0]
+        before = {r[0] for r in db.execute("SELECT id FROM submission WHERE season_id = ?", (winter,))}
+        # The player's own seeded signup (the seed signs up others too).
+        seeded = db.execute("SELECT s.id FROM submission s JOIN account a ON a.id = s.account_id "
+                            "WHERE s.season_id = ? AND a.username = 'player'", (winter,)).fetchone()[0]
     r = post(player, f"/s/{winter}/signup", files={"yaml": ("y.yaml", YAML.format("Visitor").encode())})
     check("visitors can sign up to the demo's own season", 'banner ok' in r.text, re.findall(r'class="banner[^"]*">[^<]*', r.text))
     with sqlite3.connect(os.path.join(again.data, "bifrost.db")) as db:
-        mine = db.execute("SELECT id FROM submission WHERE season_id = ? AND id != ?", (winter, seeded)).fetchone()[0]
+        (mine,) = {r[0] for r in db.execute("SELECT id FROM submission WHERE season_id = ?", (winter,))} - before
     post(player, f"/s/{winter}/signup/delete", data=dict(id=mine))
     r = post(player, f"/s/{winter}/signup/delete", data=dict(id=seeded))
     check("withdrawing a seeded signup says why it can't", "stay as they are" in r.text, re.findall(r'class="banner[^"]*">[^<]*', r.text))
     with sqlite3.connect(os.path.join(again.data, "bifrost.db")) as db:
         left = {r[0] for r in db.execute("SELECT id FROM submission WHERE season_id = ?", (winter,))}
-    check("…and withdraw their own signup, but not the seeded one", left == {seeded}, left)
+    check("…and withdraw their own signup, but not the seeded ones", left == before, (left, before))
     r = post(admin, f"/s/{winter}/signup/game/{seeded}/notes", data=dict(notes="defaced"))
     check("…nor rewrite its notes", "stay as they are" in r.text, re.findall(r'class="banner[^"]*">[^<]*', r.text))
     check("…but their pages still show", get(admin, f"/s/{autumn}/admin").ok and get(admin, f"/s/{autumn}/board").ok)
