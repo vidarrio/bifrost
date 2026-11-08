@@ -105,7 +105,8 @@ try:
     board = get(admin, f"/s/{autumn}/board").text
     sent = [int(n) for n in re.findall(r"· sent (\d+) ·", board)]
     check("…has the live season part played", "goaled" in board and sum(n > 0 for n in sent) >= 4, sent)
-    check("…with prioritized hints on its board", prios >= 2 and "wanted from you" in board, prios)
+    check("…with prioritized hints on its board", prios >= 2 and "wanted from you" in board,
+          (prios, [l for l in seed.stdout.splitlines() if "hints" in l]))
     check("…and fills the minesweeper leaderboards", mines.get(1, 0) >= 20 and mines.get(0, 0) >= 20, mines)
     check("game servers listen on localhost only", re.search(r"AP server started on 127\.0\.0\.1:\d+", srv.logtext())
           and not re.search(r"AP server started on 0\.0\.0\.0", srv.logtext()))

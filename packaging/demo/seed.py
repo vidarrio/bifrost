@@ -64,7 +64,8 @@ ACCOUNT = {slot: account for account, slot, _ in SUMMER + AUTUMN + WINTER}
 SUMMER_PLAY = {"Ann": "goal", "Mia": "goal", "Sam": "goal", "AnnDice": 30}
 AUTUMN_PLAY = {"SamDash": "goal", "Mia": 30, "Ann": 25, "Sam": 20, "AnnTunic": 12, "Commons": 5}
 HINTS = 4
-# How many of those hints the item's owner has starred as a priority.
+# How many of those hints the item's owner has starred as a priority, in the
+# live season. The archived one has none to give: most of its games finished.
 PRIORITIZED = 2
 LINE = re.compile(r"^\s*(?P<loc>.+) \((?P<finder>[^()]+)\): (?P<item>.+) \((?P<owner>[^()]+)\)\s*$")
 rng = random.Random(26)
@@ -191,7 +192,7 @@ def main(base, data):
             sys.exit(f"seed: read no placements from season {sid}'s spoiler")
         return out
 
-    def play(sid, plan):
+    def play(sid, plan, stars=0):
         # The common game's card shows "Everyone", not its slot.
         wait_board(sid, [s for s in plan if s != "Commons"])
         places = spoiler(sid)
@@ -242,10 +243,14 @@ def main(base, data):
                   and plan.get(finder) != "goal" and (finder, loc) not in done]
         # Each is between two people, so a starred hint shows as wanted on
         # someone else's card, and each item is hinted once: a /hint names every
-        # copy. Spread out where there are enough (each slot owning and holding
-        # one at most), then any. The checks above use up the playthrough's
-        # locations first, so there may not be many to pick from.
-        wanted = [w for w in wanted if ACCOUNT.get(w[0]) != ACCOUNT.get(w[2])]
+        # copy. Only between games with a card of a player's own: the common
+        # game's card shows "Everyone", so a hint it owns has no game page to be
+        # starred from, and one it holds would show as wanted on the shared card
+        # rather than a player's. Spread out where there are enough (each slot
+        # owning and holding one at most), then any. The checks above use up the
+        # playthrough's locations first, so there may not be many to pick from.
+        wanted = [w for w in wanted if w[0] in ids and w[2] in ids
+                  and ACCOUNT.get(w[0]) != ACCOUNT.get(w[2])]
         hinted, owners, finders, items = [], set(), set(), set()
         for spread in (True, False):
             for owner, item, finder, loc in wanted:
@@ -255,6 +260,9 @@ def main(base, data):
                     owners.add(owner)
                     finders.add(finder)
                     items.add((owner, item))
+        if len(hinted) < stars:
+            sys.exit(f"seed: only {len(hinted)} hints to give in season {sid} "
+                     f"({len(wanted)} candidates), {stars} wanted for stars")
         for owner, item, _, _ in hinted:
             console(sid, f"/hint {shlex.quote(owner)} {shlex.quote(item)}")
 
@@ -268,12 +276,9 @@ def main(base, data):
                     return r.split("</div>", 1)[0]
 
         # Star a few of them, as their owners would, from the owner's game page
-        # (where the hint shows once the board has seen it). The common game's
-        # card has no slot name, so its hints are left as they are.
+        # (where the hint shows once the board has seen it).
         starred = 0
-        for owner, item, finder, loc in hinted:
-            if starred >= PRIORITIZED or owner not in ids:
-                continue
+        for owner, item, finder, loc in hinted[:stars]:
             page = f"/s/{sid}/game/{ids[owner]}"
             for _ in range(20):
                 row = hint_row(page, item, finder, loc)
@@ -359,7 +364,7 @@ def main(base, data):
         signup(live, role, slot, game)
     generate(live)
     post(player, f"/s/{live}/common/{COMMON}/ident", data=dict(name="Steve"))
-    play(live, AUTUMN_PLAY)
+    play(live, AUTUMN_PLAY, PRIORITIZED)
     minesweeper(live, [("player", "standard", 4, 0.75), ("moderator", "standard", 6, 0.5),
                        ("sysadmin", "standard", 2, 1.0)])
 
