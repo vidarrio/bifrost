@@ -2,6 +2,7 @@
 //! area of the site has its own submodule, re-exported so callers use
 //! `render::…` throughout.
 
+use crate::clock::now as now_secs;
 use axum::response::Html;
 
 use crate::ap::BoardSnapshot;
@@ -499,13 +500,6 @@ fn fmt_date(secs: i64) -> String {
     format!("{d} {} {year}", MON[((m - 1).clamp(0, 11)) as usize])
 }
 
-fn now_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
 /// A whole-unit "x ago" using the largest unit that fits: s, m, h, d, w.
 fn fmt_ago(sec: i64) -> String {
     let s = sec.max(0);
@@ -541,7 +535,6 @@ pub fn notice(text: &str, ok: bool, back: &str) -> Html<String> {
     Html(b)
 }
 
-/// Toggles the game page's tab panels (delegated click on the tab bar).
 /// Tab bar styling shared by the game page and the season console.
 const TABS_CSS: &str = r#"<style>
 .gtabs{display:flex;flex-wrap:wrap;gap:2px;border-bottom:1px solid var(--bd);margin:22px 0 16px}

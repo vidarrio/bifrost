@@ -218,11 +218,7 @@ fn verify_release(
             Err(e) => return Err(format!("{}: {e}", file.display())),
         }
     }
-    let got: String = hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
+    let got = crate::text::hex(&hasher.finalize());
     if got != want {
         return Err(format!("{asset} doesn't match the signed SHA256SUMS"));
     }
@@ -246,20 +242,12 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
 
     fn setup(name: &str, contents: &[u8]) -> (std::path::PathBuf, String) {
-        use sha2::{Digest, Sha256};
         let dir = std::env::temp_dir().join(format!("bifrost-upd-{}-{name}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let f = dir.join("asset");
         std::fs::write(&f, contents).unwrap();
-        let h: String = Sha256::digest(contents)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        let h = crate::text::sha256_hex(contents);
         (f, format!("{h}  bifrost-9.9.9-x86_64-linux\n"))
-    }
-
-    fn hexs(b: &[u8]) -> String {
-        b.iter().map(|x| format!("{x:02x}")).collect()
     }
 
     #[test]
@@ -282,7 +270,7 @@ mod tests {
         let pubkey = key.verifying_key();
         let asset = "bifrost-9.9.9-x86_64-linux";
         let (file, sums) = setup("sig", b"payload");
-        let reply = |sig: Option<&[u8]>, sums: &str| serde_json::json!({"sums": hexs(sums.as_bytes()), "sig": sig.map(hexs)});
+        let reply = |sig: Option<&[u8]>, sums: &str| serde_json::json!({"sums": crate::text::hex(sums.as_bytes()), "sig": sig.map(crate::text::hex)});
         let check = |sig: Option<&[u8]>, sums: &str| {
             verify_release(&pubkey, &reply(sig, sums), asset, &file)
         };

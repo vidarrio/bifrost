@@ -43,7 +43,7 @@ pub(crate) async fn seasons_import(
     mut mp: Multipart,
 ) -> Response {
     if !me.can(auth::Action::ManageInstance) {
-        return render::notice("Sysadmins only.", false, "/").into_response();
+        return sysadmin_only();
     }
     let tmp = config::get()
         .tmp_dir()
@@ -148,7 +148,11 @@ pub(crate) async fn seasons_create(
     }
     let created = st
         .db
-        .create_season(&name, me.principal().map(|p| p.account_id), auth::now())
+        .create_season(
+            &name,
+            me.principal().map(|p| p.account_id),
+            crate::clock::now(),
+        )
         .await;
     match created {
         Ok(id) => {
@@ -182,10 +186,7 @@ pub(crate) fn fmt_utc(secs: i64) -> String {
 
 /// A season name for a blank form: "Season <Mon YYYY>" by day's date.
 pub(crate) fn default_season_name() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or_default();
+    let secs = crate::clock::now();
     // Civil date from unix seconds (UTC), Howard Hinnant's algorithm.
     let days = secs.div_euclid(86_400);
     let z = days + 719_468;

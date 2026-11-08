@@ -252,7 +252,7 @@ pub(crate) async fn admin_export_token(
     Form(f): Form<ExportTokenForm>,
 ) -> Response {
     if !me.can(auth::Action::ManageInstance) {
-        return render::notice("Sysadmins only.", false, "/").into_response();
+        return sysadmin_only();
     }
     match f.action.as_str() {
         "new" => {

@@ -12,6 +12,8 @@
 //!
 //! Handlers read the result with the [`Me`] extractor.
 
+use crate::clock::now;
+use crate::text::hex;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
@@ -198,10 +200,6 @@ pub fn token_hash(token: &str) -> String {
     hex(&Sha256::digest(token.as_bytes()))
 }
 
-fn hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
 /// Username rules: 3–32 of `[A-Za-z0-9_.-]`.
 pub fn valid_username(s: &str) -> bool {
     (3..=32).contains(&s.len())
@@ -222,13 +220,6 @@ pub fn password_problem(pw: &str) -> Option<String> {
     } else {
         None
     }
-}
-
-pub fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 // ---------------------------------------------------------------- state

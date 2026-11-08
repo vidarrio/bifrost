@@ -1,6 +1,7 @@
 //! Minesweeper: boards, moves, stats and leaderboards.
 
 use super::*;
+use crate::clock::now_nanos;
 
 pub(crate) async fn minesweeper_page(
     State(st): State<AppState>,
@@ -34,13 +35,6 @@ pub(crate) async fn minesweeper_page(
         &expert,
         &back,
     )
-}
-
-pub(crate) fn now_nanos() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0)
 }
 
 #[derive(Deserialize)]

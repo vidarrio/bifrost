@@ -245,7 +245,7 @@ impl Sampler {
         }
         self.ticks = procs.iter().map(|(&pid, p)| (pid, p.ticks)).collect();
         Some(Sample {
-            at: crate::auth::now(),
+            at: crate::clock::now(),
             mem_used,
             mem_total,
             cpu,

@@ -4,6 +4,7 @@
 //! `current.zip` is what (re)starts the game: today an external watcher on that
 //! file restarts the AP server; Bifrost never needs root.
 
+use crate::clock::now;
 use crate::id::Id;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -26,12 +27,6 @@ pub fn set(state: &GenState, running: bool, msg: impl Into<String>) {
         g.0 = running;
         g.1 = msg.into();
     }
-}
-
-fn slug(s: &str) -> String {
-    s.chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '_' })
-        .collect()
 }
 
 /// Remove files in `dir` with the given extension (e.g. "yaml").
@@ -444,7 +439,7 @@ pub async fn list_apworlds(season: Id) -> Vec<Apworld> {
             } else {
                 let actual = tokio::fs::read(entry.path())
                     .await
-                    .map(|b| ap_adapter::sha256_hex(&b));
+                    .map(|b| crate::text::sha256_hex(&b));
                 match (pins.get(&name), actual) {
                     (Some(p), Ok(h)) if p.sha256 == h => {
                         w.pinned = true;
@@ -561,10 +556,6 @@ pub async fn regenerate(db: Db, rts: Arc<Runtimes>, season: Id) {
         Ok(msg) => set(&state, false, msg),
         Err(e) => set(&state, false, format!("Failed — {e}")),
     }
-}
-
-fn now() -> i64 {
-    crate::auth::now()
 }
 
 /// Roll with the active Archipelago install, then pin the season to it: from
@@ -729,9 +720,11 @@ async fn run_inner(
     clear_old_seeds(season_id).await;
     for sub in &subs {
         // By id too: names that slugify alike mustn't overwrite each other.
-        let dst = season
-            .players
-            .join(format!("{}-{}.yaml", sub.id, slug(&sub.slot_name)));
+        let dst = season.players.join(format!(
+            "{}-{}.yaml",
+            sub.id,
+            crate::text::slug(&sub.slot_name)
+        ));
         let src = config::get()
             .data_file(&sub.yaml_file)
             .ok_or_else(|| format!("{}'s YAML isn't in the data directory", sub.slot_name))?;

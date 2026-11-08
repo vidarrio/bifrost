@@ -341,7 +341,7 @@ async fn capture(
         .ok();
     let mut lines = BufReader::new(stream).lines();
     while let Ok(Some(line)) = lines.next_line().await {
-        let ts = crate::auth::now();
+        let ts = crate::clock::now();
         if let Some(f) = file.as_mut() {
             let entry = format!("{ts} {line}\n");
             let _ = f.write_all(entry.as_bytes()).await;

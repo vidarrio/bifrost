@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- When a game's file couldn't be downloaded (not your game, or no such file), the
+  notice's "back" link went to that game in the default season instead of the game's
+  own season.
 - File pickers look like the fields around them on every page. Before, the console's
   uploads, season import and replacing a signup's YAML showed the browser's plain
   "Choose File" button.
