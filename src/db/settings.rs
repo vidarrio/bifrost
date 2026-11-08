@@ -31,11 +31,19 @@ impl Default for Instance {
         Self {
             domain: String::new(),
             home_url: String::new(),
-            discords: vec![Discord {
-                name: "Archipelago".into(),
-                url: "https://discord.gg/archipelago".into(),
-                note: "official".into(),
-            }],
+            discords: vec![
+                Discord {
+                    name: "Archipelago".into(),
+                    url: "https://discord.gg/archipelago".into(),
+                    note: "official".into(),
+                },
+                // The invite Archipelago's own launcher links to.
+                Discord {
+                    name: "AP After Dark".into(),
+                    url: "https://discord.gg/fqvNCCRsu4".into(),
+                    note: "unrated and 18+ games".into(),
+                },
+            ],
         }
     }
 }
