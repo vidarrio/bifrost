@@ -223,15 +223,15 @@ def main(base, data):
                 if sent >= want:
                     break
                 out = console(sid, f"/send_location {shlex.quote(slot)} {shlex.quote(loc)}")
+                # Whatever the reply, the location may be checked now, so it's
+                # never hinted: silence can be a reply that came too late for the
+                # console, a retried command that went through the first time, or
+                # a goal's collect, and other connections' notices can come first.
+                done.add((finder, loc))
                 # "Ann sent X to Mia (loc)", or "Ann found their X (loc)".
-                if re.match(rf"{re.escape(slot)} (sent|found) ", out):
+                if re.search(rf"(?m)^{re.escape(slot)} (sent|found) ", out):
                     sent += 1
-                    done.add((finder, loc))
-                elif out.startswith("(command accepted"):
-                    # Silence means it was checked already, by a goal's collect:
-                    # checked all the same, so no hint for it either.
-                    done.add((finder, loc))
-                else:
+                elif not out.startswith("(command accepted"):
                     missed.append(f"{loc}: {out}")
             print(f"seed:   {slot}: {sent} of {len(mine)} locations checked", flush=True)
             # Far short of the plan, mostly through names the server didn't know,
@@ -272,15 +272,21 @@ def main(base, data):
         def hint_row(page, item, finder, loc):
             """The owner's game page's row for this copy of the item: a hint names
             every copy, so the row is found by where it is and who holds it
-            ("item @ location · finder", as the page shows it)."""
-            for r in admin.get(base + page).text.split('class="hintrow"')[1:]:
-                text = html.unescape(r.partition("<span>")[2].partition("</span>")[0])
-                if text == f"{item} @ {loc} · {finder}":
+            ("item @ location · finder", as the page shows it). "found" if it's
+            listed as found (" ✓"), which can't be starred."""
+            text = admin.get(base + page).text
+            for r in text.split('class="hintrow"')[1:]:
+                shown = html.unescape(r.partition("<span>")[2].partition("</span>")[0])
+                if shown == f"{item} @ {loc} · {finder}":
                     return r.split("</div>", 1)[0]
+            for r in text.split('class="hintrow found"')[1:]:
+                shown = html.unescape(r.partition("<span>")[2].partition("</span>")[0])
+                if shown == f"{item} @ {loc} · {finder} ✓":
+                    return "found"
 
         # Star a few of them, as their owners would, from the owner's game page
-        # (where the hint shows once the board has seen it). One that never shows
-        # as unfound there is passed over for the next.
+        # (where the hint shows once the board has seen it). One that shows as
+        # found, or never shows, is passed over for the next.
         starred, unshown = 0, []
         for owner, item, finder, loc in hinted:
             if starred >= stars:
@@ -288,11 +294,14 @@ def main(base, data):
             page = f"/s/{sid}/game/{ids[owner]}"
             for _ in range(20):
                 row = hint_row(page, item, finder, loc)
-                if row and 'action="prioritize"' in row:
+                if row == "found" or (row and 'action="prioritize"' in row):
                     break
                 time.sleep(3)
             else:
-                unshown.append(f"{owner}'s {item} at {loc}")
+                row = None
+            if row in ("found", None):
+                why = "found already" if row else "never shown"
+                unshown.append(f"{owner}'s {item} at {loc} ({why})")
                 continue
             form = dict(re.findall(r'name="(\w+)" value="([^"]*)"', row.split("</form>", 1)[0]))
             post(admin, f"/s/{sid}/prioritize", data={k: html.unescape(v) for k, v in form.items()})
@@ -302,7 +311,7 @@ def main(base, data):
             starred += 1
         if starred < stars:
             sys.exit(f"seed: only {starred} of {stars} hints starred in season {sid}; "
-                     "never shown on their game page: " + "; ".join(unshown))
+                     "not starrable on their game page: " + "; ".join(unshown))
         if hinted:
             print(f"seed:   {len(hinted)} hints, {starred} prioritized", flush=True)
 
