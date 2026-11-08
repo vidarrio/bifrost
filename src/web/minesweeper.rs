@@ -1,6 +1,7 @@
 //! Minesweeper: boards, moves, stats and leaderboards.
 
 use super::*;
+use crate::clock::now_nanos;
 
 pub(crate) async fn minesweeper_page(
     State(st): State<AppState>,
@@ -35,8 +36,6 @@ pub(crate) async fn minesweeper_page(
         &back,
     )
 }
-
-pub(crate) use crate::clock::now_nanos;
 
 #[derive(Deserialize)]
 pub(crate) struct KindQuery {

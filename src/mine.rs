@@ -9,6 +9,7 @@
 //! solver can't prove is discarded and regenerated, so a served board never
 //! requires a guess.
 
+use crate::clock::now_nanos;
 use std::collections::HashMap;
 
 pub const W: usize = 16;
@@ -67,8 +68,6 @@ impl Rng {
         (self.next() % n as u64) as usize
     }
 }
-
-use crate::clock::now_nanos;
 
 fn neighbors(w: usize, h: usize, i: usize) -> Vec<usize> {
     let (r, c) = (i / w, i % w);

@@ -432,13 +432,9 @@ async fn console(st: &AppState, me: &Me, minted: Option<Minted>, err: Option<&st
     .into_response()
 }
 
-fn forbidden() -> Response {
-    render::notice("Sysadmins only.", false, "/").into_response()
-}
-
 async fn users_get(State(st): State<AppState>, me: Me) -> Response {
     if !me.can(Action::ManageInstance) {
-        return forbidden();
+        return crate::web::sysadmin_only();
     }
     console(&st, &me, None, None).await
 }
@@ -451,7 +447,7 @@ struct RoleForm {
 
 async fn users_role(State(st): State<AppState>, me: Me, Form(f): Form<RoleForm>) -> Response {
     if !me.can(Action::ManageInstance) {
-        return forbidden();
+        return crate::web::sysadmin_only();
     }
     if st.auth.mode == AuthMode::ForwardAuth && !st.auth.fwd.role_groups.is_empty() {
         return console(
@@ -493,7 +489,7 @@ struct DisableForm {
 
 async fn users_disable(State(st): State<AppState>, me: Me, Form(f): Form<DisableForm>) -> Response {
     if !me.can(Action::ManageInstance) {
-        return forbidden();
+        return crate::web::sysadmin_only();
     }
     if me.principal().map(|p| p.account_id) == Some(f.account_id) && f.disabled {
         return console(&st, &me, None, Some("You can't disable yourself.")).await;
@@ -518,7 +514,7 @@ struct ResetLinkForm {
 
 async fn links_reset(State(st): State<AppState>, me: Me, Form(f): Form<ResetLinkForm>) -> Response {
     if !me.can(Action::ManageInstance) {
-        return forbidden();
+        return crate::web::sysadmin_only();
     }
     let accounts = st.auth.db.accounts().await;
     let Some(target) = accounts
@@ -581,7 +577,7 @@ async fn links_invite(
     Form(f): Form<InviteLinkForm>,
 ) -> Response {
     if !me.can(Action::ManageInstance) {
-        return forbidden();
+        return crate::web::sysadmin_only();
     }
     if let Some(r) = native_only(&st) {
         return r;
@@ -613,7 +609,7 @@ async fn links_community(
     Form(f): Form<CommunityLinkForm>,
 ) -> Response {
     if !me.can(Action::ManageInstance) {
-        return forbidden();
+        return crate::web::sysadmin_only();
     }
     if let Some(r) = native_only(&st) {
         return r;
@@ -677,7 +673,7 @@ struct RevokeForm {
 
 async fn links_revoke(State(st): State<AppState>, me: Me, Form(f): Form<RevokeForm>) -> Response {
     if !me.can(Action::ManageInstance) {
-        return forbidden();
+        return crate::web::sysadmin_only();
     }
     match st.auth.db.revoke_link(f.id).await {
         Ok(()) => Redirect::to("/admin/users").into_response(),

@@ -2,6 +2,7 @@
 //! area of the site has its own submodule, re-exported so callers use
 //! `render::…` throughout.
 
+use crate::clock::now as now_secs;
 use axum::response::Html;
 
 use crate::ap::BoardSnapshot;
@@ -480,8 +481,6 @@ fn fmt_date(secs: i64) -> String {
     ];
     format!("{d} {} {year}", MON[((m - 1).clamp(0, 11)) as usize])
 }
-
-use crate::clock::now as now_secs;
 
 /// A whole-unit "x ago" using the largest unit that fits: s, m, h, d, w.
 fn fmt_ago(sec: i64) -> String {

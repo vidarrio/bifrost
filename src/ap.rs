@@ -244,8 +244,9 @@ impl Board {
         Some((finder_name, loc_name))
     }
 
-    /// Whether the hint (finding, location, item) has been found: what the
-    /// snapshot's `HintView::found` says, without building the snapshot.
+    /// Whether the hint (finding, location, item) has been found, from the raw
+    /// hint lists, without building the snapshot. Unlike the snapshot's
+    /// `HintView::found`, it doesn't need the data package to have loaded.
     pub fn hint_found(&self, finding: i64, location: i64, item: i64) -> bool {
         self.slots.iter().any(|(n, s)| {
             s.hint_list.iter().any(|h| {
