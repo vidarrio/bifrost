@@ -5,7 +5,7 @@ import re
 import sys
 import time
 
-from lib import Server, check, first_game, fixture, get, new_season, post, summary, wait_for
+from lib import Server, check, first_game, fixture, generate, get, new_season, post, summary, wait_for
 
 srv = Server("catalog").start()
 try:
@@ -183,10 +183,8 @@ try:
     check("season keeps its copy", "bar.apworld" in get(root, f"{S}/admin").text)
 
     # generate the first season now nothing is held
-    post(root, f"{S}/admin/generate")
-    done = wait_for(lambda: (t := get(root, f"{S}/admin").text) and ("Generated seed" in t or "Failed" in t) and t, 240, 3)
-    m = re.search(r"(Generated seed[^<]*|Failed[^<]*)", done or "")
-    check("generates once nothing is held", m and m.group(0).startswith("Generated"), m and m.group(0))
+    gen = generate(root, S.removeprefix("/s/"), 240)
+    check("generates once nothing is held", gen and gen.startswith("Generated"), gen)
 finally:
     srv.stop()
 

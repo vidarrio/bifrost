@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tarfile
 
-from lib import Server, check, first_game, get, new_season, post, summary, wait_for
+from lib import Server, check, first_game, generate, get, new_season, post, summary, wait_for
 
 YAMLS = [b"name: Ann\ngame: ChecksFinder\nChecksFinder: {}\n", b"name: Bob\ngame: ChecksFinder\nChecksFinder: {}\n"]
 
@@ -20,8 +20,7 @@ try:
     post(root, f"/s/{sid}/admin/signups", data=dict(open="1"))
     for y in YAMLS:
         post(root, f"/s/{sid}/signup", files={"yaml": ("y.yaml", y)})
-    post(root, f"/s/{sid}/admin/generate")
-    wait_for(lambda: "Generated seed" in get(root, f"/s/{sid}/admin").text, 300, 3)
+    generate(root, sid)
     archived = wait_for(lambda: "isn't connected" not in post(root, f"/s/{sid}/admin/archive-season", data={"name": ""}).text, 120, 3)
     check("season archived", archived and "summary" in get(root, "/admin/seasons").text)
     seasons = get(root, "/admin/seasons").text

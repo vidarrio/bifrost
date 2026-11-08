@@ -1,7 +1,5 @@
 """Behind a forward-auth proxy: who a season's pages believe. No real proxy; the
 requests carry what one would pass on."""
-import os
-import sqlite3
 import sys
 
 import requests
@@ -29,7 +27,7 @@ try:
     srv.stop()
     r = srv.cli("auth", "mode", "forward-auth")
     check("switches to forward auth", r.returncode == 0, r.stderr)
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+    with srv.db() as db:
         db.execute("INSERT INTO season (id, name, state, created_at, private_live) VALUES (?, 'Secret', 'archived', 0, 1)", (SECRET,))
         db.execute("INSERT INTO season (id, name, state, created_at, private_live, summary) VALUES (?, 'Open', 'archived', 0, 0, NULL)", (OPEN,))
 
@@ -37,8 +35,9 @@ try:
     check("without season_pages, headers on a season page are ignored", status(srv, f"/s/{SECRET}/board", ADMIN) == 401)
     check("…on the log", status(srv, f"/s/{SECRET}/log", ADMIN) == 401)
     check("…and on the summary", status(srv, f"/s/{SECRET}/season", ADMIN) == 401)
-    check("…so nobody can be provisioned there",
-          sqlite3.connect(os.path.join(srv.data, "bifrost.db")).execute("SELECT COUNT(*) FROM account WHERE username = 'alice'").fetchone()[0] == 0)
+    with srv.db() as db:
+        alice = db.execute("SELECT COUNT(*) FROM account WHERE username = 'alice'").fetchone()[0]
+    check("…so nobody can be provisioned there", alice == 0)
     check("an open season's page needs no identity", status(srv, f"/s/{OPEN}/log") == 200)
     for bare in (f"/s/{SECRET}", f"/s/{SECRET}/"):
         r = requests.get(srv.base + bare, headers=ADMIN, allow_redirects=False, timeout=10)

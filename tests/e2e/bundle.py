@@ -16,7 +16,7 @@ import time
 
 import requests
 
-from lib import REPO, Server, check, first_game, get, new_season, post, summary, tiny_pack, wait_for
+from lib import REPO, Server, check, first_game, generate, get, new_season, post, summary, tiny_pack, wait_for
 
 _built = glob.glob(os.path.join(REPO, "dist", "bifrost-*-x86_64-linux"))
 if not _built:
@@ -44,10 +44,8 @@ try:
     r = post(root, f"/s/{sid}/signup/check", files={"yaml": ("y.yaml", YAML)}).json()
     check("YAML check runs on the bundled Python", r.get("ok"), r)
     post(root, f"/s/{sid}/signup", files={"yaml": ("y.yaml", YAML)})
-    post(root, f"/s/{sid}/admin/generate")
-    t = wait_for(lambda: (x := get(root, f"/s/{sid}/admin").text) and ("Generated seed" in x or "Failed" in x) and x, 300, 3)
-    m = re.search(r"(Generated seed[^<]*|Failed[^<]*)", t or "")
-    check("generation", m and m.group(0).startswith("Generated"), m and m.group(0))
+    gen = generate(root, sid)
+    check("generation", gen and gen.startswith("Generated"), gen)
     py = os.path.join(rtdir, "python/bin/python3")
     ps = lambda: subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True).stdout
     check("live server on the bundled Python", wait_for(lambda: any(l.startswith(py) and "bifrost_server.py" in l for l in ps().splitlines()), 30))

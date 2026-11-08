@@ -10,7 +10,6 @@ import os
 import re
 import shutil
 import socket
-import sqlite3
 import threading
 import subprocess
 import sys
@@ -94,7 +93,7 @@ try:
     check("the seed script runs", seed.returncode == 0, (seed.stdout + seed.stderr)[-800:])
     seasons = get(admin, "/admin/seasons").text
     check("…and makes its seasons", all(n in seasons for n in ("Summer season", "Autumn season", "Winter season")))
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+    with srv.db() as db:
         summer = json.loads(db.execute("SELECT summary FROM season WHERE name = 'Summer season'").fetchone()[0] or "{}")
         autumn = db.execute("SELECT id FROM season WHERE name = 'Autumn season'").fetchone()[0]
         mines = dict(db.execute("SELECT season_id IS NULL, COUNT(*) FROM mine_result GROUP BY 1").fetchall())
@@ -113,7 +112,7 @@ try:
     check("the demo shows no reset time without one", get(admin, "/demo/status").json().get("reset_in") is None)
 
     # Caps: seasons, and a season's games.
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+    with srv.db() as db:
         have = db.execute("SELECT COUNT(*) FROM season").fetchone()[0]
     made = [post(admin, "/admin/seasons", data=dict(name=f"Extra {i}")) for i in range(12 - have)]
     r = post(admin, "/admin/seasons", data=dict(name="One too many"))
@@ -134,7 +133,7 @@ try:
 
     # Live seasons: the seed leaves one, so of four generated at once, three
     # go live and one is refused.
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+    with srv.db() as db:
         summer = db.execute("SELECT state FROM season WHERE name = 'Summer season'").fetchone()[0]
     check("the seed archives its archived season", summer == "archived", summer)
     extra = [re.search(r"/s/([0-9a-z]+)/admin", m.url).group(1) for m in made[:4]]
@@ -162,7 +161,7 @@ try:
         e = re.search(r"/s/([0-9a-z]+)/admin", m.url).group(1)
         if e not in went_live:
             post(admin, f"/s/{e}/admin/season/delete", data=dict(name=f"Extra {i}"))
-    with sqlite3.connect(os.path.join(srv.data, "bifrost.db")) as db:
+    with srv.db() as db:
         left = db.execute("SELECT COUNT(*) FROM season").fetchone()[0]
     check("the extras that aren't live can be deleted", left == have + 3, left)
 finally:
@@ -181,7 +180,7 @@ try:
     admin = as_role(again, "sysadmin")
     check("a start restores the snapshot", "Autumn season" in get(admin, "/admin/seasons").text
           and not os.path.exists(os.path.join(again.data, "leftover")))
-    with sqlite3.connect(os.path.join(again.data, "bifrost.db")) as db:
+    with again.db() as db:
         autumn = db.execute("SELECT id FROM season WHERE name = 'Autumn season'").fetchone()[0]
     st = get(admin, "/demo/status").json()
     check("the bar learns which seasons are the demo's own", autumn in st.get("protected", []), st)
@@ -200,7 +199,7 @@ try:
     check("…while playing in them still works", r.status_code != 403, r.status_code)
     # Signups on the demo's own season: a visitor's can be withdrawn, the seeded one stays.
     player = as_role(again, "player")
-    with sqlite3.connect(os.path.join(again.data, "bifrost.db")) as db:
+    with again.db() as db:
         winter = db.execute("SELECT id FROM season WHERE name = 'Winter season'").fetchone()[0]
         before = {r[0] for r in db.execute("SELECT id FROM submission WHERE season_id = ?", (winter,))}
         # The player's own seeded signup (the seed signs up others too).
@@ -208,12 +207,12 @@ try:
                             "WHERE s.season_id = ? AND a.username = 'player'", (winter,)).fetchone()[0]
     r = post(player, f"/s/{winter}/signup", files={"yaml": ("y.yaml", YAML.format("Visitor").encode())})
     check("visitors can sign up to the demo's own season", 'banner ok' in r.text, re.findall(r'class="banner[^"]*">[^<]*', r.text))
-    with sqlite3.connect(os.path.join(again.data, "bifrost.db")) as db:
+    with again.db() as db:
         (mine,) = {r[0] for r in db.execute("SELECT id FROM submission WHERE season_id = ?", (winter,))} - before
     post(player, f"/s/{winter}/signup/delete", data=dict(id=mine))
     r = post(player, f"/s/{winter}/signup/delete", data=dict(id=seeded))
     check("withdrawing a seeded signup says why it can't", "stay as they are" in r.text, re.findall(r'class="banner[^"]*">[^<]*', r.text))
-    with sqlite3.connect(os.path.join(again.data, "bifrost.db")) as db:
+    with again.db() as db:
         left = {r[0] for r in db.execute("SELECT id FROM submission WHERE season_id = ?", (winter,))}
     check("…and withdraw their own signup, but not the seeded ones", left == before, (left, before))
     r = post(admin, f"/s/{winter}/signup/game/{seeded}/notes", data=dict(notes="defaced"))

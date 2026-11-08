@@ -6,7 +6,7 @@ import re
 import sys
 import time
 
-from lib import Server, check, get, new_season, post, summary, wait_for
+from lib import Server, check, generate, get, new_season, post, summary, wait_for
 
 YAML = b"name: Ann\ngame: ChecksFinder\nChecksFinder: {}\n"
 SHOT = os.environ.get("SHOT")
@@ -20,8 +20,7 @@ try:
     sid = new_season(root, "Loaded")
     post(root, f"/s/{sid}/admin/signups", data=dict(open="1"))
     post(root, f"/s/{sid}/signup", files={"yaml": ("y.yaml", YAML)})
-    post(root, f"/s/{sid}/admin/generate")
-    wait_for(lambda: "Generated seed" in get(root, f"/s/{sid}/admin").text, 300, 3)
+    generate(root, sid)
     served = lambda p: (m := re.search(r"Loaded — AP server</td><td>(\d+) MiB", p)) and int(m.group(1))
     panel = wait_for(lambda: (p := get(root, "/admin/settings/load").text) and served(p) and p, 60, 5)
     check("the live season's server is listed with its memory", panel, (panel or get(root, "/admin/settings/load").text)[:600])
