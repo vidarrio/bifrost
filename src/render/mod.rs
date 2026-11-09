@@ -385,15 +385,7 @@ function bifFilterForm(){
 document.addEventListener('DOMContentLoaded',bifFilterForm);
 "#,
     include_str!("dropdown.js"),
-    r#"// The activity log's sender and receiver fields: a styled list of the
-// players in window.bifPlayers, in place of the native <datalist> popup (which
-// can't be styled). See bifDropdown (dropdown.js) for how it behaves.
-function bifAutocomplete(){
- document.querySelectorAll('input[data-ac]').forEach(function(inp){
-  var box=inp.parentNode.querySelector('.acbox');if(!box)return;
-  bifDropdown(inp,box,function(){return window.bifPlayers||[];},BIF_PLAYER_LIST);
- });
-}
+    r#"// The log filter's sender and receiver lists (see dropdown.js).
 document.addEventListener('DOMContentLoaded',bifAutocomplete);
 // Live board: poll the fragment and swap the columns in place (no full reload),
 // so slot stats/statuses and the activity feed update on their own. Only runs
@@ -646,6 +638,44 @@ mod tests {
         let html = log::filter_form("log", &f);
         assert!(!html.contains("</script><b>"), "{html}");
         assert!(html.contains("\\u003c/script\\u003e"));
+    }
+
+    /// The dropdown's Node tests (`tests/js/`) run `dropdown.js` with the
+    /// markup these pages render; this checks the pages load it and render that
+    /// markup.
+    #[test]
+    fn dropdown_pages_load_its_script_and_markup() {
+        assert!(HEAD.contains(include_str!("dropdown.js")));
+        assert!(HEAD.contains("addEventListener('DOMContentLoaded',bifAutocomplete)"));
+        assert!(game::HINT_JS.contains("hlist=bifHintSearch()"));
+        let f = log::LogFilter {
+            kinds_selected: [true; 4],
+            classes_selected: [true; 4],
+            sender: "",
+            receiver: "",
+            within: 0,
+            since: None,
+            until: None,
+            participants: &[],
+            qs: "",
+        };
+        let html = log::filter_form("log", &f);
+        for name in ["sender", "receiver"] {
+            assert!(
+                html.contains(&format!(
+                    r#"<input type="text" name="{name}" placeholder="{name}" autocomplete="off" data-ac value=""><div class="acbox"></div>"#
+                )),
+                "{html}"
+            );
+        }
+        let game = include_str!("game.rs");
+        assert_eq!(game.matches(r#"<input id="hintq" "#).count(), 2);
+        assert_eq!(
+            game.matches(r#"<div id="hintmatches" class="matches"></div>"#)
+                .count(),
+            2
+        );
+        assert_eq!(game.matches("out.push_str(HINT_JS);").count(), 2);
     }
 
     #[test]

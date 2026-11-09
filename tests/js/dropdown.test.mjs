@@ -1,5 +1,9 @@
 // Keyboard and mouse behaviour of the shared dropdown (src/render/dropdown.js),
-// with each preset its page uses. Run with `node --test tests/js/*.test.mjs`.
+// wired up the way each page does it: bifAutocomplete for the activity log's
+// filter, bifHintSearch for the game page's hint search. A Rust test
+// (`dropdown_pages_load_its_script_and_markup`) checks that the pages load the
+// script and render the markup these tests assume.
+// Run with `node --test tests/js/*.test.mjs`.
 //
 // A browser isn't needed: the dropdown uses only a few DOM calls, which the
 // fake elements below provide.
@@ -18,7 +22,6 @@ class El {
     this.text = '';
     this.value = '';
     this.listeners = {};
-    this.focused = 0;
   }
   addEventListener(type, f) {
     (this.listeners[type] ||= []).push(f);
@@ -43,16 +46,15 @@ class El {
     return this.children.find((c) => c.className.split(' ').includes('sel')) || null;
   }
   scrollIntoView() {}
-  focus() {
-    this.focused++;
-  }
 }
 
-// The dropdown.js globals in a fresh context, with timers run by hand.
-function load() {
+// The dropdown.js globals in a fresh context, with timers run by hand. `doc`
+// is what the page's `document` offers besides createElement.
+function load(doc) {
   const timers = [];
   const ctx = {
-    document: { createElement: () => new El() },
+    document: { createElement: () => new El(), ...doc },
+    window: {},
     setTimeout: (f) => timers.push(f),
   };
   vm.createContext(ctx);
@@ -61,13 +63,33 @@ function load() {
   return ctx;
 }
 
-// A field and its box wired up with one of the presets.
-function setup(preset, names) {
-  const ctx = load();
+// A log filter field (`input[data-ac]`) and the `.acbox` beside it.
+function filterField() {
   const inp = new El();
   const box = new El();
-  const pool = { names };
-  const handle = ctx.bifDropdown(inp, box, () => pool.names, ctx[preset]);
+  inp.parentNode = { querySelector: (q) => (q === '.acbox' ? box : null) };
+  return { inp, box };
+}
+
+// One page's field and list, wired up the way that page does it:
+// BIF_PLAYER_LIST is the log filter, BIF_ITEM_LIST the hint search.
+function setup(preset, names) {
+  let ctx, inp, box, handle, setPool;
+  if (preset === 'BIF_PLAYER_LIST') {
+    ({ inp, box } = filterField());
+    ctx = load({ querySelectorAll: (q) => (assert.equal(q, 'input[data-ac]'), [inp]) });
+    setPool = (n) => (ctx.window.bifPlayers = n);
+    setPool(names);
+    ctx.bifAutocomplete();
+  } else {
+    inp = new El();
+    box = new El();
+    const ids = { hintq: inp, hintmatches: box };
+    ctx = load({ getElementById: (id) => ids[id] });
+    setPool = (n) => (ctx.ITEMS = n);
+    setPool(names);
+    handle = ctx.bifHintSearch();
+  }
   const shown = () => box.children.map((c) => c.textContent);
   const selected = () => box.children.findIndex((c) => c.className.split(' ').includes('sel'));
   const type = (v) => {
@@ -75,7 +97,7 @@ function setup(preset, names) {
     inp.fire('input');
   };
   const key = (k) => inp.fire('keydown', { key: k });
-  return { ctx, inp, box, pool, handle, shown, selected, type, key };
+  return { ctx, inp, box, setPool, handle, shown, selected, type, key };
 }
 
 const PLAYERS = ['Ann', 'Bob', 'Dana', 'Eve', 'Fay', 'Gus', 'Hal', 'Ida', 'Jo', 'Kai'];
@@ -175,7 +197,7 @@ test('item list: at most 15 matches, from the pool as it is now', () => {
   const t = setup('BIF_ITEM_LIST', many);
   t.type('key');
   assert.deepEqual(t.shown(), many.slice(0, 15));
-  t.pool.names = ['Key A'];
+  t.setPool(['Key A']);
   t.type('key');
   assert.deepEqual(t.shown(), ['Key A']);
 });
@@ -188,17 +210,39 @@ for (const preset of ['BIF_PLAYER_LIST', 'BIF_ITEM_LIST']) {
     assert.ok(ev.defaultPrevented, "the field doesn't lose focus");
     assert.equal(t.inp.value, 'Alpine');
     assert.deepEqual(t.shown(), []);
-    assert.equal(t.inp.focused, 1);
   });
 
-  test(`${preset}: Escape closes, close() too`, () => {
+  test(`${preset}: Escape closes`, () => {
     const t = setup(preset, ['Alpha', 'Alpine']);
     t.type('alp');
     t.key('Escape');
     assert.deepEqual(t.shown(), []);
-    t.type('alp');
-    t.handle.close();
-    assert.deepEqual(t.shown(), []);
     assert.ok(!t.key('ArrowDown').defaultPrevented);
   });
 }
+
+test('item list: the hint form can close it', () => {
+  const t = setup('BIF_ITEM_LIST', ['Alpha', 'Alpine']);
+  t.type('alp');
+  t.handle.close();
+  assert.deepEqual(t.shown(), []);
+  assert.ok(!t.key('Tab').defaultPrevented);
+});
+
+test('player list: every filter field gets a list, without players too', () => {
+  const a = filterField();
+  const b = filterField();
+  const lone = new El();
+  lone.parentNode = { querySelector: () => null };
+  const ctx = load({ querySelectorAll: () => [a.inp, lone, b.inp] });
+  ctx.bifAutocomplete();
+  a.inp.fire('focus');
+  assert.deepEqual(a.box.children, [], 'no window.bifPlayers: an empty list');
+  ctx.window.bifPlayers = ['Ann', 'Bob'];
+  a.inp.fire('focus');
+  b.inp.value = 'b';
+  b.inp.fire('input');
+  assert.deepEqual(a.box.children.map((c) => c.textContent), ['Ann', 'Bob']);
+  assert.deepEqual(b.box.children.map((c) => c.textContent), ['Bob']);
+  lone.fire('focus');
+});

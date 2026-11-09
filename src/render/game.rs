@@ -3,10 +3,9 @@
 use super::*;
 
 /// The per-game hint search. Expects `ITEMS` (this world's item names) defined
-/// just above it, and `bifDropdown` from the page header (see `dropdown.js`
+/// just above it, and `bifHintSearch` from the page header (see `dropdown.js`
 /// for how the list behaves). Enter submits the form.
-pub(super) const HINT_JS: &str = r#"var q=document.getElementById('hintq');
-var hlist=bifDropdown(q,document.getElementById('hintmatches'),function(){return ITEMS;},BIF_ITEM_LIST);
+pub(super) const HINT_JS: &str = r#"var q=document.getElementById('hintq'),hlist=bifHintSearch();
 var hform=document.getElementById('hintform'),hstatus=document.getElementById('hintstatus');
 var hback=hform.querySelector('input[name=back]').value,hbtn=hform.querySelector('button');
 function refreshHints(){

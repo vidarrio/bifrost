@@ -87,6 +87,7 @@ jobs:
         run: cargo test --workspace
       - name: Unit tests (demo build)
         run: cargo test -p bifrost --features demo
+      # The runner image's Node (the tests need 18 or later, for node:test).
       - name: Page script tests
         run: node --test tests/js/*.test.mjs
 

@@ -1,5 +1,6 @@
 // A filtered list of names under a text field, to pick one from. The page
-// header includes this file, and tests/js/dropdown.test.mjs tests it.
+// header includes this file, and tests/js/dropdown.test.mjs tests it, with
+// the two pages' wiring at the end.
 //
 // bifDropdown(inp, box, list, o): inp is the field, box the element the matches
 // go in, and list() returns the names to match. It's read on every keystroke,
@@ -12,19 +13,22 @@
 //   first   typing highlights the first match (else nothing until ↓)
 //   wrap    ↑/↓ wrap round the ends (else they stop there)
 //   pick    the key that takes the highlighted match: 'Enter' or 'Tab'
-// A click on a match takes it, and Escape closes the list. The list is the
+// A click on a match takes it (focus stays in the field, since the click's
+// mousedown is cancelled), and Escape closes the list. The list is the
 // box's children, so CSS can hide an empty box with :empty.
 // Returns { close }, for a form that clears the field itself.
 //
+// The highlighted match is scrolled into view.
+//
 // The two places that use it behave differently on purpose.
 
-// The activity log's sender and receiver fields (`bifAutocomplete`): a short
+// The activity log's sender and receiver fields (bifAutocomplete, below): a short
 // list of player names, so it opens when the field is focused, even empty, and
 // nothing is highlighted until ↓. Enter takes the highlighted name, and
 // without one it submits the filter.
 var BIF_PLAYER_LIST = { max: 8, cls: 'aci', empty: true, focus: true, pick: 'Enter' };
 
-// The game page's hint search (`HINT_JS`): long item lists, so it matches
+// The game page's hint search (bifHintSearch, below): long item lists, so it matches
 // every word typed, highlights the first match and wraps ↑/↓ round the ends.
 // Tab takes the highlighted item, so Enter always sends the hint.
 var BIF_ITEM_LIST = { words: true, max: 15, cls: 'match', first: true, wrap: true, pick: 'Tab' };
@@ -32,7 +36,7 @@ var BIF_ITEM_LIST = { words: true, max: 15, cls: 'match', first: true, wrap: tru
 function bifDropdown(inp, box, list, o) {
  var hits = [], sel = -1;
  function close() { hits = []; sel = -1; box.textContent = ''; }
- function take(n) { inp.value = n; close(); inp.focus(); }
+ function take(n) { inp.value = n; close(); }
  function render() {
   box.textContent = '';
   hits.forEach(function (n, i) {
@@ -80,4 +84,22 @@ function bifDropdown(inp, box, list, o) {
   }
  });
  return { close: close };
+}
+
+// The activity log's filter: every `input[data-ac]` with an `.acbox` beside
+// it lists the players in window.bifPlayers. The header runs it once the page
+// has loaded.
+function bifAutocomplete() {
+ document.querySelectorAll('input[data-ac]').forEach(function (inp) {
+  var box = inp.parentNode.querySelector('.acbox');
+  if (!box) return;
+  bifDropdown(inp, box, function () { return window.bifPlayers || []; }, BIF_PLAYER_LIST);
+ });
+}
+
+// The game page's hint search (`HINT_JS`): #hintq lists the names in the
+// page's ITEMS, which the page replaces after each hint, in #hintmatches.
+function bifHintSearch() {
+ return bifDropdown(document.getElementById('hintq'), document.getElementById('hintmatches'),
+  function () { return ITEMS; }, BIF_ITEM_LIST);
 }
