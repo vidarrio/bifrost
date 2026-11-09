@@ -64,7 +64,7 @@ function bifDropdown(inp, box, list, o) {
  inp.addEventListener('input', open);
  if (o.focus) {
   inp.addEventListener('focus', open);
-  // Late enough that a click on a match lands first.
+  // After a pause, so that a click on a match lands first.
   inp.addEventListener('blur', function () { setTimeout(close, 150); });
  }
  inp.addEventListener('keydown', function (e) {
