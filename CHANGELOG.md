@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- In the activity log's sender and receiver lists, the highlighted name scrolls into
+  view. Before, the last names of a long list could be highlighted out of sight.
 - The apworlds a season gets (custom worlds, the common games' and Universal Tracker's
   on every roll) and a season's `host.yaml` copied from the instance's own are put in
   place in one step, so a signup check or a generation reading one at that moment

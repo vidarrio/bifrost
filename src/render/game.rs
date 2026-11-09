@@ -3,28 +3,9 @@
 use super::*;
 
 /// The per-game hint search. Expects `ITEMS` (this world's item names) defined
-/// just above it. Substring filter with a live dropdown; ↑/↓ highlight (and
-/// scroll into view), Tab accepts, Enter submits the form.
-pub(super) const HINT_JS: &str = r#"var q=document.getElementById('hintq'),box=document.getElementById('hintmatches');
-var hits=[],hsel=-1;
-function hrender(){
- box.innerHTML='';
- hits.forEach(function(n,i){var d=document.createElement('div');d.className='match'+(i===hsel?' sel':'');d.textContent=n;d.addEventListener('mousedown',function(e){e.preventDefault();q.value=n;hits=[];box.innerHTML='';q.focus();});box.appendChild(d);});
- var s=box.querySelector('.sel');if(s)s.scrollIntoView({block:'nearest'});
-}
-q.addEventListener('input',function(){
- var v=q.value.toLowerCase().trim();if(!v){hits=[];box.innerHTML='';return;}
- var w=v.split(/\s+/);
- hits=ITEMS.filter(function(n){var l=n.toLowerCase();return w.every(function(x){return l.indexOf(x)>=0})}).slice(0,15);
- hsel=hits.length?0:-1;hrender();
-});
-q.addEventListener('keydown',function(e){
- if(!hits.length)return;
- if(e.key==='ArrowDown'){e.preventDefault();hsel=(hsel+1)%hits.length;hrender();}
- else if(e.key==='ArrowUp'){e.preventDefault();hsel=(hsel-1+hits.length)%hits.length;hrender();}
- else if(e.key==='Tab'){e.preventDefault();if(hsel>=0){q.value=hits[hsel];hits=[];box.innerHTML='';}}
- else if(e.key==='Escape'){hits=[];box.innerHTML='';}
-});
+/// just above it, and `bifHintSearch` from the page header (see `dropdown.js`
+/// for how the list behaves). Enter submits the form.
+pub(super) const HINT_JS: &str = r#"var q=document.getElementById('hintq'),hlist=bifHintSearch();
 var hform=document.getElementById('hintform'),hstatus=document.getElementById('hintstatus');
 var hback=hform.querySelector('input[name=back]').value,hbtn=hform.querySelector('button');
 function refreshHints(){
@@ -38,7 +19,7 @@ function refreshHints(){
 hform.addEventListener('submit',function(e){
  e.preventDefault();
  var item=q.value.trim();if(!item)return;
- hits=[];box.innerHTML='';hbtn.disabled=true;hstatus.className='inlinemsg';hstatus.textContent='Hinting…';
+ hlist.close();hbtn.disabled=true;hstatus.className='inlinemsg';hstatus.textContent='Hinting…';
  fetch('hint',{method:'POST',body:new URLSearchParams(new FormData(hform))}).then(function(r){return r.json()}).then(function(j){
   hbtn.disabled=false;
   hstatus.className='inlinemsg '+(j&&j.ok?'ok':'bad');

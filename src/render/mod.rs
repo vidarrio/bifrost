@@ -276,7 +276,7 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .logfilter .ffbtns{margin-left:auto;gap:8px}
 .logfilter .ffbtns button,.logfilter .ffbtns .pill{display:inline-flex;align-items:center}
 .logfilter .acwrap{position:relative;display:inline-flex}
-.acbox{position:absolute;top:calc(100% + 3px);left:0;min-width:150px;z-index:7;max-height:220px;overflow:auto;background:var(--panel);border:1px solid var(--bd);display:none}
+.acbox{position:absolute;top:calc(100% + 3px);left:0;min-width:150px;z-index:7;max-height:220px;overflow:auto;background:var(--panel);border:1px solid var(--bd)}.acbox:empty{display:none}
 .acbox .aci{padding:6px 9px;font-size:12.5px;cursor:pointer;border-bottom:1px solid var(--bd);white-space:nowrap}
 .acbox .aci:last-child{border-bottom:0}
 .acbox .aci:hover,.acbox .aci.sel{background:var(--bd);color:var(--fg)}
@@ -383,35 +383,9 @@ function bifFilterForm(){
  });
 }
 document.addEventListener('DOMContentLoaded',bifFilterForm);
-// Custom sender/receiver autocomplete (replaces the unstylable native datalist
-// popup). Reads the participant pool from window.bifPlayers.
-function bifAutocomplete(){
- var players=window.bifPlayers||[];
- function esch(s){return s.replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
- document.querySelectorAll('input[data-ac]').forEach(function(inp){
-  var box=inp.parentNode.querySelector('.acbox');if(!box)return;var sel=-1,items=[];
-  function hide(){box.style.display='none';box.innerHTML='';sel=-1;items=[];}
-  function show(){
-   var q=inp.value.trim().toLowerCase();
-   items=players.filter(function(p){return p.toLowerCase().indexOf(q)>-1;}).slice(0,8);
-   if(!items.length){hide();return;}
-   box.innerHTML=items.map(function(p,i){return '<div class="aci'+(i===sel?' sel':'')+'">'+esch(p)+'</div>';}).join('');
-   box.style.display='block';
-   Array.prototype.forEach.call(box.children,function(d,i){
-    d.addEventListener('mousedown',function(e){e.preventDefault();inp.value=items[i];hide();});});
-  }
-  inp.addEventListener('input',function(){sel=-1;show();});
-  inp.addEventListener('focus',show);
-  inp.addEventListener('blur',function(){setTimeout(hide,150);});
-  inp.addEventListener('keydown',function(e){
-   if(box.style.display!=='block')return;
-   if(e.key==='ArrowDown'){sel=Math.min(sel+1,items.length-1);show();e.preventDefault();}
-   else if(e.key==='ArrowUp'){sel=Math.max(sel-1,0);show();e.preventDefault();}
-   else if(e.key==='Enter'&&sel>=0){inp.value=items[sel];hide();e.preventDefault();}
-   else if(e.key==='Escape'){hide();}
-  });
- });
-}
+"#,
+    include_str!("dropdown.js"),
+    r#"// The log filter's sender and receiver lists (see dropdown.js).
 document.addEventListener('DOMContentLoaded',bifAutocomplete);
 // Live board: poll the fragment and swap the columns in place (no full reload),
 // so slot stats/statuses and the activity feed update on their own. Only runs
@@ -664,6 +638,44 @@ mod tests {
         let html = log::filter_form("log", &f);
         assert!(!html.contains("</script><b>"), "{html}");
         assert!(html.contains("\\u003c/script\\u003e"));
+    }
+
+    /// The dropdown's Node tests (`tests/js/`) run `dropdown.js` with the
+    /// markup these pages render; this checks the pages load it and render that
+    /// markup.
+    #[test]
+    fn dropdown_pages_load_its_script_and_markup() {
+        assert!(HEAD.contains(include_str!("dropdown.js")));
+        assert!(HEAD.contains("addEventListener('DOMContentLoaded',bifAutocomplete)"));
+        assert!(game::HINT_JS.contains("hlist=bifHintSearch()"));
+        let f = log::LogFilter {
+            kinds_selected: [true; 4],
+            classes_selected: [true; 4],
+            sender: "",
+            receiver: "",
+            within: 0,
+            since: None,
+            until: None,
+            participants: &[],
+            qs: "",
+        };
+        let html = log::filter_form("log", &f);
+        for name in ["sender", "receiver"] {
+            assert!(
+                html.contains(&format!(
+                    r#"<input type="text" name="{name}" placeholder="{name}" autocomplete="off" data-ac value=""><div class="acbox"></div>"#
+                )),
+                "{html}"
+            );
+        }
+        let game = include_str!("game.rs");
+        assert_eq!(game.matches(r#"<input id="hintq" "#).count(), 2);
+        assert_eq!(
+            game.matches(r#"<div id="hintmatches" class="matches"></div>"#)
+                .count(),
+            2
+        );
+        assert_eq!(game.matches("out.push_str(HINT_JS);").count(), 2);
     }
 
     #[test]

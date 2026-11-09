@@ -88,7 +88,7 @@ CI runs on every pull request and on every push to `main`. It checks:
 | Job | Runs |
 |---|---|
 | `lint` | `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, a syntax check of the Python helpers and tests, and that the image and the bundle pin the same Archipelago |
-| `test` | `cargo test --workspace` |
+| `test` | `cargo test --workspace`, and the page script tests (`node --test tests/js/*.test.mjs`) |
 | `e2e` | the native end-to-end suites (a debug build on real Archipelago installs, generating seeds and running servers under bubblewrap), split across parallel shards |
 | `image` | builds the container image and runs its suite (`tests/e2e/run.sh container`) |
 | `bundle` | builds the native bundle and runs its suite (`tests/e2e/run.sh bundle`) |
@@ -271,6 +271,7 @@ Releases of Bifrost's Archipelago fork are separate; see
 cargo fmt --all                                        # format
 cargo clippy --workspace --all-targets -- -D warnings  # lint
 cargo test --workspace                                 # unit tests
+node --test tests/js/*.test.mjs                        # page script tests
 cargo build && BIFROST_DATA=./data BIFROST_AP_DIR=/path/to/Archipelago \
     BIFROST_RUNTIME_DIR=. BIFROST_INSECURE_COOKIES=1 target/debug/bifrost
 ```
