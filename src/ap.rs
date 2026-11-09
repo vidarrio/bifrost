@@ -272,104 +272,32 @@ impl Board {
         let ap = self
             .slots
             .iter()
-            .map(|(n, s)| {
+            .map(|(&n, s)| {
                 let (world_size, items_for) = self
                     .meta
                     .as_ref()
-                    .and_then(|m| m.totals(*n))
-                    .map(|t| (t.world_size, t.items_for))
-                    .unwrap_or((0, 0));
-                // Items of this slot that nobody has found yet.
-                let still_to_find = items_for.saturating_sub(s.received as u32);
-                // Hints for THIS slot's own items — "where is my item", the way
-                // hints are normally read. Filter by receiving == this slot; the
-                // item is ours, the location is in whichever world is finding it.
-                let mut hint_views = Vec::new();
-                if let Some(m) = self.meta.as_ref() {
-                    for h in s.hint_list.iter().filter(|h| h.receiving == *n) {
-                        let item = m.item_name(&s.game, h.item).unwrap_or("?");
-                        let find_game = self
-                            .slots
-                            .get(&h.finding)
-                            .map(|x| x.game.as_str())
-                            .unwrap_or("");
-                        let loc = m.location_name(find_game, h.location).unwrap_or("?");
-                        let finder = self.name_of(h.finding);
-                        let mark = if h.found { " ✓" } else { "" };
-                        hint_views.push(HintView {
-                            finding: h.finding,
-                            location: h.location,
-                            item: h.item,
-                            receiving: h.receiving,
-                            found: h.found,
-                            text: format!("{item} @ {loc} · {finder}{mark}"),
-                        });
-                    }
-                }
-                // Every item this slot has received, rendered like a found hint
-                // ("item @ location · finder ✓"): item named in this slot's game,
-                // location in the finder's game.
-                let mut found_items = Vec::new();
-                if let Some(m) = self.meta.as_ref() {
-                    for (item, location, finder) in &s.received_items {
-                        let item_name = m.item_name(&s.game, *item).unwrap_or("?");
-                        let find_game = self
-                            .slots
-                            .get(finder)
-                            .map(|x| x.game.as_str())
-                            .unwrap_or("");
-                        let loc = m.location_name(find_game, *location).unwrap_or("?");
-                        let finder_name = self.name_of(*finder);
-                        found_items.push(HintView {
-                            finding: *finder,
-                            location: *location,
-                            item: *item,
-                            receiving: *n,
-                            found: true,
-                            text: format!("{item_name} @ {loc} · {finder_name} ✓"),
-                        });
-                    }
-                }
-                // Finder-oriented: items located in THIS slot's world that belong
-                // to someone else (finding == this slot). Item is named in the
-                // RECEIVER's game, the location in this (the finder's) own game.
-                // Rendered "item → receiver @ location" so the board can showcase
-                // a prioritized hint on the finder's card.
-                let mut finder_views = Vec::new();
-                if let Some(m) = self.meta.as_ref() {
-                    for h in s.hint_list.iter().filter(|h| h.finding == *n) {
-                        let recv_game = self
-                            .slots
-                            .get(&h.receiving)
-                            .map(|x| x.game.as_str())
-                            .unwrap_or("");
-                        let item = m.item_name(recv_game, h.item).unwrap_or("?");
-                        let loc = m.location_name(&s.game, h.location).unwrap_or("?");
-                        let receiver = self.name_of(h.receiving);
-                        let mark = if h.found { " ✓" } else { "" };
-                        finder_views.push(HintView {
-                            finding: h.finding,
-                            location: h.location,
-                            item: h.item,
-                            receiving: h.receiving,
-                            found: h.found,
-                            text: format!("{item} → {receiver} @ {loc}{mark}"),
-                        });
-                    }
-                }
-                (
-                    *n,
-                    ApLive {
-                        status: s.status,
-                        sent: s.sent,
-                        received: s.received,
-                        world_size,
-                        still_to_find,
-                        hint_views,
-                        found_items,
-                        finder_views,
-                    },
-                )
+                    .and_then(|m| m.totals(n))
+                    .map_or((0, 0), |t| (t.world_size, t.items_for));
+                let (hint_views, found_items, finder_views) = match self.meta.as_deref() {
+                    Some(m) => (
+                        self.hint_views(m, n, s),
+                        self.found_items(m, n, s),
+                        self.finder_views(m, n, s),
+                    ),
+                    None => Default::default(),
+                };
+                let live = ApLive {
+                    status: s.status,
+                    sent: s.sent,
+                    received: s.received,
+                    world_size,
+                    // Items of this slot that nobody has found yet.
+                    still_to_find: items_for.saturating_sub(s.received as u32),
+                    hint_views,
+                    found_items,
+                    finder_views,
+                };
+                (n, live)
             })
             .collect();
         BoardSnapshot {
@@ -378,6 +306,88 @@ impl Board {
             hint_cost: self.hint_cost,
             ap,
         }
+    }
+
+    /// The game a slot plays ("" if it isn't on the board).
+    fn game_of(&self, slot: i64) -> &str {
+        self.slots.get(&slot).map_or("", |x| x.game.as_str())
+    }
+
+    /// Hints for slot `n`'s own items ("where is my item", the way hints are
+    /// normally read): the item named in its game, the location in the
+    /// finder's. "item @ location · finder", with " ✓" once found.
+    fn hint_views(&self, m: &crate::meta::Meta, n: i64, s: &SlotState) -> Vec<HintView> {
+        s.hint_list
+            .iter()
+            .filter(|h| h.receiving == n)
+            .map(|h| {
+                let item = m.item_name(&s.game, h.item).unwrap_or("?");
+                let loc = m
+                    .location_name(self.game_of(h.finding), h.location)
+                    .unwrap_or("?");
+                let finder = self.name_of(h.finding);
+                let mark = if h.found { " ✓" } else { "" };
+                HintView {
+                    finding: h.finding,
+                    location: h.location,
+                    item: h.item,
+                    receiving: h.receiving,
+                    found: h.found,
+                    text: format!("{item} @ {loc} · {finder}{mark}"),
+                }
+            })
+            .collect()
+    }
+
+    /// Every item slot `n` has received, written like a found hint ("item @
+    /// location · finder ✓"): the item named in its game, the location in the
+    /// finder's.
+    fn found_items(&self, m: &crate::meta::Meta, n: i64, s: &SlotState) -> Vec<HintView> {
+        s.received_items
+            .iter()
+            .map(|&(item, location, finder)| {
+                let item_name = m.item_name(&s.game, item).unwrap_or("?");
+                let loc = m
+                    .location_name(self.game_of(finder), location)
+                    .unwrap_or("?");
+                let finder_name = self.name_of(finder);
+                HintView {
+                    finding: finder,
+                    location,
+                    item,
+                    receiving: n,
+                    found: true,
+                    text: format!("{item_name} @ {loc} · {finder_name} ✓"),
+                }
+            })
+            .collect()
+    }
+
+    /// Hints for items in slot `n`'s world that belong to someone else, so the
+    /// board can show a prioritized hint on the finder's card: the item named
+    /// in the receiver's game, the location in this one. "item → receiver @
+    /// location", with " ✓" once found.
+    fn finder_views(&self, m: &crate::meta::Meta, n: i64, s: &SlotState) -> Vec<HintView> {
+        s.hint_list
+            .iter()
+            .filter(|h| h.finding == n)
+            .map(|h| {
+                let item = m
+                    .item_name(self.game_of(h.receiving), h.item)
+                    .unwrap_or("?");
+                let loc = m.location_name(&s.game, h.location).unwrap_or("?");
+                let receiver = self.name_of(h.receiving);
+                let mark = if h.found { " ✓" } else { "" };
+                HintView {
+                    finding: h.finding,
+                    location: h.location,
+                    item: h.item,
+                    receiving: h.receiving,
+                    found: h.found,
+                    text: format!("{item} → {receiver} @ {loc}{mark}"),
+                }
+            })
+            .collect()
     }
 }
 
@@ -1217,7 +1227,7 @@ pub fn resolve_parts(b: &Board, parts: &[Value]) -> String {
             "item_id" | "location_id" => {
                 let owner = p.get("player").and_then(Value::as_i64).unwrap_or(0);
                 let id: i64 = text.parse().unwrap_or(0);
-                let game = b.slots.get(&owner).map(|x| x.game.as_str()).unwrap_or("");
+                let game = b.game_of(owner);
                 let resolved = b.meta.as_ref().and_then(|m| {
                     if ty == "item_id" {
                         m.item_name(game, id)
@@ -1282,6 +1292,145 @@ pub async fn slot_points(url: &str, password: &str, name: &str) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
+    /// Two players' worlds: Ann (slot 1, Dice) and Mia (slot 2, Tunic). Ann
+    /// has two hints for her items in Mia's world, Mia one in Ann's (found),
+    /// and Ann has received two items from Mia.
+    fn board() -> super::Board {
+        let mut b = super::Board {
+            connected: true,
+            seed: Some("123".into()),
+            hint_cost: 10,
+            ..Default::default()
+        };
+        let hint = |receiving, finding, item, location, found| super::HintRaw {
+            receiving,
+            finding,
+            item,
+            location,
+            found,
+        };
+        let hints = vec![
+            hint(1, 2, 10, 200, false),
+            hint(2, 1, 20, 100, true),
+            hint(1, 2, 11, 201, false),
+        ];
+        for (n, name, game) in [(1, "Ann", "Dice"), (2, "Mia", "Tunic")] {
+            b.slots.insert(
+                n,
+                super::SlotState {
+                    name: name.into(),
+                    game: game.into(),
+                    status: 20,
+                    hint_list: hints.clone(),
+                    sent: 3,
+                    received: 2,
+                    ..Default::default()
+                },
+            );
+        }
+        b.slots.get_mut(&1).unwrap().received_items = vec![(11, 201, 2), (10, 200, 2)];
+        b.meta = Some(std::sync::Arc::new(
+            serde_json::from_value(serde_json::json!({
+                "slots": {
+                    "1": {"name": "Ann", "game": "Dice", "world_size": 5, "items_for": 6},
+                    "2": {"name": "Mia", "game": "Tunic", "world_size": 7, "items_for": 1},
+                },
+                "item_names": {
+                    "Dice": {"10": "Die", "11": "Pip"},
+                    "Tunic": {"20": "Sword"},
+                },
+                "location_names": {
+                    "Dice": {"100": "Roll 1"},
+                    "Tunic": {"200": "Cave", "201": "Chest"},
+                },
+            }))
+            .unwrap(),
+        ));
+        b
+    }
+
+    /// Each entry in order, as (finding, location, item, receiving, found, text).
+    fn rows(v: &[super::HintView]) -> Vec<(i64, i64, i64, i64, bool, String)> {
+        v.iter()
+            .map(|h| {
+                (
+                    h.finding,
+                    h.location,
+                    h.item,
+                    h.receiving,
+                    h.found,
+                    h.text.clone(),
+                )
+            })
+            .collect()
+    }
+
+    fn row(
+        f: i64,
+        l: i64,
+        i: i64,
+        r: i64,
+        found: bool,
+        t: &str,
+    ) -> (i64, i64, i64, i64, bool, String) {
+        (f, l, i, r, found, t.to_string())
+    }
+
+    #[test]
+    fn snapshot_names_each_slots_hints_and_finds() {
+        let snap = board().snapshot();
+        assert!(snap.connected);
+        assert_eq!(snap.seed.as_deref(), Some("123"));
+        assert_eq!(snap.hint_cost, 10);
+        let ann = &snap.ap[&1];
+        assert_eq!((ann.status, ann.sent, ann.received), (20, 3, 2));
+        assert_eq!((ann.world_size, ann.still_to_find), (5, 4));
+        assert_eq!(
+            rows(&ann.hint_views),
+            [
+                row(2, 200, 10, 1, false, "Die @ Cave · Mia"),
+                row(2, 201, 11, 1, false, "Pip @ Chest · Mia"),
+            ]
+        );
+        assert_eq!(
+            rows(&ann.found_items),
+            [
+                row(2, 201, 11, 1, true, "Pip @ Chest · Mia ✓"),
+                row(2, 200, 10, 1, true, "Die @ Cave · Mia ✓"),
+            ]
+        );
+        assert_eq!(
+            rows(&ann.finder_views),
+            [row(1, 100, 20, 2, true, "Sword → Mia @ Roll 1 ✓")]
+        );
+        let mia = &snap.ap[&2];
+        // More received than it's owed: none left, not an underflow.
+        assert_eq!((mia.world_size, mia.still_to_find), (7, 0));
+        assert_eq!(
+            rows(&mia.hint_views),
+            [row(1, 100, 20, 2, true, "Sword @ Roll 1 · Ann ✓")]
+        );
+        assert!(mia.found_items.is_empty());
+        assert_eq!(
+            rows(&mia.finder_views),
+            [
+                row(2, 200, 10, 1, false, "Die → Ann @ Cave"),
+                row(2, 201, 11, 1, false, "Pip → Ann @ Chest"),
+            ]
+        );
+    }
+
+    #[test]
+    fn snapshot_without_meta_has_figures_but_no_hints() {
+        let mut b = board();
+        b.meta = None;
+        let ann = &b.snapshot().ap[&1];
+        assert_eq!((ann.world_size, ann.still_to_find, ann.sent), (0, 0, 3));
+        assert!(
+            ann.hint_views.is_empty() && ann.found_items.is_empty() && ann.finder_views.is_empty()
+        );
+    }
+
     #[test]
     fn our_own_join_isnt_a_player_connecting() {
         let mut b = super::Board::default();
