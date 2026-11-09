@@ -13,8 +13,10 @@
 //   first   typing highlights the first match (else nothing until ↓)
 //   wrap    ↑/↓ wrap round the ends (else they stop there)
 //   pick    the key that takes the highlighted match: 'Enter' or 'Tab'
-// A click on a match takes it (focus stays in the field, since the click's
-// mousedown is cancelled), and Escape closes the list. The list is the
+// A click on a match takes it, and Escape closes the list. Without `focus`
+// the list stays open when the field loses focus, so a click on it puts focus
+// back in the field. With it, the click finds the field focused already (its
+// mousedown is cancelled), and focusing it again would reopen the list. The list is the
 // box's children, so CSS can hide an empty box with :empty.
 // Returns { close }, for a form that clears the field itself.
 //
@@ -36,7 +38,7 @@ var BIF_ITEM_LIST = { words: true, max: 15, cls: 'match', first: true, wrap: tru
 function bifDropdown(inp, box, list, o) {
  var hits = [], sel = -1;
  function close() { hits = []; sel = -1; box.textContent = ''; }
- function take(n) { inp.value = n; close(); }
+ function take(n) { inp.value = n; close(); if (!o.focus) inp.focus(); }
  function render() {
   box.textContent = '';
   hits.forEach(function (n, i) {

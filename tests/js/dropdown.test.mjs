@@ -22,6 +22,7 @@ class El {
     this.text = '';
     this.value = '';
     this.listeners = {};
+    this.focused = 0;
   }
   addEventListener(type, f) {
     (this.listeners[type] ||= []).push(f);
@@ -46,6 +47,12 @@ class El {
     return this.children.find((c) => c.className.split(' ').includes('sel')) || null;
   }
   scrollIntoView() {}
+  // Like a browser's: fires `focus` (the field here is never focused already
+  // when a test calls this).
+  focus() {
+    this.focused++;
+    this.fire('focus');
+  }
 }
 
 // The dropdown.js globals in a fresh context, with timers run by hand. `doc`
@@ -220,6 +227,27 @@ for (const preset of ['BIF_PLAYER_LIST', 'BIF_ITEM_LIST']) {
     assert.ok(!t.key('ArrowDown').defaultPrevented);
   });
 }
+
+test('item list: a click after the field lost focus puts focus back', () => {
+  const t = setup('BIF_ITEM_LIST', ['Bow', 'Bomb']);
+  t.type('bo');
+  t.inp.fire('blur');
+  t.ctx.runTimers();
+  assert.deepEqual(t.shown(), ['Bow', 'Bomb'], 'still open');
+  t.box.children[1].fire('mousedown');
+  assert.equal(t.inp.value, 'Bomb');
+  assert.equal(t.inp.focused, 1);
+  assert.deepEqual(t.shown(), []);
+});
+
+test("player list: a click doesn't refocus the field, which would reopen it", () => {
+  const t = setup('BIF_PLAYER_LIST', PLAYERS);
+  t.inp.fire('focus');
+  t.box.children[1].fire('mousedown');
+  assert.equal(t.inp.value, 'Bob');
+  assert.equal(t.inp.focused, 0);
+  assert.deepEqual(t.shown(), []);
+});
 
 test('item list: the hint form can close it', () => {
   const t = setup('BIF_ITEM_LIST', ['Alpha', 'Alpine']);
