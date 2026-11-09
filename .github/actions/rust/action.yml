@@ -1,0 +1,21 @@
+name: Rust
+description: >-
+  The pinned toolchain (rust-toolchain.toml) and a cargo cache. The repository
+  must be checked out first.
+inputs:
+  shared-key:
+    description: The cache's key across jobs (rust-cache's shared-key); by default each job has its own.
+    default: ""
+  save:
+    description: Whether this run saves the cache. Only main's caches can be restored by other branches.
+    default: ${{ github.ref == 'refs/heads/main' }}
+runs:
+  using: composite
+  steps:
+    - name: Toolchain
+      shell: bash
+      run: rustup toolchain install
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      with:
+        shared-key: ${{ inputs.shared-key }}
+        save-if: ${{ inputs.save }}

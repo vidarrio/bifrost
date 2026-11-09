@@ -1,0 +1,25 @@
+name: Host
+description: >-
+  What the end-to-end suites need of the runner: system packages, and
+  bubblewrap allowed to create user namespaces (Ubuntu's AppArmor stops it by
+  default).
+inputs:
+  packages:
+    description: apt packages to install, space-separated.
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: System packages
+      if: inputs.packages != ''
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        sudo apt-get update
+        # Word splitting on purpose: one argument per package.
+        # shellcheck disable=SC2086
+        sudo apt-get install -y $PACKAGES
+    - name: Let bubblewrap create user namespaces
+      shell: bash
+      run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0

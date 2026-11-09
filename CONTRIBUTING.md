@@ -186,7 +186,9 @@ Bifrost's fork has no build of yet; cutting one is the maintainer's call
 
 GitHub Actions are pinned to full commit SHAs, with the version in a comment
 (`uses: actions/checkout@<sha> # v7.0.1`), so a moved tag can't change what
-runs. Dependabot updates both. Pin new actions the same way. Note that
+runs. Dependabot updates both. That covers the local actions CI's jobs share
+too (`.github/actions/`: the Rust toolchain and cache, and the runner setup
+the end-to-end suites need). Pin new actions the same way. Note that
 Dependabot's security alerts don't cover SHA-pinned actions; its weekly
 version updates are what keeps them current.
 
