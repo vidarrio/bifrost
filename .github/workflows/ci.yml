@@ -87,6 +87,8 @@ jobs:
         run: cargo test --workspace
       - name: Unit tests (demo build)
         run: cargo test -p bifrost --features demo
+      - name: Page script tests
+        run: node --test tests/js/*.test.mjs
 
   # The native end-to-end suites, in parallel shards: a debug build on the
   # runner, on the Archipelago build the image ships, under bubblewrap.

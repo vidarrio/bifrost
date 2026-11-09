@@ -276,7 +276,7 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .logfilter .ffbtns{margin-left:auto;gap:8px}
 .logfilter .ffbtns button,.logfilter .ffbtns .pill{display:inline-flex;align-items:center}
 .logfilter .acwrap{position:relative;display:inline-flex}
-.acbox{position:absolute;top:calc(100% + 3px);left:0;min-width:150px;z-index:7;max-height:220px;overflow:auto;background:var(--panel);border:1px solid var(--bd);display:none}
+.acbox{position:absolute;top:calc(100% + 3px);left:0;min-width:150px;z-index:7;max-height:220px;overflow:auto;background:var(--panel);border:1px solid var(--bd)}.acbox:empty{display:none}
 .acbox .aci{padding:6px 9px;font-size:12.5px;cursor:pointer;border-bottom:1px solid var(--bd);white-space:nowrap}
 .acbox .aci:last-child{border-bottom:0}
 .acbox .aci:hover,.acbox .aci.sel{background:var(--bd);color:var(--fg)}
@@ -383,33 +383,15 @@ function bifFilterForm(){
  });
 }
 document.addEventListener('DOMContentLoaded',bifFilterForm);
-// Custom sender/receiver autocomplete (replaces the unstylable native datalist
-// popup). Reads the participant pool from window.bifPlayers.
+"#,
+    include_str!("dropdown.js"),
+    r#"// The activity log's sender and receiver fields: a styled list of the
+// players in window.bifPlayers, in place of the native <datalist> popup (which
+// can't be styled). See bifDropdown (dropdown.js) for how it behaves.
 function bifAutocomplete(){
- var players=window.bifPlayers||[];
- function esch(s){return s.replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
  document.querySelectorAll('input[data-ac]').forEach(function(inp){
-  var box=inp.parentNode.querySelector('.acbox');if(!box)return;var sel=-1,items=[];
-  function hide(){box.style.display='none';box.innerHTML='';sel=-1;items=[];}
-  function show(){
-   var q=inp.value.trim().toLowerCase();
-   items=players.filter(function(p){return p.toLowerCase().indexOf(q)>-1;}).slice(0,8);
-   if(!items.length){hide();return;}
-   box.innerHTML=items.map(function(p,i){return '<div class="aci'+(i===sel?' sel':'')+'">'+esch(p)+'</div>';}).join('');
-   box.style.display='block';
-   Array.prototype.forEach.call(box.children,function(d,i){
-    d.addEventListener('mousedown',function(e){e.preventDefault();inp.value=items[i];hide();});});
-  }
-  inp.addEventListener('input',function(){sel=-1;show();});
-  inp.addEventListener('focus',show);
-  inp.addEventListener('blur',function(){setTimeout(hide,150);});
-  inp.addEventListener('keydown',function(e){
-   if(box.style.display!=='block')return;
-   if(e.key==='ArrowDown'){sel=Math.min(sel+1,items.length-1);show();e.preventDefault();}
-   else if(e.key==='ArrowUp'){sel=Math.max(sel-1,0);show();e.preventDefault();}
-   else if(e.key==='Enter'&&sel>=0){inp.value=items[sel];hide();e.preventDefault();}
-   else if(e.key==='Escape'){hide();}
-  });
+  var box=inp.parentNode.querySelector('.acbox');if(!box)return;
+  bifDropdown(inp,box,function(){return window.bifPlayers||[];},BIF_PLAYER_LIST);
  });
 }
 document.addEventListener('DOMContentLoaded',bifAutocomplete);

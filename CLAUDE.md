@@ -15,7 +15,8 @@ top of it. Where the two disagree, CONTRIBUTING.md wins.
 - Cut a release only when the maintainer asks for one.
 - Before pushing, run `cargo fmt --all`,
   `cargo clippy --workspace --all-targets -- -D warnings` and
-  `cargo test --workspace`. For changes that touch behaviour, also run the
+  `cargo test --workspace`, and `node --test tests/js/*.test.mjs` when a
+  change touches page scripts. For changes that touch behaviour, also run the
   end-to-end suites that cover it (`tests/e2e/run.sh <suite>…`).
 - Add a `CHANGELOG.md` entry for user-visible changes, under the rules in
   CONTRIBUTING.md.
