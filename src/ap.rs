@@ -340,7 +340,8 @@ impl Board {
     }
 
     /// Every item slot `n` has received, written like a found hint ("item @
-    /// location · finder ✓").
+    /// location · finder ✓"): the item named in its game, the location in the
+    /// finder's.
     fn found_items(&self, m: &crate::meta::Meta, n: i64, s: &SlotState) -> Vec<HintView> {
         s.received_items
             .iter()
@@ -1292,8 +1293,8 @@ pub async fn slot_points(url: &str, password: &str, name: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     /// Two players' worlds: Ann (slot 1, Dice) and Mia (slot 2, Tunic). Ann
-    /// has a hint for her item in Mia's world, Mia one in Ann's (found), and
-    /// Ann has received an item from Mia.
+    /// has two hints for her items in Mia's world, Mia one in Ann's (found),
+    /// and Ann has received two items from Mia.
     fn board() -> super::Board {
         let mut b = super::Board {
             connected: true,
@@ -1301,21 +1302,17 @@ mod tests {
             hint_cost: 10,
             ..Default::default()
         };
+        let hint = |receiving, finding, item, location, found| super::HintRaw {
+            receiving,
+            finding,
+            item,
+            location,
+            found,
+        };
         let hints = vec![
-            super::HintRaw {
-                receiving: 1,
-                finding: 2,
-                item: 10,
-                location: 200,
-                found: false,
-            },
-            super::HintRaw {
-                receiving: 2,
-                finding: 1,
-                item: 20,
-                location: 100,
-                found: true,
-            },
+            hint(1, 2, 10, 200, false),
+            hint(2, 1, 20, 100, true),
+            hint(1, 2, 11, 201, false),
         ];
         for (n, name, game) in [(1, "Ann", "Dice"), (2, "Mia", "Tunic")] {
             b.slots.insert(
@@ -1331,7 +1328,7 @@ mod tests {
                 },
             );
         }
-        b.slots.get_mut(&1).unwrap().received_items = vec![(11, 201, 2)];
+        b.slots.get_mut(&1).unwrap().received_items = vec![(11, 201, 2), (10, 200, 2)];
         b.meta = Some(std::sync::Arc::new(
             serde_json::from_value(serde_json::json!({
                 "slots": {
@@ -1352,34 +1349,74 @@ mod tests {
         b
     }
 
+    /// Each entry in order, as (finding, location, item, receiving, found, text).
+    fn rows(v: &[super::HintView]) -> Vec<(i64, i64, i64, i64, bool, String)> {
+        v.iter()
+            .map(|h| {
+                (
+                    h.finding,
+                    h.location,
+                    h.item,
+                    h.receiving,
+                    h.found,
+                    h.text.clone(),
+                )
+            })
+            .collect()
+    }
+
+    fn row(
+        f: i64,
+        l: i64,
+        i: i64,
+        r: i64,
+        found: bool,
+        t: &str,
+    ) -> (i64, i64, i64, i64, bool, String) {
+        (f, l, i, r, found, t.to_string())
+    }
+
     #[test]
     fn snapshot_names_each_slots_hints_and_finds() {
         let snap = board().snapshot();
         assert!(snap.connected);
         assert_eq!(snap.seed.as_deref(), Some("123"));
         assert_eq!(snap.hint_cost, 10);
-        let texts = |v: &[super::HintView]| v.iter().map(|h| h.text.clone()).collect::<Vec<_>>();
         let ann = &snap.ap[&1];
         assert_eq!((ann.status, ann.sent, ann.received), (20, 3, 2));
         assert_eq!((ann.world_size, ann.still_to_find), (5, 4));
-        assert_eq!(texts(&ann.hint_views), ["Die @ Cave · Mia"]);
-        assert_eq!(texts(&ann.found_items), ["Pip @ Chest · Mia ✓"]);
-        assert_eq!(texts(&ann.finder_views), ["Sword → Mia @ Roll 1 ✓"]);
-        let h = &ann.found_items[0];
         assert_eq!(
-            (h.finding, h.location, h.item, h.receiving, h.found),
-            (2, 201, 11, 1, true)
+            rows(&ann.hint_views),
+            [
+                row(2, 200, 10, 1, false, "Die @ Cave · Mia"),
+                row(2, 201, 11, 1, false, "Pip @ Chest · Mia"),
+            ]
+        );
+        assert_eq!(
+            rows(&ann.found_items),
+            [
+                row(2, 201, 11, 1, true, "Pip @ Chest · Mia ✓"),
+                row(2, 200, 10, 1, true, "Die @ Cave · Mia ✓"),
+            ]
+        );
+        assert_eq!(
+            rows(&ann.finder_views),
+            [row(1, 100, 20, 2, true, "Sword → Mia @ Roll 1 ✓")]
         );
         let mia = &snap.ap[&2];
         // More received than it's owed: none left, not an underflow.
         assert_eq!((mia.world_size, mia.still_to_find), (7, 0));
-        assert_eq!(texts(&mia.hint_views), ["Sword @ Roll 1 · Ann ✓"]);
-        assert!(mia.found_items.is_empty());
-        assert_eq!(texts(&mia.finder_views), ["Die → Ann @ Cave"]);
-        let h = &mia.finder_views[0];
         assert_eq!(
-            (h.finding, h.location, h.item, h.receiving, h.found),
-            (2, 200, 10, 1, false)
+            rows(&mia.hint_views),
+            [row(1, 100, 20, 2, true, "Sword @ Roll 1 · Ann ✓")]
+        );
+        assert!(mia.found_items.is_empty());
+        assert_eq!(
+            rows(&mia.finder_views),
+            [
+                row(2, 200, 10, 1, false, "Die → Ann @ Cave"),
+                row(2, 201, 11, 1, false, "Pip → Ann @ Chest"),
+            ]
         );
     }
 
