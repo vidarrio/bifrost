@@ -157,6 +157,9 @@ def post(s, path, **kw):
     return _decoded(s.post(s.base + path, **kw))
 
 
+# packaging/demo/seed.py keeps its own copies of post, new_season and
+# generate (it ships, so it can't import this file). When a page's text that
+# they look for changes, change both.
 def new_season(s, name):
     """Create a season and return its id."""
     r = post(s, "/admin/seasons", data=dict(name=name))

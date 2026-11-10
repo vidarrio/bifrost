@@ -92,6 +92,12 @@ def main(base, data):
     roles = {r: session(r) for r in ("player", "moderator", "sysadmin")}
     player, mod, admin = roles["player"], roles["moderator"], roles["sysadmin"]
 
+    # post, season, signup and generate do what tests/e2e/lib.py's post,
+    # new_season and generate (and the suites' signups) do, on the same pages.
+    # This file ships, so it can't import lib.py. When a page's text that they
+    # look for changes ("Generated seed", the banner classes, the season's
+    # address), change both. tests/e2e/demo.py runs this seed, so CI catches a
+    # copy that was missed.
     def post(s, path, **kw):
         r = s.post(base + path, timeout=120, **kw)
         r.raise_for_status()
