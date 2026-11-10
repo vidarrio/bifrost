@@ -153,6 +153,10 @@ def get(s, path, **kw):
     return _decoded(s.get(s.base + path, **kw))
 
 
+# packaging/demo/seed.py keeps its own copies of post, new_season and
+# generate (it ships, so it can't import this file). When a page's text that
+# they look for changes, change both; tests/e2e/demo.py runs the seed, so CI
+# catches a copy that was missed.
 def post(s, path, **kw):
     return _decoded(s.post(s.base + path, **kw))
 

@@ -11,24 +11,25 @@ set -u
 cd "$(dirname "$0")"
 # The native suites, in CI's parallel shards (balanced by run time, about two
 # minutes each on a runner). A new native suite goes into one of them; a new
-# shard also goes into `shard)` and `shards)` below.
+# shard is a new `shardN` variable, with N added to `shards`.
 shard1="apupdate backup forward_auth homepill minesweeper packs upgrade"
 shard2="quiet load season_actions"
 shard3="catalog supervisor season_import common"
 # The demo seeds its seasons by playing them, which takes several minutes.
 shard4="demo"
-native="$shard1 $shard2 $shard3 $shard4"
+shards="1 2 3 4"
+native=""
+for n in $shards; do eval "native=\"\${native:+\$native }\$shard$n\""; done
 case "${1:-native}" in
     native) suites=$native ;;
     shard)
-        case "${2:-}" in
-            1) suites=$shard1 ;;
-            2) suites=$shard2 ;;
-            3) suites=$shard3 ;;
-            4) suites=$shard4 ;;
-            *) echo "run.sh: no shard '${2:-}'" >&2; exit 2 ;;
-        esac ;;
-    shards) echo '[1, 2, 3, 4]'; exit 0 ;;
+        # Only a number from `shards` reaches the eval.
+        n=${2:-}
+        case "$n" in ''|*[!0-9]*) n= ;; esac
+        case " $shards " in *" $n "*) ;; *) n= ;; esac
+        [ -n "$n" ] || { echo "run.sh: no shard '${2:-}'" >&2; exit 2; }
+        eval "suites=\$shard$n" ;;
+    shards) echo "[$(echo $shards | sed 's/ /, /g')]"; exit 0 ;;
     packaging) suites="container bundle" ;;
     list) printf '%s\n' $native container bundle; exit 0 ;;
     *) suites="$*" ;;
