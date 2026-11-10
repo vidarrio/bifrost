@@ -50,7 +50,8 @@ pub(crate) fn sysadmin_only() -> Response {
     render::notice("Sysadmins only.", false, "/").into_response()
 }
 
-/// Send a file as an attachment named `name` (ranges, conditional requests).
+/// Send a file as an attachment named `name` (ranges, conditional requests;
+/// `tests/e2e/backup.py` checks both).
 pub(crate) async fn download(
     path: std::path::PathBuf,
     name: &str,

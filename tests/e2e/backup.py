@@ -48,6 +48,19 @@ try:
 
     r = get(root, f"/admin/settings/backups/download?name={name}")
     check("download works", r.ok and r.headers.get("content-disposition", "").endswith(f'"{name}"'), r.status_code)
+    # Downloads answer ranges and conditional requests (tower-http's ServeFile),
+    # and are never cached, so a replaced file is fetched again.
+    url, size, etag = f"/admin/settings/backups/download?name={name}", len(r.content), r.headers.get("etag")
+    check("…isn't cached", r.headers.get("cache-control") == "no-store", r.headers.get("cache-control"))
+    rr = get(root, url, headers={"Range": "bytes=0-9"})
+    check("…sends a range", rr.status_code == 206 and rr.content == r.content[:10]
+          and rr.headers.get("content-range") == f"bytes 0-9/{size}", (rr.status_code, rr.headers.get("content-range")))
+    rr = get(root, url, headers={"Range": f"bytes={size}-"})
+    check("…refuses a range past the end", rr.status_code == 416, rr.status_code)
+    rr = get(root, url, headers={"If-None-Match": etag or "-"})
+    check("…answers 304 to its own ETag", etag and rr.status_code == 304 and not rr.content, (etag, rr.status_code))
+    rr = get(root, url, headers={"If-None-Match": '"other"'})
+    check("…and sends it again for another", rr.status_code == 200 and rr.content == r.content, rr.status_code)
     z = zipfile.ZipFile(io.BytesIO(r.content))
     names = z.namelist()
     check("backup has the database", "bifrost.db" in names)
