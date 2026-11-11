@@ -220,10 +220,15 @@ def main(base, data):
                 sys.exit(f"seed: marking {slot} finished didn't take: {notice and notice.group(1)}")
             print(f"seed:   {slot}: goal", flush=True)
         done = set()
+        landed = {}
         for slot, want in plan.items():
             if want == "goal":
                 continue
-            mine = [p for p in places if p[0] == slot]
+            # Not where a finished game's items were: finishing collects them
+            # (under Archipelago's default collect_mode, auto), so those
+            # locations are checked already and trying them only costs a console
+            # round trip each.
+            mine = [p for p in places if p[0] == slot and plan.get(p[3]) != "goal"]
             sent, missed = 0, []
             for finder, loc, _, _, _ in mine:
                 if sent >= want:
@@ -239,6 +244,7 @@ def main(base, data):
                     sent += 1
                 elif not out.startswith("(command accepted"):
                     missed.append(f"{loc}: {out}")
+            landed[slot] = sent
             print(f"seed:   {slot}: {sent} of {len(mine)} locations checked", flush=True)
             # Far short of the plan, mostly through names the server didn't know,
             # means the spoiler's names no longer match the server's.
@@ -320,6 +326,34 @@ def main(base, data):
                      "not starrable on their game page: " + "; ".join(unshown))
         if hinted:
             print(f"seed:   {len(hinted)} hints, {starred} prioritized", flush=True)
+        # Archiving freezes the board's counts, which follow the game server's
+        # save file (written every minute or so), so wait until every card has
+        # caught up: a finished game shows all its locations checked, and any
+        # other at least those its finished partners' collects checked plus the
+        # ones checked above.
+        want_seen = {slot: len([p for p in places if p[0] == slot and plan.get(p[3]) == "goal"]) + landed.get(slot, 0)
+                     for slot, how in plan.items() if how != "goal"}
+        for _ in range(100):
+            behind, seen_slots = [], set()
+            for card in admin.get(f"{base}/s/{sid}/board").text.split('class="slot cardlink')[1:]:
+                m = re.search(r"(\d+) locations · \d+ left · sent (\d+) ·", card)
+                who = set(re.findall(r'<span class="who">([^<]+)</span>', card))
+                slot = "Commons" if "Everyone" in who else next((w for w in who if w in plan), None)
+                if not m or slot is None:
+                    continue
+                seen_slots.add(slot)
+                total, seen = int(m.group(1)), int(m.group(2))
+                need = max(total, 1) if plan[slot] == "goal" else want_seen[slot]
+                if seen < need:
+                    behind.append(f"{slot} {seen}/{need}")
+            # A card it couldn't read counts as behind, so a change to the
+            # board's markup fails here rather than skipping the wait.
+            behind += [f"{slot} (no card read)" for slot in plan if slot not in seen_slots]
+            if not behind:
+                break
+            time.sleep(3)
+        else:
+            sys.exit(f"seed: season {sid}'s board never caught up: {', '.join(behind)}")
 
     def minesweeper(sid, games):
         """Write a history of finished boards: (account, kind, boards, win share)."""
