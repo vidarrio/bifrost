@@ -120,15 +120,13 @@ try:
     check("at most 12 seasons", "at most 12 seasons" in r.text and "One too many" not in get(admin, "/admin/seasons").text, r.text[-300:])
     sid = re.search(r"/s/([0-9a-z]+)/admin", made[-1].url).group(1)
     post(admin, f"/s/{sid}/admin/signups", data=dict(open="1"))
-    def signup(name):  # paced: signups are rate limited
-        for _ in range(30):
-            r = post(player, f"/s/{sid}/signup", files={"yaml": ("y.yaml", YAML.format(name).encode())})
-            if r.status_code != 429:
-                return r
-            time.sleep(2)
-        return r
-    oks = sum('class="banner ok"' in signup(f"P{i}").text for i in range(12))
-    r = signup("P12")
+    def signup(name, i):
+        # Each from an address of its own: signups are rate limited per address
+        # (10 in 10 minutes), and the seed has used up this one's.
+        return post(player, f"/s/{sid}/signup", files={"yaml": ("y.yaml", YAML.format(name).encode())},
+                    headers={"X-Forwarded-For": f"198.51.100.{100 + i}"})
+    oks = sum('class="banner ok"' in signup(f"P{i}", i).text for i in range(12))
+    r = signup("P12", 12)
     check("a season takes 12 games", oks == 12, oks)
     check("at most 12 games in a season", "at most 12 games" in r.text, re.findall(r'class="banner[^"]*">[^<]*', r.text))
 
@@ -140,7 +138,7 @@ try:
     extra = [re.search(r"/s/([0-9a-z]+)/admin", m.url).group(1) for m in made[:4]]
     for i, e in enumerate(extra):
         post(admin, f"/s/{e}/admin/signups", data=dict(open="1"))
-        # From an address of its own: the caps above used up this one's signups.
+        # From an address of its own: the seed used up this one's signups.
         post(admin, f"/s/{e}/signup", files={"yaml": ("y.yaml", YAML.format(f"L{i}").encode())},
              headers={"X-Forwarded-For": f"198.51.100.{i + 1}"})
     gens = [threading.Thread(target=post, args=(admin, f"/s/{e}/admin/generate")) for e in extra]

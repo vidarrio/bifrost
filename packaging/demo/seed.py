@@ -223,7 +223,10 @@ def main(base, data):
         for slot, want in plan.items():
             if want == "goal":
                 continue
-            mine = [p for p in places if p[0] == slot]
+            # Not where a finished game's items were: finishing collects them,
+            # so those locations are checked already and trying them only costs
+            # a console round trip each.
+            mine = [p for p in places if p[0] == slot and plan.get(p[3]) != "goal"]
             sent, missed = 0, []
             for finder, loc, _, _, _ in mine:
                 if sent >= want:
@@ -320,6 +323,19 @@ def main(base, data):
                      "not starrable on their game page: " + "; ".join(unshown))
         if hinted:
             print(f"seed:   {len(hinted)} hints, {starred} prioritized", flush=True)
+        # The board counts what the game server reports, a little later: wait
+        # until it shows the goals and the checks, so that archiving freezes
+        # them and the snapshot shows them.
+        goals = sum(how == "goal" for how in plan.values())
+        for i in range(100):
+            b = admin.get(f"{base}/s/{sid}/board").text
+            shown = b.count('<span class="st">goaled</span>')
+            moving = sum(int(n) > 0 for n in re.findall(r"· sent (\d+) ·", b))
+            if shown >= goals and (moving >= len(plan) or i >= 20):
+                break
+            time.sleep(3)
+        else:
+            sys.exit(f"seed: season {sid}'s board showed {shown} of {goals} goals")
 
     def minesweeper(sid, games):
         """Write a history of finished boards: (account, kind, boards, win share)."""
