@@ -119,6 +119,9 @@ pub fn season_page(
         // The log's rows measure nothing while its tab is hidden, so fit its
         // page size to the window when the tab opens (on load, the hash has
         // already opened it by the time `bifFitLog` runs).
+        // After `TABS_JS`, so its click handler runs second: the tab script
+        // has shown the panel and written `#tab-log` by then, and the refit's
+        // reload keeps that hash.
         if has_log {
             out.push_str(FIT_LOG_ON_TAB_JS);
         }
