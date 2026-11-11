@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-11
+
 ### Changed
 
 - An archived season's page puts its final standings, its minesweeper leaderboards and
@@ -396,7 +398,8 @@ Upgrading from 0.1.x:
   a given version), checked against the release's checksums. Going back means
   restoring the pre-upgrade backup and the previous file, which it keeps.
 
-[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/vidarrio/bifrost/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/vidarrio/bifrost/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/vidarrio/bifrost/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/vidarrio/bifrost/compare/v0.1.2...v0.2.0
