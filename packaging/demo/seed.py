@@ -334,17 +334,21 @@ def main(base, data):
         want_seen = {slot: len([p for p in places if p[0] == slot and plan.get(p[3]) == "goal"]) + landed.get(slot, 0)
                      for slot, how in plan.items() if how != "goal"}
         for _ in range(100):
-            behind = []
+            behind, seen_slots = [], set()
             for card in admin.get(f"{base}/s/{sid}/board").text.split('class="slot cardlink')[1:]:
                 m = re.search(r"(\d+) locations · \d+ left · sent (\d+) ·", card)
                 who = set(re.findall(r'<span class="who">([^<]+)</span>', card))
                 slot = "Commons" if "Everyone" in who else next((w for w in who if w in plan), None)
                 if not m or slot is None:
                     continue
+                seen_slots.add(slot)
                 total, seen = int(m.group(1)), int(m.group(2))
-                need = total if plan[slot] == "goal" else want_seen[slot]
+                need = max(total, 1) if plan[slot] == "goal" else want_seen[slot]
                 if seen < need:
                     behind.append(f"{slot} {seen}/{need}")
+            # A card it couldn't read counts as behind, so a change to the
+            # board's markup fails here rather than skipping the wait.
+            behind += [f"{slot} (no card read)" for slot in plan if slot not in seen_slots]
             if not behind:
                 break
             time.sleep(3)
