@@ -34,7 +34,7 @@ function resolve(href) {
 
 // A page with a tab bar over `panels` ({id: [link hrefs]}), the first one
 // open, and one GET form in the last panel. `hash` is the URL's fragment.
-function load(panels, hash = '') {
+function load(panels, hash = '', search = '') {
   const ids = Object.keys(panels);
   const listeners = [];
   const buttons = ids.map((id, i) => ({
@@ -73,6 +73,7 @@ function load(panels, hash = '') {
   };
   const url = new URL(PAGE);
   url.hash = hash;
+  url.search = search;
   const page = {
     buttons,
     panels: panelEls,
@@ -92,7 +93,7 @@ function load(panels, hash = '') {
   };
   const ctx = {
     document,
-    location: { origin: url.origin, pathname: url.pathname, hash: url.hash },
+    location: { origin: url.origin, pathname: url.pathname, search: url.search, hash: url.hash },
     history: { replaceState: (_s, _t, u) => page.replaced.push(u) },
     URL,
   };
@@ -113,7 +114,15 @@ test('the first tab is open until another is clicked', () => {
   p.click('tab-log');
   assert.deepEqual(p.open(), ['tab-log']);
   assert.deepEqual(p.on(), ['tab-log']);
-  assert.deepEqual(p.replaced, ['#tab-log']);
+  assert.deepEqual(p.replaced, ['/s/abc/season#tab-log']);
+});
+
+// Pages set a <base> (/s/abc/), which history.replaceState resolves against, so
+// a bare '#tab-log' would send the address to /s/abc/#tab-log.
+test('the hash it writes keeps the page and its query', () => {
+  const p = load(SEASON, '', '?page=2&rpp=40');
+  p.click('tab-log');
+  assert.deepEqual(p.replaced, ['/s/abc/season?page=2&rpp=40#tab-log']);
 });
 
 test('the hash opens its tab without adding to the history', () => {

@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its activity log on tabs, instead of one long page. The activity log's pages and
   filter stay on its tab.
 
+### Fixed
+
+- Switching tabs on a game's page or the season console changed the address to the
+  season's own root, losing the page and its query, so reloading or sharing it led to
+  the season's board instead. The address now keeps the page. On an archived season's
+  page this also stopped the activity log fitting its rows to the window when its tab
+  opened.
+
 ## [0.4.0] - 2026-11-11
 
 ### Added

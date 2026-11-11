@@ -1,10 +1,12 @@
 // Tab bars (`.gtabs`) and their panels (`.gtabpanel`), included in a page by
 // `TABS_JS` in mod.rs. Tested by tests/js/tabs.test.mjs.
+// The URLs it writes name the page's own path: pages set a <base>, which a bare
+// '#tab' would resolve against.
 (function(){var bar=document.querySelector('.gtabs');if(!bar)return;
 function activate(id,push){var btn=bar.querySelector('.gtab[data-tab="'+id+'"]');if(!btn)return;
 bar.querySelectorAll('.gtab').forEach(function(x){x.classList.toggle('on',x===btn);});
 document.querySelectorAll('.gtabpanel').forEach(function(p){p.hidden=(p.id!==id);});
-if(push)history.replaceState(null,'','#'+id);
+if(push)history.replaceState(null,'',location.pathname+location.search+'#'+id);
 document.querySelectorAll('form').forEach(function(f){var a=f.getAttribute('action');if(a)f.setAttribute('action',a.split('#')[0]+'#'+id);});}
 bar.addEventListener('click',function(e){var b=e.target.closest('.gtab');if(!b)return;activate(b.getAttribute('data-tab'),true);});
 document.querySelectorAll('.gtabpanel a[href]').forEach(function(a){if(a.getAttribute('href').charAt(0)==='#')return;var u;try{u=new URL(a.href);}catch(e){return;}
