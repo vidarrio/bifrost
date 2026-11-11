@@ -2,6 +2,10 @@
 
 use super::*;
 
+const FIT_LOG_ON_TAB_JS: &str = r#"<script>
+document.querySelector('.gtabs').addEventListener('click',function(e){var b=e.target.closest('.gtab');if(b&&b.getAttribute('data-tab')==='tab-log')bifFitLog();});
+</script>"#;
+
 /// An archived season's detail page: final standings per game, this season's
 /// frozen minesweeper leaderboards and its activity log, each on a tab.
 pub fn season_page(
@@ -37,6 +41,7 @@ pub fn season_page(
     .collect();
     let tabbed = tabs.len() > 1;
     if tabbed {
+        out.push_str(TABS_CSS);
         out.push_str(r#"<div class="gtabs">"#);
         for (i, (id, label)) in tabs.iter().enumerate() {
             let on = if i == 0 { " on" } else { "" };
@@ -111,6 +116,12 @@ pub fn season_page(
     }
     if tabbed {
         out.push_str(TABS_JS);
+        // The log's rows measure nothing while its tab is hidden, so fit its
+        // page size to the window when the tab opens (on load, the hash has
+        // already opened it by the time `bifFitLog` runs).
+        if has_log {
+            out.push_str(FIT_LOG_ON_TAB_JS);
+        }
     }
 
     out.push_str("</main></body></html>");

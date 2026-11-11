@@ -803,13 +803,21 @@ mod tests {
         assert!(at(r#"<div class="gtabpanel" id="tab-standings">"#) < at("ChecksFinder"));
         assert!(at(r#"<div class="gtabpanel" id="tab-mine" hidden>"#) < at("Beginner"));
         assert!(at(r#"<div class="gtabpanel" id="tab-log" hidden>"#) < at(r#"id="logfilter""#));
-        assert!(all.contains(TABS_JS));
+        assert!(all.contains(TABS_CSS) && all.contains(TABS_JS));
+        assert!(
+            all.contains("bifFitLog();"),
+            "refits the log when its tab opens"
+        );
 
         let no_mine = page(false, true);
         assert!(!no_mine.contains("tab-mine") && no_mine.contains("tab-log"));
-        assert!(no_mine.contains(TABS_JS));
+        assert!(no_mine.contains(TABS_CSS) && no_mine.contains(TABS_JS));
 
-        // Standings alone need no tabs.
+        let no_log = page(true, false);
+        assert!(no_log.contains("tab-mine") && !no_log.contains("tab-log"));
+        assert!(!no_log.contains("bifFitLog();"));
+
+        // Standings alone need no tabs (no "gtab" also means no TABS_CSS).
         let alone = page(false, false);
         assert!(
             !alone.contains("gtab") && !alone.contains(TABS_JS),

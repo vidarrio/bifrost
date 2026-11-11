@@ -23,6 +23,15 @@ function classList(names) {
   };
 }
 
+// What a browser gives as an `a.href`: resolved, or as written if it can't be.
+function resolve(href) {
+  try {
+    return new URL(href, PAGE).href;
+  } catch {
+    return href;
+  }
+}
+
 // A page with a tab bar over `panels` ({id: [link hrefs]}), the first one
 // open, and one GET form in the last panel. `hash` is the URL's fragment.
 function load(panels, hash = '') {
@@ -47,7 +56,7 @@ function load(panels, hash = '') {
     for (const href of panels[p.id]) {
       const link = {
         raw: href,
-        href: new URL(href, PAGE).href,
+        href: resolve(href),
         getAttribute: (a) => (a === 'href' ? href : null),
         closest: (q) => (q === '.gtabpanel' ? p : null),
       };
@@ -155,4 +164,10 @@ test('a page without a tab bar is left alone', () => {
   };
   vm.createContext(ctx);
   vm.runInContext(SRC, ctx);
+});
+
+test("a link that can't be parsed doesn't stop the script", () => {
+  const p = load({ 'tab-a': [], 'tab-b': ['http://[nope', 'season?page=2'] }, '#tab-b');
+  assert.deepEqual(p.links.map((l) => l.href), ['http://[nope', `${PAGE}?page=2#tab-b`]);
+  assert.deepEqual(p.open(), ['tab-b']);
 });
