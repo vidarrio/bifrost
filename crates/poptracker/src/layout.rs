@@ -1,9 +1,9 @@
 //! Layouts, rule lists and location trees read from a pack's JSON.
 
 use crate::defs::{LocNode, MapLoc, SectionDef};
+use crate::engine::E;
 use crate::rules::{MAX_ALTERNATIVES, Rules};
 use crate::sandbox::note_error;
-use crate::session::engine::E;
 use std::collections::HashMap;
 use std::rc::Rc;
 

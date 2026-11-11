@@ -1,8 +1,8 @@
 //! Settling every location's and section's level over repeated passes.
 
+use crate::engine::E;
 use crate::rules::{LEVEL_NONE, LEVEL_NORMAL, MAX_RULE_PASSES, Rules, resolve_rules};
 use crate::sandbox::note_error;
-use crate::session::engine::E;
 use mlua::Lua;
 
 /// Settle every location's and section's level, unless that's been done since the

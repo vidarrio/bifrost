@@ -1,7 +1,7 @@
 //! The `Archipelago` global.
 
 use crate::Result;
-use crate::session::engine::{E, MAX_STORAGE_KEY, MAX_STORAGE_KEYS, PLAYERS};
+use crate::engine::{E, MAX_STORAGE_KEY, MAX_STORAGE_KEYS, PLAYERS};
 use mlua::{Function, Lua, MultiValue, Table, Value};
 
 /// The `Archipelago` global: handlers, data-storage reads and players.

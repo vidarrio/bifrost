@@ -4,10 +4,10 @@ pub(crate) mod locations;
 pub(crate) mod providers;
 pub(crate) mod settle;
 
+use crate::engine::E;
 use crate::rules::locations::reference_level;
 use crate::rules::providers::{count_custom_call, location_present, provider_count_cached};
 use crate::sandbox::{is_memory_error, note_error};
-use crate::session::engine::E;
 use mlua::{Function, Lua, MultiValue, Value};
 
 // ---- access-rule evaluation --------------------------------------------------
@@ -33,7 +33,7 @@ pub(crate) fn level_name(l: Level) -> &'static str {
 
 /// How many times the rules are gone through for references between locations
 /// to settle. PopTracker goes on until they do; a pack can make them flip forever.
-pub(crate) const MAX_RULE_PASSES: usize = 256;
+const MAX_RULE_PASSES: usize = 256;
 
 /// How many alternatives one location's rules may join up to with its parents':
 /// the count multiplies at each level, and memory for it is outside Lua's cap.
@@ -57,7 +57,7 @@ pub(crate) fn leading_int(s: &str) -> i64 {
 
 /// Run a rule's `$name|arg|…` function, as PopTracker reads its result: a number
 /// (or a string that is one) truncated, `true` as 1, anything else or an error 0.
-pub(crate) fn run_rule_function(lua: &Lua, eng: &E, code: &str) -> i64 {
+fn run_rule_function(lua: &Lua, eng: &E, code: &str) -> i64 {
     let mut parts = code.strip_prefix('$').unwrap_or(code).split('|');
     let name = parts.next().unwrap_or("");
     let Ok(func) = lua.globals().get::<Function>(name) else {

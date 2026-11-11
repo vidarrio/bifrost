@@ -35,6 +35,7 @@
 
 mod archive;
 mod defs;
+mod engine;
 mod host;
 mod item_json;
 mod items;

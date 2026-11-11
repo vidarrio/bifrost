@@ -1,9 +1,9 @@
 //! `require`, finding modules only in the pack.
 
 use crate::Result;
+use crate::engine::E;
 use crate::pack::{find_in_pack, module_path};
 use crate::sandbox::to_lua;
-use crate::session::engine::E;
 use crate::session::read_pack_file;
 use mlua::{Lua, Table, Value};
 

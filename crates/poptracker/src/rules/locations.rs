@@ -1,9 +1,9 @@
 //! Locations and sections as rules and objects refer to them.
 
 use crate::defs::LocNode;
+use crate::engine::E;
 use crate::rules::providers::provider_count;
 use crate::rules::{LEVEL_NONE, LEVEL_NORMAL, Level};
-use crate::session::engine::E;
 use mlua::Lua;
 
 /// A function running for a rule looked at a location (see `provider_count_cached`).
@@ -102,7 +102,7 @@ pub(crate) fn real_section(eng: &E, loc: usize, section: usize) -> Option<(usize
 
 /// A reference's level, from what's settled so far. As in PopTracker, a target with
 /// no visibility rules is visible, and one not settled yet isn't.
-pub(crate) fn reference_level(eng: &E, id: &str, visibility: bool) -> Option<Level> {
+pub(super) fn reference_level(eng: &E, id: &str, visibility: bool) -> Option<Level> {
     let read = |key: &str, vis_empty: bool| -> Level {
         let e = eng.borrow();
         if visibility {

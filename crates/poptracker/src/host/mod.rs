@@ -8,7 +8,7 @@ mod script_host;
 mod tracker;
 
 use crate::Result;
-use crate::session::engine::E;
+use crate::engine::E;
 use mlua::Lua;
 
 // ---- host API ----------------------------------------------------------------

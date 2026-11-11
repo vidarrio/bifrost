@@ -2,14 +2,14 @@
 
 use crate::Result;
 use crate::defs::MapDef;
+use crate::engine::{
+    E, ITEM_INDEX, ITEM_METHODS, ITEM_OBJECTS, LOCATION_METHODS, MAX_LOOKUP_DEPTH,
+};
 use crate::item_json::read_item;
 use crate::json::parse_pack_json;
 use crate::layout::{flatten_locations, num};
 use crate::rules::locations::{location_object, mark_indirect};
 use crate::rules::providers::{custom_can_provide, provider_count_cached};
-use crate::session::engine::{
-    E, ITEM_INDEX, ITEM_METHODS, ITEM_OBJECTS, LOCATION_METHODS, MAX_LOOKUP_DEPTH,
-};
 use crate::session::read_pack_file;
 use mlua::{Lua, MultiValue, Table, Value};
 use std::rc::Rc;

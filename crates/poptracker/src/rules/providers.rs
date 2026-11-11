@@ -1,8 +1,8 @@
 //! Counting the items (and custom items) that provide a code.
 
+use crate::engine::{E, MAX_CUSTOM_CALLS, MAX_LOOKUP_DEPTH};
 use crate::rules::run_rule_function;
 use crate::sandbox::{is_memory_error, note_error};
-use crate::session::engine::{E, MAX_CUSTOM_CALLS, MAX_LOOKUP_DEPTH};
 use mlua::{Lua, Table, Value};
 
 pub(crate) fn provider_count(lua: &Lua, eng: &E, code: &str) -> i64 {
@@ -105,7 +105,7 @@ pub(crate) fn custom_can_provide(eng: &E, item: &Table, code: &str) -> bool {
 /// CheckedLocations`). We resolve it directly against the fed valid-location set.
 /// Returns false when no set was fed (so visibility stays disabled) or the code
 /// isn't a plain integer.
-pub(crate) fn location_present(eng: &E, code: &str) -> bool {
+pub(super) fn location_present(eng: &E, code: &str) -> bool {
     let e = eng.borrow();
     let Some(valid) = e.valid_locations.as_ref() else {
         return false;

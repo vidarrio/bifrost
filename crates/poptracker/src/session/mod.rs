@@ -1,17 +1,16 @@
 //! A live engine session for one pack and one slot.
 
-pub(crate) mod engine;
-mod state;
+mod report;
 
+use crate::engine::{
+    CODE_WATCHES, DIRTY_CUSTOM, E, Eng, FRAME_HANDLERS, MAX_STORAGE_ROUNDS, MAX_WATCH_ROUNDS,
+    PLAYERS,
+};
 use crate::host::install_host;
 use crate::json::{json_to_lua, parse_pack_json};
 use crate::pack::{Pack, find_in_pack};
 use crate::rules::providers::{count_custom_call, custom_can_provide};
 use crate::sandbox::{is_memory_error, note_error, run_pack_source, sandboxed_lua};
-use crate::session::engine::{
-    CODE_WATCHES, DIRTY_CUSTOM, E, Eng, FRAME_HANDLERS, MAX_STORAGE_ROUNDS, MAX_WATCH_ROUNDS,
-    PLAYERS,
-};
 use crate::{Error, Result};
 use mlua::{Function, Lua, Table, Value};
 use std::cell::RefCell;
@@ -26,7 +25,7 @@ pub struct Session {
     eng: E,
     /// Remaining instruction-hook ticks for the current operation; the debug
     /// hook decrements it and aborts at zero so untrusted pack Lua can't hang
-    /// the host. Reset (via [`charge`]) at the start of each public call.
+    /// the host. Reset (via [`Self::charge`]) at the start of each public call.
     budget: Rc<std::cell::Cell<u64>>,
 }
 
@@ -403,7 +402,7 @@ pub(crate) fn read_pack_file(eng: &E, rel: &str) -> Result<String> {
 /// The live callbacks in a registry list (see `FRAME_HANDLERS`) that `pick`
 /// accepts, in the order they were added, copied out first so a callback may
 /// change the list.
-pub(crate) fn registered(lua: &Lua, key: &str, pick: impl Fn(&Table) -> bool) -> Vec<Function> {
+fn registered(lua: &Lua, key: &str, pick: impl Fn(&Table) -> bool) -> Vec<Function> {
     let Ok(list) = lua.named_registry_value::<Table>(key) else {
         return Vec::new();
     };

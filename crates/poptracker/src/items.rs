@@ -1,7 +1,7 @@
 //! PopTracker's item model: what a pack reads and writes through an item's object.
 
+use crate::engine::E;
 use crate::item_json::parse_filters;
-use crate::session::engine::E;
 use mlua::{Lua, Value};
 
 /// How far one item's change may pass on through composites' links.

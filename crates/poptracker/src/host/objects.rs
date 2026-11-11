@@ -1,13 +1,11 @@
 //! Location, section and item objects, and custom items.
 
 use crate::Result;
+use crate::engine::{DIRTY_CUSTOM, E, ITEM_INDEX, ITEM_METHODS, ITEM_OBJECTS, LOCATION_METHODS};
 use crate::items::{item_get, item_set};
 use crate::rules::locations::{hosted_collected, mark_indirect};
 use crate::rules::settle::settle_accessibility;
 use crate::rules::{LEVEL_CLEARED, LEVEL_NONE};
-use crate::session::engine::{
-    DIRTY_CUSTOM, E, ITEM_INDEX, ITEM_METHODS, ITEM_OBJECTS, LOCATION_METHODS,
-};
 use mlua::{Lua, MultiValue, Table, Value};
 
 /// Location and item objects' methods, and `ScriptHost:CreateLuaItem` (so after `ScriptHost`).

@@ -1,8 +1,8 @@
 //! The sandboxed Lua VM, and helpers for the errors pack Lua raises.
 
-use crate::session::engine::{E, MAX_PACK_ERROR_LEN, MAX_PACK_ERRORS};
+use crate::engine::{E, MAX_PACK_ERROR_LEN, MAX_PACK_ERRORS};
 use crate::{Error, Result};
-use mlua::{Lua, LuaOptions, StdLib, Table, Value};
+use mlua::{Lua, LuaOptions, StdLib, Value};
 
 /// Memory ceiling for the sandboxed Lua VM (guards runaway allocation).
 const LUA_MEMORY_LIMIT: usize = 256 * 1024 * 1024;
@@ -31,24 +31,6 @@ pub(crate) fn is_memory_error(e: &mlua::Error) -> bool {
 
 pub(crate) fn to_lua(e: Error) -> mlua::Error {
     mlua::Error::runtime(e.to_string())
-}
-
-/// A whole-number field a pack keeps as a Lua number, truncated toward zero
-/// like PopTracker does (and mlua before 0.12, which now refuses `1.5` as an
-/// integer). Integers (and integral values) are read exactly; other numbers
-/// are truncated if they fit an i64. Missing, non-numeric, NaN, infinite or
-/// out-of-range values are `None`.
-pub(crate) fn lua_int(t: &Table, key: &str) -> Option<i64> {
-    if let Ok(i) = t.get::<i64>(key) {
-        return Some(i);
-    }
-    // -2^63 is exact as a float; 2^63 is the first value past i64::MAX.
-    const MIN: f64 = i64::MIN as f64;
-    const MAX: f64 = -(i64::MIN as f64);
-    t.get::<f64>(key)
-        .ok()
-        .filter(|n| *n >= MIN && *n < MAX)
-        .map(|n| n.trunc() as i64)
 }
 
 /// Run a pack's Lua file, as source only: a chunk that starts with Lua's
@@ -192,7 +174,7 @@ mod tests {
                 "{banned} must be unavailable to pack Lua"
             );
         }
-        let os: Table = g.get("os").unwrap();
+        let os: mlua::Table = g.get("os").unwrap();
         let mut names: Vec<String> = os
             .pairs::<String, Value>()
             .map(|kv| kv.unwrap().0)

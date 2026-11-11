@@ -1,8 +1,8 @@
 //! The `ScriptHost` global.
 
 use crate::Result;
+use crate::engine::{CODE_WATCHES, E, FRAME_HANDLERS};
 use crate::sandbox::{is_memory_error, note_error, to_lua};
-use crate::session::engine::{CODE_WATCHES, E, FRAME_HANDLERS};
 use crate::session::read_pack_file;
 use mlua::{Function, Lua, MultiValue, Table, Value};
 

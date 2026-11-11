@@ -1,11 +1,11 @@
 //! A session's reports: the tracker state and the pack summary.
 
+use crate::engine::CODE_WATCHES;
 use crate::layout::resolve_layout;
 use crate::rules::locations::{all_held, real_section};
 use crate::rules::settle::{settle_accessibility, settle_visibility};
 use crate::rules::{LEVEL_NONE, LEVEL_NORMAL, Rules, level_name, resolve_rules};
-use crate::sandbox::{lua_int, note_error};
-use crate::session::engine::CODE_WATCHES;
+use crate::sandbox::note_error;
 use crate::session::{Session, registered};
 use crate::state::{
     ItemState, LocationState, MapInfo, Marker, SectionState, Summary, TrackerState,
@@ -256,4 +256,22 @@ impl Session {
                 && e.setr_h.is_empty()),
         }
     }
+}
+
+/// A whole-number field a pack keeps as a Lua number, truncated toward zero
+/// like PopTracker does (and mlua before 0.12, which now refuses `1.5` as an
+/// integer). Integers (and integral values) are read exactly; other numbers
+/// are truncated if they fit an i64. Missing, non-numeric, NaN, infinite or
+/// out-of-range values are `None`.
+fn lua_int(t: &Table, key: &str) -> Option<i64> {
+    if let Ok(i) = t.get::<i64>(key) {
+        return Some(i);
+    }
+    // -2^63 is exact as a float; 2^63 is the first value past i64::MAX.
+    const MIN: f64 = i64::MIN as f64;
+    const MAX: f64 = -(i64::MIN as f64);
+    t.get::<f64>(key)
+        .ok()
+        .filter(|n| *n >= MIN && *n < MAX)
+        .map(|n| n.trunc() as i64)
 }
