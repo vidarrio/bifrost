@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- An archived season's page puts its final standings, its minesweeper leaderboards and
+  its activity log on tabs, instead of one long page. The activity log's pages and
+  filter stay on its tab.
+
 ## [0.4.0] - 2026-11-11
 
 ### Added

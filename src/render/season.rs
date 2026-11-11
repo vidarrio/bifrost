@@ -2,8 +2,12 @@
 
 use super::*;
 
-/// An archived season's detail page: final standings per game + this season's
-/// frozen minesweeper leaderboards.
+const FIT_LOG_ON_TAB_JS: &str = r#"<script>
+document.querySelector('.gtabs').addEventListener('click',function(e){var b=e.target.closest('.gtab');if(b&&b.getAttribute('data-tab')==='tab-log')bifFitLog();});
+</script>"#;
+
+/// An archived season's detail page: final standings per game, this season's
+/// frozen minesweeper leaderboards and its activity log, each on a tab.
 pub fn season_page(
     s: &crate::season::SeasonSummary,
     activity: &[crate::db::ActivityRow],
@@ -21,7 +25,47 @@ pub fn season_page(
         fmt_date(s.finalized_at),
     ));
 
-    out.push_str(r#"<h2>Final standings</h2>"#);
+    // Standings, the minesweeper leaderboards and the activity log each get a
+    // tab, when there's more than one of them to show.
+    let has_mine = s.minesweeper.iter().any(|m| !m.is_empty());
+    // Shown whenever the season has any logged activity (participants non-empty),
+    // so the filter bar + "no matches" still render under an active filter.
+    let has_log = !f.participants.is_empty();
+    let tabs: Vec<(&str, &str)> = [
+        Some(("tab-standings", "Final standings")),
+        has_mine.then_some(("tab-mine", "Minesweeper")),
+        has_log.then_some(("tab-log", "Activity log")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let tabbed = tabs.len() > 1;
+    if tabbed {
+        out.push_str(TABS_CSS);
+        out.push_str(r#"<div class="gtabs">"#);
+        for (i, (id, label)) in tabs.iter().enumerate() {
+            let on = if i == 0 { " on" } else { "" };
+            out.push_str(&format!(
+                r#"<button type="button" class="gtab{on}" data-tab="{id}">{label}</button>"#
+            ));
+        }
+        out.push_str("</div>");
+    }
+    let open = |out: &mut String, id: &str, title: &str| {
+        if tabbed {
+            let hidden = if id == "tab-standings" { "" } else { " hidden" };
+            out.push_str(&format!(r#"<div class="gtabpanel" id="{id}"{hidden}>"#));
+        } else {
+            out.push_str(&format!("<h2>{title}</h2>"));
+        }
+    };
+    let close = |out: &mut String| {
+        if tabbed {
+            out.push_str("</div>");
+        }
+    };
+
+    open(&mut out, "tab-standings", "Final standings");
     if s.games.is_empty() {
         out.push_str(r#"<div class="empty">No games recorded.</div>"#);
     } else {
@@ -41,22 +85,22 @@ pub fn season_page(
         }
         out.push_str("</div>");
     }
+    close(&mut out);
 
-    if s.minesweeper.iter().any(|m| !m.is_empty()) {
-        out.push_str(r#"<h2>Minesweeper — this season</h2>"#);
+    if has_mine {
+        open(&mut out, "tab-mine", "Minesweeper — this season");
         for m in &s.minesweeper {
             if m.is_empty() {
                 continue;
             }
             out.push_str(&mine_leaderboard_html(&m.label, &m.time, &m.rate, 5));
         }
+        close(&mut out);
     }
 
     // Season activity log, replayed with "x ago" frozen to the season-end time.
-    // Shown whenever the season has any logged activity (participants non-empty),
-    // so the filter bar + "no matches" still render under an active filter.
-    if !f.participants.is_empty() {
-        out.push_str(r#"<h2>Activity log</h2>"#);
+    if has_log {
+        open(&mut out, "tab-log", "Activity log");
         render_log_section(
             &mut out,
             "season",
@@ -68,6 +112,16 @@ pub fn season_page(
             f,
             false,
         );
+        close(&mut out);
+    }
+    if tabbed {
+        out.push_str(TABS_JS);
+        // The log's rows measure nothing while its tab is hidden, so fit its
+        // page size to the window when the tab opens (on load, the hash has
+        // already opened it by the time `bifFitLog` runs).
+        if has_log {
+            out.push_str(FIT_LOG_ON_TAB_JS);
+        }
     }
 
     out.push_str("</main></body></html>");

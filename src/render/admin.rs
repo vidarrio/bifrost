@@ -270,7 +270,7 @@ pub fn admin_page(
         season.state().as_str(),
     ));
     // Tabbed season console; the tab survives form posts via
-    // the URL hash (see <button type="button" class="gtab on" data-tab="tab-overview">Overview</button><button type="button" class="gtab" data-tab="tab-entries">Signups &amp; apworlds</button><button type="button" class="gtab" data-tab="tab-files">Player files</button><button type="button" class="gtab" data-tab="tab-conn">Connection</button><button type="button" class="gtab" data-tab="tab-options">Options</button><button type="button" class="gtab" data-tab="tab-archive">Archive</button>_JS).
+    // the URL hash (see `TABS_JS`).
     let conn = if connected { "connected" } else { "waiting" };
     let seed_txt = seed.filter(|s| !s.is_empty()).unwrap_or("—");
     let addr = connect

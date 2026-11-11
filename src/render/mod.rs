@@ -563,18 +563,9 @@ fn update_banner(n: &crate::release_check::Newer) -> String {
 /// Toggles `.gtabpanel`s from the `.gtabs` bar. The open tab lives in the URL
 /// hash, and every form's action carries it too: a post's redirect inherits
 /// the fragment, so you land back on the tab you acted from.
-const TABS_JS: &str = r#"<script>
-(function(){var bar=document.querySelector('.gtabs');if(!bar)return;
-function activate(id,push){var btn=bar.querySelector('.gtab[data-tab="'+id+'"]');if(!btn)return;
-bar.querySelectorAll('.gtab').forEach(function(x){x.classList.toggle('on',x===btn);});
-document.querySelectorAll('.gtabpanel').forEach(function(p){p.hidden=(p.id!==id);});
-if(push)history.replaceState(null,'','#'+id);
-document.querySelectorAll('form').forEach(function(f){var a=f.getAttribute('action');if(a)f.setAttribute('action',a.split('#')[0]+'#'+id);});}
-bar.addEventListener('click',function(e){var b=e.target.closest('.gtab');if(!b)return;activate(b.getAttribute('data-tab'),true);});
-var h=(location.hash||'').slice(1),el=h&&document.getElementById(h);
-if(el&&el.classList.contains('gtabpanel'))activate(h,false);
-})();
-</script>"#;
+/// Links in a panel back to the same page (a log's pager and "Clear") carry
+/// their panel's hash too.
+const TABS_JS: &str = concat!("<script>", include_str!("tabs.js"), "</script>");
 
 /// Tab bar + the opening tag of the (default-visible) Hints panel. The caller
 /// closes the panel, then appends `inlogic_panel(...)` and `GAME_TAB_JS`.
@@ -768,5 +759,70 @@ mod tests {
             !html.contains("<script>bad()") && !html.contains("x\" onmouseover"),
             "unescaped field"
         );
+    }
+
+    #[test]
+    fn archived_season_tabs_what_it_has() {
+        let names = ["Ann".to_string()];
+        let filter = |participants| LogFilter {
+            kinds_selected: [true; 4],
+            classes_selected: [true; 4],
+            sender: "",
+            receiver: "",
+            within: 0,
+            since: None,
+            until: None,
+            participants,
+            qs: "",
+        };
+        let page = |mine: bool, log: bool| {
+            let s = crate::season::SeasonSummary {
+                games: vec![crate::season::SeasonGame {
+                    game: "ChecksFinder".into(),
+                    ..Default::default()
+                }],
+                minesweeper: if mine {
+                    vec![crate::season::MineBoard {
+                        label: "Beginner".into(),
+                        time: vec![("Ann".into(), 30)],
+                        ..Default::default()
+                    }]
+                } else {
+                    vec![]
+                },
+                ..Default::default()
+            };
+            let f = filter(if log { &names[..] } else { &[] });
+            season_page(&s, &[], 1, 1, 50, &f).0
+        };
+
+        let all = page(true, true);
+        let bar = r#"<div class="gtabs"><button type="button" class="gtab on" data-tab="tab-standings">Final standings</button><button type="button" class="gtab" data-tab="tab-mine">Minesweeper</button><button type="button" class="gtab" data-tab="tab-log">Activity log</button></div>"#;
+        assert!(all.contains(bar), "{all}");
+        let at = |needle: &str| all.find(needle).unwrap_or_else(|| panic!("{needle}"));
+        assert!(at(r#"<div class="gtabpanel" id="tab-standings">"#) < at("ChecksFinder"));
+        assert!(at(r#"<div class="gtabpanel" id="tab-mine" hidden>"#) < at("Beginner"));
+        assert!(at(r#"<div class="gtabpanel" id="tab-log" hidden>"#) < at(r#"id="logfilter""#));
+        assert!(all.contains(TABS_CSS) && all.contains(TABS_JS));
+        assert!(
+            all.contains("bifFitLog();"),
+            "refits the log when its tab opens"
+        );
+
+        let no_mine = page(false, true);
+        assert!(!no_mine.contains("tab-mine") && no_mine.contains("tab-log"));
+        assert!(no_mine.contains(TABS_CSS) && no_mine.contains(TABS_JS));
+
+        let no_log = page(true, false);
+        assert!(no_log.contains("tab-mine") && !no_log.contains("tab-log"));
+        assert!(!no_log.contains("bifFitLog();"));
+
+        // Standings alone need no tabs (no "gtab" also means no TABS_CSS).
+        let alone = page(false, false);
+        assert!(
+            !alone.contains("gtab") && !alone.contains(TABS_JS),
+            "{alone}"
+        );
+        assert!(alone.contains("<h2>Final standings</h2>") && alone.contains("ChecksFinder"));
     }
 }
