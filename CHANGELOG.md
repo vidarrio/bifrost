@@ -19,15 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   servers on localhost, and resets from a snapshot. Its seed fills it with seasons of
   real games, some finished and some part played, with hints (a couple starred as
   priorities), and minesweeper leaderboards.
-  Release builds don't include it. See `packaging/demo/README.md`.
+  Release builds don't include it. Every push to `main` publishes it as the
+  `ghcr.io/vidarrio/bifrost:demo` image. See `packaging/demo/README.md`.
+- The home page says what Archipelago and Bifrost are under its title, with the four
+  steps of a season: sign up, generate, play, follow along.
+- Bifrost has a logo: six islands joined by bridges. It replaces the gold caret as the
+  favicon, shows beside the name in the page header and on the home page. The home
+  page's title and the live board's progress bars fade through its colour.
 
 ### Changed
 
 - The home page lists the AP After Dark Discord, for unrated and 18+ games, next to the
   official Archipelago one, unless the instance has saved its own list in Settings. An
   instance that has keeps its list; add it there.
-- The home page says what Archipelago and Bifrost are under its title, with the four
-  steps of a season: sign up, generate, play, follow along.
 - The home page lists your seasons instead of showcasing one: every season you can see
   that isn't archived (drafts only for those who run them), public ones and private
   ones you're in, live ones first, each
@@ -40,9 +44,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A game's figures, on its card on the live board and at the top of its page, give how
   many locations are left right after how many there are, before what was sent and
   received.
-- Bifrost has a logo: six islands joined by bridges. It replaces the gold caret as the
-  favicon, shows beside the name in the page header and on the home page. The home
-  page's title and the live board's progress bars fade through its colour.
 
 ### Removed
 
@@ -61,16 +62,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't see part of it. Every file Bifrost replaces this way is now on disk before it
   takes the old one's place, so a crash or power cut leaves the old file or the new
   one, not an empty one.
-- A re-roll that failed while it set up the season's games left the season on the new
-  seed's name, with its activity and starred hints already gone, while the old game
-  kept running. The new seed now only becomes the season's once its games are set up.
 - A co-op partner's name that matched a player's except for capital letters ("ann" and
   "Ann") passed the check at generation. The partner got no seat of their own and could
   take that player's game instead. Generation now refuses it, as it does an exact match.
-- A re-roll or a generation that failed while it set up the season's games no longer
-  leaves it with some games missing or their players unassigned: the games are set up
-  all at once or not at all. If a season's game server passwords can't be read, its
-  server doesn't start, where before it started without a password.
+- A re-roll or a generation that failed while it set up the season's games could leave
+  the season with some games missing or their players unassigned. A re-roll also moved
+  the season to the new seed's name and cleared its activity and starred hints while
+  the old game kept running. The games are now set up all at once or not at all, and
+  the new seed only becomes the season's once they are.
+- If a season's game server passwords can't be read, its server doesn't start. Before,
+  it started without a password.
 - When a game's file couldn't be downloaded (not your game, or no such file), the
   notice's "back" link went to that game in the default season instead of the game's
   own season.
