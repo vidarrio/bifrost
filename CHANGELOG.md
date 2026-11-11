@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-11
+
 ### Added
 
 - A demo build (`cargo build --features demo`) for a public demo: a bar switches between
@@ -379,7 +381,8 @@ Upgrading from 0.1.x:
   a given version), checked against the release's checksums. Going back means
   restoring the pre-upgrade backup and the previous file, which it keeps.
 
-[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/vidarrio/bifrost/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/vidarrio/bifrost/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/vidarrio/bifrost/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/vidarrio/bifrost/compare/v0.1.1...v0.1.2
