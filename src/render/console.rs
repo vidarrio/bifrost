@@ -437,11 +437,16 @@ pub fn settings_page(
 <style>.authform{{max-width:560px}}.authform textarea{{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:7px 9px;font:13px/1.5 var(--mono);min-height:110px}}</style>
 <form class="authform" method="post" action="/admin/settings">
 <label>Connect host — what players' AP clients connect to; each live season adds its port<input type="text" name="domain" value="{}" placeholder="ap.example.org" maxlength="253"></label>
-<label>Home link (optional) — a "home" pill in the header<input type="url" name="home_url" value="{}" placeholder="https://example.org/"></label>
+<label>Home link (optional) — a pill in the header that goes there<input type="url" name="home_url" value="{}" placeholder="https://example.org/"></label>
+<label>Home pill label — what that pill says, in capitals; empty for “{}”<input type="text" name="home_label" value="{}" placeholder="{}" maxlength="{}"></label>
 <label>Discord servers — one per line: <span class="mono">Name | https://discord.gg/… | note</span><textarea name="discords" spellcheck="false">{}</textarea></label>
 <button type="submit">Save</button></form>"#,
         esc(&inst.domain),
         esc(&inst.home_url),
+        crate::db::DEFAULT_HOME_LABEL,
+        esc(&inst.home_label),
+        crate::db::DEFAULT_HOME_LABEL,
+        crate::db::HOME_LABEL_MAX,
         esc(&discords),
     ));
     auth_page("Console", r#"<a href="/">← home</a>"#, err, &body)

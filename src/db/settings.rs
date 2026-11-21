@@ -14,6 +14,8 @@ pub struct Instance {
     pub domain: String,
     /// An optional "home" link in the header (e.g. the operator's homepage).
     pub home_url: String,
+    /// What the header's home pill says. Empty: [`DEFAULT_HOME_LABEL`].
+    pub home_label: String,
     /// Community Discord servers listed on the home page.
     pub discords: Vec<Discord>,
 }
@@ -31,6 +33,7 @@ impl Default for Instance {
         Self {
             domain: String::new(),
             home_url: String::new(),
+            home_label: String::new(),
             discords: vec![
                 Discord {
                     name: "Archipelago".into(),
@@ -44,6 +47,22 @@ impl Default for Instance {
                     note: "unrated and 18+ games".into(),
                 },
             ],
+        }
+    }
+}
+
+/// What the header's home pill says when the sysadmin hasn't named it.
+pub const DEFAULT_HOME_LABEL: &str = "HOME";
+
+/// The longest home pill label the settings page accepts, in characters.
+pub const HOME_LABEL_MAX: usize = 24;
+
+impl Instance {
+    /// What the header's home pill says.
+    pub fn home_label(&self) -> &str {
+        match self.home_label.trim() {
+            "" => DEFAULT_HOME_LABEL,
+            l => l,
         }
     }
 }
@@ -181,6 +200,21 @@ mod tests {
         let i: super::Instance =
             serde_json::from_str(r#"{"domain":"x.example","password_note":"ask"}"#).unwrap();
         assert_eq!(i.domain, "x.example");
+        assert_eq!(
+            i.home_label(),
+            "HOME",
+            "settings saved before the label existed"
+        );
+    }
+
+    #[test]
+    fn the_home_label_defaults_to_home() {
+        let mut i = super::Instance::default();
+        assert_eq!(i.home_label(), "HOME");
+        i.home_label = "  ".into();
+        assert_eq!(i.home_label(), "HOME");
+        i.home_label = " Our site ".into();
+        assert_eq!(i.home_label(), "Our site");
     }
 
     use super::*;

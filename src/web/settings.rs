@@ -185,6 +185,8 @@ pub(crate) struct SettingsForm {
     pub(crate) domain: String,
     #[serde(default)]
     pub(crate) home_url: String,
+    #[serde(default)]
+    pub(crate) home_label: String,
     /// One server per line: `Name | https://discord.gg/… | note`.
     #[serde(default)]
     pub(crate) discords: String,
@@ -210,6 +212,7 @@ pub(crate) async fn settings_save(
             let typed = db::Instance {
                 domain: f.domain.clone(),
                 home_url: f.home_url.clone(),
+                home_label: f.home_label.clone(),
                 discords: f
                     .discords
                     .lines()
@@ -249,6 +252,13 @@ pub(crate) fn parse_settings(f: &SettingsForm) -> Result<db::Instance, String> {
     if !home_url.is_empty() && !web_url(&home_url) {
         return Err("The home link must be an http(s) URL.".into());
     }
+    let home_label = f.home_label.trim().to_string();
+    if home_label.chars().count() > db::HOME_LABEL_MAX || home_label.chars().any(char::is_control) {
+        return Err(format!(
+            "The home pill's label must be one line of at most {} characters.",
+            db::HOME_LABEL_MAX
+        ));
+    }
     let mut discords = Vec::new();
     for (i, line) in f
         .discords
@@ -280,6 +290,7 @@ pub(crate) fn parse_settings(f: &SettingsForm) -> Result<db::Instance, String> {
     Ok(db::Instance {
         domain,
         home_url,
+        home_label,
         discords,
     })
 }
