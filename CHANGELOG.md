@@ -7,16 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-21
+
+### Added
+
+- A **Home pill label** setting on the settings page, next to the home link:
+  what the header's home pill says.
+
 ### Changed
 
-- The header's home pill says HOME by default, with no arrow, instead of the
-  name of the site it links to. What it says is a setting of its own on the
-  settings page, next to the home link.
+- The header's home pill says HOME unless the label is set, with no arrow,
+  instead of the name of the site it links to.
 
 ### Fixed
 
 - The header's home pill no longer sits slightly lower than the rest of the
   header on pages other than the home page.
+
+### Security
+
+- The native bundle's Python is a newer build of Python 3.13.18
+  (python-build-standalone 20261110). It brings zlib 1.4, which fixes several
+  memory-safety bugs, including a buffer overflow in `gzwrite()`
+  (CVE-2026-85091) and a write past the end of a buffer in
+  `inflateGetDictionary()`. It also brings expat 2.10.0, which fixes four
+  vulnerabilities in XML parsing (CVE-2026-113351, CVE-2026-115506,
+  CVE-2026-117610, CVE-2026-118370). The container image uses Debian's Python
+  and libraries instead: Debian trixie has fixed CVE-2026-85091, but not yet
+  the expat ones.
 
 ## [0.4.1] - 2026-11-11
 
@@ -409,7 +427,8 @@ Upgrading from 0.1.x:
   a given version), checked against the release's checksums. Going back means
   restoring the pre-upgrade backup and the previous file, which it keeps.
 
-[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/vidarrio/bifrost/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/vidarrio/bifrost/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/vidarrio/bifrost/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/vidarrio/bifrost/compare/v0.2.0...v0.3.0
