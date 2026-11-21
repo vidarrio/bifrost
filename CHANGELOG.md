@@ -9,11 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.2] - 2026-11-21
 
+### Added
+
+- A **Home pill label** setting on the settings page, next to the home link:
+  what the header's home pill says.
+
 ### Changed
 
-- The header's home pill says HOME by default, with no arrow, instead of the
-  name of the site it links to. What it says is a setting of its own on the
-  settings page, next to the home link.
+- The header's home pill says HOME unless the label is set, with no arrow,
+  instead of the name of the site it links to.
 
 ### Fixed
 
