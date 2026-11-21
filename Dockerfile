@@ -21,7 +21,7 @@ ARG DEBIAN=trixie
 ARG APT="apt-get -o APT::Sandbox::User=root"
 
 # ---- Bifrost ----
-FROM docker.io/library/rust:1.99.1-${DEBIAN} AS bifrost
+FROM docker.io/library/rust:1.100.0-${DEBIAN} AS bifrost
 WORKDIR /src
 # Cargo features: empty for every release; `demo` builds the public demo's
 # image (packaging/demo/README.md).
