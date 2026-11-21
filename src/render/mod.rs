@@ -304,7 +304,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .pickrow>button{flex:0 0 auto}
 .pickrow>button[hidden]{display:none}
 #catsel{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:9px 11px;font-size:13px}
-@media (max-width:480px){.pickrow>button{flex:1 1 100%}}
+@media (max-width:480px){.pickrow>button{flex:1 1 100%;min-height:40px}}
 .nav{display:flex;justify-content:space-between;gap:10px;margin-top:18px}.nav:has(>:only-child){justify-content:flex-end}
 .nav .back{background:transparent;border:1px solid var(--bd);color:var(--muted)}
 .inlinemsg{font-family:var(--mono);font-size:12.5px;margin-top:8px;min-height:1em;word-break:break-word}.inlinemsg.ok{color:var(--ok)}.inlinemsg.bad{color:var(--bad)}
