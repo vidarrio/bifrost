@@ -55,7 +55,7 @@ impl Default for Instance {
 pub const DEFAULT_HOME_LABEL: &str = "HOME";
 
 /// The longest home pill label the settings page accepts, in characters.
-pub const HOME_LABEL_MAX: usize = 24;
+pub const HOME_LABEL_MAX: usize = 16;
 
 impl Instance {
     /// What the header's home pill says.

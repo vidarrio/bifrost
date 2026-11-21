@@ -157,7 +157,7 @@ function bifApplyMe(m){
  var a=document.getElementById('adminslot');
  if(a)a.innerHTML=(m&&m.admin)?'<a class="pill" href="/admin/seasons">admin</a>':'';
  var h=document.getElementById('homeslot');
- if(h){h.innerHTML='';if(m&&m.home){var l=document.createElement('a');l.className='pill';l.href=m.home;l.textContent=m.home_label||'HOME';h.appendChild(l)}}
+ if(h){h.innerHTML='';if(m&&m.home){var l=document.createElement('a');l.className='pill home';l.href=m.home;l.textContent=m.home_label||'HOME';h.appendChild(l)}}
 }
 try{var _m=localStorage.getItem('bifme');if(_m)bifApplyMe(JSON.parse(_m));}catch(e){}
 fetch('/api/me').then(function(r){return r.json()}).then(function(m){
@@ -225,6 +225,8 @@ header .spacer{flex:1}
 .who{font-family:var(--mono);font-size:12px;color:var(--muted)}.who b{color:var(--fg)}.who a{color:var(--accent)}
 .pill{white-space:nowrap;display:inline-flex;align-items:center;font-family:var(--mono);font-size:11px;line-height:1;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);text-decoration:none;border:1px solid var(--bd);border-radius:999px;padding:4px 11px}.pill:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
 #adminslot,#homeslot{display:contents}
+/* A long label is cut short on a narrow screen instead of widening the page. */
+.pill.home{display:block;max-width:25vw;overflow:hidden;text-overflow:ellipsis}
 .matches{max-width:460px;margin:-4px 0 12px;display:grid;max-height:240px;overflow:auto}.matches .match{font-family:var(--mono);font-size:12px;padding:5px 8px;border:1px solid var(--bd);border-top:0;cursor:pointer;background:var(--panel)}.matches .match:hover,.matches .match.sel{background:var(--bd)}
 .hintrow{display:flex;justify-content:space-between;align-items:center;gap:10px;font-family:var(--mono);font-size:12.5px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px;margin:6px 0}
 .hintrow>span{min-width:0;overflow-wrap:anywhere}

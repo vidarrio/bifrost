@@ -94,7 +94,7 @@ pub fn home_pill(inst: &crate::db::Instance) -> String {
         String::new()
     } else {
         format!(
-            r#"<a class="pill" href="{}">{}</a>"#,
+            r#"<a class="pill home" href="{}">{}</a>"#,
             esc(&inst.home_url),
             esc(inst.home_label())
         )
@@ -161,7 +161,7 @@ mod tests {
         inst.home_url = "https://example.org/?a=1&b=2".into();
         assert_eq!(
             super::home_pill(&inst),
-            r#"<a class="pill" href="https://example.org/?a=1&amp;b=2">HOME</a>"#
+            r#"<a class="pill home" href="https://example.org/?a=1&amp;b=2">HOME</a>"#
         );
         inst.home_label = "<Our site>".into();
         assert!(super::home_pill(&inst).ends_with(">&lt;Our site&gt;</a>"));

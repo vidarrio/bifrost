@@ -20,9 +20,9 @@ try:
     post(root, "/admin/settings", data=dict(domain="", home_url="https://home.example.org/", home_label=" Our <site> ", discords=""))
     check("the label is its own setting", get(root, "/api/me").json().get("home_label") == "Our <site>")
     # Raw, not through get(), which decodes entities.
-    check("…shown escaped on the landing page", 'href="https://home.example.org/">Our &lt;site&gt;</a>' in root.get(srv.base + "/").text)
-    r = post(root, "/admin/settings", data=dict(domain="", home_url="https://home.example.org/", home_label="x" * 25, discords=""))
-    check("a label over 24 characters is refused", "at most 24 characters" in r.text and get(root, "/api/me").json().get("home_label") == "Our <site>")
+    check("…shown escaped on the landing page", 'class="pill home" href="https://home.example.org/">Our &lt;site&gt;</a>' in root.get(srv.base + "/").text)
+    r = post(root, "/admin/settings", data=dict(domain="", home_url="https://home.example.org/", home_label="x" * 17, discords=""))
+    check("a label over 16 characters is refused", "at most 16 characters" in r.text and get(root, "/api/me").json().get("home_label") == "Our <site>")
     r = get(srv.session(), "/api/me")
     check("anonymous header gets it as well", r.status_code == 401 and r.json().get("home") == "https://home.example.org/" and r.json().get("home_label") == "Our <site>", (r.status_code, r.text[:200]))
 finally:
