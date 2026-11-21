@@ -66,7 +66,8 @@ pub(crate) async fn download(
             }
             r.map(axum::body::Body::new).into_response()
         }
-        Err(e) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        // ServeFile's error type is Infallible.
+        Err(e) => match e {},
     }
 }
 
