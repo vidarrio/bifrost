@@ -12,11 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - The native bundle's Python is a newer build of Python 3.13.18
-  (python-build-standalone 20261110). It brings zlib 1.4, which fixes a buffer
-  overflow in `gzwrite()` (CVE-2026-85091), and expat 2.10.0, which fixes four
+  (python-build-standalone 20261110). It brings zlib 1.4, which fixes several
+  memory-safety bugs, including a buffer overflow in `gzwrite()`
+  (CVE-2026-85091) and a write past the end of a buffer in
+  `inflateGetDictionary()`. It also brings expat 2.10.0, which fixes four
   vulnerabilities in XML parsing (CVE-2026-113351, CVE-2026-115506,
   CVE-2026-117610, CVE-2026-118370). The container image uses Debian's Python
-  and isn't affected.
+  and libraries instead: Debian trixie has fixed CVE-2026-85091, but not yet
+  the expat ones.
 
 ## [0.4.1] - 2026-11-11
 
