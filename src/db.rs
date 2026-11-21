@@ -22,7 +22,7 @@ pub use common::{SeasonCommon, SetIdentOutcome};
 pub use migrate::PRE_0_3;
 pub use seasons::{MAX_DAILY_HINTS, MAX_GAMES_LIMIT, SeasonRow, State};
 pub use seats::{JoinOutcome, SeatLink, SeatRow, name_clash, seat_name_error};
-pub use settings::{Approval, Discord, Instance};
+pub use settings::{Approval, DEFAULT_HOME_LABEL, Discord, HOME_LABEL_MAX, Instance};
 pub use worlds::{CatalogWorld, WorldRequest};
 
 #[derive(Clone)]

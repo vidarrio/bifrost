@@ -22,10 +22,11 @@ pub(crate) async fn favicon() -> impl IntoResponse {
 pub(crate) async fn api_me(State(st): State<AppState>, me: auth::Me) -> Json<serde_json::Value> {
     let (user, _) = me.ident();
     // The header's optional "home" pill (instance settings).
-    let home = st.db.instance().await.home_url;
+    let inst = st.db.instance().await;
     Json(serde_json::json!({
         "user": user,
-        "home": home,
+        "home": inst.home_url,
+        "home_label": inst.home_label(),
         // Moderators and up: the header's way into season administration.
         "admin": me.can(auth::Action::CreateSeason),
         "sign_in": st.auth.sign_in_url(),
@@ -120,7 +121,7 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
             .replace("<!--IDENTITYJS-->", render::IDENTITY_JS)
             .replace("<!--SEASONS-->", &render::landing_seasons(&cards, sign_in))
             .replace("<!--PASTSEASONS-->", &past_html)
-            .replace("<!--HOMEPILL-->", &render::home_pill(&inst.home_url))
+            .replace("<!--HOMEPILL-->", &render::home_pill(&inst))
             .replace("<!--TAG-->", &render::landing_tag(&inst.domain))
             .replace("<!--DISCORDS-->", &render::landing_discords(&inst.discords)),
     )
