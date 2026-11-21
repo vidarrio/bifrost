@@ -939,8 +939,8 @@ async fn forward_auth_principal(
 /// An anonymous request to a gated API: 401 with JSON, so client code (e.g.
 /// the header's `/api/me`) can offer sign-in and still show the home link.
 async fn api_unauthenticated(auth: &AuthInner) -> Response {
-    let home = auth.db.instance().await.home_url;
-    let body = serde_json::json!({ "user": null, "admin": false, "sign_in": auth.sign_in_url(), "home": home });
+    let inst = auth.db.instance().await;
+    let body = serde_json::json!({ "user": null, "admin": false, "sign_in": auth.sign_in_url(), "home": inst.home_url, "home_label": inst.home_label() });
     (StatusCode::UNAUTHORIZED, axum::Json(body)).into_response()
 }
 

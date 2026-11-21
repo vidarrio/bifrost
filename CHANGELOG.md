@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The header's home pill says HOME by default, with no arrow, instead of the
+  name of the site it links to. What it says is a setting of its own on the
+  settings page, next to the home link.
+
+### Fixed
+
+- The header's home pill no longer sits slightly lower than the rest of the
+  header on pages other than the home page.
+
 ## [0.4.1] - 2026-11-11
 
 ### Changed
