@@ -58,17 +58,14 @@ pub(crate) async fn download(
     req: axum::extract::Request,
 ) -> Response {
     let disposition = format!("attachment; filename=\"{name}\"");
-    match tower::ServiceExt::oneshot(tower_http::services::ServeFile::new(path), req).await {
-        Ok(mut r) => {
-            if let Ok(v) = axum::http::HeaderValue::from_str(&disposition) {
-                r.headers_mut()
-                    .insert(axum::http::header::CONTENT_DISPOSITION, v);
-            }
-            r.map(axum::body::Body::new).into_response()
-        }
-        // ServeFile's error type is Infallible.
-        Err(e) => match e {},
+    // ServeFile's error type is Infallible, so this can't fail.
+    let Ok(mut r) =
+        tower::ServiceExt::oneshot(tower_http::services::ServeFile::new(path), req).await;
+    if let Ok(v) = axum::http::HeaderValue::from_str(&disposition) {
+        r.headers_mut()
+            .insert(axum::http::header::CONTENT_DISPOSITION, v);
     }
+    r.map(axum::body::Body::new).into_response()
 }
 
 /// Build an attachment download for a seed member's bytes. The filename sent to
