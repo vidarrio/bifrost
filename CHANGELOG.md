@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- On a season's signup page, the "Upload apworld", "Use this world" and
+  "Check it" buttons sit on the same row as the file or world they act on, as
+  tall as it, instead of alone on a line below it. On a phone they take a
+  full-width line under it.
+
 ## [0.4.2] - 2026-11-21
 
 ### Added
