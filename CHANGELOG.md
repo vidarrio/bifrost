@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-21
+
+### Changed
+
+- The native bundle's Python is a newer build of Python 3.13.18
+  (python-build-standalone 20261110), with zlib 1.4, expat 2.10.0 and
+  pip 26.3.
+
 ## [0.4.1] - 2026-11-11
 
 ### Changed
@@ -398,7 +406,8 @@ Upgrading from 0.1.x:
   a given version), checked against the release's checksums. Going back means
   restoring the pre-upgrade backup and the previous file, which it keeps.
 
-[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/vidarrio/bifrost/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/vidarrio/bifrost/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/vidarrio/bifrost/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/vidarrio/bifrost/compare/v0.2.0...v0.3.0
