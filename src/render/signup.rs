@@ -132,8 +132,7 @@ pub fn signup_page(
         step1.push_str(&format!(
             r#"<div data-box="catalog" hidden>
       <p class="hint">Worlds the server's admins have vetted — they're ready to use.</p>
-      <select id="catsel">{opts}</select>
-      <button type="button" id="catbtn" class="back">Use this world</button>
+      <div class="pickrow"><select id="catsel">{opts}</select><button type="button" id="catbtn" class="back">Use this world</button></div>
       <div id="catmsg" class="inlinemsg"></div>
     </div>"#
         ));
@@ -147,8 +146,7 @@ pub fn signup_page(
         step1.push_str(&format!(
             r#"<div data-box="custom" hidden>
       <p class="hint">Upload the world's <code>.apworld</code>.{approval}</p>
-      <input type="file" id="apfile" accept=".apworld">
-      <button type="button" id="apbtn" class="back">Upload apworld</button>
+      <div class="pickrow"><input type="file" id="apfile" accept=".apworld"><button type="button" id="apbtn" class="back">Upload apworld</button></div>
       <div id="apmsg" class="inlinemsg"></div>
     </div>"#
         ));
@@ -168,8 +166,7 @@ pub fn signup_page(
   <section class="wstep" data-step="2" hidden>
     <h2>Options YAML</h2>
     <p class="hint" id="yamlhint">Upload your options file. It's rolled against the installed worlds — it has to pass before you can sign up.</p>
-    <input type="file" name="yaml" id="yamlfile" accept=".yaml,.yml" required>
-    <button type="button" id="checkbtn" class="back">Check it</button>
+    <div class="pickrow"><input type="file" name="yaml" id="yamlfile" accept=".yaml,.yml" required><button type="button" id="checkbtn" class="back">Check it</button></div>
     <div id="checkmsg" class="inlinemsg"></div>
     <div class="nav"><button type="button" class="back" data-goto="1">← Back</button><button type="submit" id="wizsubmit" disabled><!--SUBMIT--></button></div>
     <input type="hidden" name="is_custom" id="iscustom" value="">
