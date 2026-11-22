@@ -14,7 +14,10 @@ pub struct CatalogWorld {
     pub file: String,
     pub game: String,
     pub version: String,
+    /// The sysadmins' own note (source, who vetted it).
     pub note: String,
+    /// Shown to players on the Games page.
+    pub public_note: String,
     pub added_by: String,
     pub added_at: i64,
 }
@@ -32,7 +35,7 @@ pub struct WorldRequest {
 impl Db {
     pub async fn catalog(&self) -> Vec<CatalogWorld> {
         sqlx::query_as::<_, CatalogWorld>(
-            "SELECT sha256, file, game, version, note, added_by, added_at
+            "SELECT sha256, file, game, version, note, public_note, added_by, added_at
              FROM catalog_world ORDER BY lower(game), lower(file), added_at",
         )
         .fetch_all(&self.pool)
@@ -42,7 +45,7 @@ impl Db {
 
     pub async fn catalog_world(&self, sha256: &str) -> Option<CatalogWorld> {
         sqlx::query_as::<_, CatalogWorld>(
-            "SELECT sha256, file, game, version, note, added_by, added_at
+            "SELECT sha256, file, game, version, note, public_note, added_by, added_at
              FROM catalog_world WHERE sha256 = ?",
         )
         .bind(sha256)
@@ -55,22 +58,40 @@ impl Db {
     /// Add (or re-describe) a catalog entry.
     pub async fn catalog_add(&self, w: &CatalogWorld) -> Result<(), sqlx::Error> {
         sqlx::query(
-            "INSERT INTO catalog_world (sha256, file, game, version, note, added_by, added_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO catalog_world (sha256, file, game, version, note, public_note, added_by, added_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(sha256) DO UPDATE SET
                file = excluded.file, game = excluded.game,
-               version = excluded.version, note = excluded.note",
+               version = excluded.version, note = excluded.note,
+               public_note = excluded.public_note",
         )
         .bind(&w.sha256)
         .bind(&w.file)
         .bind(&w.game)
         .bind(&w.version)
         .bind(&w.note)
+        .bind(&w.public_note)
         .bind(&w.added_by)
         .bind(w.added_at)
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Change a catalog world's notes. False if it isn't in the catalog.
+    pub async fn catalog_set_notes(
+        &self,
+        sha256: &str,
+        note: &str,
+        public_note: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let r = sqlx::query("UPDATE catalog_world SET note = ?, public_note = ? WHERE sha256 = ?")
+            .bind(note)
+            .bind(public_note)
+            .bind(sha256)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
     }
 
     pub async fn catalog_remove(&self, sha256: &str) -> Result<bool, sqlx::Error> {
@@ -232,11 +253,28 @@ mod tests {
             game: "Foo".into(),
             version: "1.2.0".into(),
             note: String::new(),
+            public_note: "for players".into(),
             added_by: "root".into(),
             added_at: 1,
         };
         db.catalog_add(&w).await.unwrap();
         assert_eq!(db.catalog().await, vec![w.clone()]);
+        assert!(
+            db.catalog_set_notes(&w.sha256, "mine", "theirs")
+                .await
+                .unwrap()
+        );
+        let got = db.catalog_world(&w.sha256).await.unwrap();
+        assert_eq!(
+            (got.note.as_str(), got.public_note.as_str()),
+            ("mine", "theirs")
+        );
+        assert!(
+            !db.catalog_set_notes(&"cd".repeat(32), "x", "y")
+                .await
+                .unwrap()
+        );
+        db.catalog_add(&w).await.unwrap();
         assert_eq!(db.catalog_world(&w.sha256).await, Some(w.clone()));
         assert!(db.catalog_remove(&w.sha256).await.unwrap());
         assert!(db.catalog().await.is_empty());

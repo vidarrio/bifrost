@@ -230,7 +230,7 @@ pub async fn offer_promote(db: &Db, sha256: &str, by: &str) -> Result<Added, Str
         return Err("The offer's file doesn't match its hash; dismiss it.".into());
     }
     let note = format!("uploaded by {}", offer.uploaded_by);
-    let added = catalog_add(db, &offer.file, &bytes, "", "", &note, by).await?;
+    let added = catalog_add(db, &offer.file, &bytes, "", "", &note, "", by).await?;
     offer_remove(sha256).await;
     Ok(added)
 }
@@ -576,11 +576,26 @@ impl Added {
     }
 }
 
+/// The most a catalog note (the sysadmins' or the public one) holds, in characters.
+pub const NOTE_MAX: usize = 200;
+
+/// A note as stored: one trimmed line of at most [`NOTE_MAX`] characters.
+pub fn clean_note(note: &str) -> String {
+    note.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(NOTE_MAX)
+        .collect()
+}
+
 /// Add an apworld to the catalog (or re-describe it). `game`/`version`
 /// default to what its manifest says. The catalog holds one version of a game
 /// (it's what a player's upload of that game is swapped for), so this
 /// replaces any other entry for the same game; seasons that installed it keep
-/// their copy.
+/// their copy. A replacement with no public note keeps the old entry's, as
+/// that's about the game rather than one file.
+#[allow(clippy::too_many_arguments)]
 pub async fn catalog_add(
     db: &Db,
     file: &str,
@@ -588,6 +603,7 @@ pub async fn catalog_add(
     game: &str,
     version: &str,
     note: &str,
+    public_note: &str,
     by: &str,
 ) -> Result<Added, String> {
     let sha = crate::text::sha256_hex(bytes);
@@ -604,7 +620,8 @@ pub async fn catalog_add(
         file: file.to_string(),
         game: pick(game, m.game),
         version: pick(version, m.version),
-        note: note.trim().chars().take(200).collect(),
+        note: clean_note(note),
+        public_note: clean_note(public_note),
         added_by: by.to_string(),
         added_at: crate::clock::now(),
         sha256: sha,
@@ -616,17 +633,29 @@ pub async fn catalog_add(
     if let Err(e) = store.await {
         return Err(format!("storing the catalog copy: {e}"));
     }
-    db.catalog_add(&w).await.map_err(|e| e.to_string())?;
-    let mut replaced = Vec::new();
-    if !w.game.is_empty() {
-        for old in db.catalog().await {
-            if old.sha256 != w.sha256 && old.game.eq_ignore_ascii_case(&w.game) {
-                catalog_remove(db, &old.sha256).await?;
-                replaced.push(old);
-            }
-        }
+    let mut w = w;
+    let olds: Vec<CatalogWorld> = if w.game.is_empty() {
+        Vec::new()
+    } else {
+        db.catalog()
+            .await
+            .into_iter()
+            .filter(|old| old.sha256 != w.sha256 && old.game.eq_ignore_ascii_case(&w.game))
+            .collect()
+    };
+    if w.public_note.is_empty()
+        && let Some(old) = olds.iter().find(|o| !o.public_note.is_empty())
+    {
+        w.public_note = old.public_note.clone();
     }
-    Ok(Added { world: w, replaced })
+    db.catalog_add(&w).await.map_err(|e| e.to_string())?;
+    for old in &olds {
+        catalog_remove(db, &old.sha256).await?;
+    }
+    Ok(Added {
+        world: w,
+        replaced: olds,
+    })
 }
 
 /// Add a world already installed in a season to the catalog.
@@ -647,7 +676,7 @@ pub async fn catalog_add_installed(
     if crate::text::sha256_hex(&bytes) != pin.sha256 {
         return Err(format!("{file} changed on disk since it was installed."));
     }
-    catalog_add(db, file, &bytes, "", "", "", by).await
+    catalog_add(db, file, &bytes, "", "", "", "", by).await
 }
 
 /// Drop a catalog entry. Seasons that already installed it keep their copy.
@@ -897,6 +926,7 @@ mod version_tests {
             game: game.into(),
             version: version.into(),
             note: String::new(),
+            public_note: String::new(),
             added_by: "root".into(),
             added_at: 0,
         };

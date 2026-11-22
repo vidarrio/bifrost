@@ -65,8 +65,9 @@ service such as kanidm or Authentik), there is no Bifrost password. Use the
 To see what you can play before you sign up, open **Games on this server**
 from the home page (`/worlds`). It lists the core games of the Archipelago
 version new seasons use, with each world's own version where it declares one,
-the custom games the server's admins have vetted, with their versions, and
-the common games the server hosts. It's as public as the home page.
+the custom games the server's admins have vetted, with their versions and
+any note the admins left for players, and the common games the server hosts.
+It's as public as the home page.
 
 Open **Sign up for a season** from the home page and pick a season from those
 open for signup. Its page shows the games so far and who's playing them. If you
@@ -681,7 +682,11 @@ schema, so restore the backup first.
 
 **Console → Apworlds** holds the **catalog**: custom worlds you have vetted.
 Players can pick them at signup. The game and version are read from the
-world's `archipelago.json`, and you can override them.
+world's `archipelago.json`, and you can override them. Each entry has two
+notes: a **public note**, which players see beside the game on the Games page
+(say, which edition of the game it needs), and an **admin note** only
+sysadmins see (say, where it came from and who vetted it). Edit them from the
+entry's notes link on the catalog page.
 
 The catalog holds one version of each game, and a player's upload of a game
 the server already has uses the server's version. An upload of a catalog game

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Catalog entries have a **public note**, shown to players beside the game on
+  the Games page, next to the admins' own note, which stays private. Both can
+  be edited on the catalog page. A replacement for a game keeps its public
+  note unless it brings its own.
 - Sysadmins can replace a catalog game with a newer version a player
   uploaded: it's listed on the catalog page, to replace the catalog's version
   or dismiss.

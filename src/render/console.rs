@@ -499,19 +499,33 @@ pub fn catalog_page(
         checked(Approval::Manual),
         checked(Approval::Auto),
     ));
+    body.push_str(r#"<style>.catnotes summary{cursor:pointer;color:var(--muted);font-size:12px;margin-top:2px}.catnotes .authform{margin:8px 0 4px}</style>"#);
     body.push_str(r#"<h2>Catalog</h2><p class="statline">Worlds you've vetted. Players can pick them at signup. The catalog holds one version of each game: a player's upload of a game that's here gets the catalog's version instead (a newer one is listed below for you to consider), and adding a game that's here replaces its entry. Removing one doesn't touch seasons that already installed it.</p>"#);
     if catalog.is_empty() {
         body.push_str(r#"<div class="empty">The catalog is empty.</div>"#);
     } else {
         body.push_str(r#"<table class="utable"><tr><th>Game</th><th>Version</th><th>File</th><th>SHA-256</th><th>Added</th><th></th></tr>"#);
         for w in catalog {
-            let note = if w.note.is_empty() {
-                String::new()
-            } else {
-                format!(r#"<div class="statline">{}</div>"#, esc(&w.note))
-            };
+            // Both notes, editable in place: the sysadmins' own and the one
+            // players see on the Games page.
+            let notes = format!(
+                r#"<details class="catnotes"><summary>{}</summary><form class="authform" method="post" action="/admin/catalog/notes"><input type="hidden" name="sha256" value="{}"><label>Public note — shown to players on the Games page<input type="text" name="public_note" value="{}" maxlength="{max}" placeholder="e.g. needs the Steam version; beta"></label><label>Admin note — only sysadmins see it<input type="text" name="note" value="{}" maxlength="{max}" placeholder="e.g. source URL, who vetted it"></label><button type="submit">Save notes</button></form></details>"#,
+                match (w.public_note.is_empty(), w.note.is_empty()) {
+                    (true, true) => "add notes".to_string(),
+                    _ => [("public", &w.public_note), ("admin", &w.note)]
+                        .iter()
+                        .filter(|(_, n)| !n.is_empty())
+                        .map(|(k, n)| format!("{k}: {}", esc(n)))
+                        .collect::<Vec<_>>()
+                        .join(" · "),
+                },
+                esc(&w.sha256),
+                esc(&w.public_note),
+                esc(&w.note),
+                max = crate::worlds::NOTE_MAX,
+            );
             body.push_str(&format!(
-                r#"<tr><td>{}{note}</td><td class="mono">{}</td><td class="mono">{}</td><td class="mono" title="{}">{}…</td><td>{} · {}</td><td>{}</td></tr>"#,
+                r#"<tr><td>{}{notes}</td><td class="mono">{}</td><td class="mono">{}</td><td class="mono" title="{}">{}…</td><td>{} · {}</td><td>{}</td></tr>"#,
                 esc(if w.game.is_empty() { "—" } else { &w.game }),
                 esc(&w.version),
                 esc(&w.file),
@@ -565,7 +579,8 @@ pub fn catalog_page(
 <label>.apworld file<input type="file" name="apworld" accept=".apworld" required></label>
 <label>Game (optional — read from the world's manifest when blank)<input type="text" name="game" maxlength="80"></label>
 <label>Version (optional — likewise)<input type="text" name="version" maxlength="80"></label>
-<label>Note (optional)<input type="text" name="note" maxlength="200" placeholder="e.g. source URL, who vetted it"></label>
+<label>Public note (optional) — shown to players on the Games page<input type="text" name="public_note" maxlength="200" placeholder="e.g. needs the Steam version; beta"></label>
+<label>Admin note (optional) — only sysadmins see it<input type="text" name="note" maxlength="200" placeholder="e.g. source URL, who vetted it"></label>
 <button type="submit">Add to catalog</button></form>
 <p class="statline">You can also add a world straight from a season: its admin page has an “add to catalog” button next to each installed upload. Adding a game that's already here replaces its entry.</p>"#,
     );

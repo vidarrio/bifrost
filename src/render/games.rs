@@ -22,6 +22,7 @@ const GAMES_STYLE: &str = r#"<style>
 .gamelist{list-style:none;padding:0;margin:0 0 8px;columns:2 240px;column-gap:24px}
 .gamelist li{break-inside:avoid;display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--bd);font-size:14px}
 .gamelist li[hidden]{display:none}
+.gamelist .note{display:block;color:var(--muted);font-size:12.5px}
 .gamelist .v{font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap}
 </style>"#;
 
@@ -75,8 +76,8 @@ pub fn games_page(v: &GamesView) -> Html<String> {
             b.push_str(r#"<div class="empty">The server's admins haven't vetted any custom games yet.</div>"#);
         } else {
             b.push_str(r#"<p class="statline">Vetted by the server's admins: ready to use.</p><ul class="gamelist">"#);
-            // Name and version only: notes are the sysadmins' own (source,
-            // who vetted it), and file names stay on the admin page.
+            // Name, version and the public note: the admins' own note and the
+            // file name stay on the admin page.
             for w in v.catalog {
                 let name = if w.game.is_empty() {
                     "Unnamed custom world"
@@ -88,7 +89,12 @@ pub fn games_page(v: &GamesView) -> Html<String> {
                 } else {
                     format!(r#"<span class="v">{}</span>"#, esc(&w.version))
                 };
-                b.push_str(&format!("<li><span>{}</span>{ver}</li>", esc(name)));
+                let note = if w.public_note.is_empty() {
+                    String::new()
+                } else {
+                    format!(r#"<span class="note">{}</span>"#, esc(&w.public_note))
+                };
+                b.push_str(&format!("<li><span>{}{note}</span>{ver}</li>", esc(name)));
             }
             b.push_str("</ul>");
         }

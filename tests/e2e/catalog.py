@@ -224,6 +224,13 @@ try:
     check("an upload of a core game installs nothing: the core game is used",
           j.get("ok") and j.get("world") == "" and "core games" in j.get("note", "") and "cf.apworld" not in pins(sid2), j)
 
+    # Public notes: set on the catalog page, shown on the Games page; the
+    # admins' own note isn't.
+    r = post(root, "/admin/catalog/notes", data={"sha256": sha, "note": "from the dev's repo", "public_note": "Plays best <with> a friend"})
+    check("a catalog world's notes can be edited", "Notes saved." in r.text)
+    games = anon.get(srv.base + "/worlds").text
+    check("the Games page shows the public note, escaped",
+          '<span class="note">Plays best &lt;with&gt; a friend</span>' in games and "from the dev" not in games)
     offer = re.search(r'action="/admin/catalog/offer/promote".*?name="sha256" value="([0-9a-f]{64})"', cat, re.S).group(1)
     r = post(root, "/admin/catalog/offer/promote", data={"sha256": offer})
     check("promoting the offer replaces the catalog's version",
@@ -232,7 +239,8 @@ try:
     check("…the old entry and the offer are gone", sha not in cat and "Newer versions players uploaded" not in cat)
     j = post(alice, f"/s/{sid2}/signup/apworld", files={"apworld": ("bar.apworld", fixture("bar.apworld"))}).json()
     check("…and later uploads of the game get the new version", j.get("ok") and "vetted version 1.1.0" in j.get("note", ""), j)
-    check("the Games page shows the new version", '<li><span>Bar Finder</span><span class="v">1.1.0</span></li>' in anon.get(srv.base + "/worlds").text)
+    check("the Games page shows the new version, keeping the game's public note",
+          '<li><span>Bar Finder<span class="note">Plays best &lt;with&gt; a friend</span></span><span class="v">1.1.0</span></li>' in anon.get(srv.base + "/worlds").text)
 
     # remove from catalog; installed copies stay
     newsha = re.search(r'<tr><td[^>]*>Bar Finder.*?action="/admin/catalog/remove".*?name="sha256" value="([0-9a-f]{64})"', get(root, "/admin/catalog").text, re.S)
