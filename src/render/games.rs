@@ -23,7 +23,6 @@ const GAMES_STYLE: &str = r#"<style>
 .gamelist li{break-inside:avoid;display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--bd);font-size:14px}
 .gamelist li[hidden]{display:none}
 .gamelist .v{font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap}
-.gamelist .note{display:block;color:var(--muted);font-size:12.5px}
 </style>"#;
 
 /// Narrow the core list as you type.
@@ -76,9 +75,11 @@ pub fn games_page(v: &GamesView) -> Html<String> {
             b.push_str(r#"<div class="empty">The server's admins haven't vetted any custom games yet.</div>"#);
         } else {
             b.push_str(r#"<p class="statline">Vetted by the server's admins: ready to use.</p><ul class="gamelist">"#);
+            // Name and version only: notes are the sysadmins' own (source,
+            // who vetted it), and file names stay on the admin page.
             for w in v.catalog {
                 let name = if w.game.is_empty() {
-                    w.file.trim_end_matches(".apworld")
+                    "Unnamed custom world"
                 } else {
                     &w.game
                 };
@@ -87,12 +88,7 @@ pub fn games_page(v: &GamesView) -> Html<String> {
                 } else {
                     format!(r#"<span class="v">{}</span>"#, esc(&w.version))
                 };
-                let note = if w.note.is_empty() {
-                    String::new()
-                } else {
-                    format!(r#"<span class="note">{}</span>"#, esc(&w.note))
-                };
-                b.push_str(&format!("<li><span>{}{note}</span>{ver}</li>", esc(name)));
+                b.push_str(&format!("<li><span>{}</span>{ver}</li>", esc(name)));
             }
             b.push_str("</ul>");
         }

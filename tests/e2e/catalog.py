@@ -155,9 +155,9 @@ try:
     anon = srv.session()
     r = anon.get(srv.base + "/worlds")
     check("the Games page is open to anyone", r.status_code == 200 and "Bar Finder" in r.text, r.status_code)
-    check("…with each vetted world's version and note, but not its file",
-          re.search(r"<li><span>Bar Finder<span class=\"note\">vetted</span></span><span class=\"v\">1.0.0</span></li>", r.text)
-          and "bar.apworld" not in r.text and sha not in r.text)
+    check("…with each vetted world's version, but not its note or file",
+          '<li><span>Bar Finder</span><span class="v">1.0.0</span></li>' in r.text
+          and "vetted" not in r.text.split("Custom games")[1] and "bar.apworld" not in r.text and sha not in r.text)
     core = wait_for(lambda: (t := anon.get(srv.base + "/worlds").text) and 'id="corelist"' in t and t, timeout=240, every=3)
     check("…and the core games, once listed", core and "<span>ChecksFinder</span>" in core and "Archipelago " in core,
           (core or "")[:300])

@@ -39,7 +39,6 @@ pub(crate) async fn signup_get(
     )
 }
 
-/// The seasons open for signup, each leading to its own page.
 /// What can be played here: the active Archipelago's games, the vetted custom
 /// ones and the common games. As public as the home page.
 pub(crate) async fn games_page(State(st): State<AppState>) -> Html<String> {
@@ -63,6 +62,7 @@ pub(crate) async fn games_page(State(st): State<AppState>) -> Html<String> {
     })
 }
 
+/// The seasons open for signup, each leading to its own page.
 pub(crate) async fn signups_list(State(st): State<AppState>, me: auth::Me) -> Html<String> {
     let mut open = Vec::new();
     for s in st.db.seasons().await {

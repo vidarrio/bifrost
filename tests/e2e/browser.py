@@ -104,7 +104,7 @@ try:
         if wait_for(lambda: 'id="corelist"' in root.get(srv.base + "/worlds").text, timeout=240, every=3):
             pg.goto(srv.base + "/worlds")
             pg.fill("#gamefilter", "checksfinder")
-            shown = pg.evaluate("[...document.querySelectorAll('#corelist li')].filter(li => li.getClientRects().length).map(li => li.textContent)")
+            shown = pg.evaluate("[...document.querySelectorAll('#corelist li')].filter(li => li.getClientRects().length).map(li => li.firstElementChild.textContent)")
             check("the Games page filter shows only the matching games", shown == ["ChecksFinder"], shown)
         else:
             check("the Games page lists the core games within 4 minutes", False)

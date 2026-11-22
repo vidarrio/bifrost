@@ -65,8 +65,8 @@ service such as kanidm or Authentik), there is no Bifrost password. Use the
 To see what you can play before you sign up, open **Games on this server**
 from the home page (`/worlds`). It lists the core games of the Archipelago
 version new seasons use, with each world's own version where it declares one,
-the custom games the server's admins have vetted, with their versions and
-notes, and the common games the server hosts. It's as public as the home page.
+the custom games the server's admins have vetted, with their versions, and
+the common games the server hosts. It's as public as the home page.
 
 Open **Sign up for a season** from the home page and pick a season from those
 open for signup. Its page shows the games so far and who's playing them. If you

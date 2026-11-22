@@ -267,6 +267,8 @@ async fn install_into(tag: &str, partial: &Path) -> Result<String, String> {
         .await
         .map_err(|e| format!("moving into place: {e}"))?;
     apinstall::mark_ready(&dest).map_err(|e| format!("marking it ready: {e}"))?;
+    // A list kept from an earlier install of this version may not fit it.
+    crate::games::forget(&version).await;
 
     let mut msg = format!("Archipelago {version} is installed and passed a test generation.");
     if !reply.failed_worlds.is_empty() {
@@ -343,7 +345,9 @@ pub async fn remove(version: &str) -> Result<(), String> {
     }
     tokio::fs::remove_dir_all(&i.dir)
         .await
-        .map_err(|e| format!("removing it: {e}"))
+        .map_err(|e| format!("removing it: {e}"))?;
+    crate::games::forget(version).await;
+    Ok(())
 }
 
 #[cfg(test)]
