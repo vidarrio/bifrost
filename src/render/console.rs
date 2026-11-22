@@ -436,11 +436,11 @@ pub fn settings_page(
         r#"<h2>Connections and home page</h2>
 <style>.authform{{max-width:560px}}.authform textarea{{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:7px 9px;font:13px/1.5 var(--mono);min-height:110px}}</style>
 <form class="authform" method="post" action="/admin/settings">
-<label>Site address (optional) — this Bifrost's own address, shown next to the title on the home page; empty for the address in <span class="mono">server.public_url</span> (without its scheme), if that's set<input type="text" name="site_address" value="{}" placeholder="bifrost.example.org" maxlength="253"></label>
+<label><span>Site address (optional) — this Bifrost's own address, shown next to the title on the home page; empty for the address in <span class="mono">server.public_url</span> (without its scheme), if that's set</span><input type="text" name="site_address" value="{}" placeholder="bifrost.example.org" maxlength="253"></label>
 <label>Connect host — what players' AP clients connect to; each live season adds its port. Shown on season boards, not the home page<input type="text" name="domain" value="{}" placeholder="ap.example.org" maxlength="253"></label>
 <label>Home link (optional) — a pill in the header that goes there<input type="url" name="home_url" value="{}" placeholder="https://example.org/"></label>
 <label>Home pill label — what that pill says (shown in capitals); empty for “{}”<input type="text" name="home_label" value="{}" placeholder="{}" maxlength="{}"></label>
-<label>Discord servers — one per line: <span class="mono">Name | https://discord.gg/… | note</span><textarea name="discords" spellcheck="false">{}</textarea></label>
+<label><span>Discord servers — one per line: <span class="mono">Name | https://discord.gg/… | note</span></span><textarea name="discords" spellcheck="false">{}</textarea></label>
 <button type="submit">Save</button></form>"#,
         esc(&inst.site_address),
         esc(&inst.domain),
@@ -585,7 +585,7 @@ pub fn common_catalog_page(
             )
         };
         body.push_str(&format!(
-            r#"<div class="hintrow"><span>{head}{used}</span><span><a href="/admin/common-games/{k}">edit</a></span></div>"#,
+            r#"<div class="hintrow"><span>{head}{used}</span><span class="act"><a href="/admin/common-games/{k}">edit</a></span></div>"#,
             k = esc(&r.key)
         ));
         if let Some(p) = &r.problem {

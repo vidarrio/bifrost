@@ -103,7 +103,7 @@ try:
     check("…finishing some of the archived season's", sum(g["pct"] == 100 for g in games) >= 3, [(g["game"], g["pct"]) for g in games])
     check("…and freezing its minesweeper leaderboards", any(m["time"] for m in summer.get("minesweeper", [])))
     board = get(admin, f"/s/{autumn}/board").text
-    sent = [int(n) for n in re.findall(r"· sent (\d+) ·", board)]
+    sent = [int(n) for n in re.findall(r"· sent\s(\d+) ·", board)]
     check("…has the live season part played", "goaled" in board and sum(n > 0 for n in sent) >= 4, sent)
     check("…with prioritized hints on its board", prios >= 2 and "wanted from you" in board,
           (prios, [l for l in seed.stdout.splitlines() if "hints" in l]))

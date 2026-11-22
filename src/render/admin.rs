@@ -674,7 +674,7 @@ pub fn admin_page(
     b.push_str(&format!(
         r#"<h2>Games per player</h2>
 <div class="statline">Games per player: {limit_text}.</div>
-<form class="console" method="post" action="admin/signups/limit" autocomplete="off"><input type="number" name="games" min="0" max="{max}" value="{limit}"><button type="submit">Set limit</button></form>
+<form class="console" method="post" action="admin/signups/limit" autocomplete="off"><input type="number" name="games" min="0" max="{max}" value="{limit}" style="flex:1;min-width:0"><button type="submit">Set limit</button></form>
 <p class="empty">How many games a player can sign up with in this season; 0 means no limit. Signups already made stay.</p>"#,
         max = crate::db::MAX_GAMES_LIMIT,
     ));
@@ -736,7 +736,7 @@ pub fn admin_page(
     // What can end or undo this season depends on its stage.
     let typed = |action: &str, label: &str, placeholder: &str, confirm: &str| {
         format!(
-            r#"<form class="console" method="post" action="{action}" autocomplete="off" onsubmit="return confirm('{confirm}')"><input type="text" name="name" placeholder="{placeholder}" required><button class="danger" type="submit">{label}</button></form>"#,
+            r#"<form class="console" method="post" action="{action}" autocomplete="off" onsubmit="return confirm('{confirm}')"><input type="text" name="name" placeholder="{placeholder}" required style="flex:1;min-width:0"><button class="danger" type="submit">{label}</button></form>"#,
             placeholder = esc(placeholder),
         )
     };

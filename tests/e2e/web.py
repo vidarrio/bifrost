@@ -161,6 +161,25 @@ def header(page):
     return page.evaluate(HEADER)
 
 
+# How many lines an element's text takes: a function of a selector or an
+# element (pass it to page.evaluate with the selector).
+# Only text counts (not buttons or badges beside it), and pieces of text whose
+# boxes overlap vertically are one line, whatever their font sizes.
+LINES = """(el) => { if (typeof el === 'string') el = document.querySelector(el);
+  const boxes = [], walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  for (let n; (n = walk.nextNode());) {
+    if (!n.textContent.trim()) continue;
+    const r = document.createRange(); r.selectNodeContents(n);
+    for (const b of r.getClientRects()) if (b.width > 0) boxes.push([b.top, b.bottom]);
+  }
+  boxes.sort((a, b) => a[0] - b[0]);
+  let lines = 0, bottom = -Infinity;
+  for (const [t, b] of boxes) {
+    if (t >= bottom - 1) { lines++; bottom = b; } else bottom = Math.max(bottom, b);
+  }
+  return lines; }"""
+
+
 def overflow_x(page):
     """How far the page is wider than the viewport, in CSS pixels."""
     return page.evaluate("document.documentElement.scrollWidth - innerWidth")
