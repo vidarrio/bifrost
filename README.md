@@ -34,10 +34,12 @@ an archive of past seasons.
 
 - **Seasons.** Each season goes draft → signups → live → archived, and several
   can be live at once. Every live season gets its own Archipelago server on a
-  stable port.
+  stable port. A season's signups and pages can be private to its members.
 - **Signups.** A two-step wizard: pick a game (core, a vetted catalog world,
-  or a custom upload), then upload a YAML. The YAML must pass Archipelago's own
-  checks before the signup is accepted.
+  or a custom upload), then upload a YAML, which must pass Archipelago's own
+  checks. A signup for a world still waiting for approval is held and checked
+  once it's approved. Players can sign up with several games, and invite co-op
+  partners to a game by link.
 - **Custom worlds, safely.** Sysadmins keep a catalog of vetted apworlds. Other
   uploads can wait for a moderator's approval. Every world is hash-pinned, and
   all apworld code runs in a bubblewrap sandbox.
@@ -56,7 +58,7 @@ an archive of past seasons.
   from your identity provider through forward-auth.
 - **Archipelago updates.** Install new releases from the settings page; each
   must pass a test generation before it's used. A live season keeps the
-  version it was generated with. Releases come from Bifrost's
+  version it was generated with until it's re-rolled. Releases come from Bifrost's
   [Archipelago fork](packaging/archipelago/), which carries small
   compatibility patches.
 - **Operations.** Nightly backups with retention, live load monitoring, and
@@ -70,9 +72,12 @@ an archive of past seasons.
 ```sh
 podman run -d --name bifrost --stop-timeout 30 --security-opt unmask=/proc/* \
     -p 8080:8080 -p 38281-38300:38281-38300 -v bifrost-data:/var/lib/bifrost \
-    ghcr.io/vidarrio/bifrost:latest    # or docker run
+    ghcr.io/vidarrio/bifrost:latest
 podman logs bifrost                  # prints the first-run /setup link
 ```
+
+Docker works too, with different security flags; see
+[Installing](docs/USER_GUIDE.md#installing).
 
 Open the `/setup?token=…` link to create the first sysadmin. Then set the
 connect host under *Console → Settings* and create a season.
@@ -107,13 +112,15 @@ src/
   main.rs           startup and shutdown
   web/              HTTP handlers and the route table, one file per area of the site
   config.rs         settings and the data-dir layout
-  db.rs, db/        SQLite: seasons, accounts, slots, claims, signups, catalog, settings
+  db.rs, db/        SQLite: seasons, accounts, slots, seats, signups, catalog, common
+                    games, settings, and schema migrations
   auth.rs           sessions, roles, forward-auth, CSRF (account.rs: sign-in, invites, users)
+  cli.rs            the `bifrost …` commands
   scope.rs          season-scoped URLs (/s/<id>/…)
   runtime.rs        per-season boards and workers (apserver.rs: the AP server supervisor)
   ap.rs             Archipelago client and live board state
   ap_adapter.rs     the one door to Archipelago internals (sandboxed helper scripts)
-  sandbox.rs        bubblewrap / resource-limit isolation
+  sandbox.rs        bubblewrap / resource-limit isolation (seccomp.rs: the syscall filter)
   apinstall.rs      which AP install each season runs (apupdate.rs: installing releases)
   worlds.rs         apworld catalog, uploads and approval
   checker.rs        YAML checks
@@ -121,16 +128,21 @@ src/
   inlogic.rs        Universal Tracker's in-logic list
   ptrack.rs         PopTracker packs (engine in crates/poptracker)
   mine.rs           no-guess minesweeper
+  common.rs         common games (common_edit.rs: editing them from the console)
+  activity.rs       the activity log
   season.rs         archived-season summaries (archive.rs: season bundles and import)
   backup.rs         backups and retention (bundle.rs: the single-file runtime)
   load.rs           live load sampling and warnings
+  selfupdate.rs     `bifrost update` (release_check.rs: the new-release banner)
+  demo.rs           the public demo build (`--features demo`)
   render/           all HTML: shared page shell in mod.rs, one file per area of the site
 crates/poptracker/  PopTracker pack engine
 scripts/            Python helpers run under Archipelago's interpreter
-static/             the home page template
+static/             the home page template and the logo
 vendor/             bundled apworlds (Universal Tracker)
-packaging/          the native bundle build and the Archipelago fork's patches
-docs/               the user guide
+packaging/          the native bundle build, the Archipelago fork's patches and the
+                    demo's seed
+docs/               the user guide and example common games
 tests/              end-to-end suites on real instances (e2e/) and page script
                     tests (js/)
 ```
