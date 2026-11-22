@@ -35,24 +35,27 @@ an archive of past seasons.
 - **Seasons.** Each season goes draft → signups → live → archived, and several
   can be live at once. Every live season gets its own Archipelago server on a
   stable port.
-- **Signups.** A three-step wizard: pick a game (core, a vetted catalog world,
+- **Signups.** A two-step wizard: pick a game (core, a vetted catalog world,
   or a custom upload), then upload a YAML. The YAML must pass Archipelago's own
   checks before the signup is accepted.
 - **Custom worlds, safely.** Sysadmins keep a catalog of vetted apworlds. Other
   uploads can wait for a moderator's approval. Every world is hash-pinned, and
   all apworld code runs in a bubblewrap sandbox.
-- **Generation.** One click rolls the seed, maps slots and claims, and starts
-  the server. Re-rolls keep claims.
+- **Generation.** One click rolls the seed, gives each signup's players their
+  slot, and starts the server. Re-rolls keep everyone's slots.
 - **Live board and game pages.** Slot status, goals and item flow, hints with
   item search and prioritization, Universal Tracker's in-logic list,
   PopTracker maps in the browser, and minesweeper for bonus hints. Each
   player's patch or output files from the generated seed are waiting on their
   game page, ready to download.
+- **Common games.** Shared co-op games the sysadmin hosts, such as a Minecraft
+  or Factorio server, which a whole season plays as one slot, with players'
+  in-game names registered and allowlists to download.
 - **Roles.** Players, moderators who run their own seasons, and sysadmins who
   run the instance. Accounts are invite-only with built-in passwords, or come
   from your identity provider through forward-auth.
-- **Archipelago updates.** Install new releases from the settings page; each is
-  tested before it's offered. A live season keeps the version it was generated
+- **Archipelago updates.** Install new releases from the settings page; each
+  must pass a test generation before it's used. A live season keeps the version it was generated
   with. Releases come from Bifrost's [Archipelago fork](packaging/archipelago/),
   which carries small compatibility patches.
 - **Operations.** Nightly backups with retention, live load monitoring, and
@@ -88,13 +91,15 @@ under Archipelago's own interpreter.
 
 ```sh
 cargo test --workspace               # unit tests
+node --test tests/js/*.test.mjs      # page script tests
 cargo build && BIFROST_DATA=./data BIFROST_AP_DIR=/path/to/Archipelago \
     BIFROST_RUNTIME_DIR=. BIFROST_INSECURE_COOKIES=1 target/debug/bifrost
 ```
 
 `BIFROST_AP_DIR` must point at an Archipelago checkout with a `venv/`
 (`BIFROST_AP_PYTHON` overrides the interpreter). `bifrost config example`
-prints every setting.
+prints every setting. The end-to-end suites, lints and the rest of the process
+are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```
 src/
@@ -125,6 +130,8 @@ static/             the home page template
 vendor/             bundled apworlds (Universal Tracker)
 packaging/          the native bundle build and the Archipelago fork's patches
 docs/               the user guide
+tests/              end-to-end suites on real instances (e2e/) and page script
+                    tests (js/)
 ```
 
 ## License
