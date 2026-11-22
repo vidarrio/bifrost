@@ -499,7 +499,7 @@ pub fn catalog_page(
         checked(Approval::Manual),
         checked(Approval::Auto),
     ));
-    body.push_str(r#"<style>.catnotes summary{cursor:pointer;color:var(--muted);font-size:12px;margin-top:2px}.catnotes .authform{margin:8px 0 4px}</style>"#);
+    body.push_str(r#"<style>.catnotes{clear:both;text-align:left}.catnotes summary{cursor:pointer;color:var(--muted);font-size:12px;margin-top:2px}.catnotes .authform{margin:8px 0 4px}</style>"#);
     body.push_str(r#"<h2>Catalog</h2><p class="statline">Worlds you've vetted. Players can pick them at signup. The catalog holds one version of each game: a player's upload of a game that's here gets the catalog's version instead (a newer one is listed below for you to consider), and adding a game that's here replaces its entry. Removing one doesn't touch seasons that already installed it.</p>"#);
     if catalog.is_empty() {
         body.push_str(r#"<div class="empty">The catalog is empty.</div>"#);
