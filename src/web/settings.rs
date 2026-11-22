@@ -59,7 +59,13 @@ pub(crate) async fn settings_load(State(st): State<AppState>, me: auth::Me) -> R
         .into_iter()
         .map(|s| (s.id, s.name))
         .collect();
-    Html(render::load_panel(load::snapshot().as_ref(), &names)).into_response()
+    // The panel replaces the page's own every few seconds: label its table the
+    // same way (`auth_page` does it for the page).
+    Html(render::label_cells(&render::load_panel(
+        load::snapshot().as_ref(),
+        &names,
+    )))
+    .into_response()
 }
 
 // ---- Archipelago installs (settings page) ----

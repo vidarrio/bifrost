@@ -8,7 +8,7 @@ Each check here stands for a bug a browser found that HTTP checks and the
 fake-DOM node tests didn't. Add to it when a page script or layout breaks."""
 import sys
 
-from lib import Server, check, get, new_season, post, summary
+from lib import Server, check, get, new_season, post, summary, wait_for
 import web
 
 srv = Server("browser", port=18199, ap_ports="39190-39192")
@@ -84,6 +84,13 @@ try:
                   pg.locator(".utable td").count() > 0 and not off, off)
             broken = pg.evaluate(web.BROKEN, ".utable td")
             check(f"{p}: at 360 px no word in a table breaks mid-word", not broken, broken)
+        # The settings page swaps in a fresh load panel every few seconds; its
+        # table needs its labels too, or its cards lose them.
+        # (No table until the first load sample.)
+        panel = wait_for(lambda: (t := root.get(srv.base + "/admin/settings/load").text) and "<table" in t and t,
+                         timeout=60)
+        check("the refreshed load panel's table cells are labelled", bool(panel) and 'data-label="Memory"' in panel,
+              (panel or "")[:200])
         # A standard minesweeper board fits a phone.
         settled(pg, "/minesweeper")
         pg.wait_for_selector(".msgrid .cell")

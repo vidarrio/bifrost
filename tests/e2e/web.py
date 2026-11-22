@@ -189,15 +189,25 @@ OFFSCREEN = """(sel) => [...document.querySelectorAll(sel)]
   .map(([t, r]) => [t, Math.round(r.left), Math.round(r.right)])"""
 
 # Words split across two lines inside the elements matching a selector, other
-# than at a hyphen or slash (where a long name may break): [word, element].
+# than right after a hyphen or slash (where a long name may break):
+# [word, element].
 BROKEN = """(sel) => { const out = [];
   for (const el of document.querySelectorAll(sel)) {
     const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     for (let n; (n = walk.nextNode());) {
       for (const m of n.textContent.matchAll(/[^\\s]+/g)) {
         const r = document.createRange(); r.setStart(n, m.index); r.setEnd(n, m.index + m[0].length);
-        const tops = new Set([...r.getClientRects()].filter(x => x.width > 0).map(x => Math.round(x.top)));
-        if (tops.size > 1 && !/[-\\/]/.test(m[0])) out.push([m[0], el.tagName]);
+        const top = (i) => { const c = document.createRange(); c.setStart(n, m.index + i); c.setEnd(n, m.index + i + 1);
+                             const b = c.getClientRects()[0]; return b ? Math.round(b.top) : null; };
+        const first = top(0);
+        for (let i = 1; i < m[0].length; i++) {
+          const t = top(i);
+          if (t !== null && first !== null && t !== first) {
+            // A break right after a hyphen or slash is where a long name may break.
+            if (!'-/'.includes(m[0][i - 1])) out.push([m[0], el.tagName]);
+            break;
+          }
+        }
       }
     }
   }

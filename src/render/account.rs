@@ -19,13 +19,13 @@ pub(super) const AUTH_STYLE: &str = r#"<style>
 .utable,.utable tbody{display:block}
 .utable tr:has(th){display:none}
 .utable tr{display:block;border:1px solid var(--bd);border-radius:10px;padding:6px 12px;margin:0 0 10px;background:var(--panel)}
-.utable td{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:5px 0;border-bottom:1px solid var(--bd);text-align:right}
-.utable td:last-child{border-bottom:0}
-.utable td::before{content:attr(data-label);flex:none;text-align:left;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
-.utable td:not([data-label]){justify-content:flex-start;flex-wrap:wrap;gap:8px;text-align:left}
+.utable td{display:block;padding:5px 0;border-bottom:0;text-align:right;overflow-wrap:break-word}
+.utable td+td{border-top:1px solid var(--bd)}
+.utable td::before{content:attr(data-label);float:left;margin-right:12px;font-size:11px;line-height:2;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);overflow-wrap:normal}
+.utable td:not([data-label]){text-align:left}
 .utable td:not([data-label])::before{content:none}
 .utable td:empty{display:none}
-.utable td>*{min-width:0}
+.utable td::after{content:"";display:block;clear:both}
 }
 .linkform{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin:6px 0 14px}
 .linkform label{display:grid;gap:4px;font-size:12px;color:var(--muted)}
@@ -35,48 +35,94 @@ pub(super) const AUTH_STYLE: &str = r#"<style>
 
 /// Copy each `utable`'s column names onto its cells (`data-label`), for the
 /// card layout a phone gets (see `AUTH_STYLE`). A column with an empty heading,
-/// such as the actions, gets no label.
-pub(super) fn label_cells(body: &str) -> String {
-    const OPEN: &str = r#"<table class="utable">"#;
+/// such as the actions, gets no label, and so does a cell that spans columns.
+/// Cells that already have a label keep it. Pages built outside `auth_page`
+/// that show a `utable`, such as the settings page's refreshed load panel, run
+/// their HTML through this too.
+pub fn label_cells(body: &str) -> String {
     let mut out = String::with_capacity(body.len() + 256);
     let mut rest = body;
-    while let Some(start) = rest.find(OPEN) {
+    while let Some(start) = rest.find("<table") {
+        let Some(tag_end) = rest[start..].find('>') else {
+            break;
+        };
+        let tag = &rest[start..start + tag_end];
         let Some(len) = rest[start..].find("</table>") else {
             break;
         };
+        let is_utable =
+            attr(tag, "class").is_some_and(|c| c.split_whitespace().any(|w| w == "utable"));
         out.push_str(&rest[..start]);
         let table = &rest[start..start + len];
+        if !is_utable {
+            out.push_str(table);
+            rest = &rest[start + len..];
+            continue;
+        }
         let mut labels: Vec<String> = Vec::new();
         for (i, row) in table.split("<tr").enumerate() {
             if i > 0 {
                 out.push_str("<tr");
             }
-            if row.contains("<th") {
-                labels = row
-                    .split("<th")
-                    .skip(1)
-                    .map(|c| {
-                        let inner = c.split_once('>').map_or("", |(_, t)| t);
-                        let text = inner.split("</th>").next().unwrap_or("");
-                        text.replace('"', "&quot;")
-                    })
-                    .collect();
+            // The heading row: headings and no data cells.
+            if labels.is_empty() && row.contains("<th") && !row.contains("<td") {
+                for c in row.split("<th").skip(1) {
+                    let (attrs, inner) = c.split_once('>').unwrap_or(("", ""));
+                    let text = strip_tags(inner.split("</th>").next().unwrap_or(""));
+                    let span = attr(attrs, "colspan")
+                        .and_then(|n| n.parse().ok())
+                        .unwrap_or(1usize);
+                    labels.push(text.trim().replace('"', "&quot;"));
+                    labels.extend(std::iter::repeat_n(String::new(), span.saturating_sub(1)));
+                }
                 out.push_str(row);
                 continue;
             }
+            let mut col = 0usize;
             for (j, cell) in row.split("<td").enumerate() {
-                if j > 0 {
-                    out.push_str("<td");
-                    if let Some(l) = labels.get(j - 1).filter(|l| !l.is_empty()) {
-                        out.push_str(&format!(r#" data-label="{l}""#));
-                    }
+                if j == 0 {
+                    out.push_str(cell);
+                    continue;
                 }
+                out.push_str("<td");
+                let attrs = cell.split_once('>').map_or("", |(a, _)| a);
+                let span = attr(attrs, "colspan")
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or(1usize);
+                if span == 1
+                    && !attrs.contains("data-label")
+                    && let Some(l) = labels.get(col).filter(|l| !l.is_empty())
+                {
+                    out.push_str(&format!(r#" data-label="{l}""#));
+                }
+                col += span;
                 out.push_str(cell);
             }
         }
         rest = &rest[start + len..];
     }
     out.push_str(rest);
+    out
+}
+
+/// An attribute's value in an HTML start tag (double-quoted, as Bifrost writes them).
+fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let at = tag.find(&format!(" {name}=\""))? + name.len() + 3;
+    tag[at..].split('"').next()
+}
+
+/// Text without its tags (headings are plain text, but be safe).
+fn strip_tags(html: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
     out
 }
 
@@ -339,5 +385,39 @@ mod tests {
             "{out}"
         );
         assert_eq!(super::label_cells("no tables"), "no tables");
+    }
+
+    #[test]
+    fn labelling_copes_with_real_markup() {
+        let body = concat!(
+            r#"<table class="utable wide" id="t"><tr><th>What</th><th colspan="2">Use <small>now</small></th><th>Note</th></tr>"#,
+            r#"<tr><td colspan="3">spans</td><td>n</td></tr>"#,
+            r#"<tr><td>a</td><td>b</td><td>c</td><td data-label="Mine">d</td></tr>"#,
+            r#"<tr><th>row head</th><td>x</td></tr></table>"#
+        );
+        let out = super::label_cells(body);
+        assert!(
+            out.contains(r#"<td colspan="3">spans</td><td data-label="Note">n</td>"#),
+            "a spanning cell has no label, and shifts the rest: {out}"
+        );
+        assert!(
+            out.contains(
+                r#"<td data-label="What">a</td><td data-label="Use now">b</td><td>c</td>"#
+            ),
+            "headings lose their tags; a spanned heading's extra columns have none: {out}"
+        );
+        assert!(
+            out.contains(r#"<td data-label="Mine">d</td>"#),
+            "an existing label stays: {out}"
+        );
+        assert!(
+            out.contains(r#"<tr><th>row head</th><td data-label="What">x</td>"#),
+            "a row with a th and data cells isn't a heading row: {out}"
+        );
+        assert_eq!(
+            super::label_cells(&out),
+            out,
+            "labelling twice changes nothing"
+        );
     }
 }
