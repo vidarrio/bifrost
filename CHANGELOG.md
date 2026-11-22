@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The home page no longer shows the connect host next to its title. That's
   the address for players' Archipelago clients, and season boards still show
   it. The home page shows the new site address there instead. Until one is
-  set, it shows the host of `server.public_url` (`BIFROST_PUBLIC_URL`) if
+  set, it shows the address in `server.public_url` (`BIFROST_PUBLIC_URL`) if
   that's configured, or nothing.
 
 ## [0.4.3] - 2026-11-22
