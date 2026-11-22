@@ -23,14 +23,17 @@ branch. Prefix the branch name with the kind of change:
 | `chore/` | dependencies, formatting, housekeeping |
 | `release/` | release cuts only (see [Releases](#releases)) |
 
-For example: `feat/season-rehearsal`, `fix/hint-credit-race`.
+For example: `feat/season-rehearsal`, `fix/hint-credit-race`. Dependabot's
+branches (`dependabot/…`) count as `chore`.
 
 The kind of change also shows on the pull request: its title starts with it
 (see [Pull requests](#pull-requests)), and it's labelled with it
 automatically, from the branch prefix.
 
-Keep branches short-lived. If `main` moves on while you work, rebase onto it
-and update the pull request with `git push --force-with-lease`.
+Keep branches short-lived. If `main` moves on while you work, bring the branch
+up to date: rebase onto `main` and `git push --force-with-lease`, or merge
+`main` into it (GitHub's **Update branch** does this). Either is fine, since
+the squash merge leaves only the pull request's title on `main`.
 
 `main` is protected: nobody pushes to it directly, the maintainer included.
 Changes reach it only through a pull request with passing CI (see
@@ -38,8 +41,10 @@ Changes reach it only through a pull request with passing CI (see
 
 ## Commits
 
-Write an imperative subject line of at most 72 characters ("Add season import",
-not "Added…"). Use the body to explain why when it isn't obvious. Don't add
+Write an imperative subject line of at most 72 characters, in the same form
+as a pull request title (`feat: add season import`, not "Added season
+import"). Only the pull request's title reaches `main`, but branch commits
+read best in the same style. Use the body to explain why when it isn't obvious. Don't add
 tool attribution trailers such as `Co-Authored-By` or "Generated with"; the
 [AI disclaimer](AI_DISCLAIMER.md) covers how Bifrost is made.
 
@@ -64,22 +69,39 @@ pull request instead.
 
 ## Pull requests
 
-Open a pull request against `main` once the branch is ready for review. Its
-title is `<kind>: <subject>`, where `<kind>` is the branch's prefix without the
-slash and `<subject>` is an imperative summary. A scope in parentheses is
-optional. For example:
+Open a pull request against `main` once the branch is ready for review.
+
+Its title is `<kind>: <subject>`:
+
+- `<kind>` is the branch's prefix without the slash (`chore` for Dependabot's
+  branches).
+- A scope in parentheses after the kind is optional, and a `!` before the
+  colon marks a breaking change.
+- `<subject>` is an imperative summary in lower case, with no full stop.
+- Keep the whole title to about 65 characters. It becomes the commit subject
+  on `main` with " (#N)" appended, which should stay within the 72 characters
+  of [Commits](#commits). Nothing checks the length, so count it yourself.
+
+For example:
 
 - `feat: import seasons from archive bundles`
 - `fix(poptracker): don't hold the engine borrow while handlers run`
+- `chore(deps): bump zip from 9.4.2 to 9.5.1` (Dependabot's)
+- `release: v0.4.3`
 
 A CI check (`title`) fails when the title doesn't have this form or its kind
-doesn't match the branch.
+doesn't match the branch. It reruns when the title or description is edited.
 
-The description says:
+The description follows the
+[template](.github/pull_request_template.md):
 
-- what changes and why;
-- how it was tested;
-- whether it needs a changelog entry (and that it has one).
+- **What and why**: what changes and why.
+- **How it was tested**: the commands run, the suites that passed, anything
+  checked by hand.
+- **Checklist**: title, branch up to date, the local checks, and the
+  changelog entry (or a note that there's no user-visible change). Tick these
+  when opening the pull request. The last two items, CI and review, are ticked
+  just before merging (see [Merging](#merging)).
 
 ### CI
 
@@ -87,17 +109,29 @@ CI runs on every pull request and on every push to `main`. It checks:
 
 | Job | Runs |
 |---|---|
-| `lint` | `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, a syntax check of the Python helpers and tests, and that the image and the bundle pin the same Archipelago |
-| `test` | `cargo test --workspace`, and the page script tests (`node --test tests/js/*.test.mjs`) |
-| `e2e` | the native end-to-end suites (a debug build on real Archipelago installs, generating seeds and running servers under bubblewrap), split across parallel shards |
+| `changes` | decides whether the slow jobs run (not for documentation-only changes, see below), and how the end-to-end suites are split into shards |
+| `lint` | `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`, and again for the demo build (`--features demo`); a syntax check of the Python helpers and tests; that the database schema is as released (see [Database changes](#database-changes)); that every end-to-end suite runs in some shard; that the `rust:` base images and `rust-version` match the pinned toolchain; and that the image and the bundle pin the same Archipelago |
+| `test` | `cargo test --workspace`, the unit tests of the demo build, and the page script tests (`node --test tests/js/*.test.mjs`) |
+| `e2e (N)` | the native end-to-end suites (a debug build on real Archipelago installs, generating seeds and running servers under bubblewrap), one job per shard |
+| `e2e` | passes when every shard passed: the one end-to-end check the ruleset requires, however the suites are sharded |
 | `image` | builds the container image and runs its suite (`tests/e2e/run.sh container`) |
 | `bundle` | builds the native bundle and runs its suite (`tests/e2e/run.sh bundle`) |
-| `title` | the pull request title is `<kind>: <subject>`, with the branch's kind (see [Pull requests](#pull-requests)) |
+| `title` | pull requests only: the title is `<kind>: <subject>`, with the branch's kind (see [Pull requests](#pull-requests)) |
+| `label` | pull requests only, when one opens or reopens: labels it with its kind, from the branch prefix |
 
-`e2e`, `image` and `bundle` are skipped when a pull request only changes
-documentation (Markdown files, `docs/`, `LICENSE`). The image and bundle
+The ruleset on `main` requires `lint`, `test`, `e2e`, `image`, `bundle` and
+`title`.
+
+The `e2e (N)` shards, `image` and `bundle` are skipped when a pull request
+only changes documentation (Markdown files, `docs/`, `LICENSE`); `e2e` still
+runs, and passes. The image and bundle
 builds reuse a layer cache that only `main` writes, so a pull request rebuilds
 only what it changed.
+
+Each push to `main` also builds and publishes the public demo's image as
+`ghcr.io/vidarrio/bifrost:demo` and `:demo-<short sha>`
+(`.github/workflows/demo.yml`, which can also be started by hand). It never
+touches the release tags. After merging, check that `main`'s runs pass.
 
 Run the same commands locally before pushing (see [Development](#development)).
 
@@ -140,8 +174,8 @@ A pull request merges when all of these hold:
 
 Merge with **squash and merge**, the only merge method the repository allows.
 The pull request title, kind included, becomes the commit subject on `main`,
-with the PR number appended. Keep it to about 65 characters, so the subject
-stays under 72 with the number. The branch is deleted automatically.
+with the PR number appended (hence its length limit; see
+[Pull requests](#pull-requests)). The branch is deleted automatically.
 
 ### Repository settings
 
@@ -170,9 +204,8 @@ These GitHub settings enforce the process:
 Cargo dependencies and Rust toolchains, and opens a pull request for each.
 Actions come as one grouped pull request, and so do Cargo patch updates; any
 other Cargo update gets its own, since a minor bump of a `0.x` crate can be
-breaking. Its
-pull requests follow the same rules as any other: CI, a review, every finding
-answered, squash merge.
+breaking. Its pull requests follow the same rules as any other: CI, a review,
+every finding answered, squash merge.
 
 Two pins are releases rather than packages, so Dependabot can't see them: the
 bundle's Python (`PY_URL`/`PY_SHA256` in `packaging/bundle/Containerfile`)
@@ -238,8 +271,13 @@ To cut release `X.Y.Z`:
    ```
 
 6. **The release workflow** (`.github/workflows/release.yml`) takes it from
-   there. It checks that the tag matches `Cargo.toml` and that the changelog
-   has a `[X.Y.Z]` section, then:
+   there. It checks that the tagged commit is on `main`, that the tag matches
+   `Cargo.toml` and that the changelog has a `[X.Y.Z]` section. Its signing
+   job waits for the maintainer to approve the deployment to the `release`
+   environment (**Review deployments** on the run's page; see
+   [Repository settings](#repository-settings)). The bundle is built, and its
+   provenance attested, before that; the image, the signature and the GitHub
+   release wait for the approval. The workflow:
    - builds the container image and pushes it to
      `ghcr.io/vidarrio/bifrost` as `X.Y.Z`, `X.Y` and `latest` (a version
      with a pre-release suffix, like `0.2.0-rc.1`, gets only `X.Y.Z-…` and is
@@ -270,7 +308,9 @@ Releases of Bifrost's Archipelago fork are separate; see
 ```sh
 cargo fmt --all                                        # format
 cargo clippy --workspace --all-targets -- -D warnings  # lint
+cargo clippy -p bifrost --all-targets --features demo -- -D warnings  # lint the demo build
 cargo test --workspace                                 # unit tests
+cargo test -p bifrost --features demo                  # unit tests of the demo build
 node --test tests/js/*.test.mjs                        # page script tests
 cargo build && BIFROST_DATA=./data BIFROST_AP_DIR=/path/to/Archipelago \
     BIFROST_RUNTIME_DIR=. BIFROST_INSECURE_COOKIES=1 target/debug/bifrost
