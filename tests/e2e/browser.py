@@ -67,6 +67,25 @@ try:
         for p in pages:
             settled(pg, p)
             check(f"{p}: no sideways scroll at 360 px", web.overflow_x(pg) <= 0, web.overflow_x(pg))
+            # The identity takes a row of its own rather than wrapping in the bar.
+            lines = pg.evaluate(web.LINES, "#who")
+            check(f"{p}: at 360 px the header's identity is one line", lines == 1, lines)
+        # Tabs: one row that scrolls, not a grid of buttons.
+        settled(pg, f"/s/{sid}/admin")
+        tops = pg.evaluate("() => new Set([...document.querySelectorAll('.gtab')].map(t => Math.round(t.getBoundingClientRect().top))).size")
+        check("at 360 px a page's tabs are one row", tops == 1, tops)
+        # Tables scroll sideways; their names and buttons don't break.
+        for p in ("/admin/users", "/admin/seasons"):
+            settled(pg, p)
+            many = pg.evaluate("(sel) => [...document.querySelectorAll(sel)].filter(td => td.textContent.trim())"
+                               ".map(td => [td.textContent.trim().slice(0, 30), (" + web.LINES + ")(td)]).filter(([, n]) => n > 1)",
+                               ".utable td")
+            check(f"{p}: at 360 px every table cell is one line", not many, many)
+        # A standard minesweeper board fits a phone.
+        settled(pg, "/minesweeper")
+        pg.wait_for_selector(".msgrid .cell")
+        w = pg.evaluate("document.querySelector('.msgrid').getBoundingClientRect().width")
+        check("at 360 px a standard minesweeper board fits the screen", w <= 360 - 32, w)
         ctx.close()
 
         # --- tabs keep the page's address (season pages have <base href>)

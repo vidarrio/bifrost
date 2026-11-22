@@ -12,6 +12,9 @@ pub(super) const AUTH_STYLE: &str = r#"<style>
 .utable td{padding:7px 8px;border-bottom:1px solid var(--bd);vertical-align:middle}
 .utable form{display:inline}.utable .mono{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
 .utable tr.dead td{color:var(--muted)}
+/* A phone can't fit a table's columns: the table scrolls sideways, and names,
+   ports, dates and buttons stay whole instead of breaking mid-word. */
+@media (max-width:560px){.utable{display:block;overflow-x:auto}.utable th,.utable td{white-space:nowrap}}
 .linkform{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin:6px 0 14px}
 .linkform label{display:grid;gap:4px;font-size:12px;color:var(--muted)}
 .minted input{width:100%;font-family:var(--mono);font-size:12.5px;background:var(--bg);color:var(--fg);border:1px solid var(--ok);border-radius:6px;padding:8px 10px;margin-top:6px}

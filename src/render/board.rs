@@ -23,7 +23,8 @@ header .hwrap{max-width:none;padding-inline:clamp(20px,4vw,80px)}
 .seasonprog .spfill{height:100%;border-radius:999px;background:var(--brand);transition:width .6s ease;min-width:2px}
 .slot .cardprog{height:5px;border-radius:999px;background:var(--bg);overflow:hidden;margin:2px 0 9px}
 .joincard{max-width:760px}
-.joincard .kv{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;margin:0 0 8px;font-size:14px}
+.joincard .kv{display:flex;gap:4px 14px;align-items:baseline;margin:0 0 8px;font-size:14px}
+.joincard .kv>:not(.k){min-width:0;overflow-wrap:anywhere}
 .joincard .k{flex:0 0 110px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .joincard .steps{margin:16px 0 0;padding-left:18px;color:var(--muted);font-size:14px}
 .joincard .steps li{margin:4px 0}
@@ -205,7 +206,9 @@ pub(super) fn board_inner(
     activity: &[crate::db::ActivityRow],
     inlogic: &std::collections::HashMap<i64, i64>,
 ) {
-    out.push_str(r#"<div class="boardgrid"><h2>Games — tap one to hint and see its hints</h2>"#);
+    out.push_str(
+        r#"<div class="boardgrid"><h2>Games — tap one to hint and see its&nbsp;hints</h2>"#,
+    );
     if slots.is_empty() {
         out.push_str(r#"<div class="empty">No slots yet — the board fills once Bifrost connects to a running game.</div>"#);
     } else {
@@ -215,7 +218,7 @@ pub(super) fn board_inner(
             let (cls, label) = card_status(&live);
             let avail = inlogic
                 .get(&g.ap_slot)
-                .map(|n| format!(" · {n} available"))
+                .map(|n| format!(" · {n}&nbsp;available"))
                 .unwrap_or_default();
             let common = g
                 .rows
@@ -224,7 +227,7 @@ pub(super) fn board_inner(
                 .and_then(|k| commons.iter().find(|c| c.key == k));
             out.push_str(&format!(
                 r#"<a class="slot cardlink {cls}" href="game/{}"><span class="st">{label}</span><div class="game">{}</div>
-<div class="meta">{} locations · {} left · sent {} · recv {}{avail}</div>"#,
+<div class="meta">{}&nbsp;locations · {}&nbsp;left · sent&nbsp;{} · recv&nbsp;{}{avail}</div>"#,
                 g.rows[0].game_id,
                 esc(common.map_or(g.game, |c| c.name.as_str())),
                 live.world_size,
