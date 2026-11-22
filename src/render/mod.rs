@@ -150,9 +150,13 @@ macro_rules! identity_js {
 // doesn't flicker empty→filled on reload, then confirm/update from /api/me.
 // Signing in or out changes who the cached identity belongs to: drop it, so
 // the next page doesn't paint the old one (a signed-out name on a shared
-// browser) before /api/me answers.
-function bifForgetMe(){try{localStorage.removeItem('bifme')}catch(e){}}
-document.addEventListener('submit',function(e){var a=e.target.getAttribute('action')||'';if(a==='/login'||a==='/logout')bifForgetMe()});
+// browser) before /api/me answers. The flag keeps this page's own /api/me, if
+// it's still on its way, from caching the old identity again.
+var bifForgot=false;
+function bifForgetMe(){bifForgot=true;try{localStorage.removeItem('bifme')}catch(e){}}
+// Every form that signs someone in or out: sign-in, first-run setup, an
+// invite, a password reset, sign-out.
+document.addEventListener('submit',function(e){var a=e.target.getAttribute('action')||'';if(/^\/(login|logout|setup)$|^\/(invite|reset)\//.test(a))bifForgetMe()});
 function bifApplyMe(m){
  var w=document.getElementById('who');
  // Built from DOM nodes, not markup: the cached identity is replayed on every
@@ -169,7 +173,7 @@ fetch('/api/me').then(function(r){return r.json()}).then(function(m){
  bifApplyMe(m);
  // Everything bifApplyMe draws, so a page paints the same header from the cache
  // as it will once /api/me answers (a missing home pill shifted the rest).
- try{localStorage.setItem('bifme',JSON.stringify({user:(m&&m.user)||null,admin:!!(m&&m.admin),sign_in:m&&m.sign_in,sign_out:m&&m.sign_out,home:(m&&m.home)||'',home_label:(m&&m.home_label)||''}));}catch(e){}
+ if(!bifForgot)try{localStorage.setItem('bifme',JSON.stringify({user:(m&&m.user)||null,admin:!!(m&&m.admin),sign_in:m&&m.sign_in,sign_out:m&&m.sign_out,home:(m&&m.home)||'',home_label:(m&&m.home_label)||''}));}catch(e){}
 }).catch(function(){});
 "#, demo_js!())
     };
@@ -725,6 +729,24 @@ mod tests {
     fn header_builds_no_markup_from_the_identity() {
         // Shared by every page and the landing page; the cached identity is
         // replayed into it, so it must not go through innerHTML.
+        // No other way into markup, and innerHTML only ever as a plain `=`.
+        for banned in [
+            "insertAdjacentHTML",
+            "outerHTML",
+            "document.write",
+            "innerHTML+",
+            "innerHTML ",
+        ] {
+            assert!(
+                !IDENTITY_JS.contains(banned),
+                "{banned} in the header script"
+            );
+        }
+        assert_eq!(
+            IDENTITY_JS.matches("innerHTML").count(),
+            IDENTITY_JS.matches("innerHTML=").count(),
+            "innerHTML written other than as `innerHTML=`"
+        );
         // Each innerHTML assignment is either a clear or the admin pill's
         // constant markup (chosen by a boolean), never built from the data.
         for rest in IDENTITY_JS.split("innerHTML=").skip(1) {
