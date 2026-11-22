@@ -20,7 +20,7 @@ try:
     post(root, f"/s/{sid}/admin/signups", data=dict(open="1"))
     # Pages a signed-in sysadmin sees, of each kind: the landing page (its own
     # template), the console, a season's console (tabs) and its signup wizard.
-    pages = ["/", "/signups", "/admin/seasons", "/admin/users", "/admin/settings",
+    pages = ["/", "/signups", "/worlds", "/admin/seasons", "/admin/users", "/admin/settings",
              "/admin/catalog", f"/s/{sid}/admin", f"/s/{sid}/signup"]
     for p in pages:
         check(f"{p} loads", get(root, p).status_code == 200)
@@ -97,6 +97,18 @@ try:
         w = pg.evaluate("document.querySelector('.msgrid').getBoundingClientRect().width")
         check("at 360 px a standard minesweeper board fits the screen", w <= 360 - 32, w)
         ctx.close()
+
+        # --- the Games page's filter narrows what's shown (rendered, not just
+        # marked hidden). Its core list may still be being gathered.
+        pg = web.context(b, srv, root).new_page()
+        if wait_for(lambda: 'id="corelist"' in root.get(srv.base + "/worlds").text, timeout=240, every=3):
+            pg.goto(srv.base + "/worlds")
+            pg.fill("#gamefilter", "checksfinder")
+            shown = pg.evaluate("[...document.querySelectorAll('#corelist li')].filter(li => li.getClientRects().length).map(li => li.textContent)")
+            check("the Games page filter shows only the matching games", shown == ["ChecksFinder"], shown)
+        else:
+            check("the Games page lists the core games within 4 minutes", False)
+        pg.context.close()
 
         # --- tabs keep the page's address (season pages have <base href>)
         ctx = web.context(b, srv, root)

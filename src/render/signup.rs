@@ -112,6 +112,7 @@ pub fn signup_page(
         step1.push_str(r#"<label><input type="radio" name="gtype" value="custom"> <span>Another custom (unofficial) game — I have its <code>.apworld</code></span></label>"#);
     }
     step1.push_str("</div>");
+    step1.push_str(r#"<p class="hint"><a href="/worlds" target="_blank" rel="noopener">See every game on this server</a>, with versions.</p>"#);
     if !worlds.custom_allowed {
         step1.push_str(
             r#"<p class="hint">Custom (unofficial) games are turned off on this server.</p>"#,

@@ -32,6 +32,7 @@ mod config;
 mod db;
 #[cfg(feature = "demo")]
 mod demo;
+mod games;
 mod generate;
 mod inlogic;
 mod load;
@@ -246,6 +247,8 @@ async fn main() {
 
     backup::spawn_nightly(db.clone());
     release_check::spawn();
+    // The Games page's list for the version new seasons use.
+    games::ensure(apinstall::active());
     load::spawn_sampler(cfg.data_dir.clone());
 
     let shutdown_seasons = seasons.clone();

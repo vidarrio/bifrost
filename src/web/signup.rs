@@ -40,6 +40,29 @@ pub(crate) async fn signup_get(
 }
 
 /// The seasons open for signup, each leading to its own page.
+/// What can be played here: the active Archipelago's games, the vetted custom
+/// ones and the common games. As public as the home page.
+pub(crate) async fn games_page(State(st): State<AppState>) -> Html<String> {
+    let ap = apinstall::active();
+    let core = crate::games::cached(&ap);
+    if core.is_none() {
+        crate::games::ensure(ap.clone());
+    }
+    let commons: Vec<String> = crate::common::catalog()
+        .into_iter()
+        .filter_map(|(_, s)| s.ok().map(|s| s.name))
+        .collect();
+    let catalog = st.db.catalog().await;
+    render::games_page(&render::GamesView {
+        ap_version: ap.upstream(),
+        core: core.as_deref(),
+        catalog: &catalog,
+        commons: &commons,
+        custom_allowed: sandbox::get().custom_worlds_allowed(),
+        manual: st.db.approval().await == db::Approval::Manual,
+    })
+}
+
 pub(crate) async fn signups_list(State(st): State<AppState>, me: auth::Me) -> Html<String> {
     let mut open = Vec::new();
     for s in st.db.seasons().await {

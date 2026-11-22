@@ -34,6 +34,8 @@ const COUNTS_TIMEOUT: Duration = Duration::from_secs(120);
 /// Default wall-clock cap on a generation (`BIFROST_GENERATE_TIMEOUT_MIN`).
 const GENERATE_TIMEOUT: Duration = Duration::from_secs(120 * 60);
 const SETTINGS_TIMEOUT: Duration = Duration::from_secs(60);
+/// Listing an install's games loads every world once.
+const GAMES_TIMEOUT: Duration = Duration::from_secs(300);
 const PNG_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// What a helper may touch besides the AP install, scripts and season dir
@@ -381,6 +383,51 @@ async fn scratch_dir(stem: &str) -> Result<PathBuf, String> {
         .await
         .map_err(|e| format!("scratch dir: {e}"))?;
     Ok(dir)
+}
+
+/// One game an Archipelago install provides, with the version its world
+/// declares (if it declares one).
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct GameEntry {
+    pub game: String,
+    pub version: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct GameList {
+    games: Option<Vec<GameEntry>>,
+    error: Option<String>,
+}
+
+/// The games `ap` provides: its own worlds only, loaded with an empty scratch
+/// dir as the user dir (no season, so no uploaded world), read-only except
+/// for that scratch dir.
+pub async fn list_games(ap: &Install) -> Result<Vec<GameEntry>, String> {
+    let cfg = config::get();
+    let scratch = scratch_dir("games").await?;
+    let job = Job {
+        program: &ap.python,
+        args: vec![cfg.script("bifrost_games.py").into_os_string()],
+        cwd: &scratch,
+        env: vec![
+            ("BIFROST_AP_DIR", ap.dir.clone().into_os_string()),
+            ("BIFROST_SEASON_DIR", scratch.clone().into_os_string()),
+            ("PYTHONDONTWRITEBYTECODE", "1".into()),
+            ("SKIP_REQUIREMENTS_UPDATE", "1".into()),
+        ],
+        read: vec![ap.dir.clone(), cfg.runtime_dir.join("scripts")],
+        write: vec![scratch.clone()],
+        network: false,
+    };
+    let out = sandbox::run(sandbox::get().command(&job), GAMES_TIMEOUT).await;
+    let _ = tokio::fs::remove_dir_all(&scratch).await;
+    let out = out.map_err(|e| format!("games: {e}"))?;
+    let list: GameList = last_json_line(&out.stdout, "{}").map_err(|e| format!("games: {e}"))?;
+    match (list.games, list.error) {
+        (Some(g), _) => Ok(g),
+        (None, Some(e)) => Err(format!("games: {e}")),
+        (None, None) => Err(format!("games: no list ({})", stderr_tail(&out, 2))),
+    }
 }
 
 /// Validate a player YAML (raw contents) against the season's worlds with AP's

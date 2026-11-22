@@ -149,6 +149,19 @@ try:
              data={"note": "vetted"})
     check("catalog add reads the manifest", "Added bar.apworld" in r.text and "Bar Finder" in r.text and "1.0.0" in r.text, r.text[-800:])
     sha = re.search(r'name="sha256" value="([0-9a-f]{64})"', r.text).group(1)
+    # The Games page, as public as the home page: vetted worlds with their
+    # versions (no file details), and the active Archipelago's core games once
+    # they've been listed.
+    anon = srv.session()
+    r = anon.get(srv.base + "/worlds")
+    check("the Games page is open to anyone", r.status_code == 200 and "Bar Finder" in r.text, r.status_code)
+    check("…with each vetted world's version and note, but not its file",
+          re.search(r"<li><span>Bar Finder<span class=\"note\">vetted</span></span><span class=\"v\">1.0.0</span></li>", r.text)
+          and "bar.apworld" not in r.text and sha not in r.text)
+    core = wait_for(lambda: (t := anon.get(srv.base + "/worlds").text) and 'id="corelist"' in t and t, timeout=240, every=3)
+    check("…and the core games, once listed", core and "<span>ChecksFinder</span>" in core and "Archipelago " in core,
+          (core or "")[:300])
+    check("…which the home page links to", 'href="/worlds"' in anon.get(srv.base + "/").text)
     page = get(bob, f"{S}/signup").text
     check("signup offers the catalog", f'value="{sha}"' in page and "Bar Finder 1.0.0 (bar.apworld)" in page)
     j = post(bob, f"{S}/signup/apworld", files={"catalog": (None, sha)}).json()

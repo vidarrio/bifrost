@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A **Games** page (`/worlds`, linked from the home page and the signup
+  wizard) lists what can be played on the server before you sign up: the core
+  games of the Archipelago version new seasons use, with each world's own
+  version where it declares one, the custom games the admins have vetted,
+  with their versions and notes, and the common games the server hosts. It's
+  as public as the home page.
 - A **Site address** setting: Bifrost's own address, shown next to the title
   on the home page.
 
