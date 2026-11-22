@@ -230,7 +230,7 @@ details.identedit{margin:-4px 0 8px}details.identedit summary{cursor:pointer;fon
 .prow{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .players .who{font-family:inherit;font-size:15px;font-weight:600;color:var(--fg)}.players .by{font-size:12px;color:var(--muted)}.players .by.mine{color:var(--ok)}
 header{width:100%;border-bottom:1px solid var(--bd);background:var(--panel)}
-header .hwrap{max-width:900px;margin:0 auto;padding:0 16px;height:52px;display:flex;align-items:center;gap:14px}
+header .hwrap{max-width:900px;margin:0 auto;padding:0 16px;height:52px;display:flex;align-items:center;gap:14px;line-height:1.5}
 header .brand{font-weight:700;font-size:16px;color:var(--fg);text-decoration:none;display:flex;align-items:center;gap:8px}header .brand img{width:22px;height:22px}header .brand:hover{text-decoration:none}
 header .spacer{flex:1}
 .who{font-family:var(--mono);font-size:12px;color:var(--muted)}.who b{color:var(--fg)}.who a{color:var(--accent)}
@@ -542,13 +542,14 @@ pub fn notice(text: &str, ok: bool, back: &str) -> Html<String> {
 /// Tab bar styling shared by the game page and the season console.
 const TABS_CSS: &str = r#"<style>
 .gtabs{display:flex;flex-wrap:wrap;gap:2px;border-bottom:1px solid var(--bd);margin:22px 0 16px}
-.gtab{white-space:nowrap}
-/* On a phone, one row that scrolls sideways instead of a grid of buttons. */
-@media (max-width:560px){.gtabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}.gtab{padding:8px 11px}}
 .gtab{background:none;color:var(--muted);border:0;border-bottom:2px solid transparent;border-radius:0;margin-bottom:-1px;padding:8px 15px;font-family:var(--font);font-size:14px;font-weight:600;cursor:pointer}
 .gtab:hover{color:var(--fg)}
 .gtab.on{color:var(--accent);border-bottom-color:var(--accent)}
 a.gtab{display:inline-block;text-decoration:none}
+.gtab{white-space:nowrap}
+/* On a phone, one row that scrolls sideways instead of a grid of buttons
+   (after the rules above, so its padding wins). */
+@media (max-width:560px){.gtabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}.gtab{padding:8px 11px}}
 </style>"#;
 
 /// The instance console's tab bar: one page per tab, so these

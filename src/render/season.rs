@@ -94,7 +94,9 @@ pub fn season_page(
             if m.is_empty() {
                 continue;
             }
+            out.push_str(r#"<div class="lbview">"#);
             out.push_str(&mine_leaderboard_html(&m.label, &m.time, &m.rate, 5));
+            out.push_str("</div>");
         }
         close(&mut out);
     }
