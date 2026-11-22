@@ -183,10 +183,27 @@ pub fn minesweeper_page(
         stats = mine_stats_html(standard, expert),
     ));
     b.push_str(MINE_STYLE);
+    b.push_str(LB_STYLE);
     b.push_str(MINE_JS);
     b.push_str("</main></body></html>");
     Html(b)
 }
+
+/// The leaderboards' styles, shared by the minesweeper page and an archived
+/// season's page.
+pub(super) const LB_STYLE: &str = r#"<style>
+.lbview{margin-top:14px;max-width:560px}
+.lbhead{font-size:15px;margin:0 0 6px}
+.lbsub{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:18px 0 8px}
+.lbsub small{text-transform:none;letter-spacing:0;font-weight:400}
+table.lb{width:100%;border-collapse:collapse;font-size:13.5px}
+table.lb th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;padding:4px 10px;border-bottom:1px solid var(--bd)}
+table.lb td{padding:6px 10px;border-bottom:1px solid var(--bd)}
+table.lb td.rank{color:var(--muted);font-family:var(--mono);width:1%;white-space:nowrap}
+table.lb td.num{font-family:var(--mono);text-align:right}
+table.lb th:last-child{text-align:right}
+table.lb tr:first-child td.rank{color:var(--accent);font-weight:700}
+</style>"#;
 
 pub(super) const MINE_STYLE: &str = r#"<style>
 /* Widen this page (and match the header) so the full expert board fits beside
@@ -213,17 +230,6 @@ header .hwrap{max-width:1180px}
 .mstab:hover{color:var(--fg);border-color:var(--accent)}
 .mstab.active{color:var(--bg);background:var(--accent);border-color:var(--accent)}
 .mstabgap{width:1px;align-self:stretch;background:var(--bd);margin:2px 4px}
-.lbview{margin-top:14px;max-width:560px}
-.lbhead{font-size:15px;margin:0 0 6px}
-.lbsub{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:18px 0 8px}
-.lbsub small{text-transform:none;letter-spacing:0;font-weight:400}
-table.lb{width:100%;border-collapse:collapse;font-size:13.5px}
-table.lb th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;padding:4px 10px;border-bottom:1px solid var(--bd)}
-table.lb td{padding:6px 10px;border-bottom:1px solid var(--bd)}
-table.lb td.rank{color:var(--muted);font-family:var(--mono);width:1%;white-space:nowrap}
-table.lb td.num{font-family:var(--mono);text-align:right}
-table.lb th:last-child{text-align:right}
-table.lb tr:first-child td.rank{color:var(--accent);font-weight:700}
 .msscroll{overflow:auto;max-width:100%;margin:0 0 10px}
 .msgrid{display:grid;gap:2px;width:max-content}
 .cell{width:28px;height:28px;padding:0;background:var(--panel);border:1px solid var(--bd);border-radius:4px;color:var(--fg);font-family:var(--mono);font-size:14px;font-weight:700;cursor:pointer;line-height:1;text-align:center}
@@ -235,6 +241,14 @@ table.lb tr:first-child td.rank{color:var(--accent);font-weight:700}
 .cell[data-n="1"]{color:var(--accent)}.cell[data-n="2"]{color:var(--ok)}.cell[data-n="3"]{color:var(--bad)}
 .cell[data-n="4"]{color:var(--accent2)}.cell[data-n="5"]{color:var(--warn)}.cell[data-n="6"]{color:#3fbfbf}
 .cell[data-n="7"]{color:var(--fg)}.cell[data-n="8"]{color:var(--muted)}
+/* A phone: a standard board fits the screen (16 cells of 19px), the stats
+   take the full width under it, and the tab row has no separator to strand. */
+@media (max-width:560px){
+.msgrid{gap:1px}
+.cell,.msgrid.exp .cell{width:19px;height:19px;font-size:11px;border-radius:3px}
+.minestats-panel{flex:1 1 100%}
+.mstabgap{display:none}
+}
 </style>"#;
 
 pub(super) const MINE_JS: &str = r#"<script>
@@ -279,9 +293,10 @@ function nbrs(r,c){var out=[];for(var dr=-1;dr<=1;dr++)for(var dc=-1;dc<=1;dc++)
 function numOf(btn){return btn.classList.contains('open')?(parseInt(btn.textContent,10)||0):-1;}
 function surround(r,c){var flagged=0,hidden=[];nbrs(r,c).forEach(function(p){var b=cells[p[0]][p[1]];if(b.classList.contains('flag'))flagged++;else if(!b.classList.contains('open'))hidden.push(p);});return{flagged:flagged,hidden:hidden};}
 function buildGrid(){
- var exp=activeKind==='expert',cs=exp?24:28;
+ var exp=activeKind==='expert';
  grid.className='msgrid'+(exp?' exp':'');
- grid.innerHTML='';grid.style.gridTemplateColumns='repeat('+W+','+cs+'px)';cells=[];
+ grid.innerHTML='';// Cells are sized by the stylesheet (smaller on a phone).
+ grid.style.gridTemplateColumns='repeat('+W+',max-content)';cells=[];
  for(var r=0;r<H;r++){var row=[];for(var c=0;c<W;c++){
   var btn=document.createElement('button');btn.className='cell';
   (function(r,c,btn){

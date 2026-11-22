@@ -336,7 +336,8 @@ def main(base, data):
         for _ in range(100):
             behind, seen_slots = [], set()
             for card in admin.get(f"{base}/s/{sid}/board").text.split('class="slot cardlink')[1:]:
-                m = re.search(r"(\d+) locations · \d+ left · sent (\d+) ·", card)
+                # The card's figures keep each number with its label (&nbsp;).
+                m = re.search(r"(\d+)\s+locations · \d+\s+left · sent\s+(\d+) ·", html.unescape(card))
                 who = set(re.findall(r'<span class="who">([^<]+)</span>', card))
                 slot = "Commons" if "Everyone" in who else next((w for w in who if w in plan), None)
                 if not m or slot is None:

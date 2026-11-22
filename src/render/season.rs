@@ -89,11 +89,14 @@ pub fn season_page(
 
     if has_mine {
         open(&mut out, "tab-mine", "Minesweeper — this season");
+        out.push_str(super::mine::LB_STYLE);
         for m in &s.minesweeper {
             if m.is_empty() {
                 continue;
             }
+            out.push_str(r#"<div class="lbview">"#);
             out.push_str(&mine_leaderboard_html(&m.label, &m.time, &m.rate, 5));
+            out.push_str("</div>");
         }
         close(&mut out);
     }
