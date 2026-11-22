@@ -55,9 +55,10 @@ an archive of past seasons.
   run the instance. Accounts are invite-only with built-in passwords, or come
   from your identity provider through forward-auth.
 - **Archipelago updates.** Install new releases from the settings page; each
-  must pass a test generation before it's used. A live season keeps the version it was generated
-  with. Releases come from Bifrost's [Archipelago fork](packaging/archipelago/),
-  which carries small compatibility patches.
+  must pass a test generation before it's used. A live season keeps the
+  version it was generated with. Releases come from Bifrost's
+  [Archipelago fork](packaging/archipelago/), which carries small
+  compatibility patches.
 - **Operations.** Nightly backups with retention, live load monitoring, and
   season bundles you can download and import on another instance.
 - **Updates.** A banner when a new Bifrost is out, a backup before
