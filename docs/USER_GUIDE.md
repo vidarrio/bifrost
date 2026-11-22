@@ -524,9 +524,13 @@ player and pauses the seasons.
 The log prints a one-time `/setup?token=…` link. Open it to create the first
 sysadmin. Then:
 
-1. **Console → Settings**: set the **connect host** players use. Optionally
-   set a home link for the header pill and what the pill says (HOME unless
-   you name it), and Discord servers for the home page.
+1. **Console → Settings**: set the **connect host** players' Archipelago
+   clients use; season boards show it with each season's port. Optionally
+   set the **site address**, Bifrost's own address, which the home page shows
+   next to its title. Left empty, the home page uses the address in
+   `server.public_url` (`BIFROST_PUBLIC_URL`), without its scheme, if that's
+   set. You can also set a home link for the header pill and what the pill
+   says (HOME unless you name it), and Discord servers for the home page.
 2. **Console → Users & links**: mint invites.
 3. **Console → Seasons**: create a season and open its signups. Or hand that
    job to a moderator.
