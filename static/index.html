@@ -40,6 +40,14 @@
   .who{font-family:var(--mono); font-size:12px; color:var(--muted)}.who b{color:var(--fg)}.who a{color:var(--accent)}
   .pill{white-space:nowrap; display:inline-flex; align-items:center; font-family:var(--mono); font-size:11px; line-height:1; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); text-decoration:none; border:1px solid var(--bd); border-radius:999px; padding:4px 11px}
   .pill.home{display:block; min-width:5em; max-width:25vw; overflow:hidden; text-overflow:ellipsis; text-align:center}
+  header .who b, header .who a{white-space:nowrap}
+  /* As on every other page (src/render/mod.rs): on a phone the identity takes
+     a row of its own under the brand and pills. */
+  @media (max-width:560px){
+    header .hwrap{height:auto; min-height:52px; flex-wrap:wrap; row-gap:2px; padding:8px 16px}
+    header .who{order:9; flex-basis:100%; text-align:right}
+  }
+  @media (pointer:coarse){.pill{padding:7px 12px} header .who a{display:inline-block; padding:6px 0}}
   .pill:hover{border-color:var(--accent); color:var(--accent); text-decoration:none}
   #adminslot{display:contents}
   .seasonhdr{display:flex; align-items:baseline; justify-content:space-between; gap:12px}

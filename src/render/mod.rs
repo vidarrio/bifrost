@@ -238,9 +238,19 @@ header .spacer{flex:1}
 #adminslot,#homeslot{display:contents}
 /* A long label is cut short on a narrow screen instead of widening the page. */
 .pill.home{display:block;min-width:5em;max-width:25vw;overflow:hidden;text-overflow:ellipsis;text-align:center}
+header .who b,header .who a{white-space:nowrap}
+/* A phone has no room for the identity beside the brand and pills: it takes
+   a row of its own under them, rather than wrapping inside the bar. */
+@media (max-width:560px){
+header .hwrap{height:auto;min-height:52px;flex-wrap:wrap;row-gap:2px;padding:8px 16px}
+header .who{order:9;flex-basis:100%;text-align:right}
+}
+/* Bigger targets for fingers: same look, more room to hit. */
+@media (pointer:coarse){.pill{padding:7px 12px}header .who a{display:inline-block;padding:6px 0}}
 .matches{max-width:460px;margin:-4px 0 12px;display:grid;max-height:240px;overflow:auto}.matches .match{font-family:var(--mono);font-size:12px;padding:5px 8px;border:1px solid var(--bd);border-top:0;cursor:pointer;background:var(--panel)}.matches .match:hover,.matches .match.sel{background:var(--bd)}
 .hintrow{display:flex;justify-content:space-between;align-items:center;gap:10px;font-family:var(--mono);font-size:12.5px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:7px 10px;margin:6px 0}
 .hintrow>span{min-width:0;overflow-wrap:anywhere}
+.hintrow>span.act{flex:none;white-space:nowrap}
 .hintrow>form{flex:none}
 /* The two states have different-length labels ("★ prioritized" vs
    "☆ prioritize"), so each button sized to its own text. A shared min-width,
@@ -285,7 +295,7 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .logfilter input[type=text],.logfilter select,.logfilter input[type=datetime-local],.logfilter .ffbtns button,.logfilter .ffbtns .pill{height:30px;box-sizing:border-box}
 .logfilter input[type=text],.logfilter select,.logfilter input[type=datetime-local]{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:0 8px;font-size:12.5px;font-family:var(--font)}
 .logfilter input[type=text]{width:120px}
-.logfilter .ffl{color:var(--muted)}
+.logfilter .ffl{color:var(--muted);min-width:2.6em}
 .logfilter .ffbtns{margin-left:auto;gap:8px}
 .logfilter .ffbtns button,.logfilter .ffbtns .pill{display:inline-flex;align-items:center}
 .logfilter .acwrap{position:relative;display:inline-flex}
@@ -532,6 +542,9 @@ pub fn notice(text: &str, ok: bool, back: &str) -> Html<String> {
 /// Tab bar styling shared by the game page and the season console.
 const TABS_CSS: &str = r#"<style>
 .gtabs{display:flex;flex-wrap:wrap;gap:2px;border-bottom:1px solid var(--bd);margin:22px 0 16px}
+.gtab{white-space:nowrap}
+/* On a phone, one row that scrolls sideways instead of a grid of buttons. */
+@media (max-width:560px){.gtabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}.gtab{padding:8px 11px}}
 .gtab{background:none;color:var(--muted);border:0;border-bottom:2px solid transparent;border-radius:0;margin-bottom:-1px;padding:8px 15px;font-family:var(--font);font-size:14px;font-weight:600;cursor:pointer}
 .gtab:hover{color:var(--fg)}
 .gtab.on{color:var(--accent);border-bottom-color:var(--accent)}

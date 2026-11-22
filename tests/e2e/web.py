@@ -161,6 +161,13 @@ def header(page):
     return page.evaluate(HEADER)
 
 
+# How many lines an element's text takes: a function of a selector or an
+# element (pass it to page.evaluate with the selector).
+LINES = """(el) => { if (typeof el === 'string') el = document.querySelector(el);
+  const r = document.createRange(); r.selectNodeContents(el);
+  return new Set([...r.getClientRects()].filter(x => x.width > 0).map(x => Math.round(x.top + x.height / 2))).size; }"""
+
+
 def overflow_x(page):
     """How far the page is wider than the viewport, in CSS pixels."""
     return page.evaluate("document.documentElement.scrollWidth - innerWidth")
