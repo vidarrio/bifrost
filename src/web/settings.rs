@@ -184,6 +184,8 @@ pub(crate) struct SettingsForm {
     #[serde(default)]
     pub(crate) domain: String,
     #[serde(default)]
+    pub(crate) site_address: String,
+    #[serde(default)]
     pub(crate) home_url: String,
     #[serde(default)]
     pub(crate) home_label: String,
@@ -211,6 +213,7 @@ pub(crate) async fn settings_save(
             // Re-show what they typed, with the problem.
             let typed = db::Instance {
                 domain: f.domain.clone(),
+                site_address: f.site_address.clone(),
                 home_url: f.home_url.clone(),
                 home_label: f.home_label.clone(),
                 discords: f
@@ -238,6 +241,41 @@ pub(crate) fn web_url(u: &str) -> bool {
             .any(|c| c.is_whitespace() || c == '"' || c == '<' || c == '>')
 }
 
+/// Bifrost's own address as the home page shows it: a host, with an optional
+/// port and path. A pasted URL loses its scheme and trailing slash.
+pub(crate) fn site_address(raw: &str) -> Result<String, String> {
+    let a = raw.trim();
+    let lower = a.to_ascii_lowercase();
+    let a = ["https://", "http://"]
+        .iter()
+        .find(|p| lower.starts_with(*p))
+        .map_or(a, |p| &a[p.len()..])
+        .trim_end_matches('/');
+    let ok = (a.is_empty() == raw.trim().is_empty())
+        && a.len() <= 253
+        && !a.starts_with('/')
+        // Any other scheme (`ftp://…`).
+        && !a.contains("//")
+        && a.chars()
+            .all(|c| c.is_ascii_alphanumeric() || ".-[]:/_~".contains(c));
+    if ok {
+        Ok(a.to_string())
+    } else {
+        Err("The site address should be a hostname, with an optional port or path, like bifrost.example.org.".into())
+    }
+}
+
+/// The address the home page shows: the site address, or else the host (and
+/// path) of `server.public_url`, the instance's URL from its config.
+pub(crate) fn shown_site_address(inst: &db::Instance) -> String {
+    if !inst.site_address.is_empty() {
+        return inst.site_address.clone();
+    }
+    crate::config::var("BIFROST_PUBLIC_URL")
+        .and_then(|u| site_address(&u).ok())
+        .unwrap_or_default()
+}
+
 pub(crate) fn parse_settings(f: &SettingsForm) -> Result<db::Instance, String> {
     let domain = f.domain.trim().to_string();
     let host_ok = |h: &str| {
@@ -248,6 +286,7 @@ pub(crate) fn parse_settings(f: &SettingsForm) -> Result<db::Instance, String> {
     if !host_ok(&domain) {
         return Err("The connect host should be a bare hostname or IP, like ap.example.org (no scheme, no port).".into());
     }
+    let site_address = site_address(&f.site_address)?;
     let home_url = f.home_url.trim().to_string();
     if !home_url.is_empty() && !web_url(&home_url) {
         return Err("The home link must be an http(s) URL.".into());
@@ -289,8 +328,40 @@ pub(crate) fn parse_settings(f: &SettingsForm) -> Result<db::Instance, String> {
     }
     Ok(db::Instance {
         domain,
+        site_address,
         home_url,
         home_label,
         discords,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_site_address_is_a_bare_address() {
+        for (raw, want) in [
+            ("", ""),
+            (" bifrost.example.org ", "bifrost.example.org"),
+            ("https://bifrost.example.org/", "bifrost.example.org"),
+            (
+                "http://example.org:8080/bifrost/",
+                "example.org:8080/bifrost",
+            ),
+            ("[::1]:8080", "[::1]:8080"),
+            ("HTTPS://Bifrost.example.org/", "Bifrost.example.org"),
+        ] {
+            assert_eq!(super::site_address(raw).as_deref(), Ok(want), "{raw:?}");
+        }
+        for bad in [
+            "bifrost example.org",
+            "<b>x</b>",
+            "ftp://x.org",
+            "/path",
+            "a\"b",
+            "https://",
+            "https:///",
+        ] {
+            assert!(super::site_address(bad).is_err(), "{bad:?}");
+        }
+    }
 }

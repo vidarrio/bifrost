@@ -12,6 +12,9 @@ pub struct Instance {
     /// The host players' AP clients connect to (each live season adds its
     /// port), e.g. `ap.example.org`. Empty: boards say to ask an admin.
     pub domain: String,
+    /// Bifrost's own address, shown next to the title on the home page
+    /// (e.g. `bifrost.example.org`). Empty: no address there.
+    pub site_address: String,
     /// An optional "home" link in the header (e.g. the operator's homepage).
     pub home_url: String,
     /// What the header's home pill says. Empty: [`DEFAULT_HOME_LABEL`].
@@ -32,6 +35,7 @@ impl Default for Instance {
     fn default() -> Self {
         Self {
             domain: String::new(),
+            site_address: String::new(),
             home_url: String::new(),
             home_label: String::new(),
             discords: vec![
@@ -205,6 +209,7 @@ mod tests {
             "HOME",
             "settings saved before the label existed"
         );
+        assert_eq!(i.site_address, "", "…or the site address");
     }
 
     #[test]

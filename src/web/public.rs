@@ -122,7 +122,10 @@ pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<St
             .replace("<!--SEASONS-->", &render::landing_seasons(&cards, sign_in))
             .replace("<!--PASTSEASONS-->", &past_html)
             .replace("<!--HOMEPILL-->", &render::home_pill(&inst))
-            .replace("<!--TAG-->", &render::landing_tag(&inst.domain))
+            .replace(
+                "<!--TAG-->",
+                &render::landing_tag(&super::settings::shown_site_address(&inst)),
+            )
             .replace("<!--DISCORDS-->", &render::landing_discords(&inst.discords)),
     )
 }
