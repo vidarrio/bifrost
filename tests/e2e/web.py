@@ -180,6 +180,40 @@ LINES = """(el) => { if (typeof el === 'string') el = document.querySelector(el)
   return lines; }"""
 
 
+# The elements matching a selector that aren't wholly on-screen horizontally
+# (hidden ones aside): [text, left, right] for each.
+OFFSCREEN = """(sel) => [...document.querySelectorAll(sel)]
+  .filter(e => e.getClientRects().length)
+  .map(e => [e.textContent.trim().slice(0, 30), e.getBoundingClientRect()])
+  .filter(([, r]) => r.left < -0.5 || r.right > innerWidth + 0.5)
+  .map(([t, r]) => [t, Math.round(r.left), Math.round(r.right)])"""
+
+# Words split across two lines inside the elements matching a selector, other
+# than right after a hyphen or slash (where a long name may break):
+# [word, element].
+BROKEN = """(sel) => { const out = [];
+  for (const el of document.querySelectorAll(sel)) {
+    const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n; (n = walk.nextNode());) {
+      for (const m of n.textContent.matchAll(/[^\\s]+/g)) {
+        const r = document.createRange(); r.setStart(n, m.index); r.setEnd(n, m.index + m[0].length);
+        const top = (i) => { const c = document.createRange(); c.setStart(n, m.index + i); c.setEnd(n, m.index + i + 1);
+                             const b = c.getClientRects()[0]; return b ? Math.round(b.top) : null; };
+        // Every line break inside the word must come right after a hyphen or
+        // slash, where a long name may break.
+        let line = top(0);
+        for (let i = 1; i < m[0].length; i++) {
+          const t = top(i);
+          if (t === null || line === null || t === line) continue;
+          line = t;
+          if (!'-/'.includes(m[0][i - 1])) { out.push([m[0], el.tagName]); break; }
+        }
+      }
+    }
+  }
+  return out; }"""
+
+
 def overflow_x(page):
     """How far the page is wider than the viewport, in CSS pixels."""
     return page.evaluate("document.documentElement.scrollWidth - innerWidth")

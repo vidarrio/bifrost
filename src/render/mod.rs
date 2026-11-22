@@ -547,9 +547,14 @@ const TABS_CSS: &str = r#"<style>
 .gtab.on{color:var(--accent);border-bottom-color:var(--accent)}
 a.gtab{display:inline-block;text-decoration:none}
 .gtab{white-space:nowrap}
-/* On a phone, one row that scrolls sideways instead of a grid of buttons
-   (after the rules above, so its padding wins). */
-@media (max-width:560px){.gtabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}.gtab{padding:8px 11px}}
+/* On a phone the tabs are an even grid of buttons, every one in sight, rather
+   than a bar that wraps raggedly or scrolls tabs out of view (after the rules
+   above, so these win). */
+@media (max-width:560px){
+.gtabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,8.5em),1fr));gap:6px;border-bottom:0}
+.gtab{white-space:normal;text-align:center;border:1px solid var(--bd);border-radius:8px;margin:0;padding:8px 10px}
+.gtab.on{border-color:var(--accent);background:var(--panel)}
+}
 </style>"#;
 
 /// The instance console's tab bar: one page per tab, so these

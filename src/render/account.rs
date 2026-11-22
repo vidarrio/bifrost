@@ -12,14 +12,143 @@ pub(super) const AUTH_STYLE: &str = r#"<style>
 .utable td{padding:7px 8px;border-bottom:1px solid var(--bd);vertical-align:middle}
 .utable form{display:inline}.utable .mono{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
 .utable tr.dead td{color:var(--muted)}
-/* A phone can't fit a table's columns: the table scrolls sideways, and names,
-   ports, dates and buttons stay whole instead of breaking mid-word. */
-@media (max-width:560px){.utable{display:block;overflow-x:auto}.utable th,.utable td{white-space:nowrap}}
+/* A phone can't fit a table's columns, so each row becomes a card: one line per
+   field, its column's name on the left (data-label, from `label_cells`), and
+   the actions together at the bottom. Nothing is off-screen. */
+@media (max-width:560px){
+.utable,.utable tbody{display:block}
+.utable tr:has(th):not(:has(td)){display:none}
+.utable th{display:block;padding:5px 0;border:0;text-align:left}
+.utable tr{display:block;border:1px solid var(--bd);border-radius:10px;padding:6px 12px;margin:0 0 10px;background:var(--panel)}
+.utable td{display:block;padding:5px 0;border-bottom:0;text-align:right;overflow-wrap:break-word}
+.utable .mono{overflow-wrap:break-word}
+.utable td+td{border-top:1px solid var(--bd)}
+.utable td::before{content:attr(data-label);float:left;margin-right:12px;font-size:11px;line-height:2;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);overflow-wrap:normal}
+.utable td:not([data-label]){text-align:left}
+.utable td:not([data-label])::before{content:none}
+.utable td:empty{display:none}
+.utable td::after{content:"";display:block;clear:both}
+}
 .linkform{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin:6px 0 14px}
 .linkform label{display:grid;gap:4px;font-size:12px;color:var(--muted)}
 .minted input{width:100%;font-family:var(--mono);font-size:12.5px;background:var(--bg);color:var(--fg);border:1px solid var(--ok);border-radius:6px;padding:8px 10px;margin-top:6px}
 .tag{font-family:var(--mono);font-size:11px;color:var(--muted);border:1px solid var(--bd);border-radius:5px;padding:1px 6px}
 </style>"#;
+
+/// Copy each `utable`'s column names onto its cells (`data-label`), for the
+/// card layout a phone gets (see `AUTH_STYLE`). A column with an empty heading,
+/// such as the actions, gets no label, and so does a cell that spans columns.
+/// Cells that already have a label keep it. Pages built outside `auth_page`
+/// that show a `utable`, such as the settings page's refreshed load panel, run
+/// their HTML through this too.
+pub fn label_cells(body: &str) -> String {
+    let mut out = String::with_capacity(body.len() + 256);
+    let mut rest = body;
+    while let Some(start) = rest.find("<table") {
+        let Some(tag_end) = rest[start..].find('>') else {
+            break;
+        };
+        let tag = &rest[start..start + tag_end];
+        let Some(len) = rest[start..].find("</table>") else {
+            break;
+        };
+        let is_utable =
+            attr(tag, "class").is_some_and(|c| c.split_whitespace().any(|w| w == "utable"));
+        out.push_str(&rest[..start]);
+        let table = &rest[start..start + len];
+        if !is_utable {
+            out.push_str(table);
+            rest = &rest[start + len..];
+            continue;
+        }
+        let mut labels: Vec<String> = Vec::new();
+        for (i, row) in table.split("<tr").enumerate() {
+            if i > 0 {
+                out.push_str("<tr");
+            }
+            // The heading row: heading cells (not `<thead>`) and no data cells.
+            let has_th = row.contains("<th>") || row.contains("<th ");
+            if labels.is_empty() && has_th && !row.contains("<td") {
+                for c in row.split("<th").skip(1) {
+                    let (attrs, inner) = c.split_once('>').unwrap_or(("", ""));
+                    let text = strip_tags(inner.split("</th>").next().unwrap_or(""));
+                    let span = attr(attrs, "colspan")
+                        .and_then(|n| n.parse().ok())
+                        .unwrap_or(1usize);
+                    labels.push(text.trim().replace('"', "&quot;"));
+                    labels.extend(std::iter::repeat_n(String::new(), span.saturating_sub(1)));
+                }
+                out.push_str(row);
+                continue;
+            }
+            // Data cells, and any row-heading cells among them, each take
+            // their columns; only data cells get labels.
+            let mut col = 0usize;
+            let mut at = 0usize;
+            while let Some((pos, is_td)) = next_cell(&row[at..]) {
+                let pos = at + pos;
+                out.push_str(&row[at..pos]);
+                let open = if is_td { "<td" } else { "<th" };
+                out.push_str(open);
+                let after = pos + open.len();
+                let attrs = row[after..].split_once('>').map_or("", |(a, _)| a);
+                let span = attr(attrs, "colspan")
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or(1usize);
+                if is_td
+                    && span == 1
+                    && !attrs.contains("data-label")
+                    && let Some(l) = labels.get(col).filter(|l| !l.is_empty())
+                {
+                    out.push_str(&format!(r#" data-label="{l}""#));
+                }
+                col += span;
+                at = after;
+            }
+            out.push_str(&row[at..]);
+        }
+        rest = &rest[start + len..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Where the next `<td` or `<th` cell (not `<thead`) starts, and whether it's a `<td`.
+fn next_cell(s: &str) -> Option<(usize, bool)> {
+    let mut from = 0;
+    while let Some(i) = s[from..].find("<t") {
+        let at = from + i;
+        let rest = &s[at..];
+        for (tag, td) in [("<td", true), ("<th", false)] {
+            if rest.starts_with(tag) && rest[tag.len()..].starts_with([' ', '>']) {
+                return Some((at, td));
+            }
+        }
+        from = at + 2;
+    }
+    None
+}
+
+/// An attribute's value in an HTML start tag (double-quoted, as Bifrost writes them).
+fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let at = tag.find(&format!(" {name}=\""))? + name.len() + 3;
+    tag[at..].split('"').next()
+}
+
+/// Text without its tags (headings are plain text, but be safe).
+fn strip_tags(html: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
 
 pub(super) fn auth_page(title: &str, crumb: &str, err: Option<&str>, body: &str) -> Html<String> {
     let mut b = page_head(None);
@@ -31,7 +160,7 @@ pub(super) fn auth_page(title: &str, crumb: &str, err: Option<&str>, body: &str)
     if let Some(e) = err {
         b.push_str(&format!(r#"<div class="banner bad">{}</div>"#, esc(e)));
     }
-    b.push_str(body);
+    b.push_str(&label_cells(body));
     b.push_str("</main></body></html>");
     Html(b)
 }
@@ -251,4 +380,76 @@ pub fn users_page(v: &UsersView) -> Html<String> {
     }
 
     auth_page("Console", r#"<a href="/">← home</a>"#, v.err, &body)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn table_cells_get_their_column_names() {
+        let body = concat!(
+            r#"<p>before</p><table class="utable"><tr><th>User</th><th>Label / for</th><th></th></tr>"#,
+            r#"<tr class="dead"><td class="mono">bob</td><td>x</td><td><form><button>reset</button></form></td></tr>"#,
+            r#"</table><table class="other"><tr><td>untouched</td></tr></table>"#
+        );
+        let out = super::label_cells(body);
+        assert!(
+            out.contains(r#"<td data-label="User" class="mono">bob</td>"#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"<td data-label="Label / for">x</td>"#),
+            "{out}"
+        );
+        assert!(
+            out.contains("<td><form>"),
+            "an empty heading gives no label: {out}"
+        );
+        assert!(
+            out.contains(r#"<p>before</p>"#) && out.contains("<td>untouched</td>"),
+            "{out}"
+        );
+        assert_eq!(super::label_cells("no tables"), "no tables");
+    }
+
+    #[test]
+    fn labelling_copes_with_real_markup() {
+        let body = concat!(
+            r#"<table class="utable wide" id="t"><tr><th>What</th><th colspan="2">Use <small>now</small></th><th>Note</th></tr>"#,
+            r#"<tr><td colspan="3">spans</td><td>n</td></tr>"#,
+            r#"<tr><td>a</td><td>b</td><td>c</td><td data-label="Mine">d</td></tr>"#,
+            r#"<tr><th>row head</th><td>x</td></tr></table>"#
+        );
+        let out = super::label_cells(body);
+        assert!(
+            out.contains(r#"<td colspan="3">spans</td><td data-label="Note">n</td>"#),
+            "a spanning cell has no label, and shifts the rest: {out}"
+        );
+        assert!(
+            out.contains(
+                r#"<td data-label="What">a</td><td data-label="Use now">b</td><td>c</td>"#
+            ),
+            "headings lose their tags; a spanned heading's extra columns have none: {out}"
+        );
+        assert!(
+            out.contains(r#"<td data-label="Mine">d</td>"#),
+            "an existing label stays: {out}"
+        );
+        assert!(
+            out.contains(r#"<tr><th>row head</th><td data-label="Use now">x</td>"#),
+            "a row heading takes its column: {out}"
+        );
+        let thead = super::label_cells(concat!(
+            r#"<table class="utable"><thead><tr><th>A</th><th>B</th></tr></thead>"#,
+            r#"<tbody><tr><td>1</td><td>2</td></tr></tbody></table>"#
+        ));
+        assert!(
+            thead.contains(r#"<td data-label="A">1</td><td data-label="B">2</td>"#),
+            "with a thead: {thead}"
+        );
+        assert_eq!(
+            super::label_cells(&out),
+            out,
+            "labelling twice changes nothing"
+        );
+    }
 }

@@ -23,10 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Pages fit a phone's screen. The header's sign-in line gets a row of its own
-  instead of wrapping inside the bar. Tab bars stay one row that scrolls.
-  Tables scroll sideways instead of breaking names and buttons mid-word, and
-  the season list no longer widens the page. A standard minesweeper board fits
-  the screen. Console buttons, settings labels, the board's join details and
+  instead of wrapping inside the bar. Tab bars become an even grid of buttons
+  with every tab in sight. The console's tables become a card per row, each
+  field labelled and its actions underneath, instead of breaking names and
+  buttons mid-word, and the season list no longer widens the page. A standard
+  minesweeper board fits the screen. Console buttons, settings labels, the board's join details and
   the log filter's dates no longer wrap or misalign. An archived season's
   minesweeper leaderboards are styled like the live ones, at any width.
 - The page header no longer jumps when moving between pages. It's drawn from
