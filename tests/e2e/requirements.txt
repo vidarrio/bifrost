@@ -1,3 +1,3 @@
 requests
 # The browser suite (web.py); its Chromium: python -m playwright install chromium-headless-shell
-playwright==1.64.1
+playwright==1.65.2
