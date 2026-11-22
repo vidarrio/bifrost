@@ -18,7 +18,7 @@ import re
 from urllib.parse import urlsplit
 
 try:
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import TimeoutError, sync_playwright
 except ImportError:  # pragma: no cover - a clear message beats a traceback
     raise SystemExit(
         "this suite needs Playwright: pip install -r tests/e2e/requirements.txt, "
@@ -43,7 +43,11 @@ def _launch(p):
         if not found:
             raise SystemExit("no Chromium for Playwright; run: python -m playwright "
                              f"install chromium-headless-shell\n(launching its own failed: {e})")
-        return p.chromium.launch(executable_path=found[-1])
+        try:
+            return p.chromium.launch(executable_path=found[-1])
+        except Exception as e2:
+            raise SystemExit(f"no Chromium for Playwright: launching its own failed: {e}\n"
+                             f"and {found[-1]} failed too: {e2}")
 
 
 @contextlib.contextmanager
@@ -62,23 +66,33 @@ def browser():
 # answers to the page's own requests, other than those in ALLOWED.
 ERRORS = []
 
-# Error answers that are expected: (method, path, status). A signed-out
-# header's /api/me gets 401 by design.
+# Error answers expected on every page: (method, path, status). A signed-out
+# header's /api/me gets 401 by design. A check that expects another error
+# answer allows it on its own context (`context(..., allow=...)`), not here.
 ALLOWED = {("GET", "/api/me", 401)}
 
 
-def context(b, srv, session=None, width=1100, height=800):
+def take_errors():
+    """The problems collected so far, and start a new list."""
+    out = ERRORS[:]
+    ERRORS.clear()
+    return out
+
+
+def context(b, srv, session=None, width=1100, height=800, allow=()):
     """A browser context on `srv`, signed in as `session` (a lib session)
-    when given. Uncaught script errors on its pages land in `ERRORS`."""
+    when given. Problems on its pages land in `ERRORS`; `allow` adds error
+    answers, as (method, path, status), expected on this context only."""
     ctx = b.new_context(viewport={"width": width, "height": height})
     if session is not None:
         ctx.add_cookies([{"name": c.name, "value": c.value, "url": srv.base}
                          for c in session.cookies])
-    ctx.on("page", lambda pg: _watch(pg, srv.base))
+    allowed = ALLOWED | set(allow)
+    ctx.on("page", lambda pg: _watch(pg, srv.base, allowed))
     return ctx
 
 
-def _watch(pg, base):
+def _watch(pg, base, allowed):
     pg.on("pageerror", lambda e: ERRORS.append(f"{pg.url}: {e}"))
     # The browser logs a failed request as a console error too; the response
     # handler below judges those, with ALLOWED, so they're left to it.
@@ -88,7 +102,7 @@ def _watch(pg, base):
     def answered(r):
         u = urlsplit(r.url)
         if (r.url.startswith(base) and r.status >= 400
-                and (r.request.method, u.path, r.status) not in ALLOWED):
+                and (r.request.method, u.path, r.status) not in allowed):
             ERRORS.append(f"{pg.url}: {r.request.method} {u.path} -> {r.status}")
     pg.on("response", answered)
 
@@ -117,17 +131,22 @@ class HeldMe:
         compares the first paint with the header after /api/me answers would
         otherwise compare the first paint with itself."""
         self.wait_held()
-        with self.page.expect_response("**/api/me"):
+        with self.page.expect_event("requestfinished", lambda r: r.url.endswith("/api/me")):
             for r in self.held:
                 r.continue_()
         self.held.clear()
-        # The answer's handler draws the header; let it run.
-        self.page.evaluate("() => new Promise(r => setTimeout(r, 0))")
+        settle(self.page)
 
     def stop(self):
         if self.held:
             self.release()
         self.page.unroute("**/api/me", self._hold)
+
+
+def settle(page):
+    """Let the page's pending callbacks run, such as the one that draws the
+    header from /api/me's answer."""
+    page.evaluate("() => new Promise(r => setTimeout(r, 0))")
 
 
 # What the header shows: each item's text, left edge and vertical centre.

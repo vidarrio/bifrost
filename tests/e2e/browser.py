@@ -27,8 +27,9 @@ try:
 
     def settled(pg, path):
         """Open `path` and wait until the header has the server's answer."""
-        with pg.expect_response("**/api/me"):
+        with pg.expect_event("requestfinished", lambda r: r.url.endswith("/api/me")):
             pg.goto(srv.base + path)
+        web.settle(pg)
         pg.wait_for_selector("#who:not(:empty)")
 
     with web.browser() as b:
@@ -76,13 +77,13 @@ try:
         want = f"{srv.base}/s/{sid}/admin#tab-options"
         try:
             pg.wait_for_url(want, timeout=3000)
-        except Exception:
+        except web.TimeoutError:
             pass
         check("a tab adds its name to the page's address", pg.url == want, pg.url)
         pg.reload()
         try:
             pg.wait_for_selector("#tab-options", state="visible", timeout=3000)
-        except Exception:
+        except web.TimeoutError:
             pass
         check("…and reopens on reload", pg.is_visible("#tab-options") and not pg.is_visible("#tab-overview"))
         ctx.close()
@@ -132,7 +133,8 @@ try:
         held.stop()
         ctx.close()
 
-    check("no script errors, console errors or failing requests on any page", not web.ERRORS, web.ERRORS)
+    errors = web.take_errors()
+    check("no script errors, console errors or failing requests on any page", not errors, errors)
 finally:
     srv.stop()
 
