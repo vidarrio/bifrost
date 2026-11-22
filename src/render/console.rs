@@ -436,11 +436,13 @@ pub fn settings_page(
         r#"<h2>Connections and home page</h2>
 <style>.authform{{max-width:560px}}.authform textarea{{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:7px 9px;font:13px/1.5 var(--mono);min-height:110px}}</style>
 <form class="authform" method="post" action="/admin/settings">
-<label>Connect host — what players' AP clients connect to; each live season adds its port<input type="text" name="domain" value="{}" placeholder="ap.example.org" maxlength="253"></label>
+<label>Site address (optional) — this Bifrost's own address, shown next to the title on the home page<input type="text" name="site_address" value="{}" placeholder="bifrost.example.org" maxlength="253"></label>
+<label>Connect host — what players' AP clients connect to; each live season adds its port. Shown on season boards, not the home page<input type="text" name="domain" value="{}" placeholder="ap.example.org" maxlength="253"></label>
 <label>Home link (optional) — a pill in the header that goes there<input type="url" name="home_url" value="{}" placeholder="https://example.org/"></label>
 <label>Home pill label — what that pill says (shown in capitals); empty for “{}”<input type="text" name="home_label" value="{}" placeholder="{}" maxlength="{}"></label>
 <label>Discord servers — one per line: <span class="mono">Name | https://discord.gg/… | note</span><textarea name="discords" spellcheck="false">{}</textarea></label>
 <button type="submit">Save</button></form>"#,
+        esc(&inst.site_address),
         esc(&inst.domain),
         esc(&inst.home_url),
         crate::db::DEFAULT_HOME_LABEL,

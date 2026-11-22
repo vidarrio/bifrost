@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A **Site address** setting: Bifrost's own address, shown next to the title
+  on the home page.
+
+### Changed
+
+- The home page no longer shows the connect host next to its title. That's
+  the address for players' Archipelago clients, and season boards still show
+  it. The home page shows the new site address there instead, or nothing
+  until one is set.
+
 ## [0.4.3] - 2026-11-22
 
 ### Fixed
