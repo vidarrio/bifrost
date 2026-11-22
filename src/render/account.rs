@@ -17,9 +17,11 @@ pub(super) const AUTH_STYLE: &str = r#"<style>
    the actions together at the bottom. Nothing is off-screen. */
 @media (max-width:560px){
 .utable,.utable tbody{display:block}
-.utable tr:has(th){display:none}
+.utable tr:has(th):not(:has(td)){display:none}
+.utable th{display:block;padding:5px 0;border:0;text-align:left}
 .utable tr{display:block;border:1px solid var(--bd);border-radius:10px;padding:6px 12px;margin:0 0 10px;background:var(--panel)}
 .utable td{display:block;padding:5px 0;border-bottom:0;text-align:right;overflow-wrap:break-word}
+.utable .mono{overflow-wrap:break-word}
 .utable td+td{border-top:1px solid var(--bd)}
 .utable td::before{content:attr(data-label);float:left;margin-right:12px;font-size:11px;line-height:2;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);overflow-wrap:normal}
 .utable td:not([data-label]){text-align:left}
@@ -64,8 +66,9 @@ pub fn label_cells(body: &str) -> String {
             if i > 0 {
                 out.push_str("<tr");
             }
-            // The heading row: headings and no data cells.
-            if labels.is_empty() && row.contains("<th") && !row.contains("<td") {
+            // The heading row: heading cells (not `<thead>`) and no data cells.
+            let has_th = row.contains("<th>") || row.contains("<th ");
+            if labels.is_empty() && has_th && !row.contains("<td") {
                 for c in row.split("<th").skip(1) {
                     let (attrs, inner) = c.split_once('>').unwrap_or(("", ""));
                     let text = strip_tags(inner.split("</th>").next().unwrap_or(""));
@@ -78,31 +81,52 @@ pub fn label_cells(body: &str) -> String {
                 out.push_str(row);
                 continue;
             }
+            // Data cells, and any row-heading cells among them, each take
+            // their columns; only data cells get labels.
             let mut col = 0usize;
-            for (j, cell) in row.split("<td").enumerate() {
-                if j == 0 {
-                    out.push_str(cell);
-                    continue;
-                }
-                out.push_str("<td");
-                let attrs = cell.split_once('>').map_or("", |(a, _)| a);
+            let mut at = 0usize;
+            while let Some((pos, is_td)) = next_cell(&row[at..]) {
+                let pos = at + pos;
+                out.push_str(&row[at..pos]);
+                let open = if is_td { "<td" } else { "<th" };
+                out.push_str(open);
+                let after = pos + open.len();
+                let attrs = row[after..].split_once('>').map_or("", |(a, _)| a);
                 let span = attr(attrs, "colspan")
                     .and_then(|n| n.parse().ok())
                     .unwrap_or(1usize);
-                if span == 1
+                if is_td
+                    && span == 1
                     && !attrs.contains("data-label")
                     && let Some(l) = labels.get(col).filter(|l| !l.is_empty())
                 {
                     out.push_str(&format!(r#" data-label="{l}""#));
                 }
                 col += span;
-                out.push_str(cell);
+                at = after;
             }
+            out.push_str(&row[at..]);
         }
         rest = &rest[start + len..];
     }
     out.push_str(rest);
     out
+}
+
+/// Where the next `<td` or `<th` cell (not `<thead`) starts, and whether it's a `<td`.
+fn next_cell(s: &str) -> Option<(usize, bool)> {
+    let mut from = 0;
+    while let Some(i) = s[from..].find("<t") {
+        let at = from + i;
+        let rest = &s[at..];
+        for (tag, td) in [("<td", true), ("<th", false)] {
+            if rest.starts_with(tag) && rest[tag.len()..].starts_with([' ', '>']) {
+                return Some((at, td));
+            }
+        }
+        from = at + 2;
+    }
+    None
 }
 
 /// An attribute's value in an HTML start tag (double-quoted, as Bifrost writes them).
@@ -411,8 +435,16 @@ mod tests {
             "an existing label stays: {out}"
         );
         assert!(
-            out.contains(r#"<tr><th>row head</th><td data-label="What">x</td>"#),
-            "a row with a th and data cells isn't a heading row: {out}"
+            out.contains(r#"<tr><th>row head</th><td data-label="Use now">x</td>"#),
+            "a row heading takes its column: {out}"
+        );
+        let thead = super::label_cells(concat!(
+            r#"<table class="utable"><thead><tr><th>A</th><th>B</th></tr></thead>"#,
+            r#"<tbody><tr><td>1</td><td>2</td></tr></tbody></table>"#
+        ));
+        assert!(
+            thead.contains(r#"<td data-label="A">1</td><td data-label="B">2</td>"#),
+            "with a thead: {thead}"
         );
         assert_eq!(
             super::label_cells(&out),

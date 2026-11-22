@@ -199,14 +199,14 @@ BROKEN = """(sel) => { const out = [];
         const r = document.createRange(); r.setStart(n, m.index); r.setEnd(n, m.index + m[0].length);
         const top = (i) => { const c = document.createRange(); c.setStart(n, m.index + i); c.setEnd(n, m.index + i + 1);
                              const b = c.getClientRects()[0]; return b ? Math.round(b.top) : null; };
-        const first = top(0);
+        // Every line break inside the word must come right after a hyphen or
+        // slash, where a long name may break.
+        let line = top(0);
         for (let i = 1; i < m[0].length; i++) {
           const t = top(i);
-          if (t !== null && first !== null && t !== first) {
-            // A break right after a hyphen or slash is where a long name may break.
-            if (!'-/'.includes(m[0][i - 1])) out.push([m[0], el.tagName]);
-            break;
-          }
+          if (t === null || line === null || t === line) continue;
+          line = t;
+          if (!'-/'.includes(m[0][i - 1])) { out.push([m[0], el.tagName]); break; }
         }
       }
     }
