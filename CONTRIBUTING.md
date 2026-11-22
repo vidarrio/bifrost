@@ -201,7 +201,8 @@ These GitHub settings enforce the process:
 ## Dependency updates
 
 [Dependabot](.github/dependabot.yml) checks weekly for newer GitHub Actions,
-Cargo dependencies and Rust toolchains, and opens a pull request for each.
+Cargo dependencies, Rust toolchains and the end-to-end suites' Python packages
+(`tests/e2e/requirements.txt`), and opens a pull request for each.
 Actions come as one grouped pull request, and so do Cargo patch updates; any
 other Cargo update gets its own, since a minor bump of a `0.x` crate can be
 breaking. Its pull requests follow the same rules as any other: CI, a review,

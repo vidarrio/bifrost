@@ -1,17 +1,17 @@
 """Pages as a real browser shows them (headless Chromium; see web.py): no
-script errors, a header that lines up and doesn't shift or show a stale
-identity, no sideways scrolling on a phone, tabs that keep the page's
-address, and the signup wizard's buttons beside their fields.
+script or console errors and no failing requests, a header that lines up and
+doesn't shift or show a stale identity, no sideways scrolling on a phone, tabs
+that keep the page's address, and the signup wizard's buttons beside their
+fields.
 
 Each check here stands for a bug a browser found that HTTP checks and the
 fake-DOM node tests didn't. Add to it when a page script or layout breaks."""
-import re
 import sys
 
 from lib import Server, check, get, new_season, post, summary
 import web
 
-srv = Server("browser", port=18195, ap_ports="39181-39183")
+srv = Server("browser", port=18199, ap_ports="39190-39192")
 srv.start()
 try:
     root = srv.setup_sysadmin()
@@ -25,15 +25,19 @@ try:
     for p in pages:
         check(f"{p} loads", get(root, p).status_code == 200)
 
+    def settled(pg, path):
+        """Open `path` and wait until the header has the server's answer."""
+        with pg.expect_response("**/api/me"):
+            pg.goto(srv.base + path)
+        pg.wait_for_selector("#who:not(:empty)")
+
     with web.browser() as b:
         # --- the header, on every page
         ctx = web.context(b, srv, root)
         pg = ctx.new_page()
-        pg.goto(srv.base + "/admin/seasons")
-        pg.wait_for_timeout(500)
+        settled(pg, "/admin/seasons")
         for p in pages:
-            pg.goto(srv.base + p)
-            pg.wait_for_timeout(400)
+            settled(pg, p)
             items = web.header(pg)
             mids = [round(i["mid"], 1) for i in items]
             check(f"{p}: header items share one centre line",
@@ -47,11 +51,12 @@ try:
         held = web.HeldMe(pg)
         for p in pages:
             pg.goto(srv.base + p, wait_until="domcontentloaded")
-            pg.wait_for_timeout(300)
+            held.wait_held()
             first = web.header(pg)
             held.release()
-            check(f"{p}: the header doesn't change once /api/me answers", first == web.header(pg),
-                  (first, web.header(pg)))
+            after = web.header(pg)
+            check(f"{p}: the header doesn't change once /api/me answers",
+                  len(first) >= 4 and first == after, (first, after))
         held.stop()
         ctx.close()
 
@@ -59,20 +64,26 @@ try:
         ctx = web.context(b, srv, root, width=360)
         pg = ctx.new_page()
         for p in pages:
-            pg.goto(srv.base + p)
-            pg.wait_for_timeout(400)
+            settled(pg, p)
             check(f"{p}: no sideways scroll at 360 px", web.overflow_x(pg) <= 0, web.overflow_x(pg))
         ctx.close()
 
         # --- tabs keep the page's address (season pages have <base href>)
         ctx = web.context(b, srv, root)
         pg = ctx.new_page()
-        pg.goto(srv.base + f"/s/{sid}/admin")
+        settled(pg, f"/s/{sid}/admin")
         pg.click(".gtab[data-tab='tab-options']")
-        check("a tab adds its name to the page's address",
-              pg.url == f"{srv.base}/s/{sid}/admin#tab-options", pg.url)
+        want = f"{srv.base}/s/{sid}/admin#tab-options"
+        try:
+            pg.wait_for_url(want, timeout=3000)
+        except Exception:
+            pass
+        check("a tab adds its name to the page's address", pg.url == want, pg.url)
         pg.reload()
-        pg.wait_for_timeout(300)
+        try:
+            pg.wait_for_selector("#tab-options", state="visible", timeout=3000)
+        except Exception:
+            pass
         check("…and reopens on reload", pg.is_visible("#tab-options") and not pg.is_visible("#tab-overview"))
         ctx.close()
 
@@ -80,10 +91,12 @@ try:
         for width, beside in ((1100, True), (390, False)):
             ctx = web.context(b, srv, root, width=width)
             pg = ctx.new_page()
-            pg.goto(srv.base + f"/s/{sid}/signup")
+            settled(pg, f"/s/{sid}/signup")
             pg.check("input[name=gtype][value=custom]")
             f, btn = web.box(pg, "#apfile"), web.box(pg, "#apbtn")
-            if beside:
+            if not (f and btn):
+                check(f"signup at {width} px: the apworld field and its button are shown", False, (f, btn))
+            elif beside:
                 check("signup: Upload apworld sits beside its field, as tall as it",
                       btn["y"] == f["y"] and btn["height"] == f["height"] and btn["x"] > f["x"], (f, btn))
             else:
@@ -94,31 +107,32 @@ try:
         # --- signing out and in: the next page never shows the old identity
         ctx = web.context(b, srv, root)
         pg = ctx.new_page()
-        pg.goto(srv.base + "/admin/seasons")
-        pg.wait_for_timeout(500)
+        settled(pg, "/admin/seasons")
         held = web.HeldMe(pg)
-        pg.click("#signout")
-        pg.wait_for_load_state("domcontentloaded")
-        pg.wait_for_timeout(300)
+        with pg.expect_navigation():
+            pg.click("#signout")
+        held.wait_held()
         check("after signing out, the first paint doesn't show the old name",
               "root" not in (pg.text_content("#who") or ""), pg.text_content("#who"))
         held.release()
-        check("…and then offers to sign in", (pg.text_content("#who") or "").strip() == "sign in")
+        check("…and then offers to sign in", (pg.text_content("#who") or "").strip() == "sign in",
+              pg.text_content("#who"))
         pg.goto(srv.base + "/login")
         held.release()
         pg.fill("input[name=username]", "root")
         pg.fill("input[name=password]", "correct horse battery")
-        pg.click("form[action='/login'] button[type=submit]")
-        pg.wait_for_load_state("domcontentloaded")
-        pg.wait_for_timeout(300)
+        with pg.expect_navigation():
+            pg.click("form[action='/login'] button[type=submit]")
+        held.wait_held()
         check("after signing in, the first paint doesn't offer to sign in",
               "sign in" not in (pg.text_content("#who") or ""), pg.text_content("#who"))
         held.release()
-        check("…and then shows who's signed in", "signed in as root" in (pg.text_content("#who") or ""))
+        check("…and then shows who's signed in", "signed in as root" in (pg.text_content("#who") or ""),
+              pg.text_content("#who"))
         held.stop()
         ctx.close()
 
-    check("no script errors on any page", not web.ERRORS, web.ERRORS)
+    check("no script errors, console errors or failing requests on any page", not web.ERRORS, web.ERRORS)
 finally:
     srv.stop()
 
