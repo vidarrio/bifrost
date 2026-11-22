@@ -2,6 +2,7 @@
 signups, approve/reject, catalog picks and catalog-matching uploads, auto mode."""
 import io
 import json
+import os
 import re
 import sys
 import time
@@ -260,6 +261,25 @@ try:
     check("offers can be dismissed", "Newer versions players uploaded" not in get(root, "/admin/catalog").text)
     check("the Games page shows the new version, keeping the game's public note",
           '<li><span>Bar Finder<span class="note">Plays best &lt;with&gt; a friend</span></span><span class="v">1.1.0</span></li>' in anon.get(srv.base + "/worlds").text)
+
+    # Uploads waiting for approval: one world per game holds there too.
+    sid4 = new_season(root, "Late")
+    # Fresh players: uploads are limited per user, and alice and bob have made many.
+    dave, erin = srv.invite_user(root, "dave"), srv.invite_user(root, "erin")
+    post(root, f"/s/{sid4}/admin/signups", data=dict(open="1"))
+    j = post(dave, f"/s/{sid4}/signup/apworld", files={"apworld": ("late1.apworld", variant("baz.apworld", "Late Game", "1.0.0"))}).json()
+    check("an upload of a new game waits for approval", j.get("ok") and j.get("pending") and j.get("world") == "late1.apworld", j)
+    j = post(erin, f"/s/{sid4}/signup/apworld", files={"apworld": ("late2.apworld", variant("baz.apworld", "Late Game", "1.1.0"))}).json()
+    check("another upload of that game waits for the first",
+          j.get("ok") and j.get("pending") and j.get("world") == "late1.apworld" and "already waiting" in j.get("note", ""), j)
+    # The game joins the catalog meanwhile, and a pick installs the catalog's copy.
+    post(root, "/admin/catalog/add", files={"apworld": ("late.apworld", variant("baz.apworld", "Late Game", "2.0.0"))})
+    j = post(erin, f"/s/{sid4}/signup/apworld", files={"apworld": ("late3.apworld", variant("baz.apworld", "Late Game", "1.2.0"))}).json()
+    check("…the catalog's version is installed for the game", j.get("ok") and "vetted version 2.0.0" in j.get("note", ""), j)
+    r = post(root, f"/s/{sid4}/admin/worlds/approve", data={"name": "late1.apworld"})
+    check("…so approving the waiting upload is refused", "already has Late Game installed" in r.text, re.findall(r'class="banner[^"]*">[^<]*', r.text))
+    installed = os.listdir(os.path.join(srv.data, "seasons", sid4, "worlds"))
+    check("…and the season keeps one world for the game", "late1.apworld" not in installed and "late.apworld" in installed, installed)
 
     # remove from catalog; installed copies stay
     newsha = re.search(r'<tr><td[^>]*>Bar Finder.*?action="/admin/catalog/remove".*?name="sha256" value="([0-9a-f]{64})"', get(root, "/admin/catalog").text, re.S)

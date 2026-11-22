@@ -183,7 +183,9 @@ pub fn locked(method: &Method, path: &str) -> bool {
     // A download of the instance's whole database.
     // (Imports are below: a season bundle is an upload of up to 2 GiB that is
     // kept and served back as the season's download.)
-    if path.starts_with("/admin/settings/backups/download") {
+    if path.starts_with("/admin/settings/backups/download")
+        || path.starts_with("/admin/catalog/offer/download")
+    {
         return true;
     }
     post && (
@@ -554,6 +556,10 @@ mod tests {
         assert!(locked(
             &Method::GET,
             "/admin/settings/backups/download?name=x"
+        ));
+        assert!(locked(
+            &Method::GET,
+            "/admin/catalog/offer/download?sha256=x"
         ));
         for p in [
             "/admin/settings",

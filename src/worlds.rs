@@ -118,6 +118,9 @@ pub enum Placed {
     /// Its game is one of the season's core games: nothing installed, the
     /// signup uses the core game (AP would ignore the upload anyway).
     Core { game: String },
+    /// Another upload of its game is waiting for approval in this season: the
+    /// signup waits for that one (`file`).
+    Waiting { game: String, file: String },
     /// Its game is already installed in this season: the signup uses that
     /// (`file`), and nothing changes. A season keeps one world per game.
     Season {
@@ -458,6 +461,20 @@ pub async fn place_upload(
             ))
         };
     }
+    // Another upload of the game waiting for approval: a season keeps one
+    // world per game, so this signup waits for that one.
+    if !m.game.is_empty()
+        && let Some(req) = db
+            .world_requests(season)
+            .await
+            .into_iter()
+            .find(|r| r.game == m.game)
+    {
+        return Ok(Placed::Waiting {
+            game: m.game,
+            file: req.file,
+        });
+    }
     match db.approval().await {
         Approval::Auto => {
             install(dirs, file.to_string(), bytes, base).await?;
@@ -540,6 +557,16 @@ pub async fn approve(db: &Db, season: Id, file: &str, by: &str) -> Result<WorldR
     if crate::text::sha256_hex(&bytes) != req.sha256 {
         return Err(format!(
             "{file} changed since it was uploaded — reject it and ask for a new upload."
+        ));
+    }
+    // A season keeps one world per game: one installed since this upload
+    // came in (from the catalog, or another approval) wins.
+    if let Some((have, _, _)) = installed_for_game(&dirs, &req.game)
+        && have != req.file
+    {
+        return Err(format!(
+            "This season already has {} installed ({have}). Reject this upload; signups held for it can use that.",
+            req.game
         ));
     }
     if !installed_conflict(&dirs, &req.file, &req.sha256)? {

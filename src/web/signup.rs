@@ -396,6 +396,13 @@ pub(crate) async fn signup_apworld(
             "ok": true, "world": "", "pending": false,
             "note": format!("{game} is one of this server's core games, so your signup uses the server's version — nothing to install. You can continue.")
         })),
+        Ok(worlds::Placed::Waiting {
+            game,
+            file: waiting,
+        }) => Json(serde_json::json!({
+            "ok": true, "world": waiting, "pending": true,
+            "note": format!("An upload of {game} is already waiting for a moderator's approval in this season, so your signup waits for that one. You can continue; it's checked once that's approved.")
+        })),
         Ok(worlds::Placed::Season {
             game,
             file: have,
