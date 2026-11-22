@@ -362,8 +362,9 @@ CI keeps it as released.
 ### End-to-end tests
 
 The suites in `tests/e2e/` start real Bifrost instances on throwaway data
-directories and drive them over HTTP. They need Python 3 with `requests`
-(`pip install -r tests/e2e/requirements.txt`, or your distribution's package),
+directories and drive them over HTTP. They need Python 3 with `requests` and
+Playwright (`pip install -r tests/e2e/requirements.txt`), a headless Chromium
+for the browser suite (`python -m playwright install chromium-headless-shell`),
 `bubblewrap`, and an Archipelago install, which `setup-ap.sh` provides:
 
 ```sh
@@ -377,6 +378,13 @@ tests/e2e/run.sh catalog quiet       # or just some
 image as `bifrost:dev` (`podman build -t bifrost:dev .`) and the bundle
 (`packaging/bundle/build.sh`) first. Scratch space and paths are set by the
 environment variables described at the top of `tests/e2e/lib.py`.
+
+The `browser` suite checks pages as headless Chromium shows them: script
+errors, the header's layout and what it paints before `/api/me` answers, no
+sideways scrolling on a phone, tabs, and the signup wizard's layout. Page
+scripts and layout fail in ways the HTTP suites and the node tests can't see,
+so when one breaks, add a check there; `tests/e2e/web.py` has the helpers,
+such as holding `/api/me` back to see the first paint.
 
 Two extras run only by hand, not in CI: `SHOT=<file.png> python3 load.py`
 saves screenshots of the load panel (it needs a Playwright headless Chromium

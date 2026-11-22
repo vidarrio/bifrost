@@ -63,7 +63,7 @@ jobs:
       - name: Every end-to-end suite runs in CI
         run: |
           diff <(tests/e2e/run.sh list | sort) \
-               <(ls tests/e2e/*.py | xargs -n1 basename | sed 's/\.py$//' | grep -vx lib | sort)
+               <(ls tests/e2e/*.py | xargs -n1 basename | sed 's/\.py$//' | grep -vxE 'lib|web' | sort)
       - name: Rust base images and rust-version match the pinned toolchain
         run: |
           pin=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)
@@ -122,6 +122,29 @@ jobs:
       - uses: ./.github/actions/host
         with:
           packages: bubblewrap
+      # Headless Chromium, for the shard that runs the browser suite.
+      - name: Browser suite in this shard
+        id: browser
+        run: |
+          if tests/e2e/run.sh suites ${{ matrix.shard }} | grep -qx browser; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Restore Chromium
+        if: steps.browser.outputs.needed == 'true'
+        id: chromecache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
+      - name: Chromium
+        if: steps.browser.outputs.needed == 'true'
+        run: python -m playwright install --with-deps chromium-headless-shell
+      - name: Save Chromium
+        if: steps.browser.outputs.needed == 'true' && steps.chromecache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
       # The demo build first, kept aside for the demo suite, then the normal
       # build every other suite runs (only the bifrost crate rebuilds).
       - name: Build
