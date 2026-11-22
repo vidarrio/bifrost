@@ -559,7 +559,8 @@ pub(crate) async fn admin_world_to_catalog(
     }
     let (who, _) = ctx.ident(&me);
     match worlds::catalog_add_installed(&st.db, ctx.id, &f.name, &who).await {
-        Ok(_) => Redirect::to(&ctx.url("/admin")).into_response(),
+        Ok(added) if added.replaced.is_empty() => Redirect::to(&ctx.url("/admin")).into_response(),
+        Ok(added) => render::notice(&added.message(), true, "admin").into_response(),
         Err(e) => render::notice(&e, false, "admin").into_response(),
     }
 }

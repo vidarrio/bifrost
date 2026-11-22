@@ -202,7 +202,7 @@ pub fn signup_page(
    fetch('signup/apworld',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(j){
      btn.disabled=false;
      if(j.ok&&j.pending){ready[kind]=true;pending=j.world;msg.className='inlinemsg ok';msg.textContent='Uploaded '+j.world+' — it needs a moderator\'s approval before it can run. You can continue; your signup is held until then.';}
-     else if(j.ok){ready[kind]=true;if(kind=='custom')pending='';msg.className='inlinemsg ok';msg.textContent='Installed '+j.world+'. You can continue.';}
+     else if(j.ok){ready[kind]=true;if(kind=='custom')pending='';msg.className='inlinemsg ok';msg.textContent=j.note||('Installed '+j.world+'. You can continue.');}
      else{ready[kind]=false;msg.className='inlinemsg bad';msg.textContent=j.error||'Install failed.';}
      refresh1();
    }).catch(function(){btn.disabled=false;msg.className='inlinemsg bad';msg.textContent='Install failed (network).';});

@@ -78,7 +78,10 @@ have no game there yet, the signup wizard is on the page too, with two steps:
    - an upload of another custom world's `.apworld` file.
 
    The last two are offered only if the server allows custom worlds;
-   otherwise the page says custom games are turned off.
+   otherwise the page says custom games are turned off. If you upload a
+   game the server already has, the server's version is used: a core game
+   needs nothing installed, and a catalog game gets the catalog's version.
+   If yours is newer, it's passed to the server's admins to consider.
 2. **Upload your options YAML.** It is checked against the season's installed
    worlds with Archipelago's own code, and has to pass before you can
    continue. Its `name:` has to be one plain name of at most 16 characters, without
@@ -677,9 +680,19 @@ schema, so restore the backup first.
 ### The apworld catalog and approval
 
 **Console → Apworlds** holds the **catalog**: custom worlds you have vetted.
-Players can pick them at signup, and an upload whose bytes match a catalog
-entry is treated as that entry. The game and version are read from the
+Players can pick them at signup. The game and version are read from the
 world's `archipelago.json`, and you can override them.
+
+The catalog holds one version of each game, and a player's upload of a game
+the server already has uses the server's version. An upload of a catalog game
+installs the catalog's version instead, and an upload of a core game installs
+nothing (Archipelago always loads its own core worlds, so a core game can't be
+replaced). If the upload is a newer version of a catalog game, it's listed
+under **Newer versions players uploaded**: **replace the catalog's version**
+with it once you've vetted it, or **dismiss** it. Adding a world whose game is
+already in the catalog, from the form or with a season's **add to catalog**
+button, replaces that game's entry. Seasons that installed the old version
+keep it.
 
 The **approval toggle** decides what happens to other uploads:
 

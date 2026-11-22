@@ -479,6 +479,7 @@ pub(super) fn release_status(
 
 pub fn catalog_page(
     catalog: &[crate::db::CatalogWorld],
+    offers: &[crate::worlds::Offer],
     approval: crate::db::Approval,
     err: Option<&str>,
     saved: Option<&str>,
@@ -498,7 +499,7 @@ pub fn catalog_page(
         checked(Approval::Manual),
         checked(Approval::Auto),
     ));
-    body.push_str(r#"<h2>Catalog</h2><p class="statline">Worlds you've vetted. Players can pick them at signup, and an upload with the same contents is accepted without approval. Removing one doesn't touch seasons that already installed it.</p>"#);
+    body.push_str(r#"<h2>Catalog</h2><p class="statline">Worlds you've vetted. Players can pick them at signup. The catalog holds one version of each game: a player's upload of a game that's here gets the catalog's version instead (a newer one is listed below for you to consider), and adding a game that's here replaces its entry. Removing one doesn't touch seasons that already installed it.</p>"#);
     if catalog.is_empty() {
         body.push_str(r#"<div class="empty">The catalog is empty.</div>"#);
     } else {
@@ -529,6 +530,35 @@ pub fn catalog_page(
         }
         body.push_str("</table>");
     }
+    if !offers.is_empty() {
+        body.push_str(r#"<h2>Newer versions players uploaded</h2><p class="statline">A player uploaded a newer version of a catalog game. Their signup uses the catalog's version; replace it with theirs here once you've vetted it, and new signups get that instead. Seasons that installed the old one keep it.</p>"#);
+        body.push_str(r#"<table class="utable"><tr><th>Game</th><th>Version</th><th>Replaces</th><th>Uploaded</th><th></th></tr>"#);
+        for o in offers {
+            body.push_str(&format!(
+                r#"<tr><td>{}</td><td class="mono">{}</td><td class="mono">{}</td><td>{} · {}</td><td>{} {}</td></tr>"#,
+                esc(&o.game),
+                esc(&o.version),
+                esc(&o.replaces),
+                esc(&o.uploaded_by),
+                fmt_date(o.uploaded_at),
+                action_btn(
+                    "/admin/catalog/offer/promote",
+                    &[("sha256", &o.sha256)],
+                    "replace the catalog's version",
+                    false,
+                    &format!("Replace {} {} in the catalog with {}?", o.game, o.replaces, o.version)
+                ),
+                action_btn(
+                    "/admin/catalog/offer/dismiss",
+                    &[("sha256", &o.sha256)],
+                    "dismiss",
+                    true,
+                    ""
+                ),
+            ));
+        }
+        body.push_str("</table>");
+    }
     body.push_str(
         r#"<h2>Add a world</h2>
 <form class="authform" method="post" action="/admin/catalog/add" enctype="multipart/form-data">
@@ -537,7 +567,7 @@ pub fn catalog_page(
 <label>Version (optional — likewise)<input type="text" name="version" maxlength="80"></label>
 <label>Note (optional)<input type="text" name="note" maxlength="200" placeholder="e.g. source URL, who vetted it"></label>
 <button type="submit">Add to catalog</button></form>
-<p class="statline">You can also add a world straight from a season: its admin page has an “add to catalog” button next to each installed upload.</p>"#,
+<p class="statline">You can also add a world straight from a season: its admin page has an “add to catalog” button next to each installed upload. Adding a game that's already here replaces its entry.</p>"#,
     );
     auth_page("Console", r#"<a href="/">← home</a>"#, err, &body)
 }

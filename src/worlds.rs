@@ -101,6 +101,147 @@ pub enum Placed {
     Installed { catalog: bool },
     /// Waiting for approval.
     Pending,
+    /// Its game is one of the season's core games: nothing installed, the
+    /// signup uses the core game (AP would ignore the upload anyway).
+    Core { game: String },
+    /// Its game is in the catalog: the catalog's version was installed
+    /// instead (as `file`). `offered`: the upload was newer, so it was kept
+    /// for a sysadmin to promote as the catalog's replacement.
+    Ours {
+        game: String,
+        file: String,
+        version: String,
+        offered: Option<String>,
+    },
+}
+
+/// A dotted version as numbers ("v1.10.2" → [1, 10, 2]), if it is one.
+fn version_parts(v: &str) -> Option<Vec<u64>> {
+    let v = v.trim().trim_start_matches(['v', 'V']);
+    let parts: Option<Vec<u64>> = v.split('.').map(|p| p.parse().ok()).collect();
+    parts.filter(|p| !p.is_empty())
+}
+
+/// Whether version `a` is newer than `b`, when both are dotted versions.
+pub fn version_newer(a: &str, b: &str) -> bool {
+    match (version_parts(a), version_parts(b)) {
+        (Some(mut a), Some(mut b)) => {
+            let n = a.len().max(b.len());
+            a.resize(n, 0);
+            b.resize(n, 0);
+            a > b
+        }
+        _ => false,
+    }
+}
+
+/// The catalog's entry for a game (its newest, should there be several).
+pub fn catalog_for_game<'a>(catalog: &'a [CatalogWorld], game: &str) -> Option<&'a CatalogWorld> {
+    let game = game.trim();
+    if game.is_empty() {
+        return None;
+    }
+    catalog
+        .iter()
+        .filter(|w| w.game.eq_ignore_ascii_case(game))
+        .reduce(|best, w| {
+            if version_newer(&w.version, &best.version) {
+                w
+            } else {
+                best
+            }
+        })
+}
+
+/// A newer version of a catalog game that a player uploaded, kept for a
+/// sysadmin to promote as the catalog's replacement (or dismiss). Kept as
+/// files in `$BIFROST_DATA/catalog/offers/`: `<sha256>.apworld` and its
+/// `<sha256>.json`.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct Offer {
+    pub sha256: String,
+    pub file: String,
+    pub game: String,
+    pub version: String,
+    /// The catalog version it would replace.
+    pub replaces: String,
+    pub uploaded_by: String,
+    pub uploaded_at: i64,
+    pub season: Id,
+}
+
+fn offers_dir() -> PathBuf {
+    config::get().catalog_dir().join("offers")
+}
+
+fn is_sha(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Keep an upload as an offer (once per file contents).
+async fn offer_store(offer: &Offer, bytes: &[u8]) -> Result<(), String> {
+    let dir = offers_dir();
+    let res = async {
+        tokio::fs::create_dir_all(&dir).await?;
+        crate::atomic::write_async(
+            dir.join(format!("{}.apworld", offer.sha256)),
+            bytes.to_vec(),
+        )
+        .await?;
+        let json = serde_json::to_vec(offer).expect("offer serializes");
+        crate::atomic::write_async(dir.join(format!("{}.json", offer.sha256)), json).await
+    };
+    res.await
+        .map_err(|e| format!("keeping the newer version: {e}"))
+}
+
+/// Every offer waiting for a sysadmin, newest first.
+pub fn offers() -> Vec<Offer> {
+    let mut out: Vec<Offer> = std::fs::read_dir(offers_dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .filter_map(|e| serde_json::from_slice(&std::fs::read(e.path()).ok()?).ok())
+        .collect();
+    out.sort_by_key(|o: &Offer| std::cmp::Reverse(o.uploaded_at));
+    out
+}
+
+async fn offer_remove(sha256: &str) {
+    let dir = offers_dir();
+    let _ = tokio::fs::remove_file(dir.join(format!("{sha256}.apworld"))).await;
+    let _ = tokio::fs::remove_file(dir.join(format!("{sha256}.json"))).await;
+}
+
+/// Promote an offer into the catalog, replacing the game's current entry.
+pub async fn offer_promote(db: &Db, sha256: &str, by: &str) -> Result<Added, String> {
+    if !is_sha(sha256) {
+        return Err("No such offer.".into());
+    }
+    let offer = offers()
+        .into_iter()
+        .find(|o| o.sha256 == sha256)
+        .ok_or("No such offer.")?;
+    let bytes = tokio::fs::read(offers_dir().join(format!("{sha256}.apworld")))
+        .await
+        .map_err(|e| format!("reading the offer: {e}"))?;
+    if crate::text::sha256_hex(&bytes) != sha256 {
+        return Err("The offer's file doesn't match its hash; dismiss it.".into());
+    }
+    let note = format!("uploaded by {}", offer.uploaded_by);
+    let added = catalog_add(db, &offer.file, &bytes, "", "", &note, by).await?;
+    offer_remove(sha256).await;
+    Ok(added)
+}
+
+/// Drop an offer.
+pub async fn offer_dismiss(sha256: &str) -> Result<(), String> {
+    if !is_sha(sha256) || !offers().iter().any(|o| o.sha256 == sha256) {
+        return Err("No such offer.".into());
+    }
+    offer_remove(sha256).await;
+    Ok(())
 }
 
 /// Refuse to swap a world out from under the YAMLs that use it: a different
@@ -132,6 +273,48 @@ pub async fn place_upload(
 ) -> Result<Placed, String> {
     let dirs = config::get().season(season);
     let sha = crate::text::sha256_hex(&bytes);
+    // A game the server already has: use the server's version. A catalog game
+    // gets the catalog's copy (and a newer upload is offered to sysadmins); a
+    // core game needs nothing, as AP always loads its own.
+    let m = manifest(&bytes);
+    if db.catalog_world(&sha).await.is_none() {
+        let catalog = db.catalog().await;
+        if let Some(cat) = catalog_for_game(&catalog, &m.game) {
+            let installed = install_from_catalog(db, season, &cat.sha256, uploader).await?;
+            let offered = if version_newer(&m.version, &cat.version) {
+                let offer = Offer {
+                    sha256: sha.clone(),
+                    file: file.to_string(),
+                    game: cat.game.clone(),
+                    version: m.version.clone(),
+                    replaces: cat.version.clone(),
+                    uploaded_by: uploader.to_string(),
+                    uploaded_at: crate::clock::now(),
+                    season,
+                };
+                offer_store(&offer, &bytes).await?;
+                tracing::info!(
+                    "{uploader} uploaded {} {} (the catalog has {}): offered to sysadmins",
+                    cat.game,
+                    m.version,
+                    cat.version
+                );
+                Some(m.version.clone())
+            } else {
+                None
+            };
+            return Ok(Placed::Ours {
+                game: cat.game.clone(),
+                file: installed,
+                version: cat.version.clone(),
+                offered,
+            });
+        }
+        let core = crate::games::cached(&crate::apinstall::for_dirs(&dirs));
+        if !m.game.is_empty() && core.is_some_and(|c| c.iter().any(|g| g.game == m.game)) {
+            return Ok(Placed::Core { game: m.game });
+        }
+    }
     if installed_conflict(&dirs, file, &sha)? {
         return Ok(Placed::Installed { catalog: false });
     }
@@ -363,8 +546,41 @@ pub async fn recheck_stale(db: &Db, season: Id) {
     }
 }
 
+/// A catalog addition, and the entries for the same game it replaced.
+pub struct Added {
+    pub world: CatalogWorld,
+    pub replaced: Vec<CatalogWorld>,
+}
+
+impl Added {
+    /// What to tell the sysadmin.
+    pub fn message(&self) -> String {
+        let w = &self.world;
+        let what = if w.game.is_empty() {
+            w.file.clone()
+        } else {
+            format!("{} {}", w.game, w.version).trim().to_string()
+        };
+        let mut m = format!("Added {what} to the catalog.");
+        for old in &self.replaced {
+            m.push_str(&format!(
+                " It replaces {}; seasons that installed that keep it.",
+                if old.version.is_empty() {
+                    old.file.clone()
+                } else {
+                    format!("version {}", old.version)
+                }
+            ));
+        }
+        m
+    }
+}
+
 /// Add an apworld to the catalog (or re-describe it). `game`/`version`
-/// default to what its manifest says.
+/// default to what its manifest says. The catalog holds one version of a game
+/// (it's what a player's upload of that game is swapped for), so this
+/// replaces any other entry for the same game; seasons that installed it keep
+/// their copy.
 pub async fn catalog_add(
     db: &Db,
     file: &str,
@@ -373,7 +589,7 @@ pub async fn catalog_add(
     version: &str,
     note: &str,
     by: &str,
-) -> Result<CatalogWorld, String> {
+) -> Result<Added, String> {
     let sha = crate::text::sha256_hex(bytes);
     let m = manifest(bytes);
     let pick = |typed: &str, read: String| {
@@ -401,7 +617,16 @@ pub async fn catalog_add(
         return Err(format!("storing the catalog copy: {e}"));
     }
     db.catalog_add(&w).await.map_err(|e| e.to_string())?;
-    Ok(w)
+    let mut replaced = Vec::new();
+    if !w.game.is_empty() {
+        for old in db.catalog().await {
+            if old.sha256 != w.sha256 && old.game.eq_ignore_ascii_case(&w.game) {
+                catalog_remove(db, &old.sha256).await?;
+                replaced.push(old);
+            }
+        }
+    }
+    Ok(Added { world: w, replaced })
 }
 
 /// Add a world already installed in a season to the catalog.
@@ -410,7 +635,7 @@ pub async fn catalog_add_installed(
     season: Id,
     file: &str,
     by: &str,
-) -> Result<CatalogWorld, String> {
+) -> Result<Added, String> {
     let dirs = config::get().season(season);
     let pin = ap_adapter::world_pins(&dirs)
         .get(file)
@@ -646,5 +871,45 @@ mod tests {
             error: Some("line 1".into()),
         };
         assert!(judge(&broken).unwrap_err().contains("valid YAML"));
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    #[test]
+    fn versions_compare_by_number() {
+        assert!(version_newer("1.10.0", "1.9.2"));
+        assert!(version_newer("v2", "1.99"));
+        assert!(version_newer("1.0.1", "1.0"));
+        assert!(!version_newer("1.0", "1.0.0"));
+        assert!(!version_newer("1.0.0", "1.1"));
+        assert!(!version_newer("", "1.0"), "no version is never newer");
+        assert!(!version_newer("2.0-beta", "1.0"), "not a dotted version");
+    }
+
+    #[test]
+    fn the_catalog_entry_for_a_game_is_its_newest() {
+        let w = |game: &str, version: &str, sha: &str| CatalogWorld {
+            sha256: sha.into(),
+            file: format!("{sha}.apworld"),
+            game: game.into(),
+            version: version.into(),
+            note: String::new(),
+            added_by: "root".into(),
+            added_at: 0,
+        };
+        let cat = [
+            w("Bar Finder", "1.0.0", "a"),
+            w("bar finder", "1.2.0", "b"),
+            w("Foo", "3", "c"),
+        ];
+        assert_eq!(
+            catalog_for_game(&cat, "Bar Finder").map(|w| w.sha256.as_str()),
+            Some("b")
+        );
+        assert!(catalog_for_game(&cat, "").is_none());
+        assert!(catalog_for_game(&cat, "Baz").is_none());
     }
 }

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Sysadmins can replace a catalog game with a newer version a player
+  uploaded: it's listed on the catalog page, to replace the catalog's version
+  or dismiss.
 - A **Games** page (`/worlds`, linked from the home page and the signup
   wizard) lists what can be played on the server before you sign up: the core
   games of the Archipelago version new seasons use, with each world's own
@@ -20,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Uploading a game the server already has uses the server's version: a
+  catalog game gets the catalog's copy, and a core game needs nothing
+  installed (Archipelago ignored such an upload anyway). The catalog now
+  holds one version of each game: adding one that's already there replaces
+  its entry, and seasons that installed the old one keep it.
 - The home page no longer shows the connect host next to its title. That's
   the address for players' Archipelago clients, and season boards still show
   it. The home page shows the new site address there instead. Until one is

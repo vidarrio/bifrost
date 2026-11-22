@@ -210,6 +210,8 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
             post(catalog_upload).layer(upload_limit()),
         )
         .route("/admin/catalog/remove", post(catalog_remove))
+        .route("/admin/catalog/offer/promote", post(catalog_offer_promote))
+        .route("/admin/catalog/offer/dismiss", post(catalog_offer_dismiss))
         .route("/admin/catalog/approval", post(catalog_approval))
         .route("/admin/common-games", get(common_catalog_view))
         .route("/admin/common-games/new", post(common_catalog_new))

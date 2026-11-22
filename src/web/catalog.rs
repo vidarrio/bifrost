@@ -7,7 +7,13 @@ pub(crate) async fn catalog_page(
     err: Option<&str>,
     saved: Option<&str>,
 ) -> Html<String> {
-    render::catalog_page(&st.db.catalog().await, st.db.approval().await, err, saved)
+    render::catalog_page(
+        &st.db.catalog().await,
+        &worlds::offers(),
+        st.db.approval().await,
+        err,
+        saved,
+    )
 }
 
 pub(crate) async fn catalog_view(State(st): State<AppState>, me: auth::Me) -> Response {
@@ -54,10 +60,9 @@ pub(crate) async fn catalog_upload(
     }
     .await;
     match res {
-        Ok(w) => {
-            let msg = format!("Added {} to the catalog.", w.file);
-            catalog_page(&st, None, Some(&msg)).await.into_response()
-        }
+        Ok(added) => catalog_page(&st, None, Some(&added.message()))
+            .await
+            .into_response(),
         Err(e) => catalog_page(&st, Some(&e), None).await.into_response(),
     }
 }
@@ -76,6 +81,41 @@ pub(crate) async fn catalog_remove(
         return sysadmin_only();
     }
     match worlds::catalog_remove(&st.db, &f.sha256).await {
+        Ok(()) => Redirect::to("/admin/catalog").into_response(),
+        Err(e) => catalog_page(&st, Some(&e), None).await.into_response(),
+    }
+}
+
+/// Promote a player's newer version of a catalog game into the catalog,
+/// replacing the game's current entry.
+pub(crate) async fn catalog_offer_promote(
+    State(st): State<AppState>,
+    me: auth::Me,
+    Form(f): Form<CatalogRemoveForm>,
+) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return sysadmin_only();
+    }
+    match worlds::offer_promote(&st.db, &f.sha256, &me.username()).await {
+        Ok(added) => {
+            tracing::info!("{}: {}", me.username(), added.message());
+            catalog_page(&st, None, Some(&added.message()))
+                .await
+                .into_response()
+        }
+        Err(e) => catalog_page(&st, Some(&e), None).await.into_response(),
+    }
+}
+
+pub(crate) async fn catalog_offer_dismiss(
+    State(st): State<AppState>,
+    me: auth::Me,
+    Form(f): Form<CatalogRemoveForm>,
+) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return sysadmin_only();
+    }
+    match worlds::offer_dismiss(&f.sha256).await {
         Ok(()) => Redirect::to("/admin/catalog").into_response(),
         Err(e) => catalog_page(&st, Some(&e), None).await.into_response(),
     }
