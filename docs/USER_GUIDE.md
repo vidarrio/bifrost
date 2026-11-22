@@ -135,8 +135,9 @@ moderator assigns each one to an account from its game page (under
 ### Connecting
 
 Open the season from the home page: a live season opens on its board. Its
-**Live board** tab shows the season's progress, each game's locations (checked,
-left, sent and received) and recent activity; **full log →** opens the
+**Live board** tab shows the season's progress, each game's location count,
+how many of its items are still to find, what it has sent and received, and
+recent activity; **full log →** opens the
 season's whole activity log, which you can filter by sender and receiver. Its
 **How to join** tab gives the season's address (`host:port`), its
 connect password if one is set, the Archipelago version its server runs, which
@@ -269,8 +270,10 @@ The season console has six tabs:
 - **Connection.** The season's **connect password**, and a **server console**
   for Archipelago server commands, such as `/send`, with auto-completion. A new
   password applies to the running server straight away. With an external
-  Archipelago server only a sysadmin can change it, and Bifrost restarts
-  briefly to apply it. The address players connect to is shown above the
+  Archipelago server the password belongs to that shared server, so only a
+  sysadmin can change it. It applies to every season, and Bifrost restarts
+  briefly once the host's helper (which reads `connect_password.request`) has
+  set it. The address players connect to is shown above the
   tabs.
 - **Options.** Choose who can see the season. A new season's pages after
   generation are for its players, moderators and admins, and you can open them to
@@ -640,7 +643,7 @@ With the container stopped, run the restore in a one-off container on the
 same volume, then start the old image tag:
 
 ```sh
-podman run --rm -v bifrost-data:/var/lib/bifrost ghcr.io/vidarrio/bifrost:0.4 \
+podman run --rm -v bifrost-data:/var/lib/bifrost ghcr.io/vidarrio/bifrost:0.4.2 \
     backup restore /var/lib/bifrost/backups/bifrost-…-pre-upgrade-from-0.4.2.zip
 ```
 
@@ -820,7 +823,8 @@ a newer schema: run the newer version, or restore the pre-upgrade backup.
 
 Only starting the server upgrades a data directory. Commands such as
 `bifrost auth status` leave it as it is, and refuse to run on one whose
-database schema isn't this version's (start the server once to upgrade it).
+database schema isn't this version's. If it's older, start the server once
+to upgrade it; if it's newer, use the newer version's commands.
 A new, empty data directory is set up by any command, and `bifrost backup
 list`, `bifrost backup restore` and `bifrost config example` always work.
 
@@ -879,8 +883,9 @@ Configure it under `[forward_auth]`:
 - Bifrost reads the user's id from `X-Auth-Request-User`, their name from
   `X-Auth-Request-Preferred-Username` and their groups from
   `X-Auth-Request-Groups`, as oauth2-proxy sends them with
-  `--set-xauthrequest`. For other names set `BIFROST_FWD_SUBJECT_HEADER`,
-  `BIFROST_FWD_USERNAME_HEADER` or `BIFROST_FWD_GROUPS_HEADER`.
+  `--set-xauthrequest`. For other names set `subject_header`,
+  `username_header` or `groups_header` (`BIFROST_FWD_SUBJECT_HEADER`,
+  `BIFROST_FWD_USERNAME_HEADER`, `BIFROST_FWD_GROUPS_HEADER`).
 - `sign_in_url` / `sign_out_url` are used for the header's links.
 
 Private seasons need the proxy's identity on their pages too, so `/board`, `/log`
@@ -964,7 +969,8 @@ off with `[updates] check = false` (`BIFROST_UPDATE_CHECK=off`). Set
 
 By default Bifrost runs each live season's Archipelago server itself. With
 `[archipelago] mode = "external"` (`BIFROST_AP_MODE`) it uses a server you run
-yourself instead.
+yourself instead, set by `url`, `slot`, `password` and `admin_password` in the
+same section (see `bifrost config example`).
 
 Archipelago's own generation settings (hint cost, release and collect modes,
 and so on) come from `$BIFROST_DATA/host.yaml` if you put one there. Each new
