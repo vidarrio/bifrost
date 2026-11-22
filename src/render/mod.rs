@@ -162,7 +162,9 @@ function bifApplyMe(m){
 try{var _m=localStorage.getItem('bifme');if(_m)bifApplyMe(JSON.parse(_m));}catch(e){}
 fetch('/api/me').then(function(r){return r.json()}).then(function(m){
  bifApplyMe(m);
- try{localStorage.setItem('bifme',JSON.stringify({user:(m&&m.user)||null,admin:!!(m&&m.admin),sign_in:m&&m.sign_in,sign_out:m&&m.sign_out}));}catch(e){}
+ // Everything bifApplyMe draws, so a page paints the same header from the cache
+ // as it will once /api/me answers (a missing home pill shifted the rest).
+ try{localStorage.setItem('bifme',JSON.stringify({user:(m&&m.user)||null,admin:!!(m&&m.admin),sign_in:m&&m.sign_in,sign_out:m&&m.sign_out,home:(m&&m.home)||'',home_label:(m&&m.home_label)||''}));}catch(e){}
 }).catch(function(){});
 "#, demo_js!())
     };
@@ -676,6 +678,42 @@ mod tests {
             2
         );
         assert_eq!(game.matches("out.push_str(HINT_JS);").count(), 2);
+    }
+
+    #[test]
+    fn header_caches_everything_it_draws() {
+        // The header paints from the cached identity before /api/me answers.
+        // A field drawn but not cached appears late and shifts the header
+        // (the home pill did), so every `m.<field>` bifApplyMe reads must be
+        // in what the script caches.
+        let apply = IDENTITY_JS
+            .split("function bifApplyMe(m){")
+            .nth(1)
+            .and_then(|r| r.split("\n}\n").next())
+            .expect("bifApplyMe");
+        let cached = IDENTITY_JS
+            .lines()
+            .find(|l| l.contains("localStorage.setItem('bifme'"))
+            .expect("the identity cache");
+        let mut fields: Vec<&str> = apply
+            .split("m.")
+            .skip(1)
+            .map(|r| {
+                r.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .next()
+                    .unwrap()
+            })
+            .filter(|f| !f.is_empty())
+            .collect();
+        fields.sort_unstable();
+        fields.dedup();
+        assert!(fields.contains(&"home_label"), "{fields:?}");
+        for f in fields {
+            assert!(
+                cached.contains(&format!("{f}:")),
+                "bifApplyMe draws m.{f}, which isn't cached"
+            );
+        }
     }
 
     #[test]

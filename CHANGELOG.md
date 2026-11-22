@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The page header no longer jumps when moving between pages. It's drawn from
+  a copy saved by the previous page, and that copy now includes the home pill,
+  so the pill no longer turns up a moment late and pushes the sign-in text and
+  the admin pill aside.
+
 ## [0.4.3] - 2026-11-22
 
 ### Fixed
