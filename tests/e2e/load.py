@@ -21,7 +21,7 @@ try:
     post(root, f"/s/{sid}/admin/signups", data=dict(open="1"))
     post(root, f"/s/{sid}/signup", files={"yaml": ("y.yaml", YAML)})
     generate(root, sid)
-    served = lambda p: (m := re.search(r"Loaded — AP server</td><td>(\d+) MiB", p)) and int(m.group(1))
+    served = lambda p: (m := re.search(r"Loaded — AP server</td><td[^>]*>(\d+) MiB", p)) and int(m.group(1))
     panel = wait_for(lambda: (p := get(root, "/admin/settings/load").text) and served(p) and p, 60, 5)
     check("the live season's server is listed with its memory", panel, (panel or get(root, "/admin/settings/load").text)[:600])
     if panel:
@@ -31,7 +31,7 @@ try:
             or served(get(root, "/admin/settings/load").text)
         check("…a plausible amount (20–2000 MiB)", mib and 20 <= mib <= 2000, mib)
         check("host memory and CPU charts", panel.count('class="loadchart"') == 2 and "<polyline" in panel)
-        check("helpers and Bifrost rows", "Other processes" in panel and "<td>Bifrost</td>" in panel)
+        check("helpers and Bifrost rows", "Other processes" in panel and re.search(r"<td[^>]*>Bifrost</td>", panel))
     page = get(root, "/admin/settings").text
     check("settings page embeds the panel and refreshes it", 'id="loadpanel"' in page and "/admin/settings/load" in page)
     check("season admin page shows its server's usage",

@@ -60,7 +60,7 @@ try:
 
     post(root, "/admin/settings/ap/use", data={"version": TAG})
     page = get(root, "/admin/settings").text
-    row = lambda v: re.search(rf"<tr><td class=\"mono\">{re.escape(v)}.*?</tr>", page, re.S).group(0)
+    row = lambda v: re.search(rf"<tr><td[^>]*class=\"mono\">{re.escape(v)}.*?</tr>", page, re.S).group(0)
     check("new version active", "active" in row(TAG))
     check("Alpha still pinned to the bundled version", "Alpha (live)" in row(BUNDLED))
 
