@@ -10,7 +10,7 @@
 
 - [ ] Title is `<kind>: <subject>` (kind = the branch prefix), at most ~65 characters (it becomes the commit on `main`, plus " (#N)")
 - [ ] Branch is up to date with `main`
-- [ ] `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass locally
+- [ ] `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings` (and with `-p bifrost --features demo`) and `cargo test --workspace` pass locally
 - [ ] `CHANGELOG.md` has an entry under `[Unreleased]` (or: no user-visible change)
 - [ ] CI passes
 - [ ] Reviewed on this PR; every finding (inline and in the summary) has an answer: fixed, with the commit, or explained

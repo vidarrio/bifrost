@@ -41,8 +41,10 @@ Changes reach it only through a pull request with passing CI (see
 
 ## Commits
 
-Write an imperative subject line of at most 72 characters ("Add season import",
-not "Added…"). Use the body to explain why when it isn't obvious. Don't add
+Write an imperative subject line of at most 72 characters, in the same form
+as a pull request title (`feat: add season import`, not "Added season
+import"). Only the pull request's title reaches `main`, but branch commits
+read best in the same style. Use the body to explain why when it isn't obvious. Don't add
 tool attribution trailers such as `Co-Authored-By` or "Generated with"; the
 [AI disclaimer](AI_DISCLAIMER.md) covers how Bifrost is made.
 
@@ -77,7 +79,8 @@ Its title is `<kind>: <subject>`:
   colon marks a breaking change.
 - `<subject>` is an imperative summary in lower case, with no full stop.
 - Keep the whole title to about 65 characters. It becomes the commit subject
-  on `main` with " (#N)" appended, which has to stay under 72.
+  on `main` with " (#N)" appended, which should stay within the 72 characters
+  of [Commits](#commits). Nothing checks the length, so count it yourself.
 
 For example:
 
@@ -113,16 +116,21 @@ CI runs on every pull request and on every push to `main`. It checks:
 | `e2e` | passes when every shard passed: the one end-to-end check the ruleset requires, however the suites are sharded |
 | `image` | builds the container image and runs its suite (`tests/e2e/run.sh container`) |
 | `bundle` | builds the native bundle and runs its suite (`tests/e2e/run.sh bundle`) |
-| `title` | the pull request title is `<kind>: <subject>`, with the branch's kind (see [Pull requests](#pull-requests)) |
-| `label` | labels the pull request with its kind, from the branch prefix, when it opens |
+| `title` | pull requests only: the title is `<kind>: <subject>`, with the branch's kind (see [Pull requests](#pull-requests)) |
+| `label` | pull requests only, when one opens or reopens: labels it with its kind, from the branch prefix |
 
-`e2e`, `image` and `bundle` are skipped when a pull request only changes
-documentation (Markdown files, `docs/`, `LICENSE`). The image and bundle
+The ruleset on `main` requires `lint`, `test`, `e2e`, `image`, `bundle` and
+`title`.
+
+The `e2e (N)` shards, `image` and `bundle` are skipped when a pull request
+only changes documentation (Markdown files, `docs/`, `LICENSE`); `e2e` still
+runs, and passes. The image and bundle
 builds reuse a layer cache that only `main` writes, so a pull request rebuilds
 only what it changed.
 
-Each push to `main` also builds and publishes the public demo's image
-(`ghcr.io/vidarrio/bifrost:demo`, `.github/workflows/demo.yml`). It never
+Each push to `main` also builds and publishes the public demo's image as
+`ghcr.io/vidarrio/bifrost:demo` and `:demo-<short sha>`
+(`.github/workflows/demo.yml`, which can also be started by hand). It never
 touches the release tags. After merging, check that `main`'s runs pass.
 
 Run the same commands locally before pushing (see [Development](#development)).
@@ -196,9 +204,8 @@ These GitHub settings enforce the process:
 Cargo dependencies and Rust toolchains, and opens a pull request for each.
 Actions come as one grouped pull request, and so do Cargo patch updates; any
 other Cargo update gets its own, since a minor bump of a `0.x` crate can be
-breaking. Its
-pull requests follow the same rules as any other: CI, a review, every finding
-answered, squash merge.
+breaking. Its pull requests follow the same rules as any other: CI, a review,
+every finding answered, squash merge.
 
 Two pins are releases rather than packages, so Dependabot can't see them: the
 bundle's Python (`PY_URL`/`PY_SHA256` in `packaging/bundle/Containerfile`)
@@ -264,11 +271,13 @@ To cut release `X.Y.Z`:
    ```
 
 6. **The release workflow** (`.github/workflows/release.yml`) takes it from
-   there. It checks that the tag matches `Cargo.toml` and that the changelog
-   has a `[X.Y.Z]` section. Its signing job waits for the maintainer to
-   approve the deployment to the `release` environment (**Review deployments**
-   on the run's page; see [Repository settings](#repository-settings)), and
-   nothing is published until they do. The workflow:
+   there. It checks that the tagged commit is on `main`, that the tag matches
+   `Cargo.toml` and that the changelog has a `[X.Y.Z]` section. Its signing
+   job waits for the maintainer to approve the deployment to the `release`
+   environment (**Review deployments** on the run's page; see
+   [Repository settings](#repository-settings)). The bundle is built, and its
+   provenance attested, before that; the image, the signature and the GitHub
+   release wait for the approval. The workflow:
    - builds the container image and pushes it to
      `ghcr.io/vidarrio/bifrost` as `X.Y.Z`, `X.Y` and `latest` (a version
      with a pre-release suffix, like `0.2.0-rc.1`, gets only `X.Y.Z-…` and is
@@ -301,6 +310,7 @@ cargo fmt --all                                        # format
 cargo clippy --workspace --all-targets -- -D warnings  # lint
 cargo clippy -p bifrost --all-targets --features demo -- -D warnings  # lint the demo build
 cargo test --workspace                                 # unit tests
+cargo test -p bifrost --features demo                  # unit tests of the demo build
 node --test tests/js/*.test.mjs                        # page script tests
 cargo build && BIFROST_DATA=./data BIFROST_AP_DIR=/path/to/Archipelago \
     BIFROST_RUNTIME_DIR=. BIFROST_INSECURE_COOKIES=1 target/debug/bifrost
