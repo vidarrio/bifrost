@@ -70,17 +70,20 @@ try:
             # The identity takes a row of its own rather than wrapping in the bar.
             lines = pg.evaluate(web.LINES, "#who")
             check(f"{p}: at 360 px the header's identity is one line", lines == 1, lines)
-        # Tabs: one row that scrolls, not a grid of buttons.
-        settled(pg, f"/s/{sid}/admin")
-        tops = pg.evaluate("() => new Set([...document.querySelectorAll('.gtab')].map(t => Math.round(t.getBoundingClientRect().top))).size")
-        check("at 360 px a page's tabs are one row", tops == 1, tops)
-        # Tables scroll sideways; their names and buttons don't break.
-        for p in ("/admin/users", "/admin/seasons"):
+        # Every tab is on-screen: nothing scrolled or wrapped out of view.
+        for p in (f"/s/{sid}/admin", "/admin/users"):
             settled(pg, p)
-            many = pg.evaluate("(sel) => [...document.querySelectorAll(sel)].filter(td => td.textContent.trim())"
-                               ".map(td => [td.textContent.trim().slice(0, 30), (" + web.LINES + ")(td)]).filter(([, n]) => n > 1)",
-                               ".utable td")
-            check(f"{p}: at 360 px every table cell is one line", not many, many)
+            off = pg.evaluate(web.OFFSCREEN, ".gtab")
+            check(f"{p}: at 360 px every tab is on-screen", pg.locator(".gtab").count() >= 3 and not off, off)
+        # Tables: every field and action on-screen (rows become cards), and
+        # no name or date broken mid-word.
+        for p in ("/admin/users", "/admin/seasons", "/admin/settings"):
+            settled(pg, p)
+            off = pg.evaluate(web.OFFSCREEN, ".utable td, .utable td a, .utable td button, .utable td select")
+            check(f"{p}: at 360 px every table field and action is on-screen",
+                  pg.locator(".utable td").count() > 0 and not off, off)
+            broken = pg.evaluate(web.BROKEN, ".utable td")
+            check(f"{p}: at 360 px no word in a table breaks mid-word", not broken, broken)
         # A standard minesweeper board fits a phone.
         settled(pg, "/minesweeper")
         pg.wait_for_selector(".msgrid .cell")

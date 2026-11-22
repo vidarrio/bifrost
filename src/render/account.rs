@@ -12,14 +12,73 @@ pub(super) const AUTH_STYLE: &str = r#"<style>
 .utable td{padding:7px 8px;border-bottom:1px solid var(--bd);vertical-align:middle}
 .utable form{display:inline}.utable .mono{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
 .utable tr.dead td{color:var(--muted)}
-/* A phone can't fit a table's columns: the table scrolls sideways, and names,
-   ports, dates and buttons stay whole instead of breaking mid-word. */
-@media (max-width:560px){.utable{display:block;overflow-x:auto}.utable th,.utable td{white-space:nowrap}}
+/* A phone can't fit a table's columns, so each row becomes a card: one line per
+   field, its column's name on the left (data-label, from `label_cells`), and
+   the actions together at the bottom. Nothing is off-screen. */
+@media (max-width:560px){
+.utable,.utable tbody{display:block}
+.utable tr:has(th){display:none}
+.utable tr{display:block;border:1px solid var(--bd);border-radius:10px;padding:6px 12px;margin:0 0 10px;background:var(--panel)}
+.utable td{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:5px 0;border-bottom:1px solid var(--bd);text-align:right}
+.utable td:last-child{border-bottom:0}
+.utable td::before{content:attr(data-label);flex:none;text-align:left;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.utable td:not([data-label]){justify-content:flex-start;flex-wrap:wrap;gap:8px;text-align:left}
+.utable td:not([data-label])::before{content:none}
+.utable td:empty{display:none}
+.utable td>*{min-width:0}
+}
 .linkform{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin:6px 0 14px}
 .linkform label{display:grid;gap:4px;font-size:12px;color:var(--muted)}
 .minted input{width:100%;font-family:var(--mono);font-size:12.5px;background:var(--bg);color:var(--fg);border:1px solid var(--ok);border-radius:6px;padding:8px 10px;margin-top:6px}
 .tag{font-family:var(--mono);font-size:11px;color:var(--muted);border:1px solid var(--bd);border-radius:5px;padding:1px 6px}
 </style>"#;
+
+/// Copy each `utable`'s column names onto its cells (`data-label`), for the
+/// card layout a phone gets (see `AUTH_STYLE`). A column with an empty heading,
+/// such as the actions, gets no label.
+pub(super) fn label_cells(body: &str) -> String {
+    const OPEN: &str = r#"<table class="utable">"#;
+    let mut out = String::with_capacity(body.len() + 256);
+    let mut rest = body;
+    while let Some(start) = rest.find(OPEN) {
+        let Some(len) = rest[start..].find("</table>") else {
+            break;
+        };
+        out.push_str(&rest[..start]);
+        let table = &rest[start..start + len];
+        let mut labels: Vec<String> = Vec::new();
+        for (i, row) in table.split("<tr").enumerate() {
+            if i > 0 {
+                out.push_str("<tr");
+            }
+            if row.contains("<th") {
+                labels = row
+                    .split("<th")
+                    .skip(1)
+                    .map(|c| {
+                        let inner = c.split_once('>').map_or("", |(_, t)| t);
+                        let text = inner.split("</th>").next().unwrap_or("");
+                        text.replace('"', "&quot;")
+                    })
+                    .collect();
+                out.push_str(row);
+                continue;
+            }
+            for (j, cell) in row.split("<td").enumerate() {
+                if j > 0 {
+                    out.push_str("<td");
+                    if let Some(l) = labels.get(j - 1).filter(|l| !l.is_empty()) {
+                        out.push_str(&format!(r#" data-label="{l}""#));
+                    }
+                }
+                out.push_str(cell);
+            }
+        }
+        rest = &rest[start + len..];
+    }
+    out.push_str(rest);
+    out
+}
 
 pub(super) fn auth_page(title: &str, crumb: &str, err: Option<&str>, body: &str) -> Html<String> {
     let mut b = page_head(None);
@@ -31,7 +90,7 @@ pub(super) fn auth_page(title: &str, crumb: &str, err: Option<&str>, body: &str)
     if let Some(e) = err {
         b.push_str(&format!(r#"<div class="banner bad">{}</div>"#, esc(e)));
     }
-    b.push_str(body);
+    b.push_str(&label_cells(body));
     b.push_str("</main></body></html>");
     Html(b)
 }
@@ -251,4 +310,34 @@ pub fn users_page(v: &UsersView) -> Html<String> {
     }
 
     auth_page("Console", r#"<a href="/">← home</a>"#, v.err, &body)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn table_cells_get_their_column_names() {
+        let body = concat!(
+            r#"<p>before</p><table class="utable"><tr><th>User</th><th>Label / for</th><th></th></tr>"#,
+            r#"<tr class="dead"><td class="mono">bob</td><td>x</td><td><form><button>reset</button></form></td></tr>"#,
+            r#"</table><table class="other"><tr><td>untouched</td></tr></table>"#
+        );
+        let out = super::label_cells(body);
+        assert!(
+            out.contains(r#"<td data-label="User" class="mono">bob</td>"#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"<td data-label="Label / for">x</td>"#),
+            "{out}"
+        );
+        assert!(
+            out.contains("<td><form>"),
+            "an empty heading gives no label: {out}"
+        );
+        assert!(
+            out.contains(r#"<p>before</p>"#) && out.contains("<td>untouched</td>"),
+            "{out}"
+        );
+        assert_eq!(super::label_cells("no tables"), "no tables");
+    }
 }
