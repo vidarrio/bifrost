@@ -36,6 +36,18 @@ updates:
     # Instead of Dependabot's own labels (dependencies, rust, …).
     labels: [chore]
 
+  # The end-to-end suites' Python packages (Playwright, for the browser suite,
+  # is pinned: its Chromium is cached by this file's hash).
+  - package-ecosystem: pip
+    directory: /tests/e2e
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+    # Instead of Dependabot's own labels (dependencies, python, …).
+    labels: [chore]
+
   # A toolchain bump fails lint until the rust: base images and rust-version
   # follow on the same PR (CONTRIBUTING.md, Development). There's no docker
   # entry for those images, so they never arrive as a separate PR.
