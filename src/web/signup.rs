@@ -396,6 +396,27 @@ pub(crate) async fn signup_apworld(
             "ok": true, "world": "", "pending": false,
             "note": format!("{game} is one of this server's core games, so your signup uses the server's version — nothing to install. You can continue.")
         })),
+        Ok(worlds::Placed::Season {
+            game,
+            file: have,
+            version,
+            offered,
+        }) => {
+            let ver = if version.is_empty() {
+                String::new()
+            } else {
+                format!(" {version}")
+            };
+            let mut note = format!(
+                "This season already has {game}{ver}, so your signup uses that — nothing new to install. You can continue."
+            );
+            if let Some(v) = offered {
+                note.push_str(&format!(
+                    " Your newer version ({v}) was passed to the server's admins to consider."
+                ));
+            }
+            Json(serde_json::json!({"ok": true, "world": have, "pending": false, "note": note}))
+        }
         Ok(worlds::Placed::Ours {
             game,
             file: installed,

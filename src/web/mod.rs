@@ -213,6 +213,7 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         .route("/admin/catalog/notes", post(catalog_notes))
         .route("/admin/catalog/offer/promote", post(catalog_offer_promote))
         .route("/admin/catalog/offer/dismiss", post(catalog_offer_dismiss))
+        .route("/admin/catalog/offer/download", get(catalog_offer_download))
         .route("/admin/catalog/approval", post(catalog_approval))
         .route("/admin/common-games", get(common_catalog_view))
         .route("/admin/common-games/new", post(common_catalog_new))

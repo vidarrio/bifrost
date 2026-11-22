@@ -61,13 +61,27 @@ pub struct Manifest {
 }
 
 pub fn manifest(bytes: &[u8]) -> Manifest {
+    manifest_from(std::io::Cursor::new(bytes))
+}
+
+/// [`manifest`] of an apworld on disk, reading only what it needs.
+pub fn manifest_of(path: &std::path::Path) -> Manifest {
+    std::fs::File::open(path).map_or_else(|_| Manifest::default(), manifest_from)
+}
+
+/// The manifest Archipelago itself reads (`APContainer.read_contents`): the
+/// zip's root `archipelago.json`, else the first entry whose name ends in
+/// `archipelago.json`, at any depth. Bifrost has to see the same game AP will.
+fn manifest_from<R: Read + std::io::Seek>(zip: R) -> Manifest {
     let read = || -> Option<Manifest> {
-        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).ok()?;
-        let name = zip
-            .file_names()
-            .filter_map(Result::ok)
-            .find(|n| n.ends_with("/archipelago.json") && n.matches('/').count() == 1)?
-            .into_owned();
+        let mut zip = zip::ZipArchive::new(zip).ok()?;
+        let name = if zip.index_for_name("archipelago.json").is_some() {
+            "archipelago.json".to_string()
+        } else {
+            (0..zip.len())
+                .filter_map(|i| zip.name_for_index(i)?.ok().map(|n| n.into_owned()))
+                .find(|n| n.ends_with("archipelago.json"))?
+        };
         let mut json = String::new();
         zip.by_name(&name)
             .ok()?
@@ -104,6 +118,14 @@ pub enum Placed {
     /// Its game is one of the season's core games: nothing installed, the
     /// signup uses the core game (AP would ignore the upload anyway).
     Core { game: String },
+    /// Its game is already installed in this season: the signup uses that
+    /// (`file`), and nothing changes. A season keeps one world per game.
+    Season {
+        game: String,
+        file: String,
+        version: String,
+        offered: Option<String>,
+    },
     /// Its game is in the catalog: the catalog's version was installed
     /// instead (as `file`). `offered`: the upload was newer, so it was kept
     /// for a sysadmin to promote as the catalog's replacement.
@@ -113,6 +135,21 @@ pub enum Placed {
         version: String,
         offered: Option<String>,
     },
+}
+
+/// The world a season already has for `game` (Bifrost's own aside): its file
+/// name, hash and version. A season keeps one world per game.
+pub fn installed_for_game(dirs: &SeasonDirs, game: &str) -> Option<(String, String, String)> {
+    if game.trim().is_empty() {
+        return None;
+    }
+    ap_adapter::world_pins(dirs)
+        .into_iter()
+        .filter(|(_, pin)| !pin.shipped)
+        .find_map(|(file, pin)| {
+            let m = manifest_of(&dirs.worlds.join(&file));
+            (m.game == game).then_some((file, pin.sha256, m.version))
+        })
 }
 
 /// A dotted version as numbers ("v1.10.2" → [1, 10, 2]), if it is one.
@@ -143,7 +180,8 @@ pub fn catalog_for_game<'a>(catalog: &'a [CatalogWorld], game: &str) -> Option<&
     }
     catalog
         .iter()
-        .filter(|w| w.game.eq_ignore_ascii_case(game))
+        // Exactly, as Archipelago matches games.
+        .filter(|w| w.game == game)
         .reduce(|best, w| {
             if version_newer(&w.version, &best.version) {
                 w
@@ -178,8 +216,30 @@ fn is_sha(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// Keep an upload as an offer (once per file contents).
-async fn offer_store(offer: &Offer, bytes: &[u8]) -> Result<(), String> {
+/// The most offers kept at once: each holds an upload (up to 32 MiB), and
+/// anyone who can sign up can make one.
+const MAX_OFFERS: usize = 20;
+
+/// Keep an upload as an offer: one per player and game (a newer one replaces
+/// theirs), and none past [`MAX_OFFERS`]. False when it wasn't kept.
+async fn offer_store(offer: &Offer, bytes: &[u8]) -> Result<bool, String> {
+    for o in offers() {
+        if o.game == offer.game && o.uploaded_by == offer.uploaded_by {
+            if !version_newer(&offer.version, &o.version) {
+                return Ok(false);
+            }
+            offer_remove(&o.sha256).await;
+        }
+    }
+    if offers().len() >= MAX_OFFERS {
+        tracing::warn!(
+            "not keeping {}'s {} {}: {MAX_OFFERS} offers are waiting on the catalog page",
+            offer.uploaded_by,
+            offer.game,
+            offer.version
+        );
+        return Ok(false);
+    }
     let dir = offers_dir();
     let res = async {
         tokio::fs::create_dir_all(&dir).await?;
@@ -192,6 +252,7 @@ async fn offer_store(offer: &Offer, bytes: &[u8]) -> Result<(), String> {
         crate::atomic::write_async(dir.join(format!("{}.json", offer.sha256)), json).await
     };
     res.await
+        .map(|()| true)
         .map_err(|e| format!("keeping the newer version: {e}"))
 }
 
@@ -229,10 +290,40 @@ pub async fn offer_promote(db: &Db, sha256: &str, by: &str) -> Result<Added, Str
     if crate::text::sha256_hex(&bytes) != sha256 {
         return Err("The offer's file doesn't match its hash; dismiss it.".into());
     }
+    if let Some(cat) = catalog_for_game(&db.catalog().await, &offer.game)
+        && !version_newer(&offer.version, &cat.version)
+    {
+        offer_remove(sha256).await;
+        return Err(format!(
+            "The catalog has {} {} already, no older than this offer ({}); it's been dismissed.",
+            cat.game, cat.version, offer.version
+        ));
+    }
     let note = format!("uploaded by {}", offer.uploaded_by);
     let added = catalog_add(db, &offer.file, &bytes, "", "", &note, "", by).await?;
     offer_remove(sha256).await;
+    // Offers no newer than the game's catalog version now are moot.
+    for o in offers() {
+        if o.game == added.world.game && !version_newer(&o.version, &added.world.version) {
+            offer_remove(&o.sha256).await;
+        }
+    }
     Ok(added)
+}
+
+/// An offer's file, for a sysadmin to vet: its name and bytes.
+pub async fn offer_file(sha256: &str) -> Result<(String, Vec<u8>), String> {
+    if !is_sha(sha256) {
+        return Err("No such offer.".into());
+    }
+    let offer = offers()
+        .into_iter()
+        .find(|o| o.sha256 == sha256)
+        .ok_or("No such offer.")?;
+    let bytes = tokio::fs::read(offers_dir().join(format!("{sha256}.apworld")))
+        .await
+        .map_err(|e| format!("reading the offer: {e}"))?;
+    Ok((offer.file, bytes))
 }
 
 /// Drop an offer.
@@ -273,43 +364,69 @@ pub async fn place_upload(
 ) -> Result<Placed, String> {
     let dirs = config::get().season(season);
     let sha = crate::text::sha256_hex(&bytes);
-    // A game the server already has: use the server's version. A catalog game
-    // gets the catalog's copy (and a newer upload is offered to sysadmins); a
-    // core game needs nothing, as AP always loads its own.
+    // A game the server already has: use the server's version. The season's
+    // own copy if it has one (a season keeps one world per game), else the
+    // catalog's; a core game needs nothing, as AP always loads its own. An
+    // upload newer than the catalog's version is offered to sysadmins either
+    // way.
     let m = manifest(&bytes);
-    if db.catalog_world(&sha).await.is_none() {
-        let catalog = db.catalog().await;
-        if let Some(cat) = catalog_for_game(&catalog, &m.game) {
-            let installed = install_from_catalog(db, season, &cat.sha256, uploader).await?;
-            let offered = if version_newer(&m.version, &cat.version) {
-                let offer = Offer {
-                    sha256: sha.clone(),
-                    file: file.to_string(),
-                    game: cat.game.clone(),
-                    version: m.version.clone(),
-                    replaces: cat.version.clone(),
-                    uploaded_by: uploader.to_string(),
-                    uploaded_at: crate::clock::now(),
-                    season,
-                };
-                offer_store(&offer, &bytes).await?;
-                tracing::info!(
-                    "{uploader} uploaded {} {} (the catalog has {}): offered to sysadmins",
-                    cat.game,
-                    m.version,
-                    cat.version
-                );
-                Some(m.version.clone())
-            } else {
-                None
-            };
-            return Ok(Placed::Ours {
+    let in_catalog = db.catalog_world(&sha).await.is_some();
+    let cat = if in_catalog {
+        None
+    } else {
+        catalog_for_game(&db.catalog().await, &m.game).cloned()
+    };
+    let offered = match &cat {
+        Some(cat) if version_newer(&m.version, &cat.version) => {
+            let offer = Offer {
+                sha256: sha.clone(),
+                file: file.to_string(),
                 game: cat.game.clone(),
-                file: installed,
-                version: cat.version.clone(),
-                offered,
-            });
+                version: m.version.clone(),
+                replaces: cat.version.clone(),
+                uploaded_by: uploader.to_string(),
+                uploaded_at: crate::clock::now(),
+                season,
+            };
+            match offer_store(&offer, &bytes).await {
+                Ok(true) => {
+                    tracing::info!(
+                        "{uploader} uploaded {} {} (the catalog has {}): offered to sysadmins",
+                        cat.game,
+                        m.version,
+                        cat.version
+                    );
+                    Some(m.version.clone())
+                }
+                Ok(false) => None,
+                // The signup goes ahead on the server's version either way.
+                Err(e) => {
+                    tracing::warn!("{e}");
+                    None
+                }
+            }
         }
+        _ => None,
+    };
+    // The season's own world for the game (this very file, or another).
+    if let Some((have, _, version)) = installed_for_game(&dirs, &m.game) {
+        return Ok(Placed::Season {
+            game: m.game,
+            file: have,
+            version,
+            offered,
+        });
+    }
+    if let Some(cat) = cat {
+        let installed = install_from_catalog(db, season, &cat.sha256, uploader).await?;
+        return Ok(Placed::Ours {
+            game: cat.game,
+            file: installed,
+            version: cat.version,
+            offered,
+        });
+    }
+    if !in_catalog {
         let core = crate::games::cached(&crate::apinstall::for_dirs(&dirs));
         if !m.game.is_empty() && core.is_some_and(|c| c.iter().any(|g| g.game == m.game)) {
             return Ok(Placed::Core { game: m.game });
@@ -389,6 +506,11 @@ pub async fn install_from_catalog(
         );
     }
     let dirs = config::get().season(season);
+    // A season keeps one world per game: one it has already is what its
+    // signups use (the catalog may have moved on since).
+    if let Some((have, _, _)) = installed_for_game(&dirs, &cat.game) {
+        return Ok(have);
+    }
     if installed_conflict(&dirs, &cat.file, &cat.sha256)? {
         return Ok(cat.file);
     }
@@ -634,17 +756,35 @@ pub async fn catalog_add(
         return Err(format!("storing the catalog copy: {e}"));
     }
     let mut w = w;
+    let catalog = db.catalog().await;
     let olds: Vec<CatalogWorld> = if w.game.is_empty() {
         Vec::new()
     } else {
-        db.catalog()
-            .await
-            .into_iter()
-            .filter(|old| old.sha256 != w.sha256 && old.game.eq_ignore_ascii_case(&w.game))
+        catalog
+            .iter()
+            .filter(|old| old.sha256 != w.sha256 && old.game == w.game)
+            .cloned()
             .collect()
     };
+    // Replacing a game is for a newer version: going back (or sideways, to
+    // the same version) takes removing the entry first, on purpose.
+    if let Some(old) = olds.iter().find(|o| {
+        version_parts(&o.version).is_some()
+            && version_parts(&w.version).is_some()
+            && !version_newer(&w.version, &o.version)
+    }) {
+        return Err(format!(
+            "The catalog already has {} {}, and this is {}, which isn't newer. Remove that entry first to replace it with this one.",
+            old.game, old.version, w.version
+        ));
+    }
+    // A note left blank keeps the game's: this entry's own when it's being
+    // re-described, else the one of an entry it replaces.
     if w.public_note.is_empty()
-        && let Some(old) = olds.iter().find(|o| !o.public_note.is_empty())
+        && let Some(old) = catalog
+            .iter()
+            .filter(|o| o.sha256 == w.sha256 || olds.iter().any(|x| x.sha256 == o.sha256))
+            .find(|o| !o.public_note.is_empty())
     {
         w.public_note = old.public_note.clone();
     }
@@ -907,6 +1047,42 @@ mod tests {
 mod version_tests {
     use super::*;
 
+    fn zip_of(files: &[(&str, &str)]) -> Vec<u8> {
+        use std::io::Write;
+        let mut out = std::io::Cursor::new(Vec::new());
+        let mut z = zip::ZipWriter::new(&mut out);
+        for (name, body) in files {
+            z.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            z.write_all(body.as_bytes()).unwrap();
+        }
+        z.finish().unwrap();
+        out.into_inner()
+    }
+
+    #[test]
+    fn the_manifest_is_the_one_archipelago_reads() {
+        let m = |game: &str| format!(r#"{{"game": "{game}", "world_version": "1.2.3"}}"#);
+        // The root one first, wherever else one is.
+        let z = zip_of(&[
+            ("w/archipelago.json", &m("Decoy")),
+            ("archipelago.json", &m("Real")),
+        ]);
+        assert_eq!(manifest(&z).game, "Real");
+        // Else the first one at any depth (AP: first entry ending in it).
+        let z = zip_of(&[
+            ("w/deep/archipelago.json", &m("Deep")),
+            ("w/archipelago.json", &m("Later")),
+        ]);
+        assert_eq!(manifest(&z).game, "Deep");
+        let z = zip_of(&[("w/archipelago.json", &m("Plain"))]);
+        assert_eq!(
+            (manifest(&z).game.as_str(), manifest(&z).version.as_str()),
+            ("Plain", "1.2.3")
+        );
+        assert_eq!(manifest(b"not a zip"), Manifest::default());
+    }
+
     #[test]
     fn versions_compare_by_number() {
         assert!(version_newer("1.10.0", "1.9.2"));
@@ -932,12 +1108,14 @@ mod version_tests {
         };
         let cat = [
             w("Bar Finder", "1.0.0", "a"),
-            w("bar finder", "1.2.0", "b"),
+            w("Bar Finder", "1.2.0", "b"),
+            w("bar finder", "9", "d"),
             w("Foo", "3", "c"),
         ];
         assert_eq!(
             catalog_for_game(&cat, "Bar Finder").map(|w| w.sha256.as_str()),
-            Some("b")
+            Some("b"),
+            "the newest, and names match exactly, as in Archipelago"
         );
         assert!(catalog_for_game(&cat, "").is_none());
         assert!(catalog_for_game(&cat, "Baz").is_none());

@@ -546,21 +546,30 @@ pub fn catalog_page(
     }
     if !offers.is_empty() {
         body.push_str(r#"<h2>Newer versions players uploaded</h2><p class="statline">A player uploaded a newer version of a catalog game. Their signup uses the catalog's version; replace it with theirs here once you've vetted it, and new signups get that instead. Seasons that installed the old one keep it.</p>"#);
-        body.push_str(r#"<table class="utable"><tr><th>Game</th><th>Version</th><th>Replaces</th><th>Uploaded</th><th></th></tr>"#);
+        body.push_str(r#"<p class="statline">The game and version are what the upload's own manifest claims. Download it and vet its code before promoting it: the catalog's worlds are trusted on every season.</p>"#);
+        body.push_str(r#"<table class="utable"><tr><th>Game</th><th>Version</th><th>Replaces</th><th>File</th><th>Uploaded</th><th></th></tr>"#);
         for o in offers {
             body.push_str(&format!(
-                r#"<tr><td>{}</td><td class="mono">{}</td><td class="mono">{}</td><td>{} · {}</td><td>{} {}</td></tr>"#,
+                r#"<tr><td>{}</td><td class="mono">{}</td><td class="mono">{}</td><td class="mono" title="{}"><a href="/admin/catalog/offer/download?sha256={}">{}</a> · {}…</td><td>{} · {} · <a href="/s/{}/admin">season</a></td><td>{} {}</td></tr>"#,
                 esc(&o.game),
                 esc(&o.version),
                 esc(&o.replaces),
+                esc(&o.sha256),
+                esc(&o.sha256),
+                esc(&o.file),
+                esc(&o.sha256[..12.min(o.sha256.len())]),
                 esc(&o.uploaded_by),
                 fmt_date(o.uploaded_at),
+                o.season,
                 action_btn(
                     "/admin/catalog/offer/promote",
                     &[("sha256", &o.sha256)],
                     "replace the catalog's version",
                     false,
-                    &format!("Replace {} {} in the catalog with {}?", o.game, o.replaces, o.version)
+                    &format!(
+                        "Replace {} {} in the catalog with {}'s upload ({})? Its code becomes trusted catalog code for every season: vet it first.",
+                        o.game, o.replaces, o.uploaded_by, o.version
+                    )
                 ),
                 action_btn(
                     "/admin/catalog/offer/dismiss",

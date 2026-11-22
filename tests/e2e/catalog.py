@@ -130,7 +130,7 @@ try:
     check("approved world now checks", r.get("ok"), r)
 
     j = upload(bob, "foo.apworld", fixture("foo-v2.apworld"))
-    check("different content under an installed name is refused", not j.get("ok") and "already installed" in j.get("error", ""), j)
+    check("another build of a game the season has uses the season's", j.get("ok") and j.get("world") == "foo.apworld" and "already has Foo Finder" in j.get("note", ""), j)
 
     # --- reject
     j = upload(bob, "baz.apworld")
@@ -215,11 +215,11 @@ try:
     check("…and is passed to the admins", "passed to the server" in j.get("note", ""), j)
     check("…not installed itself", "my-bar.apworld" not in pins(sid2))
     cat = get(root, "/admin/catalog").text
-    check("the catalog page offers it as a replacement",
-          "Newer versions players uploaded" in cat and "1.1.0" in cat and "replace the catalog" in cat)
+    check("the catalog page offers it as a replacement, with its file to vet",
+          "Newer versions players uploaded" in cat and "1.1.0" in cat and "replace the catalog" in cat and "/admin/catalog/offer/download?sha256=" in cat)
     j = post(alice, f"/s/{sid2}/signup/apworld", files={"apworld": ("old-bar.apworld", variant("bar.apworld", "Bar Finder", "0.9.0"))}).json()
-    check("an older upload of a catalog game uses the catalog's, and isn't offered",
-          j.get("ok") and j.get("world") == "bar.apworld" and "passed to" not in j.get("note", ""), j)
+    check("an older upload uses what the season has, and isn't offered",
+          j.get("ok") and j.get("world") == "bar.apworld" and "already has Bar Finder 1.0.0" in j.get("note", "") and "passed to" not in j.get("note", ""), j)
     j = post(alice, f"/s/{sid2}/signup/apworld", files={"apworld": ("cf.apworld", variant("bar.apworld", "ChecksFinder", "9.9.9"))}).json()
     check("an upload of a core game installs nothing: the core game is used",
           j.get("ok") and j.get("world") == "" and "core games" in j.get("note", "") and "cf.apworld" not in pins(sid2), j)
@@ -232,13 +232,32 @@ try:
     check("the Games page shows the public note, escaped",
           '<span class="note">Plays best &lt;with&gt; a friend</span>' in games and "from the dev" not in games)
     offer = re.search(r'action="/admin/catalog/offer/promote".*?name="sha256" value="([0-9a-f]{64})"', cat, re.S).group(1)
+    d = root.get(srv.base + f"/admin/catalog/offer/download?sha256={offer}")
+    check("a sysadmin can download an offer to vet it", d.status_code == 200 and d.content == newer, d.status_code)
+    check("…and nobody else can", alice.get(srv.base + f"/admin/catalog/offer/download?sha256={offer}").content != newer)
     r = post(root, "/admin/catalog/offer/promote", data={"sha256": offer})
     check("promoting the offer replaces the catalog's version",
           "It replaces version 1.0.0" in r.text and "Bar Finder 1.1.0" in r.text, re.findall(r'class="banner[^"]*">[^<]*', r.text))
     cat = get(root, "/admin/catalog").text
     check("…the old entry and the offer are gone", sha not in cat and "Newer versions players uploaded" not in cat)
     j = post(alice, f"/s/{sid2}/signup/apworld", files={"apworld": ("bar.apworld", fixture("bar.apworld"))}).json()
-    check("…and later uploads of the game get the new version", j.get("ok") and "vetted version 1.1.0" in j.get("note", ""), j)
+    check("a season that has the game keeps its version", j.get("ok") and "already has Bar Finder 1.0.0" in j.get("note", ""), j)
+    check("…with one world for the game", "my-bar.apworld" not in pins(sid2))
+    sid3 = new_season(root, "Autumn")
+    post(root, f"/s/{sid3}/admin/signups", data=dict(open="1"))
+    j = post(alice, f"/s/{sid3}/signup/apworld", files={"apworld": ("bar.apworld", fixture("bar.apworld"))}).json()
+    check("…and a new season gets the new version", j.get("ok") and "vetted version 1.1.0" in j.get("note", ""), j)
+    r = post(root, "/admin/catalog/add", files={"apworld": ("bar.apworld", fixture("bar.apworld"))})
+    check("adding an older version of a catalog game is refused", "isn't newer" in r.text and "Remove that entry first" in r.text)
+    # Offers: still made when the season has the game; one per player and game.
+    j = post(alice, f"/s/{sid2}/signup/apworld", files={"apworld": ("b12.apworld", variant("bar.apworld", "Bar Finder", "1.2.0"))}).json()
+    check("a newer upload is offered even when the season has the game", "passed to the server" in j.get("note", ""), j)
+    post(alice, f"/s/{sid2}/signup/apworld", files={"apworld": ("b13.apworld", variant("bar.apworld", "Bar Finder", "1.3.0"))})
+    cat = get(root, "/admin/catalog").text
+    check("…and a player's newer upload replaces their offer", "b13.apworld" in cat and "b12.apworld" not in cat)
+    for o in re.findall(r'action="/admin/catalog/offer/dismiss".*?name="sha256" value="([0-9a-f]{64})"', cat, re.S):
+        post(root, "/admin/catalog/offer/dismiss", data={"sha256": o})
+    check("offers can be dismissed", "Newer versions players uploaded" not in get(root, "/admin/catalog").text)
     check("the Games page shows the new version, keeping the game's public note",
           '<li><span>Bar Finder<span class="note">Plays best &lt;with&gt; a friend</span></span><span class="v">1.1.0</span></li>' in anon.get(srv.base + "/worlds").text)
 

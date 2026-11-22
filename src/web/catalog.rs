@@ -159,6 +159,26 @@ pub(crate) async fn catalog_offer_promote(
     }
 }
 
+#[derive(Deserialize)]
+pub(crate) struct OfferQuery {
+    pub(crate) sha256: String,
+}
+
+/// Download an offer's file, to vet it before promoting it.
+pub(crate) async fn catalog_offer_download(
+    State(st): State<AppState>,
+    me: auth::Me,
+    Query(q): Query<OfferQuery>,
+) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return sysadmin_only();
+    }
+    match worlds::offer_file(&q.sha256).await {
+        Ok((file, bytes)) => download_response(&file, bytes),
+        Err(e) => catalog_page(&st, Some(&e), None).await.into_response(),
+    }
+}
+
 pub(crate) async fn catalog_offer_dismiss(
     State(st): State<AppState>,
     me: auth::Me,
