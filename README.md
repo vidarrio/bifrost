@@ -39,7 +39,8 @@ an archive of past seasons.
   or a custom upload), then upload a YAML, which must pass Archipelago's own
   checks. A signup for a world still waiting for approval is held and checked
   once it's approved. Players can sign up with several games, and invite co-op
-  partners to a game by link.
+  partners to a game by link. A Games page lists what can be played, with
+  versions, before anyone signs up.
 - **Custom worlds, safely.** Sysadmins keep a catalog of vetted apworlds. Other
   uploads can wait for a moderator's approval. Every world is hash-pinned, and
   all apworld code runs in a bubblewrap sandbox.

@@ -119,6 +119,8 @@ pub(crate) async fn ap_use(
         return settings_notice(&st, Some(&e.to_string())).await;
     }
     apinstall::set_active(v);
+    // The Games page lists the active version's games.
+    crate::games::ensure(i.clone());
     tracing::info!("{} made Archipelago {} active", me.username(), i.version);
     Redirect::to("/admin/settings#ap").into_response()
 }

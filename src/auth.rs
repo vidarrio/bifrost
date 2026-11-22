@@ -1066,6 +1066,7 @@ mod tests {
             "/",
             "/health",
             "/favicon.svg",
+            "/worlds",
             "/export/commons",
             "/login",
             "/logout",

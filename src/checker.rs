@@ -12,7 +12,7 @@ use crate::{ap_adapter, config};
 /// Each check spawns a Python that loads every world (~300 MB). This box also
 /// runs the game, so we serialize checks — a burst of requests queues instead of
 /// storm-spawning and OOM-killing the MultiServer.
-fn check_gate() -> &'static Semaphore {
+pub(crate) fn check_gate() -> &'static Semaphore {
     static SEM: OnceLock<Semaphore> = OnceLock::new();
     SEM.get_or_init(|| Semaphore::new(1))
 }
