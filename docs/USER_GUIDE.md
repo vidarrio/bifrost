@@ -16,7 +16,7 @@ This guide has a part for each role:
 |---|---|
 | **User** (player) | Sign up for seasons, invite co-op partners, hint, track, play minesweeper. |
 | **Moderator** | Everything a user can, plus create seasons and run the ones they created or co-moderate. |
-| **Sysadmin** | Everything, on every season, plus users, invites, the apworld catalog, Archipelago versions, backups and instance settings. |
+| **Sysadmin** | Everything, on every season, plus users, invites, the apworld and common-game catalogs, Archipelago versions, backups and instance settings. |
 
 The home page is public. A season before generation is for
 signed-in users. After generation, a new season's board, log and pages are for its
@@ -31,6 +31,8 @@ A season moves through four states:
 2. **Signups**: players submit their games.
 3. **Live**: generated; its Archipelago server is running.
 4. **Archived**: finished. Its summary stays on the home page under *Past seasons*.
+
+While a seed is being rolled, the season shows as *generating*.
 
 Several seasons can be live at once. Each live season has its own server on
 its own port. The home page lists the seasons you can see that aren't
@@ -67,7 +69,10 @@ have no game there yet, the signup wizard is on the page too, with two steps:
 1. **Pick the game.** Choose one of:
    - a core (officially supported) game;
    - a world from the server's catalog (custom worlds the admins have vetted);
-   - an upload of another custom world's `.apworld` file, if the server allows custom worlds.
+   - an upload of another custom world's `.apworld` file.
+
+   The last two are offered only if the server allows custom worlds;
+   otherwise the page says custom games are turned off.
 2. **Upload your options YAML.** It is checked against the season's installed
    worlds with Archipelago's own code, and has to pass before you can
    continue. Its `name:` has to be one plain name of at most 16 characters, without
@@ -123,13 +128,18 @@ because the season can't be generated until it's sorted out.
 
 When the season is generated, your signup's slot is yours, and your partners'
 seats are theirs. Only a slot's players can hint on it. Slots can't be claimed or
-given up by players. In a season with no signups, such as an imported one, a
-moderator assigns each slot to an account from the **Slots** page.
+given up by players. In a live season whose slots have no signup behind them, a
+moderator assigns each one to an account from its game page (under
+*Players*), or from the season's Slots page at `/s/<id>/claim`.
 
 ### Connecting
 
-Open the season from the home page: a live season opens on its board. The
-board's **How to join** tab gives the season's address (`host:port`), its
+Open the season from the home page: a live season opens on its board. Its
+**Live board** tab shows the season's progress, each game's location count,
+how many of its items are still to find, what it has sent and received, and
+recent activity; **full log →** opens the
+season's whole activity log, which you can filter by sender and receiver. Its
+**How to join** tab gives the season's address (`host:port`), its
 connect password if one is set, the Archipelago version its server runs, which
 can differ from season to season, and links to your own games. The password
 only shows to the season's players, its moderators and sysadmins. Under forward
@@ -165,11 +175,11 @@ When a season is generated, Archipelago produces a patch or output file for
 each game that needs one. Bifrost picks out each slot's files from the seed
 (by the slot number in Archipelago's usual file names) and lists them on that
 slot's game page under **Your game files**, with a download link, the file
-type and its size. Once you've claimed your slot, download them there and use
-them with your game's client or patcher.
+type and its size. Download them there and use them with your game's client
+or patcher.
 
-- Only players who've claimed a seat on the slot (every seat, for a co-op
-  slot) and the season's admins can see and download them.
+- Only the slot's players (its host and every partner's seat, for a co-op
+  slot) and the season's moderators and sysadmins can see and download them.
 - After a re-roll, the page offers the new seed's files; the old ones no
   longer fit the new game.
 - The spoiler log and the server's own file are never offered to players.
@@ -210,8 +220,9 @@ username serves every Minecraft server, and nobody else can register it.
 
 ### Past seasons
 
-Archived seasons stay on the home page with their final standings, who played
-what, and minesweeper results.
+Archived seasons stay on the home page under *Past seasons*. Each card opens
+the season's page, with tabs for its final standings, its minesweeper
+leaderboards and its activity log, which you can page through and filter.
 
 ---
 
@@ -232,36 +243,44 @@ The season console has six tabs:
 
 - **Overview.** The season's state and lifecycle actions:
   - **Open / close signups.**
-  - **Generate.** Stages the queued signups, rolls a seed, maps slots and
-    auto-claims, starts the season's Archipelago server, and closes signups.
+  - **Generate.** Stages the queued signups, rolls a seed, gives each signup's
+    players their slot, starts the season's Archipelago server, and closes
+    signups.
   - **Re-roll.** Regenerates the current lineup with a fresh seed and save.
-    Claims are kept; the game restarts.
+    Players keep their slots; the game restarts.
   - **Moderators.** Add co-moderators (moderator accounts only).
 
-  Generation refuses while any signup is held, and names them. A signup that failed
-  its check is listed under **Signups that need attention**, to replace its YAML or
-  dismiss it. A
-  warning shows when the server is short on memory for another live season.
+  Generation refuses while any signup is held, and names them. A warning shows
+  when the server is short on memory for another live season.
 - **Signups & apworlds.** The roster with each signup's check result, the
   season's installed custom worlds and where each came from, and **apworlds
-  waiting for approval**. Approving installs the world and re-checks the
-  signups held for it. Rejecting leaves them flagged. Sysadmins can also
-  promote an installed world into the catalog from here.
+  waiting for approval**. A signup that failed its check is listed at the top
+  under **Signups that need attention**, to replace its YAML or dismiss it.
+  Approving installs the world and re-checks the signups held for it, and is
+  possible only before generation. Rejecting leaves them flagged. Before
+  generation you can also delete a signup or an installed world, or clear
+  them all. Sysadmins can promote an installed world into the catalog from
+  here.
 - **Player files.** The per-player output files in the current seed, for
   download, plus the seed's spoiler log (for admins only). Players get their
   own files on their game page, so there's usually no need to send them out by
   hand. A file whose name doesn't say which slot it's for is listed here too,
   marked as not matched to a slot: hand that one to the right player
   yourself. Bifrost also logs such files after each generation.
-- **Connection.** The season's address, its **connect password** (changing it
-  restarts the server), and a **server console** for Archipelago server
-  commands, such as `/send`, with auto-completion.
+- **Connection.** The season's **connect password**, and a **server console**
+  for Archipelago server commands, such as `/send`, with auto-completion. A new
+  password applies to the running server straight away. With an external
+  Archipelago server the password belongs to that shared server, so only a
+  sysadmin can change it. It applies to every season, and Bifrost restarts
+  briefly once the host's helper (which reads `connect_password.request`) has
+  set it. The address players connect to is shown above the
+  tabs.
 - **Options.** Choose who can see the season. A new season's pages after
   generation are for its players, moderators and admins, and you can open them to
   anyone. Its signups are open to any signed-in user, and you can make them private:
   only people with the link shown there can reach them. Non-members don't see a
-  private season on the home page or in past seasons. Seasons from before this
-  setting stay open until you change them, and so do imported seasons.
+  private season on the home page or in past seasons. Imported seasons stay
+  open until you change them.
   Turn the season's minesweeper on or off,
   and set how many bonus hints a player can earn from minesweeper in any
   24 hours (5 by default; 0 means no limit). Also set how many games a player
@@ -275,8 +294,9 @@ The season console has six tabs:
   to type the season's name.
   - **Before generation: delete this season.** Removes it and everything in it.
   - **Live: archive this season.** Finishes it: the server is stopped, a summary is
-    written for *Past seasons*, and the season's files are packed into a bundle. The
-    game must be connected (its board loaded) to archive.
+    written for *Past seasons*, and the season's files are packed into a bundle. You
+    can give it a final name as you archive it. The game must be connected (its
+    board loaded) to archive.
   - **Live: cancel generation.** Stops the server and goes back to signups, as if the
     season had never been generated. All game progress is lost, and anyone who joined
     after generation needs a new invite link. Signups, YAMLs, notes, apworlds and
@@ -313,7 +333,7 @@ settings come from the instance's `host.yaml` (see
 ### Installing
 
 **Container (recommended).** The image, published on `ghcr.io` with every
-release (`latest`, or a version like `0.1.0`), contains Bifrost, a pinned
+release (`latest`, or a version like `0.4.3`), contains Bifrost, a pinned
 Archipelago build and bubblewrap:
 
 ```sh
@@ -367,7 +387,8 @@ Both the image and the file carry build provenance from the release workflow;
 `gh attestation verify oci://ghcr.io/vidarrio/bifrost:<version> -R vidarrio/bifrost`)
 checks that they were built by this repository from the release's tag.
 
-Without `BIFROST_DATA`, it keeps its data in `~/.local/share/bifrost`. Install
+Without `BIFROST_DATA`, it keeps its data in `$XDG_DATA_HOME/bifrost` (usually
+`~/.local/share/bifrost`), or in `/var/lib/bifrost` when run as root. Install
 `bubblewrap` on the host for the strong sandbox, which custom apworlds need.
 
 Put Bifrost behind a reverse proxy that terminates HTTPS. Session cookies are
@@ -422,7 +443,7 @@ Ubuntu from `wsl --install`; otherwise put `[boot]` / `systemd=true` in
 release straight into Ubuntu and install it as a service:
 
 ```sh
-v=0.1.0    # the release you want
+v=0.4.3    # the release you want
 curl -LO https://github.com/vidarrio/bifrost/releases/download/v$v/bifrost-$v-x86_64-linux
 curl -LO https://github.com/vidarrio/bifrost/releases/download/v$v/SHA256SUMS
 sha256sum -c SHA256SUMS
@@ -517,8 +538,8 @@ sysadmin. Then:
 ### Updating Bifrost
 
 Bifrost's version numbers follow [semantic versioning](https://semver.org/).
-Before 1.0, a new minor version (`0.2.0`) can bring new features or breaking
-changes, and a patch version (`0.2.1`) brings fixes, and sometimes new
+Before 1.0, a new minor version (`0.5.0`) can bring new features or breaking
+changes, and a patch version (`0.4.3`) brings fixes, and sometimes new
 documentation, but no new features or behaviour changes. Each release's notes
 are on the [releases page](https://github.com/vidarrio/bifrost/releases) and
 in the [changelog](../CHANGELOG.md). Sysadmins see a banner in the console
@@ -529,10 +550,10 @@ when a newer release is out (see [Configuration](#configuration)).
 set `BIFROST_ALLOW_ROOT=1` in the environment (`config.toml` can't set it). Game code then
 runs as root, so only do this with worlds you trust: bubblewrap, if you have it, limits it,
 but what it writes in the season's folder is then root's, and Bifrost reads from there. The
-data directory is `/var/lib/bifrost` by default, and Bifrost won't start if another user
-could change it, anything in it, a folder above it or a link on the way to it. That doesn't
-tell you what's already there: don't `chown` a directory another user has had to root and
-run from it.
+data directory is `/var/lib/bifrost` by default, and run as root, Bifrost won't start if
+another user could change it, anything in it, a folder above it or a link on the way to
+it. That doesn't tell you what's already there: don't `chown` a directory another user
+has had to root and run from it.
 
 **Permissions.** Bifrost keeps its data directory to its own user, as it holds password
 hashes, tokens, spoilers and Archipelago passwords. Each start, it tightens the directory
@@ -555,6 +576,8 @@ things: read the changelog first.
 - **The data directory and database.** On its first start the new version
   takes a pre-upgrade backup and then upgrades the database (see
   [Backups](#backups)). It logs the exact command to go back.
+- **From 0.2 or earlier.** There is no upgrade path: Bifrost refuses a data
+  directory from before 0.3.0, so start 0.3.0 or later with an empty one.
 - **Live seasons.** Their Archipelago servers save and stop with Bifrost, and
   start again with it. Players' clients reconnect on their own after a few
   seconds, and the web pages work again once Bifrost is back. Give the container
@@ -572,14 +595,14 @@ connected, but there's no need to wait for a season to end.
 
 **Container image.** Each release is tagged `X.Y.Z`, `X.Y` and `latest`
 (a pre-release gets only its `X.Y.Z-…` tag).
-Pinning `X.Y` (say `ghcr.io/vidarrio/bifrost:0.2`) gets fixes but no
+Pinning `X.Y` (say `ghcr.io/vidarrio/bifrost:0.4`) gets fixes but no
 surprise minor versions. To update, pull the image and recreate the container
 with the same volume and flags:
 
 ```sh
-podman pull ghcr.io/vidarrio/bifrost:0.2
+podman pull ghcr.io/vidarrio/bifrost:0.4
 podman stop bifrost && podman rm bifrost
-podman run -d --name bifrost … ghcr.io/vidarrio/bifrost:0.2   # as before
+podman run -d --name bifrost … ghcr.io/vidarrio/bifrost:0.4   # as before
 ```
 
 To update automatically, run the container under systemd (a Quadlet
@@ -591,7 +614,7 @@ restarts the container when it moved. With Docker, Watchtower does the same.
 
 ```sh
 sudo -u bifrost env BIFROST_DATA=/var/lib/bifrost /opt/bifrost/bifrost update        # the newest release
-sudo -u bifrost env BIFROST_DATA=/var/lib/bifrost /opt/bifrost/bifrost update 0.2.1  # or a given version
+sudo -u bifrost env BIFROST_DATA=/var/lib/bifrost /opt/bifrost/bifrost update 0.4.3  # or a given version
 sudo systemctl restart bifrost
 ```
 
@@ -604,11 +627,8 @@ the Python unpacked there, and with another data directory it would unpack a
 fresh copy first. Bifrost keeps running the old version until you restart it.
 The signature is made by the release workflow with a key only the project
 holds, so a file swapped into a release, or a release published without that
-key, is refused. Releases before signing started (0.1.0 to 0.1.2) can't be
-installed this way; download those by hand. Those versions' own
-`bifrost update` doesn't check signatures yet, so install the first signed
-release by hand too, and put it in place of the old one. From then on
-`bifrost update` checks every release. To check a file's build provenance,
+key, is refused. Releases from before signing started (0.1.0 to 0.1.2) can't
+be installed this way. To check a file's build provenance,
 download it yourself and verify it as described under
 [Installing](#installing).
 
@@ -620,27 +640,30 @@ they live in the backup directory (`$BIFROST_DATA/backups` unless moved).
 Pass `restore` the full path:
 
 ```sh
-bifrost backup restore /var/lib/bifrost/backups/bifrost-…-pre-upgrade-from-0.1.0.zip
+bifrost backup restore /var/lib/bifrost/backups/bifrost-…-pre-upgrade-from-0.4.2.zip
 ```
 
 With the container stopped, run the restore in a one-off container on the
 same volume, then start the old image tag:
 
 ```sh
-podman run --rm -v bifrost-data:/var/lib/bifrost ghcr.io/vidarrio/bifrost:0.1 \
-    backup restore /var/lib/bifrost/backups/bifrost-…-pre-upgrade-from-0.1.0.zip
+podman run --rm -v bifrost-data:/var/lib/bifrost ghcr.io/vidarrio/bifrost:0.4.2 \
+    backup restore /var/lib/bifrost/backups/bifrost-…-pre-upgrade-from-0.4.2.zip
 ```
 
-For the single file, move `<name>.previous` back into place. An older Bifrost refuses a data directory that a newer one has
-already upgraded, so restore the backup first.
+For the single file, move `<name>.previous` back into place. An older Bifrost
+refuses a data directory whose database a newer one has moved to a newer
+schema, so restore the backup first.
 
 ### Users and invites
 
 **Console → Users & links**:
 
-- **Single-use invites**: one account, then the link is dead. Invites expire.
-- **Community invites**: multi-use links with an expiry, for posting in a
-  group chat. Revocable early; each shows how many accounts it created.
+- **Single-use invites**: one account, then the link is dead. Each lasts the
+  number of days you pick (7 by default).
+- **Community invites**: multi-use links that last the number of hours you
+  pick (48 by default), for posting in a group chat. Revocable early; each
+  shows how many accounts it created.
 - **Reset links**: give one to a user who forgot their password. Any reset
   ends their existing sessions.
 - **Roles**: user, moderator, sysadmin. You can also disable accounts.
@@ -766,8 +789,8 @@ manages further versions:
   `GITHUB_TOKEN` in Bifrost's environment to lift that.
   The fork is upstream Archipelago plus small compatibility patches, such as
   silencing join and leave announcements for Bifrost's own connections.
-- **Install.** Builds the release with its own Python environment. A release
-  is only offered once a sandboxed test generation passes with it.
+- **Install.** Builds the release with its own Python environment. It can only
+  be used once a sandboxed test generation passes with it.
 - **Use for new seasons.** Signup checks and new generations use this version.
   A live season keeps the version it was generated with until it's re-rolled
   or archived, so switching never changes a running game.
@@ -781,7 +804,8 @@ Back up now**. Retention keeps the newest backup of each of the last 7 days,
 4 weeks and 3 months, within 5 GiB by default. The settings page lists backups
 for download or deletion. Each backup is a zip of the database plus the data
 directory. The Archipelago installs aren't included because they can be
-reinstalled.
+reinstalled. A backup is skipped, with a warning in the log, when the disk is
+nearly full.
 
 To restore, stop Bifrost first, then run:
 
@@ -795,16 +819,18 @@ Prefer a backup directory on another disk (`[backup] dir`).
 Bifrost also backs up on the first start after an upgrade (or a downgrade),
 before the new version touches the database, and logs the command to go back.
 These are named after the version they go back to
-(`…-pre-upgrade-from-0.1.0.zip`), and the newest three are kept regardless of
+(`…-pre-upgrade-from-0.4.2.zip`), and the newest three are kept regardless of
 the retention settings. If that backup fails, Bifrost doesn't start when
 the upgrade would change the database; free up space and start it again. An
-older Bifrost refuses a data directory that a newer one has already upgraded:
-run the newer version, or restore the pre-upgrade backup.
+older Bifrost refuses a data directory whose database a newer one has moved to
+a newer schema: run the newer version, or restore the pre-upgrade backup.
 
 Only starting the server upgrades a data directory. Commands such as
 `bifrost auth status` leave it as it is, and refuse to run on one whose
-database belongs to another version; `bifrost backup list` and
-`bifrost backup restore` always work.
+database schema isn't this version's. If it's older, start the server once
+to upgrade it; if it's newer, use the newer version's commands.
+A new, empty data directory is set up by any command, and `bifrost backup
+list`, `bifrost backup restore` and `bifrost config example` always work.
 
 ### Live load
 
@@ -854,7 +880,16 @@ Configure it under `[forward_auth]`:
 - `role_groups` maps groups to roles, for example
   `sysadmin=archipelago_admins,moderator=archipelago_moderators,user=archipelago_users`.
   When it's set, the identity provider decides roles, and users in none of the
-  groups are refused. Without it, roles are assigned in the console.
+  groups are refused. Without it, new accounts are users and roles are set
+  in the console. There's no `/setup` link under forward auth, so make the
+  first sysadmin with `bifrost admin set-role <username> sysadmin` after
+  their first sign-in.
+- Bifrost reads the user's id from `X-Auth-Request-User`, their name from
+  `X-Auth-Request-Preferred-Username` and their groups from
+  `X-Auth-Request-Groups`, as oauth2-proxy sends them with
+  `--set-xauthrequest`. For other names set `subject_header`,
+  `username_header` or `groups_header` (`BIFROST_FWD_SUBJECT_HEADER`,
+  `BIFROST_FWD_USERNAME_HEADER`, `BIFROST_FWD_GROUPS_HEADER`).
 - `sign_in_url` / `sign_out_url` are used for the header's links.
 
 Private seasons need the proxy's identity on their pages too, so `/board`, `/log`
@@ -901,7 +936,9 @@ helper:
 Without bubblewrap, Bifrost applies resource limits and the syscall filter
 only, and refuses custom apworlds unless you explicitly set
 `allow_unsandboxed_custom_worlds`. The settings page shows which tier is
-active. Resource limits for checks and generation are under `[sandbox]`.
+active. Resource limits for checks and generation are under `[sandbox]`, and
+`[sandbox] mode` (`BIFROST_SANDBOX`) forces a tier: `bwrap` refuses to start
+without working bubblewrap, and `none` keeps only the resource limits.
 PopTracker packs are allowed on either tier, since their Lua has no file or
 network access of its own; each runs under a 1 GiB memory limit and
 `pack_timeout_secs`. A pack that hits a limit isn't run again for a minute, then
@@ -934,6 +971,11 @@ running version and what the last check found). It downloads nothing. Turn it
 off with `[updates] check = false` (`BIFROST_UPDATE_CHECK=off`). Set
 `GITHUB_TOKEN` to avoid GitHub's anonymous rate limit.
 
+By default Bifrost runs each live season's Archipelago server itself. With
+`[archipelago] mode = "external"` (`BIFROST_AP_MODE`) it uses a server you run
+yourself instead, set by `url`, `slot`, `password` and `admin_password` in the
+same section (see `bifrost config example`).
+
 Archipelago's own generation settings (hint cost, release and collect modes,
 and so on) come from `$BIFROST_DATA/host.yaml` if you put one there. Each new
 season starts from a copy of it. Archipelago's defaults apply otherwise.
@@ -941,7 +983,8 @@ season starts from a copy of it. Archipelago's defaults apply otherwise.
 ### Command line
 
 The CLI works on the data directory directly. It is also the break-glass path
-when nobody can sign in.
+when nobody can sign in. The admin commands print a link's path only; set
+`public_url` (`BIFROST_PUBLIC_URL`) for them to print whole links.
 
 ```
 bifrost auth status                       show the sign-in mode and accounts
