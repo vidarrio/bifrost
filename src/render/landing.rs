@@ -101,9 +101,9 @@ pub fn home_pill(inst: &crate::db::Instance) -> String {
     }
 }
 
-/// The brand tagline: `<domain> · archipelago`.
-pub fn landing_tag(domain: &str) -> String {
-    match domain.trim() {
+/// The brand tagline: `<site address> · archipelago`.
+pub fn landing_tag(site_address: &str) -> String {
+    match site_address.trim() {
         "" => "archipelago".into(),
         d => format!("{} · archipelago", esc(d)),
     }
@@ -154,6 +154,16 @@ pub fn past_seasons_section(seasons: &[(Id, String, i64)]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_tag_shows_the_site_address() {
+        assert_eq!(super::landing_tag(""), "archipelago");
+        assert_eq!(
+            super::landing_tag("bifrost.example.org"),
+            "bifrost.example.org · archipelago"
+        );
+        assert_eq!(super::landing_tag("a<b"), "a&lt;b · archipelago");
+    }
+
     #[test]
     fn the_home_pill_says_its_label() {
         let mut inst = crate::db::Instance::default();
