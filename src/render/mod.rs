@@ -148,12 +148,21 @@ macro_rules! identity_js {
     () => {
         concat!(r#"// Fill the header from a cached identity synchronously (before paint) so it
 // doesn't flicker empty→filled on reload, then confirm/update from /api/me.
+// Signing in or out changes who the cached identity belongs to: drop it, so
+// the next page doesn't paint the old one (a signed-out name on a shared
+// browser) before /api/me answers. The flag keeps this page's own /api/me, if
+// it's still on its way, from caching the old identity again.
+var bifForgot=false;
+function bifForgetMe(){bifForgot=true;try{localStorage.removeItem('bifme')}catch(e){}}
+// Every form that signs someone in or out: sign-in, first-run setup, an
+// invite, a password reset, sign-out.
+document.addEventListener('submit',function(e){var a=e.target.getAttribute('action')||'';if(/^\/(login|logout|setup)$|^\/(invite|reset)\//.test(a))bifForgetMe()});
 function bifApplyMe(m){
  var w=document.getElementById('who');
  // Built from DOM nodes, not markup: the cached identity is replayed on every
  // page, so nothing in it may be read as HTML.
  function link(href,text){var l=document.createElement('a');l.href=href;l.textContent=text;return l}
- if(w){w.textContent='';if(m&&m.user){var b=document.createElement('b');b.textContent=m.user;w.append('signed in as ',b);if(m.sign_out){var so=link(m.sign_out,'sign out');so.id='signout';so.onclick=function(e){e.preventDefault();if(m.sign_out==='/logout'){var f=document.createElement('form');f.method='post';f.action='/logout';document.body.appendChild(f);f.submit()}else location.href=m.sign_out};w.append(' · ',so)}}else{w.append(link((m&&m.sign_in)||'/login','sign in'))}}
+ if(w){w.textContent='';if(m&&m.user){var b=document.createElement('b');b.textContent=m.user;w.append('signed in as ',b);if(m.sign_out){var so=link(m.sign_out,'sign out');so.id='signout';so.onclick=function(e){e.preventDefault();bifForgetMe();if(m.sign_out==='/logout'){var f=document.createElement('form');f.method='post';f.action='/logout';document.body.appendChild(f);f.submit()}else location.href=m.sign_out};w.append(' · ',so)}}else{var si=link((m&&m.sign_in)||'/login','sign in');si.onclick=bifForgetMe;w.append(si)}}
  var a=document.getElementById('adminslot');
  if(a)a.innerHTML=(m&&m.admin)?'<a class="pill" href="/admin/seasons">admin</a>':'';
  var h=document.getElementById('homeslot');
@@ -162,7 +171,9 @@ function bifApplyMe(m){
 try{var _m=localStorage.getItem('bifme');if(_m)bifApplyMe(JSON.parse(_m));}catch(e){}
 fetch('/api/me').then(function(r){return r.json()}).then(function(m){
  bifApplyMe(m);
- try{localStorage.setItem('bifme',JSON.stringify({user:(m&&m.user)||null,admin:!!(m&&m.admin),sign_in:m&&m.sign_in,sign_out:m&&m.sign_out}));}catch(e){}
+ // Everything bifApplyMe draws, so a page paints the same header from the cache
+ // as it will once /api/me answers (a missing home pill shifted the rest).
+ if(!bifForgot)try{localStorage.setItem('bifme',JSON.stringify({user:(m&&m.user)||null,admin:!!(m&&m.admin),sign_in:m&&m.sign_in,sign_out:m&&m.sign_out,home:(m&&m.home)||'',home_label:(m&&m.home_label)||''}));}catch(e){}
 }).catch(function(){});
 "#, demo_js!())
     };
@@ -679,13 +690,74 @@ mod tests {
     }
 
     #[test]
+    fn header_caches_everything_it_draws() {
+        // The header paints from the cached identity before /api/me answers.
+        // A field drawn but not cached appears late and shifts the header
+        // (the home pill did), so every `m.<field>` bifApplyMe reads must be
+        // in what the script caches.
+        let apply = IDENTITY_JS
+            .split("function bifApplyMe(m){")
+            .nth(1)
+            .and_then(|r| r.split("\n}\n").next())
+            .expect("bifApplyMe");
+        let cached = IDENTITY_JS
+            .lines()
+            .find(|l| l.contains("localStorage.setItem('bifme'"))
+            .expect("the identity cache");
+        let mut fields: Vec<&str> = apply
+            .split("m.")
+            .skip(1)
+            .map(|r| {
+                r.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .next()
+                    .unwrap()
+            })
+            .filter(|f| !f.is_empty())
+            .collect();
+        fields.sort_unstable();
+        fields.dedup();
+        assert!(fields.contains(&"home_label"), "{fields:?}");
+        for f in fields {
+            assert!(
+                cached.contains(&format!("{{{f}:")) || cached.contains(&format!(",{f}:")),
+                "bifApplyMe draws m.{f}, which isn't cached"
+            );
+        }
+    }
+
+    #[test]
     fn header_builds_no_markup_from_the_identity() {
         // Shared by every page and the landing page; the cached identity is
         // replayed into it, so it must not go through innerHTML.
-        for line in IDENTITY_JS.lines().filter(|l| l.contains("innerHTML")) {
+        // No other way into markup, and innerHTML only ever as a plain `=`.
+        for banned in [
+            "insertAdjacentHTML",
+            "outerHTML",
+            "document.write",
+            "innerHTML+",
+            "innerHTML ",
+        ] {
             assert!(
-                !line.contains("+m") && !line.contains("m.user") && !line.contains("m.sign"),
-                "identity data reaches innerHTML: {line}"
+                !IDENTITY_JS.contains(banned),
+                "{banned} in the header script"
+            );
+        }
+        assert_eq!(
+            IDENTITY_JS.matches("innerHTML").count(),
+            IDENTITY_JS.matches("innerHTML=").count(),
+            "innerHTML written other than as `innerHTML=`"
+        );
+        // Each innerHTML assignment is either a clear or the admin pill's
+        // constant markup (chosen by a boolean), never built from the data.
+        for rest in IDENTITY_JS.split("innerHTML=").skip(1) {
+            let ok = rest.starts_with("'';")
+                || rest.starts_with(
+                    "(m&&m.admin)?'<a class=\"pill\" href=\"/admin/seasons\">admin</a>':'';",
+                );
+            assert!(
+                ok,
+                "identity data may reach innerHTML: {}",
+                &rest[..rest.len().min(80)]
             );
         }
         assert!(HEAD.contains(IDENTITY_JS));
