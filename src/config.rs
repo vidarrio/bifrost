@@ -720,7 +720,7 @@ pub const EXAMPLE: &str = r#"# $BIFROST_DATA/config.toml — every setting here 
 [server]
 # port = 8080                        # BIFROST_PORT
 # bind = "0.0.0.0"                   # BIFROST_BIND (127.0.0.1 behind a proxy on this host)
-# public_url = "https://ap.example"  # BIFROST_PUBLIC_URL (CLI-printed links)
+# public_url = "https://ap.example"  # BIFROST_PUBLIC_URL (CLI-printed links; the home page's default address)
 # trusted_proxies = ["10.0.0.5"]     # BIFROST_TRUSTED_PROXIES (reverse proxies: X-Forwarded-For, forward-auth)
 # insecure_cookies = false           # BIFROST_INSECURE_COOKIES (plain-HTTP dev only)
 

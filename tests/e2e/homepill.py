@@ -6,7 +6,8 @@ import sys
 
 from lib import Server, check, get, post, summary
 
-srv = Server("homepill", port=18191, ap_ports="39169-39171")
+srv = Server("homepill", port=18191, ap_ports="39169-39171",
+             extra_env={"BIFROST_PUBLIC_URL": "https://pub.example.org/bifrost/"})
 srv.start()
 try:
     root = srv.setup_sysadmin()
@@ -30,9 +31,10 @@ try:
     check("the home page shows the site address", "bifrost.example.org · archipelago" in page and "ap.example.org" not in page)
     check("…saved without its scheme", 'name="site_address" value="bifrost.example.org"' in get(root, "/admin/settings").text)
     post(root, "/admin/settings", data=dict(domain="ap.example.org", site_address="", home_url="", discords=""))
-    check("no site address, no address on the home page", '<span class="tag">archipelago</span>' in root.get(srv.base + "/").text)
+    check("no site address: the host of server.public_url instead", '<span class="tag">pub.example.org/bifrost · archipelago</span>' in root.get(srv.base + "/").text)
     r = post(root, "/admin/settings", data=dict(domain="", site_address="not an address", home_url="", discords=""))
     check("a bad site address is refused", "The site address should be" in r.text)
+    check("…and shown again as typed", 'name="site_address" value="not an address"' in r.text)
     post(root, "/admin/settings", data=dict(domain="", home_url="https://home.example.org/", home_label="Our <site>", discords=""))
     r = get(srv.session(), "/api/me")
     check("anonymous header gets it as well", r.status_code == 401 and r.json().get("home") == "https://home.example.org/" and r.json().get("home_label") == "Our <site>", (r.status_code, r.text[:200]))

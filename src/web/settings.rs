@@ -243,14 +243,16 @@ pub(crate) fn web_url(u: &str) -> bool {
 
 /// Bifrost's own address as the home page shows it: a host, with an optional
 /// port and path. A pasted URL loses its scheme and trailing slash.
-fn site_address(raw: &str) -> Result<String, String> {
+pub(crate) fn site_address(raw: &str) -> Result<String, String> {
     let a = raw.trim();
-    let a = a
-        .strip_prefix("https://")
-        .or_else(|| a.strip_prefix("http://"))
-        .unwrap_or(a)
+    let lower = a.to_ascii_lowercase();
+    let a = ["https://", "http://"]
+        .iter()
+        .find(|p| lower.starts_with(*p))
+        .map_or(a, |p| &a[p.len()..])
         .trim_end_matches('/');
-    let ok = a.len() <= 253
+    let ok = (a.is_empty() == raw.trim().is_empty())
+        && a.len() <= 253
         && !a.starts_with('/')
         // Any other scheme (`ftp://…`).
         && !a.contains("//")
@@ -261,6 +263,17 @@ fn site_address(raw: &str) -> Result<String, String> {
     } else {
         Err("The site address should be a hostname, with an optional port or path, like bifrost.example.org.".into())
     }
+}
+
+/// The address the home page shows: the site address, or else the host (and
+/// path) of `server.public_url`, the instance's URL from its config.
+pub(crate) fn shown_site_address(inst: &db::Instance) -> String {
+    if !inst.site_address.is_empty() {
+        return inst.site_address.clone();
+    }
+    crate::config::var("BIFROST_PUBLIC_URL")
+        .and_then(|u| site_address(&u).ok())
+        .unwrap_or_default()
 }
 
 pub(crate) fn parse_settings(f: &SettingsForm) -> Result<db::Instance, String> {
@@ -335,6 +348,7 @@ mod tests {
                 "example.org:8080/bifrost",
             ),
             ("[::1]:8080", "[::1]:8080"),
+            ("HTTPS://Bifrost.example.org/", "Bifrost.example.org"),
         ] {
             assert_eq!(super::site_address(raw).as_deref(), Ok(want), "{raw:?}");
         }
@@ -344,6 +358,8 @@ mod tests {
             "ftp://x.org",
             "/path",
             "a\"b",
+            "https://",
+            "https:///",
         ] {
             assert!(super::site_address(bad).is_err(), "{bad:?}");
         }

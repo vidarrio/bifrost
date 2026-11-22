@@ -209,6 +209,7 @@ mod tests {
             "HOME",
             "settings saved before the label existed"
         );
+        assert_eq!(i.site_address, "", "…or the site address");
     }
 
     #[test]
