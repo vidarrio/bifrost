@@ -392,6 +392,61 @@ pub(crate) async fn signup_apworld(
         Err(e) => return fail(e),
     };
     match worlds::place_upload(&st.db, ctx.id, &file, bytes, &uploader).await {
+        Ok(worlds::Placed::Core { game }) => Json(serde_json::json!({
+            "ok": true, "world": "", "pending": false,
+            "note": format!("{game} is one of this server's core games, so your signup uses the server's version — nothing to install. You can continue.")
+        })),
+        Ok(worlds::Placed::Waiting {
+            game,
+            file: waiting,
+        }) => Json(serde_json::json!({
+            "ok": true, "world": waiting, "pending": true,
+            "note": format!("An upload of {game} is already waiting for a moderator's approval in this season, so your signup waits for that one. You can continue; it's checked once that's approved.")
+        })),
+        Ok(worlds::Placed::Season {
+            game,
+            file: have,
+            version,
+            offered,
+        }) => {
+            let ver = if version.is_empty() {
+                String::new()
+            } else {
+                format!(" {version}")
+            };
+            let mut note = format!(
+                "This season already has {game}{ver}, so your signup uses that — nothing new to install. You can continue."
+            );
+            if let Some(v) = offered {
+                note.push_str(&format!(
+                    " Your newer version ({v}) was passed to the server's admins to consider."
+                ));
+            }
+            Json(serde_json::json!({"ok": true, "world": have, "pending": false, "note": note}))
+        }
+        Ok(worlds::Placed::Ours {
+            game,
+            file: installed,
+            version,
+            offered,
+        }) => {
+            let ver = if version.is_empty() {
+                String::new()
+            } else {
+                format!(" {version}")
+            };
+            let mut note = format!(
+                "{game} is in this server's catalog, so your signup uses the server's vetted version{ver}. You can continue."
+            );
+            if let Some(v) = offered {
+                note.push_str(&format!(
+                    " Your newer version ({v}) was passed to the server's admins to consider."
+                ));
+            }
+            Json(
+                serde_json::json!({"ok": true, "world": installed, "pending": false, "note": note}),
+            )
+        }
         Ok(placed) => Json(serde_json::json!({
             "ok": true, "world": file, "pending": placed == worlds::Placed::Pending
         })),

@@ -7,7 +7,13 @@ pub(crate) async fn catalog_page(
     err: Option<&str>,
     saved: Option<&str>,
 ) -> Html<String> {
-    render::catalog_page(&st.db.catalog().await, st.db.approval().await, err, saved)
+    render::catalog_page(
+        &st.db.catalog().await,
+        &worlds::offers(),
+        st.db.approval().await,
+        err,
+        saved,
+    )
 }
 
 pub(crate) async fn catalog_view(State(st): State<AppState>, me: auth::Me) -> Response {
@@ -27,6 +33,7 @@ pub(crate) async fn catalog_upload(
     }
     let (mut bytes, mut fname) = (None::<Vec<u8>>, String::new());
     let (mut game, mut version, mut note) = (String::new(), String::new(), String::new());
+    let mut public_note = String::new();
     while let Ok(Some(field)) = mp.next_field().await {
         match field.name().unwrap_or("") {
             "apworld" => {
@@ -36,6 +43,7 @@ pub(crate) async fn catalog_upload(
             "game" => game = field.text().await.unwrap_or_default(),
             "version" => version = field.text().await.unwrap_or_default(),
             "note" => note = field.text().await.unwrap_or_default(),
+            "public_note" => public_note = field.text().await.unwrap_or_default(),
             _ => {
                 let _ = field.bytes().await;
             }
@@ -50,14 +58,23 @@ pub(crate) async fn catalog_upload(
         }
         let file = worlds::upload_file(&fname).map_err(str::to_string)?;
         let who = me.username();
-        worlds::catalog_add(&st.db, &file, &bytes, &game, &version, &note, &who).await
+        worlds::catalog_add(
+            &st.db,
+            &file,
+            &bytes,
+            &game,
+            &version,
+            &note,
+            &public_note,
+            &who,
+        )
+        .await
     }
     .await;
     match res {
-        Ok(w) => {
-            let msg = format!("Added {} to the catalog.", w.file);
-            catalog_page(&st, None, Some(&msg)).await.into_response()
-        }
+        Ok(added) => catalog_page(&st, None, Some(&added.message()))
+            .await
+            .into_response(),
         Err(e) => catalog_page(&st, Some(&e), None).await.into_response(),
     }
 }
@@ -76,6 +93,101 @@ pub(crate) async fn catalog_remove(
         return sysadmin_only();
     }
     match worlds::catalog_remove(&st.db, &f.sha256).await {
+        Ok(()) => Redirect::to("/admin/catalog").into_response(),
+        Err(e) => catalog_page(&st, Some(&e), None).await.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CatalogNotesForm {
+    pub(crate) sha256: String,
+    #[serde(default)]
+    pub(crate) note: String,
+    #[serde(default)]
+    pub(crate) public_note: String,
+}
+
+/// Change a catalog world's notes: the sysadmins' own, and the public one
+/// players see on the Games page.
+pub(crate) async fn catalog_notes(
+    State(st): State<AppState>,
+    me: auth::Me,
+    Form(f): Form<CatalogNotesForm>,
+) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return sysadmin_only();
+    }
+    let (note, public_note) = (
+        worlds::clean_note(&f.note),
+        worlds::clean_note(&f.public_note),
+    );
+    match st
+        .db
+        .catalog_set_notes(f.sha256.trim(), &note, &public_note)
+        .await
+    {
+        Ok(true) => catalog_page(&st, None, Some("Notes saved."))
+            .await
+            .into_response(),
+        Ok(false) => catalog_page(&st, Some("That world isn't in the catalog."), None)
+            .await
+            .into_response(),
+        Err(e) => catalog_page(&st, Some(&e.to_string()), None)
+            .await
+            .into_response(),
+    }
+}
+
+/// Promote a player's newer version of a catalog game into the catalog,
+/// replacing the game's current entry.
+pub(crate) async fn catalog_offer_promote(
+    State(st): State<AppState>,
+    me: auth::Me,
+    Form(f): Form<CatalogRemoveForm>,
+) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return sysadmin_only();
+    }
+    match worlds::offer_promote(&st.db, &f.sha256, &me.username()).await {
+        Ok(added) => {
+            tracing::info!("{}: {}", me.username(), added.message());
+            catalog_page(&st, None, Some(&added.message()))
+                .await
+                .into_response()
+        }
+        Err(e) => catalog_page(&st, Some(&e), None).await.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct OfferQuery {
+    pub(crate) sha256: String,
+}
+
+/// Download an offer's file, to vet it before promoting it.
+pub(crate) async fn catalog_offer_download(
+    State(st): State<AppState>,
+    me: auth::Me,
+    Query(q): Query<OfferQuery>,
+) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return sysadmin_only();
+    }
+    match worlds::offer_file(&q.sha256).await {
+        Ok((file, bytes)) => download_response(&file, bytes),
+        Err(e) => catalog_page(&st, Some(&e), None).await.into_response(),
+    }
+}
+
+pub(crate) async fn catalog_offer_dismiss(
+    State(st): State<AppState>,
+    me: auth::Me,
+    Form(f): Form<CatalogRemoveForm>,
+) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return sysadmin_only();
+    }
+    match worlds::offer_dismiss(&f.sha256).await {
         Ok(()) => Redirect::to("/admin/catalog").into_response(),
         Err(e) => catalog_page(&st, Some(&e), None).await.into_response(),
     }

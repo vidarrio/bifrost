@@ -65,8 +65,9 @@ service such as kanidm or Authentik), there is no Bifrost password. Use the
 To see what you can play before you sign up, open **Games on this server**
 from the home page (`/worlds`). It lists the core games of the Archipelago
 version new seasons use, with each world's own version where it declares one,
-the custom games the server's admins have vetted, with their versions, and
-the common games the server hosts. It's as public as the home page.
+the custom games the server's admins have vetted, with their versions and
+any note the admins left for players, and the common games the server hosts.
+It's as public as the home page.
 
 Open **Sign up for a season** from the home page and pick a season from those
 open for signup. Its page shows the games so far and who's playing them. If you
@@ -78,7 +79,11 @@ have no game there yet, the signup wizard is on the page too, with two steps:
    - an upload of another custom world's `.apworld` file.
 
    The last two are offered only if the server allows custom worlds;
-   otherwise the page says custom games are turned off.
+   otherwise the page says custom games are turned off. If you upload a
+   game the server already has, the server's version is used: the season's
+   own copy if it has one (a season keeps one world per game), else the
+   catalog's, and a core game needs nothing installed. If yours is newer
+   than the catalog's, it's passed to the server's admins to consider.
 2. **Upload your options YAML.** It is checked against the season's installed
    worlds with Archipelago's own code, and has to pass before you can
    continue. Its `name:` has to be one plain name of at most 16 characters, without
@@ -677,9 +682,31 @@ schema, so restore the backup first.
 ### The apworld catalog and approval
 
 **Console → Apworlds** holds the **catalog**: custom worlds you have vetted.
-Players can pick them at signup, and an upload whose bytes match a catalog
-entry is treated as that entry. The game and version are read from the
-world's `archipelago.json`, and you can override them.
+Players can pick them at signup. The game and version are read from the
+world's `archipelago.json`, and you can override them. Each entry has two
+notes: a **public note**, which players see beside the game on the Games page
+(say, which edition of the game it needs), and an **admin note** only
+sysadmins see (say, where it came from and who vetted it). Edit them from the
+entry's notes link on the catalog page.
+
+The catalog holds one version of each game, and a player's upload of a game
+the server already has uses the server's version. A season keeps one world
+per game: an upload of a game it has uses that copy. Otherwise an upload of a
+catalog game installs the catalog's version, and an upload of a core game
+installs nothing (Archipelago always loads its own core worlds, so a core game
+can't be replaced).
+
+If the upload is newer than the catalog's version, it's listed under **Newer
+versions players uploaded**, with its file to download. The game and version
+there are what the upload claims, so vet its code before you **replace the
+catalog's version** with it: catalog worlds are trusted on every season. Or
+**dismiss** it. Each player keeps at most one offer per game (a newer upload
+replaces theirs), and at most 20 wait at once.
+
+Adding a world whose game is already in the catalog, from the form or with a
+season's **add to catalog** button, replaces that game's entry, but only with
+a newer version: to go back to an older one, remove the entry first. Seasons
+that installed the old version keep it.
 
 The **approval toggle** decides what happens to other uploads:
 

@@ -79,6 +79,7 @@ try:
     check("no Archipelago installs", off(post(admin, "/admin/settings/ap/install", data=dict(version="0.6.8"))))
     check("no backups", off(post(admin, "/admin/settings/backups/now")))
     check("no backup downloads", off(get(admin, "/admin/settings/backups/download?name=x")))
+    check("no catalog offer downloads", off(get(admin, "/admin/catalog/offer/download?sha256=" + "a" * 64)))
     check("no export token", off(post(admin, "/admin/settings/export")))
     check("no season imports", off(post(admin, "/admin/seasons/import", files={"bundle": ("x.tar.gz", b"x")})))
     check("no apworld uploads", off(post(admin, "/admin/catalog/add", files={"file": ("x.apworld", b"PK")})))

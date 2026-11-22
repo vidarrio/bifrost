@@ -497,7 +497,7 @@ pub fn admin_page(
                     &[("name", &w.file)],
                     "add to catalog",
                     false,
-                    "",
+                    "Add this world to the catalog? If the catalog has its game already, this replaces that entry (only with a newer version).",
                 )
             } else {
                 String::new()

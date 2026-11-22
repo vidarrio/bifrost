@@ -137,10 +137,39 @@ stamp(srv, version="0.0.0-old")
 srv = server(BIFROST_BACKUP_DIR=blocked)
 check("a failed backup doesn't stop a start that keeps the schema", refused(srv) is None)
 check("it says so", "pre-upgrade backup failed" in srv.logtext() and "starting anyway" in srv.logtext())
-# Migrating needs a schema step, and there are none since the 0.3.0 baseline: when
-# the first arrives, test here that a failed backup stops a start that would
-# migrate, and that a migration backs up first and keeps existing rows.
+# A start that would migrate: the database as the schema before this one left
+# it (schema 2 added the catalog's public note), with a row in it.
+with srv.db() as db:
+    db.execute("ALTER TABLE catalog_world DROP COLUMN public_note")
+    db.execute("INSERT INTO catalog_world (sha256, file, game, version, note, added_by, added_at) "
+               "VALUES (?, 'keep.apworld', 'Keep', '1.0', 'kept', 'root', 0)", ("ab" * 32,))
+stamp(srv, version="0.0.0-old", schema=schema - 1)
+before = backups(srv)
+srv = server(BIFROST_BACKUP_DIR=blocked)
+code = refused(srv)
+check("a failed backup stops a start that would migrate", code not in (None, 0), code)
+check("saying so", "not migrating the database without one" in srv.logtext(), srv.logtext()[-800:])
+check("and leaves the database as it was", stamp(srv) == (schema - 1, "0.0.0-old"), stamp(srv))
 os.remove(os.path.join(srv.data, "blocker"))
+srv = server()
+srv.start()
+srv.stop()
+taken = [b for b in backups(srv) if b not in before]
+check("a migrating start backs up first", len(taken) == 1 and taken[0].endswith("-pre-upgrade-from-0.0.0-old.zip"), taken)
+if taken:
+    with zipfile.ZipFile(os.path.join(srv.data, "backups", taken[0])) as z:
+        snap = z.read("bifrost.db")
+    path = os.path.join(srv.data, "snap.db")
+    open(path, "wb").write(snap)
+    with contextlib.closing(sqlite3.connect(path)) as db, db:
+        old_schema = db.execute("PRAGMA user_version").fetchone()[0]
+    os.remove(path)
+    check("…holding the database before the migration", old_schema == schema - 1, old_schema)
+check("then migrates", stamp(srv)[0] == schema, stamp(srv))
+with srv.db() as db:
+    row = db.execute("SELECT note, public_note FROM catalog_world WHERE sha256 = ?", ("ab" * 32,)).fetchone()
+check("keeping existing rows, new columns at their default", row == ("kept", ""), row)
+check("and matching a fresh database's schema", schema_of(srv) == fresh_schema)
 stamp(srv, version="99.0.0", schema=schema + 1)
 srv = server()
 code = refused(srv)
@@ -222,6 +251,9 @@ try:
     check("a live season keeps its common game and allowlist", r.text == "Alex\nSteve\n", repr(r.text))
     check("the instance keeps its settings", 'value="ap.example"' in get(root, "/admin/settings").text and "A token is set" in get(root, "/admin/settings").text)
     check("and its catalogs", "vetted" in get(root, "/admin/catalog").text and "plays as <b>Commons</b>" in get(root, "/admin/common-games").text)
+    with srv.db() as db:
+        notes = db.execute("SELECT note, public_note FROM catalog_world").fetchall()
+    check("its catalog notes stay its own, with an empty public note", notes and all(n[1] == "" for n in notes) and any(n[0] == "vetted" for n in notes), notes)
     check("the live season comes back up", wait_for(lambda: "Vanilla" in get(root, f"/s/{ids['Live']}/board").text and "Ann" in get(root, f"/s/{ids['Live']}/board").text, 90, 3))
 finally:
     srv.stop()
