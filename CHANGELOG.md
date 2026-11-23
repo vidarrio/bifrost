@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-23
+
+**Upgrading:** the database gains a column (catalog entries' public notes). The first
+start of 0.5.0 takes a pre-upgrade backup, then migrates; to go back to 0.4.x, restore
+that backup (see Updating Bifrost in the user guide). Unlike earlier upgrades, 0.5.0
+won't start if that backup can't be written, for example when the backup directory is
+short of space, so make room or set `BIFROST_BACKUP_DIR` first. The catalog now holds
+one version of each game: if yours has several versions of a game, remove the older
+entries. The home page now shows the new **Site address** next to its title instead of
+the connect host: set it under *Console → Settings*, or set `server.public_url`.
+
 ### Added
 
 - Catalog entries have a **public note**, shown to players beside the game on
@@ -31,8 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   season's own copy if it has one (a season keeps one world per game), else
   the catalog's, and a core game needs nothing installed (Archipelago ignored
   such an upload anyway). The catalog now holds one version of each game:
-  adding a newer one replaces its entry, an older one is refused until the
-  entry is removed, and seasons that installed the old one keep it.
+  adding a newer one replaces its entry, one that isn't newer is refused until
+  the entry is removed, and seasons that installed the old one keep it.
 - The home page no longer shows the connect host next to its title. That's
   the address for players' Archipelago clients, and season boards still show
   it. The home page shows the new site address there instead. Until one is
@@ -48,9 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with every tab in sight. The console's tables become a card per row, each
   field labelled and its actions underneath, instead of breaking names and
   buttons mid-word, and the season list no longer widens the page. A standard
-  minesweeper board fits the screen. Console buttons, settings labels, the board's join details and
-  the log filter's dates no longer wrap or misalign. An archived season's
-  minesweeper leaderboards are styled like the live ones, at any width.
+  minesweeper board fits the screen. Console buttons, settings labels, the
+  board's join details and the log filter's dates no longer wrap or misalign.
+  An archived season's minesweeper leaderboards are styled like the live ones,
+  at any width.
 - The page header no longer jumps when moving between pages. It's drawn from
   a copy saved by the previous page, and that copy now includes the home pill,
   so the pill no longer turns up a moment late and pushes the sign-in text and
@@ -487,7 +499,8 @@ Upgrading from 0.1.x:
   a given version), checked against the release's checksums. Going back means
   restoring the pre-upgrade backup and the previous file, which it keeps.
 
-[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/vidarrio/bifrost/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/vidarrio/bifrost/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/vidarrio/bifrost/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/vidarrio/bifrost/compare/v0.4.0...v0.4.1
