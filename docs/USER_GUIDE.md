@@ -719,8 +719,12 @@ catalog game installs the catalog's version, and an upload of a core game
 installs nothing (Archipelago always loads its own core worlds, so a core game
 can't be replaced).
 
-If the upload is newer than the catalog's version, it's listed under **Newer
-versions players uploaded**, with its file to download. The game and version
+If the upload is newer than the catalog's version, it's listed under **Worlds
+offered for the catalog**, with its file to download. So is a world a season
+moderator (not a sysadmin) approves, if the catalog doesn't have its game at
+least as new, marked with who approved it. A sysadmin approving an upload in a
+season can add it to the catalog straight away instead: the approve button's
+**and add to the catalog** box is ticked by default. The game and version
 there are what the upload claims, so vet its code before you **replace the
 catalog's version** with it: catalog worlds are trusted on every season. Or
 **dismiss** it. Each player keeps at most one offer per game (a newer upload

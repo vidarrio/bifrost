@@ -295,8 +295,9 @@ pub fn catalog_for_game<'a>(catalog: &'a [CatalogWorld], game: &str) -> Option<&
         })
 }
 
-/// A newer version of a catalog game that a player uploaded, kept for a
-/// sysadmin to promote as the catalog's replacement (or dismiss). Kept as
+/// A world kept for a sysadmin to add to the catalog (or dismiss): a newer
+/// version of a catalog game that a player uploaded, or a world a season
+/// moderator approved that the catalog doesn't have (as new). Kept as
 /// files in `$BIFROST_DATA/catalog/offers/`: `<sha256>.apworld` and its
 /// `<sha256>.json`.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -310,6 +311,9 @@ pub struct Offer {
     pub uploaded_by: String,
     pub uploaded_at: i64,
     pub season: Id,
+    /// Who approved it in its season, if a moderator did.
+    #[serde(default)]
+    pub approved_by: String,
 }
 
 fn offers_dir() -> PathBuf {
@@ -415,6 +419,48 @@ pub async fn offer_promote(db: &Db, sha256: &str, by: &str) -> Result<Added, Str
     Ok(added)
 }
 
+/// A world a season moderator (not a sysadmin) just approved: offer it to the
+/// sysadmins for the catalog, unless the catalog has it, or its game at least
+/// as new, already.
+pub async fn offer_approved(db: &Db, season: Id, req: &WorldRequest, by: &str) {
+    if db.catalog_world(&req.sha256).await.is_some() {
+        return;
+    }
+    let path = config::get().season(season).worlds.join(&req.file);
+    let Ok(bytes) = tokio::fs::read(&path).await else {
+        return;
+    };
+    if crate::text::sha256_hex(&bytes) != req.sha256 {
+        return;
+    }
+    let m = manifest(&bytes);
+    let cat = catalog_for_game(&db.catalog().await, &m.game).cloned();
+    if let Some(cat) = &cat
+        && !version_newer(&m.version, &cat.version)
+    {
+        return;
+    }
+    let offer = Offer {
+        sha256: req.sha256.clone(),
+        file: req.file.clone(),
+        game: m.game,
+        version: m.version,
+        replaces: cat.map(|c| c.version).unwrap_or_default(),
+        uploaded_by: req.uploaded_by.clone(),
+        uploaded_at: req.uploaded_at,
+        season,
+        approved_by: by.to_string(),
+    };
+    match offer_store(&offer, &bytes).await {
+        Ok(true) => tracing::info!(
+            "{by} approved {} in season {season}: offered to sysadmins for the catalog",
+            req.file
+        ),
+        Ok(false) => {}
+        Err(e) => tracing::warn!("{e}"),
+    }
+}
+
 /// An offer's file, for a sysadmin to vet: its name and bytes.
 pub async fn offer_file(sha256: &str) -> Result<(String, Vec<u8>), String> {
     if !is_sha(sha256) {
@@ -491,6 +537,7 @@ pub async fn place_upload(
                 uploaded_by: uploader.to_string(),
                 uploaded_at: crate::clock::now(),
                 season,
+                approved_by: String::new(),
             };
             match offer_store(&offer, &bytes).await {
                 Ok(true) => {

@@ -443,7 +443,7 @@ pub fn admin_page(
 
     // Apworlds waiting for approval
     if !requests.is_empty() {
-        b.push_str(r#"<h2>Apworlds waiting for approval</h2><p class="statline">Uploads that aren't in the catalog. Approving installs one and checks the signups held for it; nothing runs its code before then.</p>"#);
+        b.push_str(r#"<h2>Apworlds waiting for approval</h2><p class="statline">Uploads that aren't in the catalog. Approving installs one and checks the signups held for it; nothing runs its code before then. A sysadmin's approval can add it to the catalog too; a season moderator's passes it to the sysadmins to consider.</p>"#);
         for r in requests {
             let game = if r.game.is_empty() {
                 String::new()
@@ -485,7 +485,12 @@ pub fn admin_page(
                 esc(&r.sha256[..12.min(r.sha256.len())]),
                 esc(&r.uploaded_by),
                 fmt_date(r.uploaded_at),
-                if pre_gen {
+                if pre_gen && sysadmin {
+                    format!(
+                        r#"<form method="post" action="admin/worlds/approve" style="display:inline"><input type="hidden" name="name" value="{}"><label class="inlinechk" title="Vetted for every season: catalog worlds install without approval"><input type="checkbox" name="catalog" value="1" checked> and add to the catalog</label> <button class="ghost" type="submit">approve</button></form>"#,
+                        esc(&r.file)
+                    )
+                } else if pre_gen {
                     action_btn("admin/worlds/approve", &[("name", &r.file)], "approve", false, "")
                 } else {
                     String::new()
