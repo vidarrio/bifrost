@@ -257,6 +257,56 @@ pub async fn forget(version: &str) {
         .retain(|k, _| !k.starts_with(&format!("{version}/")));
 }
 
+/// Drop the custom worlds' templates no one can ask for any more: those of
+/// files neither in the catalog nor installed in any season. Returns how many.
+pub async fn prune(db: &crate::db::Db) -> usize {
+    let mut keep: BTreeSet<String> = db.catalog().await.into_iter().map(|w| w.sha256).collect();
+    for s in db.seasons().await {
+        let dirs = config::get().season(s.id);
+        keep.extend(
+            crate::ap_adapter::world_pins(&dirs)
+                .into_values()
+                .map(|p| p.sha256),
+        );
+    }
+    prune_keeping(&config::get().data_dir.join("templates"), &keep).await
+}
+
+async fn prune_keeping(templates: &Path, keep: &BTreeSet<String>) -> usize {
+    let mut removed = 0;
+    let Ok(mut versions) = tokio::fs::read_dir(templates).await else {
+        return 0;
+    };
+    while let Ok(Some(v)) = versions.next_entry().await {
+        let Ok(mut files) = tokio::fs::read_dir(v.path().join("world")).await else {
+            continue;
+        };
+        while let Ok(Some(f)) = files.next_entry().await {
+            let name = f.file_name().to_string_lossy().to_string();
+            let Some(sha) = name.strip_suffix(".yaml") else {
+                continue;
+            };
+            if !keep.contains(sha) && tokio::fs::remove_file(f.path()).await.is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    removed
+}
+
+/// Prune now and then once a day.
+pub fn spawn_pruner(db: crate::db::Db) {
+    tokio::spawn(async move {
+        loop {
+            let n = prune(&db).await;
+            if n > 0 {
+                tracing::info!("templates: removed {n} no one can ask for any more");
+            }
+            tokio::time::sleep(Duration::from_secs(24 * 3600)).await;
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,6 +321,33 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[tokio::test]
+    async fn pruning_keeps_only_the_files_asked_for() {
+        let base = std::env::temp_dir().join(format!("bifrost-tpl-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let d = Dir(base);
+        let (a, b) = ("a".repeat(64), "b".repeat(64));
+        for v in ["0.6.7", "0.6.8"] {
+            let w = d.path().join(v).join("world");
+            std::fs::create_dir_all(&w).unwrap();
+            std::fs::write(w.join(format!("{a}.yaml")), "x").unwrap();
+            std::fs::write(w.join(format!("{b}.yaml")), "x").unwrap();
+            std::fs::create_dir_all(d.path().join(v).join("core")).unwrap();
+            std::fs::write(d.path().join(v).join("core/index.json"), "{}").unwrap();
+        }
+        let keep = BTreeSet::from([a.clone()]);
+        assert_eq!(prune_keeping(d.path(), &keep).await, 2);
+        for v in ["0.6.7", "0.6.8"] {
+            assert!(d.path().join(v).join(format!("world/{a}.yaml")).is_file());
+            assert!(!d.path().join(v).join(format!("world/{b}.yaml")).exists());
+            assert!(
+                d.path().join(v).join("core/index.json").is_file(),
+                "core templates stay"
+            );
+        }
+        assert_eq!(prune_keeping(&d.path().join("missing"), &keep).await, 0);
     }
 
     #[test]

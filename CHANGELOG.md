@@ -34,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signups are. If it's rejected, the signups held for it are checked against
   the season's copy instead.
 
+### Fixed
+
+- Starting YAMLs of custom worlds that are no longer in the catalog or
+  installed in any season are removed (at startup and once a day).
+
 ## [0.5.0] - 2026-11-23
 
 **Upgrading:** the database gains a column (catalog entries' public notes). The first
