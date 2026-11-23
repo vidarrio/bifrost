@@ -11,9 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Upgrading:** the database gains a column (catalog entries' public notes). The first
 start of 0.5.0 takes a pre-upgrade backup, then migrates; to go back to 0.4.x, restore
-that backup (see Updating Bifrost in the user guide). The home page now shows the new
-**Site address** next to its title instead of the connect host: set it under
-*Console → Settings*, or set `server.public_url`.
+that backup (see Updating Bifrost in the user guide). Unlike earlier upgrades, 0.5.0
+won't start if that backup can't be written, for example when the backup directory is
+short of space, so make room or set `BIFROST_BACKUP_DIR` first. The catalog now holds
+one version of each game: if yours has several versions of a game, remove the older
+entries. The home page now shows the new **Site address** next to its title instead of
+the connect host: set it under *Console → Settings*, or set `server.public_url`.
 
 ### Added
 
@@ -39,8 +42,8 @@ that backup (see Updating Bifrost in the user guide). The home page now shows th
   season's own copy if it has one (a season keeps one world per game), else
   the catalog's, and a core game needs nothing installed (Archipelago ignored
   such an upload anyway). The catalog now holds one version of each game:
-  adding a newer one replaces its entry, an older one is refused until the
-  entry is removed, and seasons that installed the old one keep it.
+  adding a newer one replaces its entry, one that isn't newer is refused until
+  the entry is removed, and seasons that installed the old one keep it.
 - The home page no longer shows the connect host next to its title. That's
   the address for players' Archipelago clients, and season boards still show
   it. The home page shows the new site address there instead. Until one is
