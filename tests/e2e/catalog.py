@@ -371,15 +371,42 @@ try:
                 item.filename = pkg + "/" + item.filename.removeprefix(old)
                 z.writestr(item, data)
         return out.getvalue()
+    # Even where uploads are auto-approved, replacing a season's world waits
+    # for a moderator: it changes the code everyone with the game plays.
+    sid2_worlds = os.path.join(srv.data, "seasons", sid2, "worlds")
     post(root, "/admin/catalog/approval", data={"mode": "auto"})
-    j = post(dave, f"/s/{sid2}/signup/apworld", files={"apworld": ("baz2.apworld", renamed("baz.apworld", "baz2", "Baz Finder", "1.1.0"))}).json()
+    baz11 = renamed("baz.apworld", "baz2", "Baz Finder", "1.1.0")
+    j = post(dave, f"/s/{sid2}/signup/apworld", files={"apworld": ("baz2.apworld", baz11)}).json()
     post(root, "/admin/catalog/approval", data={"mode": "manual"})
-    check("auto mode replaces the season's version at once, under its new name",
-          j.get("ok") and j.get("pending") is False and j.get("world") == "baz2.apworld" and "in place of the season's 1.0.0" in j.get("note", ""), j)
-    installed = os.listdir(os.path.join(srv.data, "seasons", sid2, "worlds"))
-    check("…removing the old file", "baz2.apworld" in installed and "baz.apworld" not in installed, installed)
+    check("auto mode doesn't replace a season's world without a moderator",
+          j.get("ok") and j.get("pending") and "newer than the season's 1.0.0" in j.get("note", "") and "baz2.apworld" not in os.listdir(sid2_worlds), j)
+    post(root, f"/s/{sid2}/admin/worlds/approve", data={"name": "baz2.apworld"})
+    installed = os.listdir(sid2_worlds)
+    check("…approving replaces it under its new name, removing the old file", "baz2.apworld" in installed and "baz.apworld" not in installed, installed)
     r = post(dave, f"/s/{sid2}/signup/check", files={"yaml": ("baz.yaml", fixture("baz.yaml"))}).json()
     check("…and the new one loads", r.get("ok"), r)
+
+    # An upload whose version can't be compared with the season's: a
+    # moderator decides, and can replace the season's anyway.
+    unversioned = renamed("baz.apworld", "baz2", "Baz Finder", "")
+    j = post(erin, f"/s/{sid2}/signup/apworld", files={"apworld": ("baz2.apworld", unversioned)}).json()
+    check("an upload without a version waits for a moderator", j.get("pending") and "can't be compared" in j.get("note", ""), j)
+    adm = get(root, f"/s/{sid2}/admin").text
+    check("…who's offered to replace the season's anyway", "doesn't declare a newer version" in adm and ">replace anyway<" in adm)
+    r = post(root, f"/s/{sid2}/admin/worlds/approve", data={"name": "baz2.apworld"})
+    check("…a plain approval refuses", "doesn't declare a newer version" in r.text and open(os.path.join(sid2_worlds, "baz2.apworld"), "rb").read() == baz11)
+    post(root, f"/s/{sid2}/admin/worlds/approve", data={"name": "baz2.apworld", "force": "1"})
+    check("…replacing anyway installs it", open(os.path.join(sid2_worlds, "baz2.apworld"), "rb").read() == unversioned)
+
+    # The catalog moves on: a season's moderators can update to its version.
+    bar14 = variant("bar.apworld", "Bar Finder", "1.4.0")
+    post(root, "/admin/catalog/add", files={"apworld": ("bar.apworld", bar14)})
+    adm = get(root, f"/s/{sid2}/admin").text
+    check("a season offers the catalog's newer version", ">update to the catalog's 1.4.0<" in adm, adm[-1500:])
+    r = post(root, f"/s/{sid2}/admin/worlds/update", data={"name": "bar.apworld"})
+    check("…and updating installs it", "Updated Bar Finder to the catalog's 1.4.0" in r.text
+          and open(os.path.join(sid2_worlds, "bar.apworld"), "rb").read() == bar14, re.findall(r'class="banner[^"]*">[^<]*', r.text))
+    check("…after which it's not offered", ">update to the catalog's" not in get(root, f"/s/{sid2}/admin").text)
 
     # Approval and the catalog: a season moderator's approval offers the world
     # to the sysadmins; a sysadmin's can add it to the catalog at once.

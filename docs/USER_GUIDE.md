@@ -88,10 +88,11 @@ have no game there yet, the signup wizard is on the page too, with two steps:
    consider.
 
    If yours is newer than the season's own copy, and the season hasn't been
-   generated yet, it can replace that copy. It's treated like any other
-   upload: installed right away if it's the catalog's version or the server
-   approves uploads automatically, otherwise once a moderator approves it,
-   and your signup is held until then. Every signup for that game is then
+   generated yet, it can replace that copy. It's installed right away if it's
+   the catalog's own version; otherwise it waits for a moderator's approval,
+   even on a server that approves uploads automatically, and your signup is
+   held until then. If either copy declares no version that can be compared,
+   a moderator decides whether yours replaces the season's. Every signup for that game is then
    checked again against the new version. Those that pass carry on; those
    that don't are flagged, as a held signup is, until the player replaces the
    YAML or a moderator removes the signup. If the new version is rejected,
@@ -294,7 +295,11 @@ The season console has six tabs:
   here, and a sysadmin's approve button adds the world to the catalog too
   (its **and add to the catalog** box, ticked by default). A moderator's
   approval passes the world to the sysadmins to consider for the catalog
-  instead.
+  instead. When the catalog has a newer version of an installed world's game,
+  the world gets an **update to the catalog's** button, which replaces it and
+  checks every signup for the game against the new version. An upload that
+  doesn't declare a newer version than the season's copy (say, neither
+  declares one) can be approved with **replace anyway**.
 - **Player files.** The per-player output files in the current seed, for
   download, plus the seed's spoiler log (for admins only). Players get their
   own files on their game page, so there's usually no need to send them out by
@@ -743,11 +748,9 @@ The **approval toggle** decides what happens to other uploads:
 
 - **Manual** (default): uploads wait for a season moderator's approval. Until
   then, Archipelago never loads them.
-- **Automatic**: uploads install straight away. That includes a newer
-  version of a game a season already has, which replaces the season's copy
-  for everyone signed up with that game (until the season is generated). So
-  any player can change the code others play with: use it only where you
-  trust the players.
+- **Automatic**: uploads of new games install straight away. A newer version
+  of a game a season already has still waits for a season moderator, since it
+  would change the code everyone signed up with that game plays.
 
 Every installed world is pinned by its SHA-256. A world file that changes
 after upload, or appears without going through Bifrost, is refused.

@@ -194,7 +194,7 @@ pub fn locked(method: &Method, path: &str) -> bool {
         // Code and files: apworlds, common games' files, PopTracker packs.
         || path.starts_with("/admin/catalog/")
         || seg("/admin/common-games")
-        || matches!(path, "/admin/worlds/approve" | "/admin/worlds/to-catalog" | "/signup/apworld")
+        || matches!(path, "/admin/worlds/approve" | "/admin/worlds/to-catalog" | "/admin/worlds/update" | "/signup/apworld")
         || path.strip_prefix("/game/").is_some_and(|r| r.split('/').nth(1) == Some("poptracker") && r.split('/').count() == 2)
         // Season bundles: any file, kept and served from the demo.
         || path == "/admin/seasons/import"
@@ -542,6 +542,7 @@ mod tests {
             "/admin/common-games/vanilla/download",
             "/admin/worlds/approve",
             "/admin/worlds/to-catalog",
+            "/admin/worlds/update",
             "/signup/apworld",
             "/game/ab12/poptracker",
             "/admin/seasons/import",

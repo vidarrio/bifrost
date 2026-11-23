@@ -205,6 +205,7 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         .route("/admin/worlds/approve", post(admin_world_approve))
         .route("/admin/worlds/reject", post(admin_world_reject))
         .route("/admin/worlds/to-catalog", post(admin_world_to_catalog))
+        .route("/admin/worlds/update", post(admin_world_update))
         .route("/admin/catalog", get(catalog_view))
         .route(
             "/admin/catalog/add",
