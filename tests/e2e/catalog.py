@@ -264,6 +264,11 @@ try:
     j = post(alice, f"/s/{sid2}/signup/apworld", files={"apworld": ("bar.apworld", fixture("bar.apworld"))}).json()
     check("a season that has the game keeps its version", j.get("ok") and "already has Bar Finder 1.0.0" in j.get("note", ""), j)
     check("…with one world for the game", "my-bar.apworld" not in pins(sid2))
+    j = post(bob, f"/s/{sid2}/signup/apworld", files={"apworld": ("bar.apworld", newer)}).json()
+    check("an upload of the catalog's newer version replaces the season's at once",
+          j.get("ok") and j.get("pending") is False and j.get("world") == "bar.apworld" and "in place of the season's 1.0.0" in j.get("note", ""), j)
+    check("…installed as the catalog's", open(os.path.join(srv.data, "seasons", sid2, "worlds", "bar.apworld"), "rb").read() == newer
+          and "from the catalog" in pins(sid2))
     sid3 = new_season(root, "Autumn")
     post(root, f"/s/{sid3}/admin/signups", data=dict(open="1"))
     j = post(alice, f"/s/{sid3}/signup/apworld", files={"apworld": ("bar.apworld", fixture("bar.apworld"))}).json()
@@ -272,7 +277,8 @@ try:
     check("adding an older version of a catalog game is refused", "isn't newer" in r.text and "Remove that entry first" in r.text)
     # Offers: still made when the season has the game; one per player and game.
     j = post(alice, f"/s/{sid2}/signup/apworld", files={"apworld": ("b12.apworld", variant("bar.apworld", "Bar Finder", "1.2.0"))}).json()
-    check("a newer upload is offered even when the season has the game", "passed to the server" in j.get("note", ""), j)
+    check("a newer upload is offered even when the season has the game (and would replace it)",
+          j.get("pending") and "newer than the season's 1.1.0" in j.get("note", "") and "passed to the server" in j.get("note", ""), j)
     post(alice, f"/s/{sid2}/signup/apworld", files={"apworld": ("b13.apworld", variant("bar.apworld", "Bar Finder", "1.3.0"))})
     cat = get(root, "/admin/catalog").text
     check("…and a player's newer upload replaces their offer", "b13.apworld" in cat and "b12.apworld" not in cat)
@@ -300,6 +306,47 @@ try:
     check("…so approving the waiting upload is refused", "already has Late Game installed" in r.text, re.findall(r'class="banner[^"]*">[^<]*', r.text))
     installed = os.listdir(os.path.join(srv.data, "seasons", sid4, "worlds"))
     check("…and the season keeps one world for the game", "late1.apworld" not in installed and "late.apworld" in installed, installed)
+
+    # --- a newer version of a game the season has replaces it once approved,
+    # and the season's signups for that game are checked against it again.
+    # (An apworld's file is named after the package in it, so a newer version
+    # comes under the same name.)
+    def foo_yaml(name, extra=b""):
+        return fixture("foo.yaml").replace(b"Pfoo", name.encode()) + extra
+    held_in = lambda page, name: re.search(rf"<span>{name} · [^<]*<span[^>]*>held", page)
+    listed = lambda page, name: f"<span>{name} · " in page
+    worlds_dir = os.path.join(srv.data, "seasons", S.removeprefix("/s/"), "worlds")
+    installed_foo = lambda: open(os.path.join(worlds_dir, "foo.apworld"), "rb").read()
+    pinned = b"requires:\n  game:\n    Foo Finder:\n      max: 1.0.0\n"
+    r = post(root, f"{S}/signup", files={"yaml": ("r.yaml", foo_yaml("Rfoo", pinned))}, data={"is_custom": "1"})
+    check("a YAML pinned to Foo Finder 1.0.0 signs up", "<h1>Rfoo</h1>" in r.text and "held" not in r.text.split("<h1>Rfoo</h1>")[1][:300], r.text[-400:])
+    foo11 = variant("foo.apworld", "Foo Finder", "1.1.0")
+    j = upload(bob, "foo.apworld", foo11)
+    check("a newer version of the season's game waits for approval to replace it",
+          j.get("ok") and j.get("pending") and j.get("world") == "foo.apworld" and "newer than the season's 1.0.0" in j.get("note", ""), j)
+    r = post(bob, f"{S}/signup", files={"yaml": ("b.yaml", foo_yaml("Bfoo"))}, data={"is_custom": "1", "pending_world": "foo.apworld"})
+    check("…and its uploader's signup is held for it", "held until a moderator approves foo.apworld" in r.text, r.text[-400:])
+    check("…while the season keeps its version", installed_foo() == fixture("foo.apworld"))
+    check("…which the admin page shows", held_in(get(root, f"{S}/admin").text, "Bfoo"))
+    post(root, f"{S}/admin/worlds/approve", data={"name": "foo.apworld"})
+    check("approving it replaces the season's version", installed_foo() == foo11)
+    flagged = wait_for(lambda: "no later than 1.0.0" in (t := get(root, f"{S}/admin").text) and t, 180, 2)
+    check("a signup whose YAML fails the new version is flagged", flagged and "Rfoo" in flagged.split("no later than 1.0.0")[0][-600:], (flagged or "")[-600:])
+    adm = wait_for(lambda: not held_in(t := get(root, f"{S}/admin").text, "Pfoo") and not held_in(t, "Bfoo") and t, 180, 2)
+    check("…the others go ahead on it", adm and listed(adm, "Pfoo") and listed(adm, "Bfoo"))
+    check("…while the flagged one stays held", adm and held_in(adm, "Rfoo"))
+    j = upload(bob, "fooold.apworld", fixture("foo.apworld"))
+    check("an older version then uses the season's", j.get("ok") and j.get("world") == "foo.apworld" and "already has Foo Finder 1.1.0" in j.get("note", ""), j)
+    # A rejected newer version: its signups use the season's version instead.
+    upload(bob, "foo.apworld", variant("foo.apworld", "Foo Finder", "1.2.0"))
+    r = post(bob, f"{S}/signup", files={"yaml": ("b2.yaml", foo_yaml("Bfoo2"))}, data={"is_custom": "1", "pending_world": "foo.apworld"})
+    check("a second newer version holds its signup too", "held until a moderator approves foo.apworld" in r.text, r.text[-400:])
+    check("…which the admin page shows", held_in(get(root, f"{S}/admin").text, "Bfoo2"))
+    post(root, f"{S}/admin/worlds/reject", data={"name": "foo.apworld"})
+    adm = wait_for(lambda: listed(t := get(root, f"{S}/admin").text, "Bfoo2") and not held_in(t, "Bfoo2") and t, 180, 2)
+    check("rejecting a newer version moves its signups to the season's", adm and installed_foo() == foo11)
+    rid = re.search(r'href="signup/game/([0-9a-z]+)">Rfoo<', get(root, f"{S}/signup").text)
+    post(root, f"{S}/admin/delete-player", data={"id": rid.group(1) if rid else ""})
 
     # remove from catalog; installed copies stay
     newsha = re.search(r'<tr><td[^>]*>Bar Finder.*?action="/admin/catalog/remove".*?name="sha256" value="([0-9a-f]{64})"', get(root, "/admin/catalog").text, re.S)

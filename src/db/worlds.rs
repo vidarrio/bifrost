@@ -174,6 +174,35 @@ impl Db {
         .unwrap_or_default()
     }
 
+    /// Hold the season's signups for `game` that aren't held already for
+    /// `file`, the newer version of it just installed, so each is checked
+    /// against that. Returns how many.
+    pub async fn hold_game(&self, season: Id, game: &str, file: &str) -> u64 {
+        sqlx::query(
+            "UPDATE submission SET held_for = ?, held_err = NULL
+             WHERE season_id = ? AND game = ? AND held_for IS NULL",
+        )
+        .bind(file)
+        .bind(season)
+        .bind(game)
+        .execute(&self.pool)
+        .await
+        .map(|r| r.rows_affected())
+        .unwrap_or(0)
+    }
+
+    /// Move the signups held for `from` to wait for `to` instead.
+    pub async fn rehold(&self, season: Id, from: &str, to: &str) {
+        let _ = sqlx::query(
+            "UPDATE submission SET held_for = ?, held_err = NULL WHERE season_id = ? AND held_for = ?",
+        )
+        .bind(to)
+        .bind(season)
+        .bind(from)
+        .execute(&self.pool)
+        .await;
+    }
+
     /// Worlds signups are still held for although nothing waits for approval
     /// under that name, and that no verdict was reached on (never checked, or
     /// the check couldn't run): a re-check was cut short.

@@ -87,6 +87,18 @@ have no game there yet, the signup wizard is on the page too, with two steps:
    yours is newer than the catalog's, it's passed to the server's admins to
    consider.
 
+   If yours is newer than the season's own copy, and the season hasn't been
+   generated yet, it can replace that copy. It's treated like any other
+   upload: installed right away if it's the catalog's version or the server
+   approves uploads automatically, otherwise once a moderator approves it,
+   and your signup is held until then. Every signup for that game is then
+   checked again against the new version. Those that pass carry on; those
+   that don't are flagged, as a held signup is, until the player replaces the
+   YAML or a moderator removes the signup. If the new version is rejected,
+   the signups held for it are checked against the season's copy instead.
+   Once the season is generated, it keeps the version its seed was made
+   with.
+
    Once you've picked a game, step 2 offers a **starting YAML** for it to
    download: Archipelago's own template, with every option, its default and
    what it does, from the season's Archipelago version. An upload still
@@ -698,7 +710,10 @@ entry's notes link on the catalog page.
 
 The catalog holds one version of each game, and a player's upload of a game
 the server already has uses the server's version. A season keeps one world
-per game: an upload of a game it has uses that copy. Otherwise an upload of a
+per game: an upload of a game it has uses that copy, unless it's newer and the
+season isn't generated yet, in which case it replaces that copy once it's
+approved (see [Signing up for a season](#signing-up-for-a-season)). Otherwise
+an upload of a
 catalog game installs the catalog's version, and an upload of a core game
 installs nothing (Archipelago always loads its own core worlds, so a core game
 can't be replaced).

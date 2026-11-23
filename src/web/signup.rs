@@ -475,6 +475,43 @@ pub(crate) async fn signup_apworld(
                 serde_json::json!({"ok": true, "world": installed, "pending": false, "note": note, "game": game}),
             )
         }
+        Ok(worlds::Placed::Replaced {
+            game,
+            file: installed,
+            version,
+            old,
+            offered,
+        }) => {
+            let mut note = format!(
+                "Installed {game} {version} in place of the season's {old}. Signups for {game} are checked against it again. You can continue."
+            );
+            if offered {
+                note.push_str(
+                    " It was also passed to the server's admins to consider for the catalog.",
+                );
+            }
+            Json(
+                serde_json::json!({"ok": true, "world": installed, "pending": false, "game": game, "note": note}),
+            )
+        }
+        Ok(worlds::Placed::Replacing {
+            game,
+            version,
+            old,
+            offered,
+        }) => {
+            let mut note = format!(
+                "Your {game} {version} is newer than the season's {old}. Once a moderator approves it, it replaces that, and every signup for {game} is checked against it. You can continue; your signup is held until then."
+            );
+            if offered {
+                note.push_str(
+                    " It was also passed to the server's admins to consider for the catalog.",
+                );
+            }
+            Json(
+                serde_json::json!({"ok": true, "world": file, "pending": true, "game": game, "note": note}),
+            )
+        }
         Ok(placed) => Json(serde_json::json!({
             "ok": true, "world": file, "pending": placed == worlds::Placed::Pending, "game": uploaded_game
         })),

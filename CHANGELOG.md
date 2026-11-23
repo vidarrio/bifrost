@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A newer version of a custom game a season already has can replace the
+  season's copy until the season is generated. It's approved like any other
+  upload (at once if it's the catalog's version or uploads are auto-approved).
+  Every signup for that game is then checked against the new version, and
+  those that fail are flagged as held signups are. If it's rejected, the
+  signups held for it are checked against the season's copy instead.
+
+### Added
+
 - The signup wizard offers a **starting YAML** for the game you pick:
   Archipelago's own template, with every option, its default and what it
   does, from the season's Archipelago version. It's written on first use and
