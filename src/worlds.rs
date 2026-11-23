@@ -410,12 +410,6 @@ pub async fn offer_promote(db: &Db, sha256: &str, by: &str) -> Result<Added, Str
     let note = format!("uploaded by {}", offer.uploaded_by);
     let added = catalog_add(db, &offer.file, &bytes, "", "", &note, "", by).await?;
     offer_remove(sha256).await;
-    // Offers no newer than the game's catalog version now are moot.
-    for o in offers() {
-        if o.game == added.world.game && !version_newer(&o.version, &added.world.version) {
-            offer_remove(&o.sha256).await;
-        }
-    }
     Ok(added)
 }
 
@@ -434,10 +428,26 @@ pub async fn offer_approved(db: &Db, season: Id, req: &WorldRequest, by: &str) {
         return;
     }
     let m = manifest(&bytes);
+    // Without a game it can't be told from others, or replace anything.
+    if m.game.is_empty() {
+        return;
+    }
     let cat = catalog_for_game(&db.catalog().await, &m.game).cloned();
     if let Some(cat) = &cat
         && !version_newer(&m.version, &cat.version)
     {
+        return;
+    }
+    // Already offered (as a newer version of a catalog game): say who
+    // approved it.
+    if let Some(mut o) = offers().into_iter().find(|o| o.sha256 == req.sha256) {
+        o.approved_by = by.to_string();
+        let json = serde_json::to_vec(&o).expect("offer serializes");
+        if let Err(e) =
+            crate::atomic::write_async(offers_dir().join(format!("{}.json", o.sha256)), json).await
+        {
+            tracing::warn!("noting who approved an offer: {e}");
+        }
         return;
     }
     let offer = Offer {
@@ -1100,6 +1110,12 @@ pub async fn catalog_add(
     db.catalog_add(&w).await.map_err(|e| e.to_string())?;
     for old in &olds {
         catalog_remove(db, &old.sha256).await?;
+    }
+    // Offers no newer than the game's catalog version now are moot.
+    for o in offers() {
+        if o.sha256 == w.sha256 || (o.game == w.game && !version_newer(&o.version, &w.version)) {
+            offer_remove(&o.sha256).await;
+        }
     }
     Ok(Added {
         world: w,

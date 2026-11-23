@@ -392,8 +392,10 @@ try:
     adm = get(root, f"/s/{sid4}/admin").text
     check("a sysadmin's approve button can add it to the catalog",
           'name="catalog" value="1" checked> and add to the catalog' in adm)
-    check("…a moderator's can't", 'name="catalog"' not in get(dave, f"/s/{sid4}/admin").text)
-    post(dave, f"/s/{sid4}/admin/worlds/approve", data={"name": "modg.apworld"})
+    dadm = get(dave, f"/s/{sid4}/admin").text
+    check("…a moderator's can't", "Apworlds waiting for approval" in dadm and "modg.apworld" in dadm and 'name="catalog"' not in dadm)
+    # Even if a moderator asks for it.
+    post(dave, f"/s/{sid4}/admin/worlds/approve", data={"name": "modg.apworld", "catalog": "1"})
     cat = get(root, "/admin/catalog").text
     offered = cat.split("Worlds offered for the catalog")[-1].split("<h2>")[0] if "Worlds offered for the catalog" in cat else ""
     check("a moderator's approval offers the world to the sysadmins",
@@ -409,7 +411,8 @@ try:
     check("…without an offer", "Root Game" not in (get(root, "/admin/catalog").text.split("Worlds offered for the catalog") + [""])[1].split("<h2>")[0])
     j = post(erin, f"/s/{sid4}/signup/apworld", files={"apworld": ("plain.apworld", variant("baz.apworld", "Plain Game", "1.0.0"))}).json()
     post(root, f"/s/{sid4}/admin/worlds/approve", data={"name": "plain.apworld"})
-    check("…or not, unticked", "Plain Game" not in get(root, "/admin/catalog").text)
+    installed = os.listdir(os.path.join(srv.data, "seasons", sid4, "worlds"))
+    check("…or not, unticked", "plain.apworld" in installed and "Plain Game" not in get(root, "/admin/catalog").text, installed)
 
     # remove from catalog; installed copies stay
     newsha = re.search(r'<tr><td[^>]*>Bar Finder.*?action="/admin/catalog/remove".*?name="sha256" value="([0-9a-f]{64})"', get(root, "/admin/catalog").text, re.S)

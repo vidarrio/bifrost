@@ -291,7 +291,10 @@ The season console has six tabs:
   possible only before generation. Rejecting leaves them flagged. Before
   generation you can also delete a signup or an installed world, or clear
   them all. Sysadmins can promote an installed world into the catalog from
-  here.
+  here, and a sysadmin's approve button adds the world to the catalog too
+  (its **and add to the catalog** box, ticked by default). A moderator's
+  approval passes the world to the sysadmins to consider for the catalog
+  instead.
 - **Player files.** The per-player output files in the current seed, for
   download, plus the seed's spoiler log (for admins only). Players get their
   own files on their game page, so there's usually no need to send them out by
@@ -726,7 +729,8 @@ least as new, marked with who approved it. A sysadmin approving an upload in a
 season can add it to the catalog straight away instead: the approve button's
 **and add to the catalog** box is ticked by default. The game and version
 there are what the upload claims, so vet its code before you **replace the
-catalog's version** with it: catalog worlds are trusted on every season. Or
+catalog's version** with it (or **add to the catalog**, for a game it doesn't
+have): catalog worlds are trusted on every season. Or
 **dismiss** it. Each player keeps at most one offer per game (a newer upload
 replaces theirs), and at most 20 wait at once.
 

@@ -320,8 +320,9 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .choice label:has(input:checked){border-color:var(--accent)}
 .wstep input[type=file],.wstep input[type=text],.wstep input[type=search]{width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:9px 11px;font-size:13px;margin:2px 0}
 
-/* The signup wizard's game list: one searchable list of every game. */
+/* A checkbox inside a row of buttons (the approve button's catalog box). */
 .inlinechk{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;color:var(--muted);margin-right:6px}.inlinechk input{margin:0}
+/* The signup wizard's game list: one searchable list of every game. */
 .gamepick{list-style:none;margin:6px 0 0;padding:0;max-height:320px;overflow-y:auto;border:1px solid var(--bd);border-radius:9px;background:var(--bg)}
 .gamepick li{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--bd);cursor:pointer;font-size:14px}
 .gamepick li:last-child{border-bottom:0}
