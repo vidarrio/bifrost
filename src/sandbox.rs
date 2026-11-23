@@ -254,7 +254,7 @@ impl Sandbox {
     pub fn posture(&self) -> String {
         match self.tier {
             Tier::Bubblewrap => format!(
-                "strong — bubblewrap: no network for any helper, read-only system, \
+                "strong (bubblewrap): no network for any helper, read-only system, \
                  only the season's files writable{}",
                 self.filter_note()
             ),
@@ -268,14 +268,14 @@ impl Sandbox {
                 } else if in_container() {
                     // Container runtimes mask parts of /proc, so bwrap can't
                     // mount a fresh one for its jail.
-                    "custom apworlds are refused — run the container with \
+                    "custom apworlds are refused: run the container with \
                      `--security-opt unmask=/proc/*` (podman) or \
                      `--security-opt systempaths=unconfined` (docker)"
                 } else {
-                    "custom apworlds are refused — install bubblewrap or use the container image"
+                    "custom apworlds are refused: install bubblewrap or use the container image"
                 };
                 format!(
-                    "minimal — resource limits + timeouts{}, no namespace jail ({why}); {custom}",
+                    "minimal: resource limits + timeouts{}, no namespace jail ({why}); {custom}",
                     self.filter_note()
                 )
             }

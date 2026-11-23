@@ -69,7 +69,7 @@ pub fn load_panel(
         let name = names
             .get(id)
             .map_or_else(|| format!("season {id}"), |n| esc(n));
-        b.push_str(&row(format!("{name} — AP server"), *v));
+        b.push_str(&row(format!("{name} (AP server)"), *v));
     }
     if s.servers.is_empty() {
         b.push_str(r#"<tr><td colspan="3" class="muted">No AP server running.</td></tr>"#);

@@ -29,7 +29,7 @@ pub fn world_file(upload_name: &str) -> Result<String, &'static str> {
         .unwrap_or("world");
     let base = crate::text::slug(stem);
     if RESERVED.contains(&base.to_lowercase().as_str()) {
-        return Err("That apworld name is reserved — rename the file and try again.");
+        return Err("That apworld name is reserved. Rename the file and try again.");
     }
     Ok(format!("{base}.apworld"))
 }
@@ -42,7 +42,7 @@ pub fn upload_file(upload_name: &str) -> Result<String, &'static str> {
         .iter()
         .any(|w| w.eq_ignore_ascii_case(&file))
     {
-        return Err("That apworld name is reserved — rename the file and try again.");
+        return Err("That apworld name is reserved. Rename the file and try again.");
     }
     Ok(file)
 }
@@ -344,7 +344,7 @@ fn installed_conflict(dirs: &SeasonDirs, file: &str, sha256: &str) -> Result<boo
     match ap_adapter::world_pins(dirs).get(file) {
         Some(p) if p.sha256 == sha256 => Ok(true),
         Some(_) => Err(format!(
-            "A different {file} is already installed this season — ask a moderator to remove it first."
+            "A different {file} is already installed this season. Ask a moderator to remove it first."
         )),
         None => Ok(false),
     }
@@ -518,9 +518,7 @@ pub async fn install_from_catalog(
         .await
         .map_err(|e| format!("reading the catalog copy: {e}"))?;
     if crate::text::sha256_hex(&bytes) != cat.sha256 {
-        return Err(
-            "The catalog copy doesn't match its hash — ask a sysadmin to re-add it.".into(),
-        );
+        return Err("The catalog copy doesn't match its hash. Ask a sysadmin to re-add it.".into());
     }
     let dirs = config::get().season(season);
     // A season keeps one world per game: one it has already is what its
@@ -556,7 +554,7 @@ pub async fn approve(db: &Db, season: Id, file: &str, by: &str) -> Result<WorldR
         .map_err(|e| format!("reading the upload: {e}"))?;
     if crate::text::sha256_hex(&bytes) != req.sha256 {
         return Err(format!(
-            "{file} changed since it was uploaded — reject it and ask for a new upload."
+            "{file} changed since it was uploaded. Reject it and ask for a new upload."
         ));
     }
     // A season keeps one world per game: one installed since this upload
@@ -637,7 +635,7 @@ pub async fn recheck_held(db: &Db, season: Id, file: &str) {
             Ok(yaml) => match check_with_retries(&dirs, &yaml).await {
                 // No verdict: `stale_holds` picks it up again.
                 Err(e) => Err(format!(
-                    "couldn't be checked ({e}) — it's tried again before generating"
+                    "couldn't be checked ({e}); it's tried again before generating"
                 )),
                 Ok(r) if !r.ok => Err(format!("its YAML didn't pass: {}", r.errors.join("; "))),
                 Ok(r) if r.players.len() > 1 => Err(ONE_GAME_PER_FILE.to_string()),

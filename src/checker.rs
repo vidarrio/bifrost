@@ -65,7 +65,7 @@ pub async fn check_yaml(season: &config::SeasonDirs, yaml: &str) -> Result<Check
     }
     if QUEUED.fetch_add(1, Ordering::SeqCst) >= MAX_QUEUED {
         QUEUED.fetch_sub(1, Ordering::SeqCst);
-        return Err("the checker is busy — try again in a minute".into());
+        return Err("the checker is busy; try again in a minute".into());
     }
     let _slot = QueueSlot;
     // Serialize checks (see check_gate). Held for the whole subprocess run.
@@ -113,7 +113,7 @@ pub async fn first_look(
     }
     if QUEUED.fetch_add(1, Ordering::SeqCst) >= MAX_QUEUED {
         QUEUED.fetch_sub(1, Ordering::SeqCst);
-        return Err("the checker is busy — try again in a minute".into());
+        return Err("the checker is busy; try again in a minute".into());
     }
     let _slot = QueueSlot;
     let _permit = check_gate()

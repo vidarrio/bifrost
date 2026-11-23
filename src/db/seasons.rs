@@ -156,11 +156,11 @@ impl std::fmt::Display for TransitionError {
             }
             TransitionError::AnotherLive(name) => write!(
                 f,
-                "season “{name}” is live — with an external AP server only one season can be live"
+                "season “{name}” is live, and an external AP server allows only one live season"
             ),
             TransitionError::NoFreePort { first, last } => write!(
                 f,
-                "every AP port ({first}–{last}) is held by a live season — archive one, \
+                "every AP port ({first}–{last}) is held by a live season; archive one, \
                  or have the sysadmin widen BIFROST_AP_PORTS"
             ),
             TransitionError::Db(e) => write!(f, "{e}"),
@@ -465,7 +465,7 @@ impl Db {
             }
             .await;
             if let Err(e) = ok {
-                tracing::error!("season {} ({}): no AP port — {e}", s.id, s.name);
+                tracing::error!("season {} ({}): no AP port: {e}", s.id, s.name);
                 if let Err(e) = sqlx::query("UPDATE season SET ap_port = NULL WHERE id = ?")
                     .bind(s.id)
                     .execute(&self.pool)

@@ -329,13 +329,13 @@ pub fn check_worlds(season: &SeasonDirs) -> Result<(), String> {
             (Some(pin), Ok(h)) if pin.sha256 == h => {}
             (None, _) => {
                 return Err(format!(
-                    "apworld {file} wasn't installed through Bifrost (no pinned hash) — \
+                    "apworld {file} wasn't installed through Bifrost (no pinned hash); \
                      delete it or upload it again"
                 ));
             }
             _ => {
                 return Err(format!(
-                    "apworld {file} changed on disk since it was uploaded — \
+                    "apworld {file} changed on disk since it was uploaded; \
                      delete it or upload it again"
                 ));
             }
@@ -345,7 +345,7 @@ pub fn check_worlds(season: &SeasonDirs) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "custom apworlds ({}) can't run without a sandbox on this host — install bubblewrap, \
+            "custom apworlds ({}) can't run without a sandbox on this host: install bubblewrap, \
              use the container image, or remove them",
             custom.join(", ")
         ))

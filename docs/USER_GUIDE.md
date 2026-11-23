@@ -894,7 +894,7 @@ identity headers the proxy sets. The mode is exclusive: in forward-auth mode
 there are no Bifrost passwords. Switch with:
 
 ```sh
-bifrost auth mode forward-auth       # or: native — restart Bifrost to apply
+bifrost auth mode forward-auth       # or: native, then restart Bifrost to apply
 ```
 
 Switching ends every session, so everyone signs in again afterwards.

@@ -1104,7 +1104,7 @@ async fn admin_exchange(
         tokio::time::timeout(Duration::from_secs(15), keyed_lock(&format!("admin:{url}"))).await
     else {
         return Err(AdminFail {
-            message: "the server is busy with another admin command — try again".into(),
+            message: "the server is busy with another admin command; try again".into(),
             sent: false,
         });
     };

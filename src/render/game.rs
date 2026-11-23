@@ -423,7 +423,7 @@ pub(super) fn poptracker_panel(game_id: Id, has_pack: bool, can_manage: bool) ->
         s.push_str(PT_JS);
     } else if can_manage {
         s.push_str(&format!(
-            r#"<p class="empty">Upload a <a href="https://github.com/black-sliver/PopTracker" target="_blank" rel="noopener">PopTracker</a> pack (.zip) for this game to get its map here, auto-tracked from the server — no setup for anyone viewing. The pack must support Archipelago auto-tracking.</p>
+            r#"<p class="empty">Upload a <a href="https://github.com/black-sliver/PopTracker" target="_blank" rel="noopener">PopTracker</a> pack (.zip) for this game to get its map here, auto-tracked from the server, with no setup for anyone viewing. The pack must support Archipelago auto-tracking.</p>
 <form method="post" action="game/{game_id}/poptracker" enctype="multipart/form-data" class="ptform">
 <input type="file" name="pack" accept=".zip,application/zip" required><button type="submit">Upload pack</button></form>"#
         ));
@@ -566,14 +566,14 @@ pub fn inlogic_body(inlogic: Option<&crate::db::InLogic>) -> String {
     let mut s = String::new();
     match inlogic {
         None => s.push_str(
-            r#"<p class="empty">Universal Tracker hasn't mapped this slot yet — it recomputes a few seconds after the slot's items or checks change. Check back shortly.</p>"#,
+            r#"<p class="empty">Universal Tracker hasn't mapped this slot yet. It recomputes a few seconds after the slot's items or checks change. Check back shortly.</p>"#,
         ),
         Some(il) => {
             let locs: Vec<String> = serde_json::from_str(&il.locations).unwrap_or_default();
             if locs.is_empty() && il.err.is_some() {
                 let msg = match il.err.as_deref() {
                     Some("disabled") => "Universal Tracker is turned off for this game by its developers, so live availability tracking isn't available here.",
-                    _ => "Couldn't compute available locations for this slot right now — it'll retry automatically.",
+                    _ => "Couldn't compute available locations for this slot right now. It'll retry automatically.",
                 };
                 s.push_str(&format!(r#"<p class="empty">{msg}</p>"#));
             } else {
@@ -780,7 +780,7 @@ pub fn game_page(
                 };
                 out.push_str(&format!(
                     r#"<h2>Send a hint</h2>
-<p class="empty">{have}Each hint in this world costs <b>{cost}</b> points. Any player with a game this season can spend them — they're the common game's own, earned as the group checks its locations. Search the pool and hint one.</p>
+<p class="empty">{have}Each hint in this world costs <b>{cost}</b> points. Any player with a game this season can spend them. They're the common game's own, earned as the group checks its locations. Search the pool and hint one.</p>
 <form method="post" action="hint" class="hintform" id="hintform">
 <input type="hidden" name="slot_id" value="{sid}"><input type="hidden" name="back" value="{back}">
 <input id="hintq" name="item" placeholder="search the common game's items…" autocomplete="off" required>
@@ -796,13 +796,13 @@ pub fn game_page(
             }
         } else {
             out.push_str(
-                r#"<h2>Send a hint</h2><p class="empty">Hinting the common game is open to anyone with a game this season — its shared hint points are reserved for players with a slot of their own. Sign up with a game, or join one with an invite link, to take part.</p>"#,
+                r#"<h2>Send a hint</h2><p class="empty">Hinting the common game is open to anyone with a game this season, but its shared hint points are reserved for players with a slot of their own. Sign up with a game, or join one with an invite link, to take part.</p>"#,
             );
         }
 
         // Where the common game's items are. Admins get the prioritize toggles.
         out.push_str(
-            r#"<h2>Hints for this game's items</h2><p class="empty" style="margin-top:-4px">Where the common game's items are — in its own or others' worlds.</p><div id="worldhints">"#,
+            r#"<h2>Hints for this game's items</h2><p class="empty" style="margin-top:-4px">Where the common game's items are, in its own or others' worlds.</p><div id="worldhints">"#,
         );
         out.push_str(&hint_rows(
             &live.hint_views,
@@ -863,7 +863,7 @@ pub fn game_page(
     // claimant-gated /game/{game}/output route (not the admin one).
     if !files.is_empty() {
         out.push_str(r#"<h2>Your game files</h2>"#);
-        out.push_str(r#"<p class="empty">The generator produced these for your slot — download and use them with your client to play this seed.</p>"#);
+        out.push_str(r#"<p class="empty">The generator produced these for your slot. Download and use them with your client to play this seed.</p>"#);
         out.push_str(r#"<div class="grid">"#);
         for f in files {
             out.push_str(&format!(
@@ -930,7 +930,7 @@ pub fn game_page(
     // Wrapped in #worldhints so a successful hint can live-refresh it.
     let can_prioritize = hint_slot.is_some() || is_admin;
     out.push_str(
-        r#"<h2>Hints for this game's items</h2><p class="empty" style="margin-top:-4px">Where this slot's items are — in its own or others' worlds.</p><div id="worldhints">"#,
+        r#"<h2>Hints for this game's items</h2><p class="empty" style="margin-top:-4px">Where this slot's items are, in its own or others' worlds.</p><div id="worldhints">"#,
     );
     out.push_str(&hint_rows(
         &live.hint_views,

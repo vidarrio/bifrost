@@ -59,7 +59,7 @@ pub fn seasons_page(
 <form class="linkform" method="post" action="/admin/seasons/import" enctype="multipart/form-data">
 <label>Season bundle<input type="file" name="bundle" accept=".tar.gz,.tgz,application/gzip" required></label>
 <button type="submit">Import</button></form>
-<p class="statline">A bundle is what archiving a season writes (its summary, seed, save, YAMLs and worlds) — download one from another Bifrost's Seasons list. It shows up here as an archived season.</p>"#,
+<p class="statline">A bundle is what archiving a season writes (its summary, seed, save, YAMLs and worlds). Download one from another Bifrost's Seasons list. It shows up here as an archived season.</p>"#,
         );
     }
     body.push_str("<h2>Seasons</h2>");
@@ -306,7 +306,7 @@ pub(super) fn ap_panel(status: &SettingsStatus) -> String {
     if let Some(j) = job {
         match &j.outcome {
             None => b.push_str(&format!(
-                r#"<meta http-equiv="refresh" content="4"><div class="banner">Installing Archipelago {} (started {}) — this page refreshes until it's done.</div>"#,
+                r#"<meta http-equiv="refresh" content="4"><div class="banner">Installing Archipelago {} (started {}), and this page refreshes until it's done.</div>"#,
                 esc(&j.version),
                 fmt_date(j.started)
             )),
@@ -436,11 +436,11 @@ pub fn settings_page(
         r#"<h2>Connections and home page</h2>
 <style>.authform{{max-width:560px}}.authform textarea{{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:7px 9px;font:13px/1.5 var(--mono);min-height:110px}}</style>
 <form class="authform" method="post" action="/admin/settings">
-<label><span>Site address (optional) — this Bifrost's own address, shown next to the title on the home page; empty for the address in <span class="mono">server.public_url</span> (without its scheme), if that's set</span><input type="text" name="site_address" value="{}" placeholder="bifrost.example.org" maxlength="253"></label>
-<label>Connect host — what players' AP clients connect to; each live season adds its port. Shown on season boards, not the home page<input type="text" name="domain" value="{}" placeholder="ap.example.org" maxlength="253"></label>
-<label>Home link (optional) — a pill in the header that goes there<input type="url" name="home_url" value="{}" placeholder="https://example.org/"></label>
-<label>Home pill label — what that pill says (shown in capitals); empty for “{}”<input type="text" name="home_label" value="{}" placeholder="{}" maxlength="{}"></label>
-<label><span>Discord servers — one per line: <span class="mono">Name | https://discord.gg/… | note</span></span><textarea name="discords" spellcheck="false">{}</textarea></label>
+<label><span>Site address (optional): this Bifrost's own address, shown next to the title on the home page; empty for the address in <span class="mono">server.public_url</span> (without its scheme), if that's set</span><input type="text" name="site_address" value="{}" placeholder="bifrost.example.org" maxlength="253"></label>
+<label>Connect host: what players' AP clients connect to; each live season adds its port. Shown on season boards, not the home page<input type="text" name="domain" value="{}" placeholder="ap.example.org" maxlength="253"></label>
+<label>Home link (optional): a pill in the header that goes there<input type="url" name="home_url" value="{}" placeholder="https://example.org/"></label>
+<label>Home pill label: what that pill says (shown in capitals); empty for “{}”<input type="text" name="home_label" value="{}" placeholder="{}" maxlength="{}"></label>
+<label><span>Discord servers, one per line: <span class="mono">Name | https://discord.gg/… | note</span></span><textarea name="discords" spellcheck="false">{}</textarea></label>
 <button type="submit">Save</button></form>"#,
         esc(&inst.site_address),
         esc(&inst.domain),
@@ -493,8 +493,8 @@ pub fn catalog_page(
     body.push_str(&format!(
         r#"<h2>Uploads</h2>
 <form class="authform" method="post" action="/admin/catalog/approval">
-<label class="chk"><input type="radio" name="mode" value="manual"{}> <span><b>Manual approval</b> — an uploaded apworld that isn't in the catalog waits until a moderator of that season (or a sysadmin) approves it. Signups that need it are held, then checked on approval.</span></label>
-<label class="chk"><input type="radio" name="mode" value="auto"{}> <span><b>Automatic</b> — uploads install right away (still pinned by hash, and still run only in the sandbox).</span></label>
+<label class="chk"><input type="radio" name="mode" value="manual"{}> <span><b>Manual approval</b>: an uploaded apworld that isn't in the catalog waits until a moderator of that season (or a sysadmin) approves it. Signups that need it are held, then checked on approval.</span></label>
+<label class="chk"><input type="radio" name="mode" value="auto"{}> <span><b>Automatic</b>: uploads install right away (still pinned by hash, and still run only in the sandbox).</span></label>
 <button type="submit">Save</button></form>"#,
         checked(Approval::Manual),
         checked(Approval::Auto),
@@ -509,7 +509,7 @@ pub fn catalog_page(
             // Both notes, editable in place: the sysadmins' own and the one
             // players see on the Games page.
             let notes = format!(
-                r#"<details class="catnotes"><summary>{}</summary><form class="authform" method="post" action="/admin/catalog/notes"><input type="hidden" name="sha256" value="{}"><label>Public note — shown to players on the Games page<input type="text" name="public_note" value="{}" maxlength="{max}" placeholder="e.g. needs the Steam version; beta"></label><label>Admin note — only sysadmins see it<input type="text" name="note" value="{}" maxlength="{max}" placeholder="e.g. source URL, who vetted it"></label><button type="submit">Save notes</button></form></details>"#,
+                r#"<details class="catnotes"><summary>{}</summary><form class="authform" method="post" action="/admin/catalog/notes"><input type="hidden" name="sha256" value="{}"><label>Public note (shown to players on the Games page)<input type="text" name="public_note" value="{}" maxlength="{max}" placeholder="e.g. needs the Steam version; beta"></label><label>Admin note (only sysadmins see it)<input type="text" name="note" value="{}" maxlength="{max}" placeholder="e.g. source URL, who vetted it"></label><button type="submit">Save notes</button></form></details>"#,
                 match (w.public_note.is_empty(), w.note.is_empty()) {
                     (true, true) => "add notes".to_string(),
                     _ => [("public", &w.public_note), ("admin", &w.note)]
@@ -586,10 +586,10 @@ pub fn catalog_page(
         r#"<h2>Add a world</h2>
 <form class="authform" method="post" action="/admin/catalog/add" enctype="multipart/form-data">
 <label>.apworld file<input type="file" name="apworld" accept=".apworld" required></label>
-<label>Game (optional — read from the world's manifest when blank)<input type="text" name="game" maxlength="80"></label>
-<label>Version (optional — likewise)<input type="text" name="version" maxlength="80"></label>
-<label>Public note (optional) — shown to players on the Games page<input type="text" name="public_note" maxlength="200" placeholder="e.g. needs the Steam version; beta"></label>
-<label>Admin note (optional) — only sysadmins see it<input type="text" name="note" maxlength="200" placeholder="e.g. source URL, who vetted it"></label>
+<label>Game (optional; read from the world's manifest when blank)<input type="text" name="game" maxlength="80"></label>
+<label>Version (optional; likewise)<input type="text" name="version" maxlength="80"></label>
+<label>Public note (optional, shown to players on the Games page)<input type="text" name="public_note" maxlength="200" placeholder="e.g. needs the Steam version; beta"></label>
+<label>Admin note (optional, only sysadmins see it)<input type="text" name="note" maxlength="200" placeholder="e.g. source URL, who vetted it"></label>
 <button type="submit">Add to catalog</button></form>
 <p class="statline">You can also add a world straight from a season: its admin page has an “add to catalog” button next to each installed upload. Adding a game that's already here replaces its entry.</p>"#,
     );

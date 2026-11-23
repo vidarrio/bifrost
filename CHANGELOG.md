@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it. The home page shows the new site address there instead. Until one is
   set, it shows the address in `server.public_url` (`BIFROST_PUBLIC_URL`) if
   that's configured, or nothing.
+- Pages, notices, error messages, logs and command output no longer use
+  em-dashes. Each one is reworded with a colon, a full stop, commas or
+  parentheses instead.
 
 ### Fixed
 

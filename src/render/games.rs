@@ -43,7 +43,7 @@ pub fn games_page(v: &GamesView) -> Html<String> {
 
     b.push_str("<h2>Core games</h2>");
     b.push_str(&format!(
-        r#"<p class="statline">Archipelago {} — the version new seasons use. A season keeps the version it was generated with. A version beside a game is that world's own.</p>"#,
+        r#"<p class="statline">Archipelago {} is the version new seasons use. A season keeps the version it was generated with. A version beside a game is that world's own.</p>"#,
         esc(v.ap_version)
     ));
     match v.core {

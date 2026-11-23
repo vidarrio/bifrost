@@ -200,7 +200,7 @@ pub async fn middleware(State(limiter): State<Arc<Limiter>>, req: Request, next:
             tracing::info!("rate limit {} hit by {key}", rule.name);
             let mut resp = (
                 StatusCode::TOO_MANY_REQUESTS,
-                format!("Too many requests — try again in {wait} s."),
+                format!("Too many requests. Try again in {wait} s."),
             )
                 .into_response();
             if let Ok(v) = HeaderValue::from_str(&wait.to_string()) {

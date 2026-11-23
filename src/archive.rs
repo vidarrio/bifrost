@@ -198,7 +198,7 @@ pub async fn read_bundle(path: &Path) -> Result<(Manifest, SeasonSummary), Strin
         .map_err(|_| format!("reading {name} took too long"))??;
         if !status.success() {
             return Err(format!(
-                "no {name} in it — not a season bundle from this Bifrost (bundles from before season import existed can't be imported)"
+                "no {name} in it, so it isn't a season bundle from this Bifrost (bundles from before season import existed can't be imported)"
             ));
         }
         Ok(data)
@@ -213,7 +213,7 @@ pub async fn read_bundle(path: &Path) -> Result<(Manifest, SeasonSummary), Strin
     }
     if manifest.version > VERSION {
         return Err(format!(
-            "it's format version {}, newer than this Bifrost reads ({VERSION}) — upgrade Bifrost first",
+            "it's format version {}, newer than this Bifrost reads ({VERSION}); upgrade Bifrost first",
             manifest.version
         ));
     }
@@ -298,7 +298,7 @@ pub async fn import(db: &Db, path: &Path, by: Option<i64>, movable: bool) -> Res
 }
 
 fn already(id: Id, seed: &str) -> String {
-    format!("season {id} here already has seed {seed} — it's imported already")
+    format!("season {id} here already has seed {seed}, so it's imported already")
 }
 
 /// The kept bundle of an archived season, if there is one.

@@ -451,7 +451,7 @@ async fn init_auth(db: &db::Db) -> auth::Auth {
     let setup_token =
         (mode == auth::AuthMode::Native && db.account_count().await == 0).then(|| {
             let t = auth::new_token();
-            tracing::warn!("no accounts yet — first-run setup: open /setup?token={t}");
+            tracing::warn!("no accounts yet; for first-run setup, open /setup?token={t}");
             t
         });
     tracing::info!("auth mode: {}", mode.as_str());

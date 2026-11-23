@@ -413,7 +413,7 @@ async fn create_inner(db: &Db, p: &Policy, from: Option<&str>) -> Result<Backup,
         && free < estimate + HEADROOM
     {
         return Err(format!(
-            "only {} MiB free in {} — skipped rather than fill the disk",
+            "only {} MiB free in {}; skipped rather than fill the disk",
             free >> 20,
             dir.display()
         ));
@@ -499,7 +499,7 @@ pub fn restore(file: &Path) -> Result<String, String> {
     let addr = cfg.local_addr();
     if std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(2)).is_ok() {
         return Err(format!(
-            "something is listening on {addr} — stop Bifrost before restoring"
+            "something is listening on {addr}; stop Bifrost before restoring"
         ));
     }
     let data = &cfg.data_dir;
@@ -509,7 +509,7 @@ pub fn restore(file: &Path) -> Result<String, String> {
     let f = std::fs::File::open(file).map_err(|e| format!("{}: {e}", file.display()))?;
     let mut zip = zip::ZipArchive::new(f).map_err(|e| format!("not a backup zip: {e}"))?;
     if zip.by_name("bifrost.db").is_err() {
-        return Err("that zip has no bifrost.db — not a Bifrost backup".into());
+        return Err("that zip has no bifrost.db, so it isn't a Bifrost backup".into());
     }
     std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
     let extracted = (|| -> Result<(), String> {

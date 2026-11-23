@@ -154,7 +154,7 @@ pub(crate) async fn admin_regenerate(
         if !ctx.state().is_live() {
             ctx.rt.with_genstate(|g| {
                 if !g.0 {
-                    g.1 = "Regenerate re-rolls a live season — generate it first.".into();
+                    g.1 = "Regenerate re-rolls a live season. Generate it first.".into();
                 }
             });
             return Redirect::to(&ctx.url("/admin"));
@@ -177,7 +177,7 @@ pub(crate) async fn admin_regenerate(
             {
                 ctx.rt.with_genstate(|g| {
                     g.0 = false;
-                    g.1 = "Regenerate re-rolls a live season — generate it first.".into();
+                    g.1 = "Regenerate re-rolls a live season. Generate it first.".into();
                 });
                 return Redirect::to(&ctx.url("/admin"));
             }
@@ -263,7 +263,7 @@ pub(crate) async fn admin_archive_season(
             b.slots.iter().map(|(k, s)| (*k, s.name.clone())).collect();
         (b.snapshot(), names, b.seed.clone())
     }) else {
-        return render::notice("Board is busy — try again.", false, "admin").into_response();
+        return render::notice("Board is busy. Try again.", false, "admin").into_response();
     };
     if !ctx.state().is_live() {
         return render::notice("Only a live season can be archived.", false, "admin")
@@ -278,7 +278,7 @@ pub(crate) async fn admin_archive_season(
     // loading, every game would be frozen at 0 checks — and archiving is final).
     if seed.is_empty() || board_seed.as_deref() != Some(seed.as_str()) || ap_names.is_empty() {
         return render::notice(
-            "The live board isn't connected to this season's game yet — try again once it shows the game's progress.",
+            "The live board isn't connected to this season's game yet. Try again once it shows the game's progress.",
             false,
             "admin",
         )
@@ -388,14 +388,14 @@ pub(crate) async fn admin_archive_season(
     // to Nextcloud. Best-effort: the displayable archive already succeeded.
     let season_txt = {
         let mut t = format!(
-            "name: {}\nseed: {}\narchived_utc: {}\n\nroster (game — status — players):\n",
+            "name: {}\nseed: {}\narchived_utc: {}\n\nroster (game: status, players):\n",
             summary.name,
             summary.seed,
             fmt_utc(now),
         );
         for g in &summary.games {
             t.push_str(&format!(
-                "  {} — {} — {}\n",
+                "  {}: {}, {}\n",
                 g.game,
                 g.label,
                 g.players.join(" & ")
@@ -445,7 +445,7 @@ pub(crate) async fn mods_add(
             Redirect::to(&ctx.url("/admin")).into_response()
         }
         Some(_) => render::notice(
-            "That account isn't a moderator — a sysadmin can change its role under users & links.",
+            "That account isn't a moderator. A sysadmin can change its role under users & links.",
             false,
             "admin",
         )
@@ -633,7 +633,7 @@ pub(crate) async fn admin_console(
                         // /release …) succeed silently — they act on the room and
                         // broadcast to players but return no console text. An empty
                         // reply here is normal, not a failure.
-                        "(command accepted — no console output; some commands like /hint and /send are silent on success and just broadcast to the room)".to_string()
+                        "(command accepted but gave no console output; some commands like /hint and /send are silent on success and just broadcast to the room)".to_string()
                     } else {
                         text
                     }
@@ -694,7 +694,7 @@ pub(crate) async fn admin_connect_password(
         let msg = if applied {
             "Connect password updated on the running server."
         } else {
-            "Connect password saved — it applies when this season's server starts."
+            "Connect password saved. It applies when this season's server starts."
         };
         return render::notice(msg, true, "admin").into_response();
     }
@@ -737,9 +737,9 @@ pub(crate) async fn admin_connect_password(
         let _ = tokio::fs::write(config::get().connpw_request_file(), line).await;
     });
     let msg = if live {
-        "Connect password updated. Bifrost is restarting to apply it everywhere — give it a few seconds, then reload."
+        "Connect password updated. Bifrost is restarting to apply it everywhere. Give it a few seconds, then reload."
     } else {
-        "No season is live, so the connect password was saved to the server config — it'll apply to the next season you generate. Bifrost is restarting; give it a few seconds, then reload."
+        "No season is live, so the connect password was saved to the server config. It'll apply to the next season you generate. Bifrost is restarting; give it a few seconds, then reload."
     };
     render::notice(msg, true, "admin").into_response()
 }
