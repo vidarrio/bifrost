@@ -56,7 +56,18 @@ where
         ));
     }
     if RUNNING.lock().unwrap().insert(key.clone()) {
+        /// Takes the key out of [`RUNNING`] however the job ends, a panic
+        /// included, so it can be asked for again.
+        struct Done(String);
+        impl Drop for Done {
+            fn drop(&mut self) {
+                if let Ok(mut r) = RUNNING.lock() {
+                    r.remove(&self.0);
+                }
+            }
+        }
         tokio::spawn(async move {
+            let _done = Done(key.clone());
             // It loads every world, like a YAML check: queue behind those.
             let res = match crate::checker::check_gate().acquire().await {
                 Ok(_permit) => job.await,
@@ -69,7 +80,6 @@ where
                     .unwrap()
                     .insert(key.clone(), (Instant::now(), e));
             }
-            RUNNING.lock().unwrap().remove(&key);
         });
     }
     Template::Preparing
@@ -130,9 +140,7 @@ pub fn world(ap: &Install, path: &Path, file: &str, sha256: &str, game: &str) ->
         let (out, index) = ap_adapter::write_templates(&ap, Some((&path, &file))).await?;
         let res = match index.get(&game) {
             Some(name) => {
-                let bytes = tokio::fs::read(out.join(name))
-                    .await
-                    .map_err(|e| e.to_string());
+                let bytes = read_output(&out, name);
                 match bytes {
                     Ok(b) => write(&kept, b).await,
                     Err(e) => Err(e),
@@ -143,6 +151,54 @@ pub fn world(ap: &Install, path: &Path, file: &str, sha256: &str, game: &str) ->
         let _ = tokio::fs::remove_dir_all(out.parent().unwrap_or(&out)).await;
         res
     })
+}
+
+/// The most a template may be. Archipelago's run to about 100 KiB.
+const MAX_TEMPLATE: u64 = 4 << 20;
+
+/// Read the file `name` the sandboxed run wrote into `out`. The run could
+/// write anything there, and something it leaves behind could still be
+/// changing it, so: `name` must be one plain file name, neither `out` nor the
+/// file may be a symlink (each is opened with `O_NOFOLLOW`, the file through
+/// the directory's own descriptor, so nothing can be swapped in between), and
+/// it must be a regular file no bigger than [`MAX_TEMPLATE`].
+fn read_output(out: &Path, name: &str) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::io::AsRawFd;
+    let plain = !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains(['/', '\0'])
+        && name.ends_with(".yaml");
+    if !plain {
+        return Err(format!("unexpected template name {name:?}"));
+    }
+    let dir = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open(out)
+        .map_err(|e| format!("templates dir: {e}"))?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(format!("/proc/self/fd/{}/{name}", dir.as_raw_fd()))
+        .map_err(|e| format!("template {name}: {e}"))?;
+    let meta = file.metadata().map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err(format!("template {name} isn't a regular file"));
+    }
+    if meta.len() > MAX_TEMPLATE {
+        return Err(format!("template {name} is too big"));
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_TEMPLATE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > MAX_TEMPLATE {
+        return Err(format!("template {name} is too big"));
+    }
+    Ok(bytes)
 }
 
 async fn write(path: &Path, bytes: Vec<u8>) -> Result<(), String> {
@@ -163,9 +219,7 @@ async fn keep(out: &Path, dest: &Path, index: &BTreeMap<String, String>) -> Resu
         return Err("no templates were written".into());
     }
     for name in index.values() {
-        let bytes = tokio::fs::read(out.join(name))
-            .await
-            .map_err(|e| e.to_string())?;
+        let bytes = read_output(out, name)?;
         write(&dest.join(name), bytes).await?;
     }
     write(
@@ -183,4 +237,56 @@ pub async fn forget(version: &str) {
         .lock()
         .unwrap()
         .retain(|k, _| !k.starts_with(&format!("{version}/")));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Dir(PathBuf);
+    impl Dir {
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn output_reads_only_plain_files_in_the_dir() {
+        let base = std::env::temp_dir().join(format!("bifrost-tpl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let d = Dir(base);
+        let out = d.path().join("out");
+        std::fs::create_dir(&out).unwrap();
+        std::fs::write(out.join("A Game.yaml"), b"game: A Game\n").unwrap();
+        assert_eq!(read_output(&out, "A Game.yaml").unwrap(), b"game: A Game\n");
+
+        // A name reaching outside the dir, or not a template's.
+        let secret = d.path().join("secret.yaml");
+        std::fs::write(&secret, b"secret").unwrap();
+        for name in [
+            "../secret.yaml",
+            "/etc/passwd",
+            "..",
+            "",
+            "x.txt",
+            "sub/x.yaml",
+        ] {
+            assert!(read_output(&out, name).is_err(), "{name:?}");
+        }
+        // A symlink in place of the file, or of the dir itself.
+        std::os::unix::fs::symlink(&secret, out.join("link.yaml")).unwrap();
+        assert!(read_output(&out, "link.yaml").is_err());
+        let linked = d.path().join("linked");
+        std::os::unix::fs::symlink(&out, &linked).unwrap();
+        assert!(read_output(&linked, "A Game.yaml").is_err());
+        // Not a regular file.
+        std::fs::create_dir(out.join("dir.yaml")).unwrap();
+        assert!(read_output(&out, "dir.yaml").is_err());
+    }
 }
