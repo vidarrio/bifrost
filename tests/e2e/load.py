@@ -21,7 +21,7 @@ try:
     post(root, f"/s/{sid}/admin/signups", data=dict(open="1"))
     post(root, f"/s/{sid}/signup", files={"yaml": ("y.yaml", YAML)})
     generate(root, sid)
-    served = lambda p: (m := re.search(r"Loaded — AP server</td><td[^>]*>(\d+) MiB", p)) and int(m.group(1))
+    served = lambda p: (m := re.search(r"Loaded \(AP server\)</td><td[^>]*>(\d+) MiB", p)) and int(m.group(1))
     panel = wait_for(lambda: (p := get(root, "/admin/settings/load").text) and served(p) and p, 60, 5)
     check("the live season's server is listed with its memory", panel, (panel or get(root, "/admin/settings/load").text)[:600])
     if panel:

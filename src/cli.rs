@@ -148,7 +148,7 @@ async fn set_mode(db: &Db, mode: &str) -> i32 {
             Ok(f) if f.configured() => {}
             Ok(_) => eprintln!(
                 "warning: no trusted proxy configured (BIFROST_FWD_SECRET_HEADER/BIFROST_FWD_SECRET \
-                 or BIFROST_TRUSTED_PROXIES) — nobody will be able to sign in"
+                 or BIFROST_TRUSTED_PROXIES), so nobody will be able to sign in"
             ),
             Err(e) => eprintln!("warning: forward-auth config: {e}"),
         }
@@ -162,7 +162,7 @@ async fn set_mode(db: &Db, mode: &str) -> i32 {
                 return 1;
             }
             println!(
-                "auth mode set to {} — restart Bifrost now to apply it{}",
+                "auth mode set to {}. Restart Bifrost now to apply it{}",
                 mode.as_str(),
                 if changed {
                     " (everyone signs in again; sessions made before the restart \
@@ -215,7 +215,7 @@ async fn reset_link(db: &Db, username: &str) -> i32 {
     }
     if db.auth_mode().await != AuthMode::Native {
         eprintln!(
-            "note: auth mode is not native — `bifrost auth mode native` and restart to use it"
+            "note: auth mode is not native; run `bifrost auth mode native` and restart to use it"
         );
     }
     match crate::account::mint_reset(&offline_auth(db), account.id, None).await {

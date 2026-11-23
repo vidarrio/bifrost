@@ -88,7 +88,7 @@ pub fn season_page(
     close(&mut out);
 
     if has_mine {
-        open(&mut out, "tab-mine", "Minesweeper — this season");
+        open(&mut out, "tab-mine", "Minesweeper (this season)");
         out.push_str(super::mine::LB_STYLE);
         for m in &s.minesweeper {
             if m.is_empty() {

@@ -179,7 +179,7 @@ pub fn login_page(rd: &str, username: &str, err: Option<&str>) -> Html<String> {
 <label>Username<input type="text" name="username" value="{}" autocomplete="username" required autofocus></label>
 <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
 <button type="submit">Sign in</button></form>
-<p class="statline">No account? Accounts are invite-only — ask an admin for an invite link. Forgot your password? An admin can give you a reset link.</p>"#,
+<p class="statline">No account? Accounts are invite-only. Ask an admin for an invite link. Forgot your password? An admin can give you a reset link.</p>"#,
             esc(rd),
             esc(username)
         ),
@@ -262,7 +262,7 @@ pub fn users_page(v: &UsersView) -> Html<String> {
     let mut body = console_nav("/admin/users", true);
     if let Some(m) = v.minted {
         body.push_str(&format!(
-            r#"<div class="banner ok minted"><b>{}</b> — copy it now; it won't be shown again.
+            r#"<div class="banner ok minted"><b>{}</b>. Copy it now; it won't be shown again.
 <input readonly id="mintedlink" data-path="{}" value="{}" onclick="this.select()"></div>
 <script>(function(){{var i=document.getElementById('mintedlink');i.value=location.origin+i.dataset.path;}})();</script>"#,
             esc(&m.what),
@@ -334,7 +334,7 @@ pub fn users_page(v: &UsersView) -> Html<String> {
 <label>Label (optional)<input type="text" name="label" maxlength="80" placeholder="e.g. Discord, season 5"></label>
 <label>Valid for (hours)<input type="number" name="hours" value="48" min="1" max="{}"></label>
 <button type="submit">Mint community invite</button></form>
-<p class="statline">A community invite works for anyone who has it until it expires or you revoke it — fine for a Discord post; single-use invites admit one account.</p>"#,
+<p class="statline">A community invite works for anyone who has it until it expires or you revoke it, which is fine for a Discord post; single-use invites admit one account.</p>"#,
             90 * 24
         ));
     }

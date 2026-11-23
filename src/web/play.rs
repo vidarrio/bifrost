@@ -235,7 +235,7 @@ pub(crate) async fn hint_post(
                         return Json(serde_json::json!({
                             "ok": true,
                             "message": format!(
-                                "Out of points — spent a bonus hint ({newc} left). It's in this world's hints below."
+                                "Out of points, so you spent a bonus hint ({newc} left). It's in this world's hints below."
                             ),
                             "points": points,
                             "credits": newc

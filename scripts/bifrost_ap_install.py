@@ -15,7 +15,7 @@
 Runs under a plain Python 3 (not an AP venv), outside the sandbox: it needs
 the network, and it's what builds the interpreter the sandboxed helpers use.
 Only the standard library is used. GUI-only requirements (Kivy/KivyMD) are
-skipped — Bifrost never opens AP's client UI — and a world whose
+skipped (Bifrost never opens AP's client UI), and a world whose
 requirements fail to install is reported, not fatal. AP's Cython speedups
 are built when a C compiler is around; otherwise AP uses its pure-Python
 fallback.

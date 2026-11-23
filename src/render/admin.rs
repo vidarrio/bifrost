@@ -26,7 +26,7 @@ pub(super) fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool, pre_gen: 
                 esc(e)
             ),
             (Some(w), None) => format!(
-                r#"<div class="meta">held — waiting for {} to be approved</div>"#,
+                r#"<div class="meta">held, waiting for {} to be approved</div>"#,
                 esc(w)
             ),
             _ => String::new(),
@@ -539,7 +539,7 @@ pub fn admin_page(
     // Generated per-player files (extracted from the current seed) for handing out.
     b.push_str(r#"<h2>Player files</h2>"#);
     if outputs.is_empty() {
-        b.push_str(r#"<div class="empty">No per-player files in the current seed — most games connect directly and produce none; only patch/ROM-based games and a few others (BG3, Minecraft, …) emit one. (Nothing here until a season is generated.)</div>"#);
+        b.push_str(r#"<div class="empty">No per-player files in the current seed. Most games connect directly and produce none; only patch/ROM-based games and a few others (BG3, Minecraft, …) emit one. (Nothing here until a season is generated.)</div>"#);
     } else {
         b.push_str(r#"<p class="empty">Files the generator produced for the seed. A file whose name says which slot it's for is offered on that slot's game page once it's claimed; these copies are for reference or for handing out by hand. A file whose name doesn't say is marked below: no game page offers it, so hand it to the right player yourself.</p>"#);
         for o in outputs {
@@ -566,7 +566,7 @@ pub fn admin_page(
                     .map(|s| s.game.as_str())
                     .unwrap_or("—");
                 b.push_str(&format!(
-                    r#"<div class="hintrow"><span><b>{}</b> — {} · <code>.{}</code> · {}</span>{link}</div>"#,
+                    r#"<div class="hintrow"><span><b>{}</b>: {} · <code>.{}</code> · {}</span>{link}</div>"#,
                     esc(&o.label),
                     esc(game),
                     esc(&o.ext),
@@ -608,7 +608,7 @@ pub fn admin_page(
     // AP admin console — commands run over fetch and append to a live log, no
     // page reload (see CONSOLE_JS).
     b.push_str(r#"<h2>Server console</h2>"#);
-    b.push_str(r#"<p class="empty">Run a server command as admin — e.g. <code>/send Player Item</code>, <code>/hint Player Item</code>, <code>/players</code>. The <code>!admin</code> prefix is added for you.</p>"#);
+    b.push_str(r#"<p class="empty">Run a server command as admin, e.g. <code>/send Player Item</code>, <code>/hint Player Item</code>, <code>/players</code>. The <code>!admin</code> prefix is added for you.</p>"#);
     b.push_str(r#"<pre class="out" id="conlog" hidden></pre>"#);
     b.push_str(
         r#"<form class="console" id="conform" method="post" action="admin/console" autocomplete="off"><div class="acwrap"><input type="text" name="cmd" id="concmd" placeholder="/players" autocomplete="off" required><div class="acmenu" id="accands" hidden></div></div><button type="submit">Run</button></form>"#,
@@ -627,7 +627,7 @@ pub fn admin_page(
     // Minesweeper minigame
     b.push_str(r#"<h2>Minesweeper</h2>"#);
     if minesweeper_on {
-        b.push_str(r#"<div class="statline">The minesweeper minigame is <b>enabled</b> — players can farm bonus hints.</div>"#);
+        b.push_str(r#"<div class="statline">The minesweeper minigame is <b>enabled</b>, so players can farm bonus hints.</div>"#);
         b.push_str(&format!(
             r#"<div class="btnrow">{}</div>"#,
             action_btn(

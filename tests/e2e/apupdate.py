@@ -35,10 +35,10 @@ try:
 
     post(root, "/admin/settings/ap/install", data={"version": TAG})
     page = get(root, "/admin/settings").text
-    check("install runs in the background", "this page refreshes" in page)
+    check("install runs in the background", "page refreshes" in page)
     r = post(root, "/admin/settings/ap/install", data={"version": "0.6.6"})
     check("a second install is refused while one runs", "already running" in r.text)
-    done = wait_for(lambda: (p := get(root, "/admin/settings").text) and "this page refreshes" not in p and p, 1800, 10)
+    done = wait_for(lambda: (p := get(root, "/admin/settings").text) and "page refreshes" not in p and p, 1800, 10)
     ok = done and "passed a test generation" in done
     check("install finished and passed its test generation", ok, re.findall(r'class="banner[^"]*">[^<]*', done or "")[-2:])
     if not ok:

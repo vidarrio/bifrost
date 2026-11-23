@@ -207,10 +207,10 @@ pub(super) fn board_inner(
     inlogic: &std::collections::HashMap<i64, i64>,
 ) {
     out.push_str(
-        r#"<div class="boardgrid"><h2>Games — tap one to hint and see its&nbsp;hints</h2>"#,
+        r#"<div class="boardgrid"><h2>Games: tap one to hint and see its&nbsp;hints</h2>"#,
     );
     if slots.is_empty() {
-        out.push_str(r#"<div class="empty">No slots yet — the board fills once Bifrost connects to a running game.</div>"#);
+        out.push_str(r#"<div class="empty">No slots yet. The board fills once Bifrost connects to a running game.</div>"#);
     } else {
         out.push_str(r#"<div class="grid board">"#);
         for g in group_by_ap(slots) {

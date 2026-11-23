@@ -267,7 +267,7 @@ impl FromRequestParts<AppState> for SeasonCtx {
             })?,
             None => st.db.default_season().await.ok_or_else(|| {
                 crate::render::notice(
-                    "There's no season yet — a sysadmin can create one under admin → seasons.",
+                    "There's no season yet. A sysadmin can create one under admin → seasons.",
                     false,
                     "/",
                 )

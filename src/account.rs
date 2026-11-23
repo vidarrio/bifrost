@@ -117,7 +117,7 @@ async fn login_post(
     let attempt = match st.auth.throttle.attempt(&username, client, known) {
         Ok(a) => a,
         Err(wait) => {
-            let msg = format!("Too many failed attempts — try again in {wait} s.");
+            let msg = format!("Too many failed attempts. Try again in {wait} s.");
             return render::login_page(&rd, &username, Some(&msg)).into_response();
         }
     };
@@ -471,7 +471,7 @@ async fn users_role(State(st): State<AppState>, me: Me, Form(f): Form<RoleForm>)
             &st,
             &me,
             None,
-            Some("That's the last sysadmin — promote someone else first."),
+            Some("That's the last sysadmin. Promote someone else first."),
         )
         .await;
     }
@@ -532,7 +532,7 @@ async fn links_reset(State(st): State<AppState>, me: Me, Form(f): Form<ResetLink
     let username = target.username.clone();
     match mint_reset(&st.auth, f.account_id, me.principal().map(|p| p.account_id)).await {
         Ok(path) => {
-            let what = format!("Reset link for {username} — single use, valid 24 h");
+            let what = format!("Reset link for {username} (single use, valid 24 h)");
             console(&st, &me, Some(Minted { what, path }), None).await
         }
         Err(e) => console(&st, &me, None, Some(&e)).await,
@@ -583,7 +583,7 @@ async fn links_invite(
         return r;
     }
     let days = f.days.clamp(1, INVITE_MAX_DAYS);
-    let what = format!("Single-use invite — valid {days} day(s)");
+    let what = format!("Single-use invite, valid {days} day(s)");
     mint_invite(
         &st,
         &me,
@@ -615,7 +615,7 @@ async fn links_community(
         return r;
     }
     let hours = f.hours.clamp(1, INVITE_MAX_DAYS * 24);
-    let what = format!("Community invite — anyone with it can join for the next {hours} h");
+    let what = format!("Community invite: anyone with it can join for the next {hours} h");
     mint_invite(
         &st,
         &me,

@@ -109,7 +109,7 @@ pub fn signup_page(
         step1.push_str(r#"<label><input type="radio" name="gtype" value="catalog"> <span>A custom game from this server's catalog</span></label>"#);
     }
     if worlds.custom_allowed {
-        step1.push_str(r#"<label><input type="radio" name="gtype" value="custom"> <span>Another custom (unofficial) game — I have its <code>.apworld</code></span></label>"#);
+        step1.push_str(r#"<label><input type="radio" name="gtype" value="custom"> <span>Another custom (unofficial) game: I have its <code>.apworld</code></span></label>"#);
     }
     step1.push_str("</div>");
     step1.push_str(r#"<p class="hint"><a href="/worlds" target="_blank" rel="noopener">See every game on this server</a>, with versions.</p>"#);
@@ -132,7 +132,7 @@ pub fn signup_page(
             .collect();
         step1.push_str(&format!(
             r#"<div data-box="catalog" hidden>
-      <p class="hint">Worlds the server's admins have vetted — they're ready to use.</p>
+      <p class="hint">Worlds the server's admins have vetted, ready to use.</p>
       <div class="pickrow"><select id="catsel">{opts}</select><button type="button" id="catbtn" class="back">Use this world</button></div>
       <div id="catmsg" class="inlinemsg"></div>
     </div>"#
@@ -140,7 +140,7 @@ pub fn signup_page(
     }
     if worlds.custom_allowed {
         let approval = if worlds.manual {
-            " If it isn't in the catalog, a moderator has to approve it before it can run — your signup is held until then."
+            " If it isn't in the catalog, a moderator has to approve it before it can run, and your signup is held until then."
         } else {
             " It installs on the server right away so we can validate your YAML next."
         };
@@ -166,7 +166,7 @@ pub fn signup_page(
   </section>
   <section class="wstep" data-step="2" hidden>
     <h2>Options YAML</h2>
-    <p class="hint" id="yamlhint">Upload your options file. It's rolled against the installed worlds — it has to pass before you can sign up.</p>
+    <p class="hint" id="yamlhint">Upload your options file. It's rolled against the installed worlds and has to pass before you can sign up.</p>
     <div class="pickrow"><input type="file" name="yaml" id="yamlfile" accept=".yaml,.yml" required><button type="button" id="checkbtn" class="back">Check it</button></div>
     <div id="checkmsg" class="inlinemsg"></div>
     <div class="nav"><button type="button" class="back" data-goto="1">← Back</button><button type="submit" id="wizsubmit" disabled><!--SUBMIT--></button></div>
@@ -192,7 +192,7 @@ pub fn signup_page(
    var p=t=='custom'?pending:'';
    document.getElementById('pendingworld').value=p;
    chkbtn.hidden=!!p;
-   document.getElementById('yamlhint').textContent=p?('Upload your options file. It can\'t be checked until '+p+' is approved — your signup is held and checked then.'):'Upload your options file. It\'s rolled against the installed worlds — it has to pass before you continue.';
+   document.getElementById('yamlhint').textContent=p?('Upload your options file. It can\'t be checked until '+p+' is approved, so your signup is held and checked then.'):'Upload your options file. It\'s rolled against the installed worlds and has to pass before you continue.';
    next2.disabled=!(p&&yamlfile.files.length);chkmsg.textContent='';
    next1.disabled=!ready[t];
  }
@@ -201,7 +201,7 @@ pub fn signup_page(
    msg.className='inlinemsg';msg.textContent='Installing…';btn.disabled=true;
    fetch('signup/apworld',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(j){
      btn.disabled=false;
-     if(j.ok&&j.pending){ready[kind]=true;pending=j.world;msg.className='inlinemsg ok';msg.textContent=j.note||('Uploaded '+j.world+' — it needs a moderator\'s approval before it can run. You can continue; your signup is held until then.');}
+     if(j.ok&&j.pending){ready[kind]=true;pending=j.world;msg.className='inlinemsg ok';msg.textContent=j.note||('Uploaded '+j.world+'. It needs a moderator\'s approval before it can run. You can continue; your signup is held until then.');}
      else if(j.ok){ready[kind]=true;if(kind=='custom')pending='';msg.className='inlinemsg ok';msg.textContent=j.note||('Installed '+j.world+'. You can continue.');}
      else{ready[kind]=false;msg.className='inlinemsg bad';msg.textContent=j.error||'Install failed.';}
      refresh1();
@@ -229,7 +229,7 @@ pub fn signup_page(
    var fd=new FormData();fd.append('yaml',f);
    fetch('signup/check',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(j){
      chkbtn.disabled=false;
-     if(j.ok){chkmsg.className='inlinemsg ok';chkmsg.textContent='✓ '+(j.name||'slot')+' — '+(j.game||'?')+' rolled cleanly.';next2.disabled=false;}
+     if(j.ok){chkmsg.className='inlinemsg ok';chkmsg.textContent='✓ '+(j.name||'slot')+' ('+(j.game||'?')+') rolled cleanly.';next2.disabled=false;}
      else{next2.disabled=true;chkmsg.className='inlinemsg bad';chkmsg.textContent=(j.errors&&j.errors.length?j.errors.join('; '):(j.error||'Did not pass.'));}
    }).catch(function(){chkbtn.disabled=false;chkmsg.className='inlinemsg bad';chkmsg.textContent='Check failed (network).';});
  });

@@ -136,10 +136,10 @@ pub fn minesweeper_page(
         n => format!(" You can earn up to {n} bonus hints in any 24 hours."),
     };
     let intro = if free {
-        "Just for fun — results count toward the all-time leaderboards (no bonus hints here). Every board is solvable by logic alone, no guessing needed, on both difficulties. Left-click a cell to reveal, right-click to flag. On a revealed number: left-click chord-reveals its neighbours once you've flagged that many mines, right-click flags all remaining neighbours when they must all be mines.".to_string()
+        "Just for fun: results count toward the all-time leaderboards (no bonus hints here). Every board is solvable by logic alone, no guessing needed, on both difficulties. Left-click a cell to reveal, right-click to flag. On a revealed number: left-click chord-reveals its neighbours once you've flagged that many mines, right-click flags all remaining neighbours when they must all be mines.".to_string()
     } else {
         format!(
-            "Clear the board without hitting a mine to earn a bonus hint — worth 1 either way. Every board is solvable by logic alone, no guessing needed, on both difficulties. Left-click a cell to reveal, right-click to flag. On a revealed number: left-click chord-reveals its neighbours once you've flagged that many mines, right-click flags all remaining neighbours when they must all be mines. Bonus hints are spent automatically when you hint without enough points.{cap_note}"
+            "Clear the board without hitting a mine to earn a bonus hint, worth 1 either way. Every board is solvable by logic alone, no guessing needed, on both difficulties. Left-click a cell to reveal, right-click to flag. On a revealed number: left-click chord-reveals its neighbours once you've flagged that many mines, right-click flags all remaining neighbours when they must all be mines. Bonus hints are spent automatically when you hint without enough points.{cap_note}"
         )
     };
     let statline = if free {
@@ -340,7 +340,7 @@ function reveal(r,c){
  return post('minesweeper/reveal',{r:r,c:c,kind:activeKind}).then(function(j){
   if(over)return;
   if(!j.ok){msg.className='inlinemsg bad';msg.textContent=j.error||'Invalid.';return;}
-  if(j.state==='lost'){over=true;(j.mines||[]).forEach(function(m){var mb=cells[m.r][m.c];mb.classList.add('open','mine');mb.textContent='✱';});msg.className='inlinemsg bad';msg.textContent='Boom — try again.';setStats(j.stats);setTimer(j.elapsed_ms,false);showNewBtn(true);return;}
+  if(j.state==='lost'){over=true;(j.mines||[]).forEach(function(m){var mb=cells[m.r][m.c];mb.classList.add('open','mine');mb.textContent='✱';});msg.className='inlinemsg bad';msg.textContent='Boom! Try again.';setStats(j.stats);setTimer(j.elapsed_ms,false);showNewBtn(true);return;}
   (j.cells||[]).forEach(openCell);
   setTimer(j.elapsed_ms,j.running);
   if(j.state==='won'){over=true;msg.className='inlinemsg ok';msg.textContent=j.earned?'Cleared! You earned a bonus hint.':j.capped?'Cleared! No bonus hint this time: you have earned the limit of '+j.cap+' in 24 hours.':'Cleared!';if(j.credits!=null&&creditsEl)creditsEl.textContent=j.credits;setStats(j.stats);showNewBtn(true);}
@@ -364,7 +364,7 @@ function loadGame(){
   if(!j||!j.active){newGame();return;}
   startBoard(j.w,j.h,j.mines);showNewBtn(false);
   var cs=j.cells||[];cs.forEach(openCell);setTimer(j.elapsed_ms,false);
-  msg.className='inlinemsg';msg.textContent=cs.length?'Resumed your board — click to continue.':'';
+  msg.className='inlinemsg';msg.textContent=cs.length?'Resumed your board. Click to continue.':'';
  }).catch(function(){newGame();});
 }
 // Pause the active difficulty's clock (tab hidden/closed, or leaving for the

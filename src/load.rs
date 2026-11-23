@@ -142,7 +142,7 @@ pub fn room_for_another_season() -> Option<String> {
     (free < need + 256 * MIB).then(|| {
         format!(
             "Memory is tight: {} MiB free, and a live season's server here uses about {} MiB. \
-             Starting another may get a server killed — ask a sysadmin to check the load.",
+             Starting another may get a server killed. Ask a sysadmin to check the load.",
             free / MIB,
             need / MIB
         )

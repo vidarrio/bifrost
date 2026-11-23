@@ -192,7 +192,7 @@ pub fn for_season(id: crate::id::Id) -> Install {
         Some((Some(i), _)) => i,
         Some((None, v)) => {
             tracing::warn!(
-                "season {id} was generated with Archipelago {v}, which isn't installed any more — using the active one"
+                "season {id} was generated with Archipelago {v}, which isn't installed any more; using the active one"
             );
             active()
         }
@@ -215,7 +215,7 @@ pub fn load(active: Option<String>, pins: BTreeMap<crate::id::Id, String>) {
         let ok = find(v).is_some();
         if !ok {
             tracing::warn!(
-                "the active Archipelago {v} isn't installed — using the bundled {}",
+                "the active Archipelago {v} isn't installed; using the bundled {}",
                 bundled().version
             );
         }

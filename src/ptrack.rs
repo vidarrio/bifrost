@@ -82,7 +82,7 @@ pub async fn validate(zip_bytes: Arc<Vec<u8>>) -> Result<poptracker::Summary, St
     let sum: poptracker::Summary = serde_json::from_value(reply).map_err(|e| e.to_string())?;
     if !sum.archipelago_autotracking {
         return Err(
-            "this pack has no Archipelago auto-tracking — it only works with an \
+            "this pack has no Archipelago auto-tracking: it only works with an \
                     emulator, so it can't be tracked here"
                 .to_string(),
         );

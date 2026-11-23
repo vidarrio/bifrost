@@ -629,7 +629,7 @@ fn load_file(path: &Path) -> Result<HashMap<String, String>, String> {
             && m.permissions().mode() & 0o077 != 0
         {
             tracing::warn!(
-                "{} is readable by group/others — it may hold secrets; chmod 600 it",
+                "{} is readable by group/others and may hold secrets; chmod 600 it",
                 path.display()
             );
         }
@@ -713,7 +713,7 @@ fn parse_file(text: &str) -> Result<HashMap<String, String>, String> {
 }
 
 /// A commented config.toml template (`bifrost config example`).
-pub const EXAMPLE: &str = r#"# $BIFROST_DATA/config.toml — every setting here can also come from the
+pub const EXAMPLE: &str = r#"# $BIFROST_DATA/config.toml: every setting here can also come from the
 # environment variable in the comment (the environment wins). Keep this file
 # chmod 600: it holds secrets.
 
@@ -731,10 +731,10 @@ pub const EXAMPLE: &str = r#"# $BIFROST_DATA/config.toml — every setting here 
 # (The host players connect to is set on the instance settings page.)
 # dir = "/opt/archipelago"           # BIFROST_AP_DIR
 # python = "/opt/archipelago/venv/bin/python"  # BIFROST_AP_PYTHON
-# — installing further releases from the settings page:
+# For installing further releases from the settings page:
 # repo = "vidarrio/Archipelago"  # BIFROST_AP_REPO (GitHub owner/name; Bifrost's fork)
 # base_python = "python3"            # BIFROST_PYTHON (builds each release's venv; needs venv + pip)
-# — external mode only (managed mode generates per-season passwords):
+# External mode only (managed mode generates per-season passwords):
 # url = "ws://127.0.0.1:38281"       # BIFROST_AP_URL
 # slot = "Tracker"                   # BIFROST_SLOT (tracker's slot; managed: first slot)
 # password = ""                      # BIFROST_AP_PASSWORD (secret)

@@ -50,7 +50,7 @@ try:
     page = s.get(BASE + "/admin/settings").text
     check("release check works from the container", f'<b class="mono">{TAG}</b>' in page)
     s.post(BASE + "/admin/settings/ap/install", data={"version": TAG})
-    done = wait_for(lambda: (p := s.get(BASE + "/admin/settings").text) and "this page refreshes" not in p and p, 1800, 10)
+    done = wait_for(lambda: (p := s.get(BASE + "/admin/settings").text) and "page refreshes" not in p and p, 1800, 10)
     ok = bool(done) and "passed a test generation" in done
     check("install + sandboxed test generation in the container", ok, re.findall(r'class="banner[^"]*">[^<]*', done or ""))
     if not ok:

@@ -455,8 +455,8 @@ pub async fn list_apworlds(season: Id) -> Vec<Apworld> {
                             p.provenance()
                         )
                     }
-                    (Some(_), _) => "⚠ changed on disk since upload — won't run".to_string(),
-                    (None, _) => "⚠ not installed through Bifrost — won't run".to_string(),
+                    (Some(_), _) => "⚠ changed on disk since upload, so it won't run".to_string(),
+                    (None, _) => "⚠ not installed through Bifrost, so it won't run".to_string(),
                 }
             };
             out.push(w);
@@ -494,20 +494,20 @@ async fn read_seed(
 pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
     let state = rts.get(season).genstate.clone();
     let Some(prev) = db.season(season).await.map(|s| s.state()) else {
-        return set(&state, false, "Failed — no such season");
+        return set(&state, false, "Failed: no such season");
     };
     // A live season is re-rolled (which keeps claims), never generated afresh.
     if !matches!(prev, State::Draft | State::Signup) {
         return set(
             &state,
             false,
-            "Failed — the season is already live; re-roll it instead",
+            "Failed: the season is already live; re-roll it instead",
         );
     }
     // Refuse up front rather than generate a world that can't go live (no
     // free AP port, or another season live on an external server).
     if let Err(e) = db.can_go_live(season).await {
-        return set(&state, false, format!("Failed — {e}"));
+        return set(&state, false, format!("Failed: {e}"));
     }
     {
         // A demo build caps live seasons; counting and moving to Generating
@@ -519,7 +519,7 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
             return set(&state, false, e);
         }
         if let Err(e) = db.transition(season, State::Generating, now()).await {
-            return set(&state, false, format!("Failed — {e}"));
+            return set(&state, false, format!("Failed: {e}"));
         }
     }
     match run_inner(&db, &rts, &state, season).await {
@@ -533,13 +533,13 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
                 set(
                     &state,
                     false,
-                    format!("Generated, but couldn't go live — {e}"),
+                    format!("Generated, but couldn't go live: {e}"),
                 )
             }
         },
         Err(e) => {
             let _ = db.transition(season, prev, now()).await;
-            set(&state, false, format!("Failed — {e}"))
+            set(&state, false, format!("Failed: {e}"))
         }
     }
 }
@@ -551,14 +551,14 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
 pub async fn regenerate(db: Db, rts: Arc<Runtimes>, season: Id) {
     let state = rts.get(season).genstate.clone();
     if let Err(e) = db.transition(season, State::Generating, now()).await {
-        return set(&state, false, format!("Failed — {e}"));
+        return set(&state, false, format!("Failed: {e}"));
     }
     let r = regen_inner(&db, &rts, &state, season).await;
     // Live either way: on failure the previous seed is still deployed.
     let _ = db.transition(season, State::Live, now()).await;
     match r {
         Ok(msg) => set(&state, false, msg),
-        Err(e) => set(&state, false, format!("Failed — {e}")),
+        Err(e) => set(&state, false, format!("Failed: {e}")),
     }
 }
 
@@ -650,7 +650,7 @@ async fn regen_inner(
         }
     }
     if !has_yaml {
-        return Err("no staged player YAMLs to re-roll — generate the season first".into());
+        return Err("no staged player YAMLs to re-roll; generate the season first".into());
     }
 
     set(
@@ -664,7 +664,7 @@ async fn regen_inner(
     let dirs = roll(state, season).await?;
 
     let seed_zip = newest_seed(season).await.ok_or("no seed was produced")?;
-    set(state, true, "Mapping slots and carrying over claims…");
+    set(state, true, "Mapping slots to their players…");
     let (seed_name, ap_slots) = read_seed(&dirs, &seed_zip).await?;
     // The new seed is the season's from here, in one go with its slots: the
     // tracker accepts the restarted server, and data derived from the old seed
@@ -677,7 +677,7 @@ async fn regen_inner(
     deploy(db, rts, season, &dirs, &seed_zip).await?;
 
     Ok(format!(
-        "Regenerated seed {seed_name} — {} AP slots, claims carried over. The game is restarting on a fresh save.",
+        "Regenerated seed {seed_name} with {} AP slots. Players keep their games, and the game server is restarting on a fresh save.",
         ap_slots.len()
     ))
 }
@@ -790,7 +790,7 @@ async fn run_inner(
         )
     };
     Ok(format!(
-        "Generated seed {seed_name} — {} AP slots. The game is restarting. Signups are now closed.{common}",
+        "Generated seed {seed_name}: {} AP slots. The game is restarting. Signups are now closed.{common}",
         ap_slots.len()
     ))
 }

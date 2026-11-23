@@ -559,7 +559,7 @@ static HASHING: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 static HASHING_QUEUE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 const HASHING_QUEUE_MAX: usize = 64;
 
-pub const BUSY: &str = "The server is busy — try again in a moment.";
+pub const BUSY: &str = "The server is busy. Try again in a moment.";
 
 /// Run `f` on the blocking pool under a hashing permit; `None` when too many
 /// are already waiting.

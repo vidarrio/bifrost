@@ -19,7 +19,7 @@ WORK=${WORK:-$HOME/.cache/bifrost-ap-fork}
 patches=$(cd "$(dirname "$0")/patches" && pwd)
 
 if gh release view "$rel" -R "$FORK" >/dev/null 2>&1; then
-    echo "$rel is already released; builds are immutable — pass the next build number" >&2
+    echo "$rel is already released and builds are immutable, so pass the next build number" >&2
     exit 1
 fi
 

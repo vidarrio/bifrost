@@ -113,17 +113,17 @@ pub(crate) async fn signup_game(
     let replace = (is_host && state.accepts_signups()) || (is_mod && pre_gen);
     let welcome = (q.new && is_host && pre_gen).then(|| match &sub.held_for {
         Some(w) => format!(
-            "Signed up: {} — held until a moderator approves {w}; your YAML is checked then. If you're sharing this game, invite your co-op partners below.",
+            "Signed up: {}, held until a moderator approves {w}; your YAML is checked then. If you're sharing this game, invite your co-op partners below.",
             sub.slot_name
         ),
         None => format!(
-            "Signed up: {} — {}. If you're sharing this game, invite your co-op partners below.",
+            "Signed up: {} ({}). If you're sharing this game, invite your co-op partners below.",
             sub.slot_name, sub.game
         ),
     });
     let saved = match q.saved.as_str() {
         "notes" => Some("Notes saved.".to_string()),
-        "yaml" => Some(format!("YAML replaced: {} — {}.", sub.slot_name, sub.game)),
+        "yaml" => Some(format!("YAML replaced: {} ({}).", sub.slot_name, sub.game)),
         _ => None,
     };
     let invites =
@@ -394,7 +394,7 @@ pub(crate) async fn signup_apworld(
     match worlds::place_upload(&st.db, ctx.id, &file, bytes, &uploader).await {
         Ok(worlds::Placed::Core { game }) => Json(serde_json::json!({
             "ok": true, "world": "", "pending": false,
-            "note": format!("{game} is one of this server's core games, so your signup uses the server's version — nothing to install. You can continue.")
+            "note": format!("{game} is one of this server's core games. Your signup uses the server's version, so there's nothing to install. You can continue.")
         })),
         Ok(worlds::Placed::Waiting {
             game,
@@ -415,7 +415,7 @@ pub(crate) async fn signup_apworld(
                 format!(" {version}")
             };
             let mut note = format!(
-                "This season already has {game}{ver}, so your signup uses that — nothing new to install. You can continue."
+                "This season already has {game}{ver}, so your signup uses that and there's nothing new to install. You can continue."
             );
             if let Some(v) = offered {
                 note.push_str(&format!(
@@ -594,7 +594,7 @@ pub(crate) async fn signup_post(
         // Its world waits for approval, so the YAML can't be checked yet: hold
         // the signup under the name it declares; it's checked on approval.
         let Some(request) = st.db.world_request(ctx.id, &held_for).await else {
-            return refuse("That apworld isn't waiting for approval any more — start over.");
+            return refuse("That apworld isn't waiting for approval any more. Start over.");
         };
         if yaml.len() > checker::MAX_YAML {
             return refuse("That YAML is too large.");

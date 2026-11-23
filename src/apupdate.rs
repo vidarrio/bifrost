@@ -338,10 +338,10 @@ pub async fn remove(version: &str) -> Result<(), String> {
         return Err("The bundled Archipelago can't be removed.".into());
     }
     if apinstall::active().version == version {
-        return Err("That's the active version — switch new seasons to another one first.".into());
+        return Err("That's the active version. Switch new seasons to another one first.".into());
     }
     if !apinstall::pinned_to(version).is_empty() {
-        return Err("A season still runs on that version — archive or re-roll it first.".into());
+        return Err("A season still runs on that version. Archive or re-roll it first.".into());
     }
     tokio::fs::remove_dir_all(&i.dir)
         .await
