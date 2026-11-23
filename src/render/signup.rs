@@ -2,28 +2,74 @@
 
 use super::*;
 
-/// What step 1 of the signup wizard offers for custom games.
+/// What step 1 of the signup wizard offers: every game the season can play.
 pub struct SignupWorlds {
     /// The sandbox can run custom worlds at all.
     pub custom_allowed: bool,
     /// Uploads not in the catalog wait for approval.
     pub manual: bool,
     pub catalog: Vec<crate::db::CatalogWorld>,
+    /// The season's Archipelago's core games, once listed.
+    pub core: Option<Vec<crate::ap_adapter::GameEntry>>,
+    /// Custom games installed in the season: (game, file, version).
+    pub installed: Vec<(String, String, String)>,
 }
 
-/// A catalog entry as one line: "Game 1.2 (file)".
-pub(super) fn catalog_label(w: &crate::db::CatalogWorld) -> String {
-    let name = if w.game.is_empty() {
-        w.file.trim_end_matches(".apworld")
-    } else {
-        &w.game
-    };
-    let mut l = name.to_string();
-    if !w.version.is_empty() {
-        l.push_str(&format!(" {}", w.version));
+/// One game in the wizard's list.
+struct Pick {
+    /// "core", "cat" (a catalog world, `value` its hash) or "season".
+    kind: &'static str,
+    value: String,
+    game: String,
+    version: String,
+}
+
+/// The wizard's one list: games the season has, then the catalog's, then the
+/// core games, each game once, sorted by name.
+fn picks(worlds: &SignupWorlds) -> Vec<Pick> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    if worlds.custom_allowed {
+        // The season's own copy is what its signups use, so its version is
+        // the one shown.
+        for (game, _, version) in &worlds.installed {
+            if seen.insert(game.clone()) {
+                out.push(Pick {
+                    kind: "season",
+                    value: game.clone(),
+                    game: game.clone(),
+                    version: version.clone(),
+                });
+            }
+        }
+        for w in &worlds.catalog {
+            let game = if w.game.is_empty() {
+                w.file.trim_end_matches(".apworld").to_string()
+            } else {
+                w.game.clone()
+            };
+            if seen.insert(game.clone()) {
+                out.push(Pick {
+                    kind: "cat",
+                    value: w.sha256.clone(),
+                    game,
+                    version: w.version.clone(),
+                });
+            }
+        }
     }
-    l.push_str(&format!(" ({})", w.file));
-    l
+    for g in worlds.core.iter().flatten() {
+        if seen.insert(g.game.clone()) {
+            out.push(Pick {
+                kind: "core",
+                value: g.game.clone(),
+                game: g.game.clone(),
+                version: g.version.clone().unwrap_or_default(),
+            });
+        }
+    }
+    out.sort_by_key(|p| p.game.to_lowercase());
+    out
 }
 
 /// A reason, as a sentence ending in one full stop.
@@ -101,51 +147,55 @@ pub fn signup_page(
         (String::new(), "")
     };
     b.push_str(&wizard_open);
-    let mut step1 = String::from(
-        r#"<div class="choice">
-      <label><input type="radio" name="gtype" value="core" checked> <span>A core / officially supported game</span></label>"#,
-    );
-    if worlds.custom_allowed && !worlds.catalog.is_empty() {
-        step1.push_str(r#"<label><input type="radio" name="gtype" value="catalog"> <span>A custom game from this server's catalog</span></label>"#);
+    // Step 1: one searchable list of every game the season can play, with
+    // uploading another custom world as its last entry.
+    let mut items = String::new();
+    if worlds.core.is_none() {
+        items.push_str(r#"<li role="option" tabindex="0" data-kind="core" data-value="" data-game=""><span>A core game <small>(the full list is still being gathered; your YAML names the game)</small></span></li>"#);
+    }
+    for p in picks(worlds) {
+        let ver = if p.version.is_empty() {
+            String::new()
+        } else {
+            format!(r#"<span class="v">{}</span>"#, esc(&p.version))
+        };
+        let tag = if p.kind == "core" {
+            ""
+        } else {
+            r#" <span class="tag">custom</span>"#
+        };
+        items.push_str(&format!(
+            r#"<li role="option" tabindex="0" data-kind="{}" data-value="{}" data-game="{}"><span>{}{tag}</span>{ver}</li>"#,
+            p.kind,
+            esc(&p.value),
+            esc(&p.game),
+            esc(&p.game),
+        ));
     }
     if worlds.custom_allowed {
-        step1.push_str(r#"<label><input type="radio" name="gtype" value="custom"> <span>Another custom (unofficial) game: I have its <code>.apworld</code></span></label>"#);
+        items.push_str(r#"<li role="option" tabindex="0" data-kind="upload" data-value="" data-game="" class="upload"><span>Upload another custom world (<code>.apworld</code>)…</span></li>"#);
     }
-    step1.push_str("</div>");
-    step1.push_str(r#"<p class="hint"><a href="/worlds" target="_blank" rel="noopener">See every game on this server</a>, with versions.</p>"#);
+    let mut step1 = format!(
+        r#"<input type="search" id="gamefind" class="gamefind" placeholder="Search for your game" aria-label="Search for your game" aria-controls="gamelist" autocomplete="off">
+      <ul id="gamelist" class="gamepick" role="listbox" aria-label="Games">{items}</ul>
+      <p class="empty" id="nogame" hidden>No game matches. Check the spelling, or upload its <code>.apworld</code> if it's a custom game.</p>
+      <div id="pickmsg" class="inlinemsg"></div>"#
+    );
+    if worlds.custom_allowed {
+        step1.push_str(r#"<p class="hint">Each game shows the version the server has. If you have a newer version of a custom game, upload it: your signup uses the server's version for now, and yours is passed to the server's admins to consider.</p>"#);
+    }
     if !worlds.custom_allowed {
         step1.push_str(
             r#"<p class="hint">Custom (unofficial) games are turned off on this server.</p>"#,
         );
-    }
-    if worlds.custom_allowed && !worlds.catalog.is_empty() {
-        let opts: String = worlds
-            .catalog
-            .iter()
-            .map(|w| {
-                format!(
-                    r#"<option value="{}">{}</option>"#,
-                    esc(&w.sha256),
-                    esc(&catalog_label(w))
-                )
-            })
-            .collect();
-        step1.push_str(&format!(
-            r#"<div data-box="catalog" hidden>
-      <p class="hint">Worlds the server's admins have vetted, ready to use.</p>
-      <div class="pickrow"><select id="catsel">{opts}</select><button type="button" id="catbtn" class="back">Use this world</button></div>
-      <div id="catmsg" class="inlinemsg"></div>
-    </div>"#
-        ));
-    }
-    if worlds.custom_allowed {
+    } else {
         let approval = if worlds.manual {
             " If it isn't in the catalog, a moderator has to approve it before it can run, and your signup is held until then."
         } else {
             " It installs on the server right away so we can validate your YAML next."
         };
         step1.push_str(&format!(
-            r#"<div data-box="custom" hidden>
+            r#"<div id="uploadbox" hidden>
       <p class="hint">Upload the world's <code>.apworld</code>.{approval}</p>
       <div class="pickrow"><input type="file" id="apfile" accept=".apworld"><button type="button" id="apbtn" class="back">Upload apworld</button></div>
       <div id="apmsg" class="inlinemsg"></div>
@@ -166,6 +216,8 @@ pub fn signup_page(
   </section>
   <section class="wstep" data-step="2" hidden>
     <h2>Options YAML</h2>
+    <div id="tplrow" hidden><p class="hint">New to this game's options? Start from a template with every option, its default and what it does.</p>
+    <div class="pickrow"><button type="button" id="tpllink" class="back">Download a starting YAML for <span id="tplgame"></span></button></div><div id="tplmsg" class="inlinemsg"></div></div>
     <p class="hint" id="yamlhint">Upload your options file. It's rolled against the installed worlds and has to pass before you can sign up.</p>
     <div class="pickrow"><input type="file" name="yaml" id="yamlfile" accept=".yaml,.yml" required><button type="button" id="checkbtn" class="back">Check it</button></div>
     <div id="checkmsg" class="inlinemsg"></div>
@@ -182,46 +234,63 @@ pub fn signup_page(
    document.querySelectorAll('.stepper li').forEach(function(li){var s=Number(li.dataset.step);li.classList.toggle('active',s==n);li.classList.toggle('done',s<n)});
  }
  form.querySelectorAll('[data-goto]').forEach(function(btn){btn.addEventListener('click',function(){if(!btn.disabled)show(Number(btn.dataset.goto))})});
- var ready={core:true,catalog:false,custom:false},pending='',next1=document.getElementById('tostep2');
+ var state={ready:false,pending:'',game:'',custom:false},next1=document.getElementById('tostep2');
  var chkbtn=document.getElementById('checkbtn'),chkmsg=document.getElementById('checkmsg'),next2=document.getElementById('wizsubmit'),yamlfile=document.getElementById('yamlfile');
- function gtype(){var r=form.querySelector('input[name=gtype]:checked');return r?r.value:'core';}
+ var find=document.getElementById('gamefind'),list=document.getElementById('gamelist'),nogame=document.getElementById('nogame'),pickmsg=document.getElementById('pickmsg'),upbox=document.getElementById('uploadbox');
+ var items=[].slice.call(list.querySelectorAll('li'));
  function refresh1(){
-   var t=gtype();
-   form.querySelectorAll('[data-box]').forEach(function(b){b.hidden=b.dataset.box!=t;});
-   document.getElementById('iscustom').value=t=='core'?'':'1';
-   var p=t=='custom'?pending:'';
-   document.getElementById('pendingworld').value=p;
-   chkbtn.hidden=!!p;
-   document.getElementById('yamlhint').textContent=p?('Upload your options file. It can\'t be checked until '+p+' is approved, so your signup is held and checked then.'):'Upload your options file. It\'s rolled against the installed worlds and has to pass before you continue.';
-   next2.disabled=!(p&&yamlfile.files.length);chkmsg.textContent='';
-   next1.disabled=!ready[t];
+   document.getElementById('iscustom').value=state.custom?'1':'';
+   document.getElementById('pendingworld').value=state.pending;
+   chkbtn.hidden=!!state.pending;
+   document.getElementById('yamlhint').textContent=state.pending?('Upload your options file. It can\'t be checked until '+state.pending+' is approved, so your signup is held and checked then.'):'Upload your options file. It\'s rolled against the installed worlds and has to pass before you continue.';
+   next2.disabled=!(state.pending&&yamlfile.files.length);chkmsg.textContent='';
+   next1.disabled=!state.ready;
+   var tr=document.getElementById('tplrow');tr.hidden=!(state.game&&!state.pending);
+   document.getElementById('tplgame').textContent=state.game;document.getElementById('tplmsg').textContent='';
  }
- form.querySelectorAll('input[name=gtype]').forEach(function(r){r.addEventListener('change',refresh1)});
- function place(btn,msg,fd,kind){
-   msg.className='inlinemsg';msg.textContent='Installing…';btn.disabled=true;
+ // Search: narrow the list as you type (the upload entry always stays).
+ find.addEventListener('input',function(){var q=find.value.trim().toLowerCase(),n=0;
+   items.forEach(function(li){var ok=li.dataset.kind=='upload'||!q||li.textContent.toLowerCase().indexOf(q)>=0;li.hidden=!ok;if(ok&&li.dataset.kind!='upload')n++;});
+   nogame.hidden=n>0;});
+ function choose(li){
+   items.forEach(function(x){x.setAttribute('aria-selected',x===li?'true':'false');});
+   var k=li.dataset.kind;upbox&&(upbox.hidden=k!='upload');pickmsg.className='inlinemsg';pickmsg.textContent='';
+   state={ready:false,pending:'',game:li.dataset.game,custom:k!='core'};
+   if(k=='core'||k=='season'){state.ready=true;}
+   else if(k=='cat'){var fd=new FormData();fd.append('catalog',li.dataset.value);place(pickmsg,fd);}
+   else if(k=='upload'){state.game='';}
+   refresh1();
+ }
+ items.forEach(function(li){li.addEventListener('click',function(){choose(li)});
+   li.addEventListener('keydown',function(e){if(e.key=='Enter'||e.key==' '){e.preventDefault();choose(li);}});});
+ function place(msg,fd,btn){
+   msg.className='inlinemsg';msg.textContent='Installing…';if(btn)btn.disabled=true;
    fetch('signup/apworld',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(j){
-     btn.disabled=false;
-     if(j.ok&&j.pending){ready[kind]=true;pending=j.world;msg.className='inlinemsg ok';msg.textContent=j.note||('Uploaded '+j.world+'. It needs a moderator\'s approval before it can run. You can continue; your signup is held until then.');}
-     else if(j.ok){ready[kind]=true;if(kind=='custom')pending='';msg.className='inlinemsg ok';msg.textContent=j.note||('Installed '+j.world+'. You can continue.');}
-     else{ready[kind]=false;msg.className='inlinemsg bad';msg.textContent=j.error||'Install failed.';}
+     if(btn)btn.disabled=false;
+     if(j.ok){state.ready=true;state.pending=j.pending?j.world:'';if(j.game)state.game=j.game;state.custom=!j.core;
+       msg.className='inlinemsg ok';msg.textContent=j.note||(j.pending?('Uploaded '+j.world+'. It needs a moderator\'s approval before it can run. You can continue; your signup is held until then.'):('Installed '+j.world+'. You can continue.'));}
+     else{state.ready=false;msg.className='inlinemsg bad';msg.textContent=j.error||'Install failed.';}
      refresh1();
-   }).catch(function(){btn.disabled=false;msg.className='inlinemsg bad';msg.textContent='Install failed (network).';});
+   }).catch(function(){if(btn)btn.disabled=false;msg.className='inlinemsg bad';msg.textContent='Install failed (network).';});
  }
  var apbtn=document.getElementById('apbtn');
  if(apbtn)apbtn.addEventListener('click',function(){
    var f=document.getElementById('apfile').files[0],m=document.getElementById('apmsg');
    if(!f){m.className='inlinemsg bad';m.textContent='Choose an .apworld file first.';return;}
-   var fd=new FormData();fd.append('apworld',f);place(apbtn,m,fd,'custom');
+   var fd=new FormData();fd.append('apworld',f);place(m,fd,apbtn);
  });
- var catbtn=document.getElementById('catbtn');
- if(catbtn)catbtn.addEventListener('click',function(){
-   var fd=new FormData();fd.append('catalog',document.getElementById('catsel').value);
-   place(catbtn,document.getElementById('catmsg'),fd,'catalog');
+ // The starting YAML: written on first ask, so ask again until it's ready.
+ document.getElementById('tpllink').addEventListener('click',function(e){
+   e.preventDefault();var game=state.game,msg=document.getElementById('tplmsg'),tries=0;
+   msg.className='inlinemsg';msg.textContent='Preparing…';
+   (function get(){fetch('signup/template?game='+encodeURIComponent(game)).then(function(r){
+     if(r.status==202){if(++tries>60){msg.className='inlinemsg bad';msg.textContent='It\'s taking too long. Try again later.';return;}setTimeout(get,3000);return;}
+     if(!r.ok)return r.json().then(function(j){msg.className='inlinemsg bad';msg.textContent=j.error||'No template for this game.';});
+     return r.blob().then(function(b){var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=game+'.yaml';document.body.appendChild(a);a.click();a.remove();msg.textContent='';});
+   }).catch(function(){msg.className='inlinemsg bad';msg.textContent='Download failed (network).';});})();
  });
- var catsel=document.getElementById('catsel');
- if(catsel)catsel.addEventListener('change',function(){ready.catalog=false;document.getElementById('catmsg').textContent='';refresh1();});
  refresh1();
- yamlfile.addEventListener('change',function(){next2.disabled=!(pending&&gtype()=='custom'&&yamlfile.files.length);chkmsg.textContent='';});
+ yamlfile.addEventListener('change',function(){next2.disabled=!(state.pending&&yamlfile.files.length);chkmsg.textContent='';});
  chkbtn.addEventListener('click',function(){
    var f=yamlfile.files[0];
    if(!f){chkmsg.className='inlinemsg bad';chkmsg.textContent='Choose your YAML first.';return;}

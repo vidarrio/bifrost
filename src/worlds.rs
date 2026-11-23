@@ -155,6 +155,21 @@ pub fn installed_for_game(dirs: &SeasonDirs, game: &str) -> Option<(String, Stri
         })
 }
 
+/// The custom games a season has installed (Bifrost's own aside): game,
+/// file and the version its manifest declares, by game name.
+pub fn installed_games(dirs: &SeasonDirs) -> Vec<(String, String, String)> {
+    let mut out: Vec<(String, String, String)> = ap_adapter::world_pins(dirs)
+        .into_iter()
+        .filter(|(_, pin)| !pin.shipped)
+        .filter_map(|(file, _)| {
+            let m = manifest_of(&dirs.worlds.join(&file));
+            (!m.game.is_empty()).then_some((m.game, file, m.version))
+        })
+        .collect();
+    out.sort_by_key(|a| a.0.to_lowercase());
+    out
+}
+
 /// A dotted version as numbers ("v1.10.2" → [1, 10, 2]), if it is one.
 fn version_parts(v: &str) -> Option<Vec<u64>> {
     let v = v.trim().trim_start_matches(['v', 'V']);

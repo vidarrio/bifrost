@@ -22,10 +22,18 @@ pub(crate) async fn signup_get(
     let (me, is_admin) = ctx.ident(&me);
     let subs = st.db.submissions(ctx.id).await.unwrap_or_default();
     let open = ctx.state().accepts_signups();
+    let dirs = config::get().season(ctx.id);
+    let ap = apinstall::for_dirs(&dirs);
+    let core = crate::games::cached(&ap);
+    if core.is_none() {
+        crate::games::ensure(ap.clone());
+    }
     let worlds = render::SignupWorlds {
         custom_allowed: sandbox::get().custom_worlds_allowed(),
         manual: st.db.approval().await == db::Approval::Manual,
         catalog: st.db.catalog().await,
+        core,
+        installed: worlds::installed_games(&dirs),
     };
     render::signup_page(
         &ctx.row.name,
@@ -377,7 +385,23 @@ pub(crate) async fn signup_apworld(
     let (uploader, _) = ctx.ident(&me);
     if !catalog.is_empty() {
         return match worlds::install_from_catalog(&st.db, ctx.id, catalog.trim(), &uploader).await {
-            Ok(file) => Json(serde_json::json!({"ok": true, "world": file, "pending": false})),
+            Ok(file) => {
+                let w = st.db.catalog_world(catalog.trim()).await;
+                let game = w.as_ref().map(|w| w.game.clone()).unwrap_or_default();
+                let ver = w
+                    .map(|w| w.version)
+                    .filter(|v| !v.is_empty())
+                    .map(|v| format!(" {v}"))
+                    .unwrap_or_default();
+                let note = if game.is_empty() {
+                    "It's ready. You can continue.".to_string()
+                } else {
+                    format!("{game}{ver} is ready. You can continue.")
+                };
+                Json(
+                    serde_json::json!({"ok": true, "world": file, "pending": false, "game": game, "note": note}),
+                )
+            }
             Err(e) => fail(&e),
         };
     }
@@ -391,16 +415,18 @@ pub(crate) async fn signup_apworld(
         Ok(f) => f,
         Err(e) => return fail(e),
     };
+    // The game it says it is, for the wizard's starting YAML.
+    let uploaded_game = worlds::manifest(&bytes).game;
     match worlds::place_upload(&st.db, ctx.id, &file, bytes, &uploader).await {
         Ok(worlds::Placed::Core { game }) => Json(serde_json::json!({
-            "ok": true, "world": "", "pending": false,
+            "ok": true, "world": "", "pending": false, "core": true, "game": game,
             "note": format!("{game} is one of this server's core games. Your signup uses the server's version, so there's nothing to install. You can continue.")
         })),
         Ok(worlds::Placed::Waiting {
             game,
             file: waiting,
         }) => Json(serde_json::json!({
-            "ok": true, "world": waiting, "pending": true,
+            "ok": true, "world": waiting, "pending": true, "game": game,
             "note": format!("An upload of {game} is already waiting for a moderator's approval in this season, so your signup waits for that one. You can continue; it's checked once that's approved.")
         })),
         Ok(worlds::Placed::Season {
@@ -422,7 +448,9 @@ pub(crate) async fn signup_apworld(
                     " Your newer version ({v}) was passed to the server's admins to consider."
                 ));
             }
-            Json(serde_json::json!({"ok": true, "world": have, "pending": false, "note": note}))
+            Json(
+                serde_json::json!({"ok": true, "world": have, "pending": false, "note": note, "game": game}),
+            )
         }
         Ok(worlds::Placed::Ours {
             game,
@@ -444,11 +472,11 @@ pub(crate) async fn signup_apworld(
                 ));
             }
             Json(
-                serde_json::json!({"ok": true, "world": installed, "pending": false, "note": note}),
+                serde_json::json!({"ok": true, "world": installed, "pending": false, "note": note, "game": game}),
             )
         }
         Ok(placed) => Json(serde_json::json!({
-            "ok": true, "world": file, "pending": placed == worlds::Placed::Pending
+            "ok": true, "world": file, "pending": placed == worlds::Placed::Pending, "game": uploaded_game
         })),
         Err(e) => {
             tracing::info!("apworld upload refused: {e}");
@@ -459,6 +487,64 @@ pub(crate) async fn signup_apworld(
 
 /// Step 2 of signup: validate a YAML live against the installed worlds (incl. an
 /// apworld just installed in step 1). Returns JSON for the wizard.
+#[derive(Deserialize)]
+pub(crate) struct TemplateQuery {
+    #[serde(default)]
+    game: String,
+}
+
+/// A starting YAML for a game the season can play: the season's own copy of
+/// a custom world, else the catalog's, else a core game of the season's
+/// Archipelago version. 202 while it's being written (the page asks again).
+pub(crate) async fn signup_template(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    Query(q): Query<TemplateQuery>,
+) -> Response {
+    use crate::templates::{self, Template};
+    let dirs = config::get().season(ctx.id);
+    let ap = apinstall::for_dirs(&dirs);
+    let game = q.game.trim();
+    let not_here = || Template::Unavailable("There's no template for that game here.".into());
+    let t = if game.is_empty() {
+        not_here()
+    } else if let Some((file, sha, _)) = worlds::installed_for_game(&dirs, game) {
+        templates::world(&ap, &dirs.worlds.join(&file), &file, &sha, game)
+    } else if let Some(cat) = worlds::catalog_for_game(&st.db.catalog().await, game) {
+        templates::world(
+            &ap,
+            &worlds::catalog_file(&cat.sha256),
+            &cat.file,
+            &cat.sha256,
+            game,
+        )
+    } else if crate::games::cached(&ap).is_some_and(|g| g.iter().any(|x| x.game == game)) {
+        templates::core(&ap, game)
+    } else {
+        not_here()
+    };
+    match t {
+        Template::Ready(path) => match tokio::fs::read(&path).await {
+            Ok(bytes) => download_response(&format!("{game}.yaml"), bytes),
+            Err(e) => (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Couldn't read the template: {e}")})),
+            )
+                .into_response(),
+        },
+        Template::Preparing => (
+            axum::http::StatusCode::ACCEPTED,
+            Json(serde_json::json!({"preparing": true})),
+        )
+            .into_response(),
+        Template::Unavailable(e) => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": e})),
+        )
+            .into_response(),
+    }
+}
+
 pub(crate) async fn signup_check(
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,

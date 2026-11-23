@@ -318,15 +318,25 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .choice{display:grid;gap:10px;margin-bottom:6px}
 .choice label{display:flex;gap:10px;align-items:flex-start;background:var(--bg);border:1px solid var(--bd);border-radius:9px;padding:11px 13px;cursor:pointer;font-size:14px}
 .choice label:has(input:checked){border-color:var(--accent)}
-.wstep input[type=file],.wstep input[type=text]{width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:9px 11px;font-size:13px;margin:2px 0}
+.wstep input[type=file],.wstep input[type=text],.wstep input[type=search]{width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:9px 11px;font-size:13px;margin:2px 0}
 
+/* The signup wizard's game list: one searchable list of every game. */
+.gamepick{list-style:none;margin:6px 0 0;padding:0;max-height:320px;overflow-y:auto;border:1px solid var(--bd);border-radius:9px;background:var(--bg)}
+.gamepick li{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--bd);cursor:pointer;font-size:14px}
+.gamepick li:last-child{border-bottom:0}
+.gamepick li[hidden]{display:none}
+.gamepick li:hover,.gamepick li:focus-visible{background:var(--panel);outline:none}
+.gamepick li[aria-selected=true]{background:var(--panel);box-shadow:inset 3px 0 0 var(--accent)}
+.gamepick li.upload{color:var(--accent)}
+.gamepick .v{font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap}
+.gamepick small{color:var(--muted)}
+.gamepick .tag{display:inline-block;margin-left:6px;padding:1px 7px;border:1px solid var(--bd);border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;color:var(--muted);vertical-align:1px}
 /* A file or world picker and the button that acts on it share a row, the
    button as tall as the field; on a narrow screen the button gets a line of its own. */
 .pickrow{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:2px 0}
 .wstep .pickrow>input,.wstep .pickrow>select{flex:1 1 240px;min-width:0;margin:0}
 .pickrow>button{flex:0 0 auto}
 .pickrow>button[hidden]{display:none}
-#catsel{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:9px 11px;font-size:13px}
 @media (max-width:480px){.pickrow>button{flex:1 1 100%;min-height:40px}}
 .nav{display:flex;justify-content:space-between;gap:10px;margin-top:18px}.nav:has(>:only-child){justify-content:flex-end}
 .nav .back{background:transparent;border:1px solid var(--bd);color:var(--muted)}
