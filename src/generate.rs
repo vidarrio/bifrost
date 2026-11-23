@@ -664,7 +664,7 @@ async fn regen_inner(
     let dirs = roll(state, season).await?;
 
     let seed_zip = newest_seed(season).await.ok_or("no seed was produced")?;
-    set(state, true, "Mapping slots and carrying over claims…");
+    set(state, true, "Mapping slots to their players…");
     let (seed_name, ap_slots) = read_seed(&dirs, &seed_zip).await?;
     // The new seed is the season's from here, in one go with its slots: the
     // tracker accepts the restarted server, and data derived from the old seed
@@ -677,7 +677,7 @@ async fn regen_inner(
     deploy(db, rts, season, &dirs, &seed_zip).await?;
 
     Ok(format!(
-        "Regenerated seed {seed_name}: {} AP slots, and players keep their slots. The game is restarting on a fresh save.",
+        "Regenerated seed {seed_name} with {} AP slots. Players keep their games, and the game server is restarting on a fresh save.",
         ap_slots.len()
     ))
 }
