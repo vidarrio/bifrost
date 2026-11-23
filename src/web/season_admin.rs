@@ -492,6 +492,9 @@ pub(crate) async fn admin_delete_player(
 #[derive(Deserialize)]
 pub(crate) struct ApworldForm {
     pub(crate) name: String,
+    /// On approval, by a sysadmin: add it to the catalog too.
+    #[serde(default)]
+    pub(crate) catalog: Option<String>,
 }
 
 const LOCKED_WORLDS: &str = "A generated season's apworlds are locked: a re-roll needs them.";
@@ -525,9 +528,35 @@ pub(crate) async fn admin_world_approve(
     if !matches!(ctx.state(), db::State::Draft | db::State::Signup) {
         return render::notice(LOCKED_WORLDS, false, "admin").into_response();
     }
-    match worlds::approve(&st.db, ctx.id, &f.name, &who).await {
-        Ok(_) => Redirect::to(&ctx.url("/admin")).into_response(),
-        Err(e) => render::notice(&e, false, "admin").into_response(),
+    let req = match worlds::approve(&st.db, ctx.id, &f.name, &who).await {
+        Ok(req) => req,
+        Err(e) => return render::notice(&e, false, "admin").into_response(),
+    };
+    // A sysadmin's approval can add it to the catalog at once; a season
+    // moderator's offers it to the sysadmins instead.
+    if !me.can(auth::Action::ManageInstance) {
+        worlds::offer_approved(&st.db, ctx.id, &req, &who).await;
+        return Redirect::to(&ctx.url("/admin")).into_response();
+    }
+    if f.catalog.is_none() {
+        return Redirect::to(&ctx.url("/admin")).into_response();
+    }
+    match worlds::catalog_add_installed(&st.db, ctx.id, &req.file, &who).await {
+        Ok(added) => render::notice(
+            &format!("Approved {}. {}", req.file, added.message()),
+            true,
+            "admin",
+        )
+        .into_response(),
+        Err(e) => render::notice(
+            &format!(
+                "Approved {}, but it wasn't added to the catalog: {e}",
+                req.file
+            ),
+            false,
+            "admin",
+        )
+        .into_response(),
     }
 }
 

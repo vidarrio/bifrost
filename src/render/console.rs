@@ -545,15 +545,37 @@ pub fn catalog_page(
         body.push_str("</table>");
     }
     if !offers.is_empty() {
-        body.push_str(r#"<h2>Newer versions players uploaded</h2><p class="statline">A player uploaded a newer version of a catalog game. Their signup uses the catalog's version; replace it with theirs here once you've vetted it, and new signups get that instead. Seasons that installed the old one keep it.</p>"#);
-        body.push_str(r#"<p class="statline">The game and version are what the upload's own manifest claims. Download it and vet its code before promoting it: the catalog's worlds are trusted on every season.</p>"#);
+        body.push_str(r#"<h2>Worlds offered for the catalog</h2><p class="statline">Newer versions of catalog games that players uploaded (their signups use the catalog's version), and worlds a season's moderators approved that the catalog doesn't have. Add one here once you've vetted it, and new signups get it. Seasons that installed an older version keep it.</p>"#);
+        body.push_str(r#"<p class="statline">The game and version are what the upload's own manifest claims. Download it and vet its code before adding it: the catalog's worlds are trusted on every season.</p>"#);
         body.push_str(r#"<table class="utable"><tr><th>Game</th><th>Version</th><th>Replaces</th><th>File</th><th>Uploaded</th><th></th></tr>"#);
         for o in offers {
+            let approved = if o.approved_by.is_empty() {
+                String::new()
+            } else {
+                format!(" · approved by {}", esc(&o.approved_by))
+            };
+            let (label, confirm) = if o.replaces.is_empty() {
+                (
+                    "add to the catalog",
+                    format!(
+                        "Add {} {} ({}'s upload) to the catalog? Its code becomes trusted catalog code for every season: vet it first.",
+                        o.game, o.version, o.uploaded_by
+                    ),
+                )
+            } else {
+                (
+                    "replace the catalog's version",
+                    format!(
+                        "Replace {} {} in the catalog with {}'s upload ({})? Its code becomes trusted catalog code for every season: vet it first.",
+                        o.game, o.replaces, o.uploaded_by, o.version
+                    ),
+                )
+            };
             body.push_str(&format!(
-                r#"<tr><td>{}</td><td class="mono">{}</td><td class="mono">{}</td><td class="mono" title="{}"><a href="/admin/catalog/offer/download?sha256={}">{}</a> · {}…</td><td>{} · {} · <a href="/s/{}/admin">season</a></td><td>{} {}</td></tr>"#,
+                r#"<tr><td>{}</td><td class="mono">{}</td><td class="mono">{}</td><td class="mono" title="{}"><a href="/admin/catalog/offer/download?sha256={}">{}</a> · {}…</td><td>{} · {}{approved} · <a href="/s/{}/admin">season</a></td><td>{} {}</td></tr>"#,
                 esc(&o.game),
                 esc(&o.version),
-                esc(&o.replaces),
+                if o.replaces.is_empty() { "new".to_string() } else { esc(&o.replaces) },
                 esc(&o.sha256),
                 esc(&o.sha256),
                 esc(&o.file),
@@ -561,23 +583,8 @@ pub fn catalog_page(
                 esc(&o.uploaded_by),
                 fmt_date(o.uploaded_at),
                 o.season,
-                action_btn(
-                    "/admin/catalog/offer/promote",
-                    &[("sha256", &o.sha256)],
-                    "replace the catalog's version",
-                    false,
-                    &format!(
-                        "Replace {} {} in the catalog with {}'s upload ({})? Its code becomes trusted catalog code for every season: vet it first.",
-                        o.game, o.replaces, o.uploaded_by, o.version
-                    )
-                ),
-                action_btn(
-                    "/admin/catalog/offer/dismiss",
-                    &[("sha256", &o.sha256)],
-                    "dismiss",
-                    true,
-                    ""
-                ),
+                action_btn("/admin/catalog/offer/promote", &[("sha256", &o.sha256)], label, false, &confirm),
+                action_btn("/admin/catalog/offer/dismiss", &[("sha256", &o.sha256)], "dismiss", true, ""),
             ));
         }
         body.push_str("</table>");

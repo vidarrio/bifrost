@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A sysadmin approving an upload in a season can add it to the catalog in the
+  same step (the approve button's box, ticked by default). A season
+  moderator's approval offers the world to the sysadmins instead, on the
+  catalog page, with who approved it.
 - The signup wizard offers a **starting YAML** for the game you pick:
   Archipelago's own template, with every option, its default and what it
   does, from the season's Archipelago version. It's written on first use and
