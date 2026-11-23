@@ -306,7 +306,7 @@ pub(super) fn ap_panel(status: &SettingsStatus) -> String {
     if let Some(j) = job {
         match &j.outcome {
             None => b.push_str(&format!(
-                r#"<meta http-equiv="refresh" content="4"><div class="banner">Installing Archipelago {} (started {}), and this page refreshes until it's done.</div>"#,
+                r#"<meta http-equiv="refresh" content="4"><div class="banner">Installing Archipelago {} (started {}). This page refreshes until it's done.</div>"#,
                 esc(&j.version),
                 fmt_date(j.started)
             )),

@@ -394,7 +394,7 @@ pub(crate) async fn signup_apworld(
     match worlds::place_upload(&st.db, ctx.id, &file, bytes, &uploader).await {
         Ok(worlds::Placed::Core { game }) => Json(serde_json::json!({
             "ok": true, "world": "", "pending": false,
-            "note": format!("{game} is one of this server's core games, so your signup uses the server's version, so there's nothing to install. You can continue.")
+            "note": format!("{game} is one of this server's core games. Your signup uses the server's version, so there's nothing to install. You can continue.")
         })),
         Ok(worlds::Placed::Waiting {
             game,

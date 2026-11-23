@@ -63,7 +63,7 @@ try:
 
     post(root, "/admin/settings/ap/check")
     post(root, "/admin/settings/ap/install", data={"version": "0.6.7-bifrost.2"})
-    done = wait_for(lambda: (p := get(root, "/admin/settings").text) and "this page refreshes" not in p and p, 1800, 10)
+    done = wait_for(lambda: (p := get(root, "/admin/settings").text) and "page refreshes" not in p and p, 1800, 10)
     check("installing a release works with the bundled Python", done and "passed a test generation" in done,
           re.findall(r'class="banner[^"]*">[^<]*', done or ""))
 finally:

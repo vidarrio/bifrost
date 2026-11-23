@@ -677,7 +677,7 @@ async fn regen_inner(
     deploy(db, rts, season, &dirs, &seed_zip).await?;
 
     Ok(format!(
-        "Regenerated seed {seed_name}: {} AP slots, claims carried over. The game is restarting on a fresh save.",
+        "Regenerated seed {seed_name}: {} AP slots, and players keep their slots. The game is restarting on a fresh save.",
         ap_slots.len()
     ))
 }
