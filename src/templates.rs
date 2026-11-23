@@ -56,18 +56,27 @@ where
         ));
     }
     if RUNNING.lock().unwrap().insert(key.clone()) {
-        /// Takes the key out of [`RUNNING`] however the job ends, a panic
-        /// included, so it can be asked for again.
-        struct Done(String);
+        /// Takes the key out of [`RUNNING`] however the job ends. If it
+        /// ends without finishing (a panic), that counts as a failure, so it
+        /// isn't retried sooner than [`RETRY`] either.
+        struct Done(String, bool);
         impl Drop for Done {
             fn drop(&mut self) {
+                if !self.1
+                    && let Ok(mut f) = FAILED.lock()
+                {
+                    f.insert(
+                        self.0.clone(),
+                        (Instant::now(), "it stopped unexpectedly".into()),
+                    );
+                }
                 if let Ok(mut r) = RUNNING.lock() {
                     r.remove(&self.0);
                 }
             }
         }
         tokio::spawn(async move {
-            let _done = Done(key.clone());
+            let mut done = Done(key.clone(), false);
             // It loads every world, like a YAML check: queue behind those.
             let res = match crate::checker::check_gate().acquire().await {
                 Ok(_permit) => job.await,
@@ -80,6 +89,7 @@ where
                     .unwrap()
                     .insert(key.clone(), (Instant::now(), e));
             }
+            done.1 = true;
         });
     }
     Template::Preparing
@@ -140,7 +150,7 @@ pub fn world(ap: &Install, path: &Path, file: &str, sha256: &str, game: &str) ->
         let (out, index) = ap_adapter::write_templates(&ap, Some((&path, &file))).await?;
         let res = match index.get(&game) {
             Some(name) => {
-                let bytes = read_output(&out, name);
+                let bytes = read_output_async(&out, name).await;
                 match bytes {
                     Ok(b) => write(&kept, b).await,
                     Err(e) => Err(e),
@@ -201,6 +211,14 @@ fn read_output(out: &Path, name: &str) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// [`read_output`], off the async runtime's threads.
+async fn read_output_async(out: &Path, name: &str) -> Result<Vec<u8>, String> {
+    let (out, name) = (out.to_path_buf(), name.to_string());
+    tokio::task::spawn_blocking(move || read_output(&out, &name))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 async fn write(path: &Path, bytes: Vec<u8>) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         tokio::fs::create_dir_all(dir)
@@ -219,7 +237,7 @@ async fn keep(out: &Path, dest: &Path, index: &BTreeMap<String, String>) -> Resu
         return Err("no templates were written".into());
     }
     for name in index.values() {
-        let bytes = read_output(out, name)?;
+        let bytes = read_output_async(out, name).await?;
         write(&dest.join(name), bytes).await?;
     }
     write(
