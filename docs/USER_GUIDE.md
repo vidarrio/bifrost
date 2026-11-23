@@ -97,7 +97,8 @@ have no game there yet, the signup wizard is on the page too, with two steps:
    YAML or a moderator removes the signup. If the new version is rejected,
    the signups held for it are checked against the season's copy instead.
    Once the season is generated, it keeps the version its seed was made
-   with.
+   with. If the catalog has the game at least as new as your upload,
+   the catalog's version is used instead.
 
    Once you've picked a game, step 2 offers a **starting YAML** for it to
    download: Archipelago's own template, with every option, its default and
@@ -734,7 +735,11 @@ The **approval toggle** decides what happens to other uploads:
 
 - **Manual** (default): uploads wait for a season moderator's approval. Until
   then, Archipelago never loads them.
-- **Automatic**: uploads install straight away.
+- **Automatic**: uploads install straight away. That includes a newer
+  version of a game a season already has, which replaces the season's copy
+  for everyone signed up with that game (until the season is generated). So
+  any player can change the code others play with: use it only where you
+  trust the players.
 
 Every installed world is pinned by its SHA-256. A world file that changes
 after upload, or appears without going through Bifrost, is refused.

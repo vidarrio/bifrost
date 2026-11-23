@@ -96,7 +96,7 @@ try:
     check("…and replaces it, still held", "<h1>Pfoo3</h1>" in r.text and "waiting for foo.apworld" in r.text, r.text[-400:])
     r = post(alice, f"{S}/signup/game/{game}/yaml", files={"yaml": ("foo.yaml", fixture("foo.yaml"))})
     check("…as often as needed", "<h1>Pfoo</h1>" in r.text, r.text[-400:])
-    check("roster shows the held signup", "waiting for foo.apworld to be approved" in page)
+    check("roster shows the held signup", "held, waiting for foo.apworld" in page)
     adm = get(root, f"{S}/admin").text
     check("admin page lists the request", "Apworlds waiting for approval" in adm and "Foo Finder" in adm)
     check("admin signup list marks it held", "held for foo.apworld" in adm)
@@ -342,11 +342,44 @@ try:
     r = post(bob, f"{S}/signup", files={"yaml": ("b2.yaml", foo_yaml("Bfoo2"))}, data={"is_custom": "1", "pending_world": "foo.apworld"})
     check("a second newer version holds its signup too", "held until a moderator approves foo.apworld" in r.text, r.text[-400:])
     check("…which the admin page shows", held_in(get(root, f"{S}/admin").text, "Bfoo2"))
+    check("…and the approval list says it replaces the season's version",
+          "replaces the season's 1.1.0</b>; approving checks every signup for Foo Finder" in get(root, f"{S}/admin").text)
     post(root, f"{S}/admin/worlds/reject", data={"name": "foo.apworld"})
     adm = wait_for(lambda: listed(t := get(root, f"{S}/admin").text, "Bfoo2") and not held_in(t, "Bfoo2") and t, 180, 2)
     check("rejecting a newer version moves its signups to the season's", adm and installed_foo() == foo11)
     rid = re.search(r'href="signup/game/([0-9a-z]+)">Rfoo<', get(root, f"{S}/signup").text)
     post(root, f"{S}/admin/delete-player", data={"id": rid.group(1) if rid else ""})
+
+    # An upload not newer than the catalog's, which is newer than the
+    # season's: the catalog's replaces the season's, not the upload.
+    post(root, "/admin/catalog/add", files={"apworld": ("late.apworld", variant("baz.apworld", "Late Game", "3.0.0"))})
+    j = post(dave, f"/s/{sid4}/signup/apworld", files={"apworld": ("late4.apworld", variant("baz.apworld", "Late Game", "2.5.0"))}).json()
+    check("a newer upload the catalog has outdone installs the catalog's version",
+          j.get("ok") and j.get("pending") is False and j.get("world") == "late.apworld" and "Late Game 3.0.0 in place of the season's 2.0.0" in j.get("note", ""), j)
+    installed = os.listdir(os.path.join(srv.data, "seasons", sid4, "worlds"))
+    check("…and not the upload", "late4.apworld" not in installed, installed)
+
+    # A newer version under another name (its own package), auto-approved:
+    # installed at once in place of the old file.
+    def renamed(name, pkg, game, version):
+        src = zipfile.ZipFile(io.BytesIO(variant(name, game, version)))
+        out = io.BytesIO()
+        old = name.removesuffix(".apworld") + "/"
+        with zipfile.ZipFile(out, "w") as z:
+            for item in src.infolist():
+                data = src.read(item.filename)
+                item.filename = pkg + "/" + item.filename.removeprefix(old)
+                z.writestr(item, data)
+        return out.getvalue()
+    post(root, "/admin/catalog/approval", data={"mode": "auto"})
+    j = post(dave, f"/s/{sid2}/signup/apworld", files={"apworld": ("baz2.apworld", renamed("baz.apworld", "baz2", "Baz Finder", "1.1.0"))}).json()
+    post(root, "/admin/catalog/approval", data={"mode": "manual"})
+    check("auto mode replaces the season's version at once, under its new name",
+          j.get("ok") and j.get("pending") is False and j.get("world") == "baz2.apworld" and "in place of the season's 1.0.0" in j.get("note", ""), j)
+    installed = os.listdir(os.path.join(srv.data, "seasons", sid2, "worlds"))
+    check("…removing the old file", "baz2.apworld" in installed and "baz.apworld" not in installed, installed)
+    r = post(dave, f"/s/{sid2}/signup/check", files={"yaml": ("baz.yaml", fixture("baz.yaml"))}).json()
+    check("…and the new one loads", r.get("ok"), r)
 
     # remove from catalog; installed copies stay
     newsha = re.search(r'<tr><td[^>]*>Bar Finder.*?action="/admin/catalog/remove".*?name="sha256" value="([0-9a-f]{64})"', get(root, "/admin/catalog").text, re.S)
@@ -355,8 +388,12 @@ try:
     check("season keeps its copy", "bar.apworld" in get(root, f"{S}/admin").text)
 
     # generate the first season now nothing is held
+    j = upload(root, "foo.apworld", variant("foo.apworld", "Foo Finder", "1.3.0"))
+    check("a newer version waits for approval without a signup", j.get("pending"), j)
     gen = generate(root, S.removeprefix("/s/"), 240)
     check("generates once nothing is held", gen and gen.startswith("Generated"), gen)
+    post(root, f"{S}/admin/worlds/approve", data={"name": "foo.apworld"})
+    check("after generation, approving a newer version doesn't replace the season's", installed_foo() == foo11)
 finally:
     srv.stop()
 

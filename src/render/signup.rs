@@ -479,7 +479,7 @@ pub fn signup_game_page(g: &SignupGame) -> Html<String> {
             esc(&sentence(e))
         )),
         (Some(w), None) => b.push_str(&format!(
-            r#"<div class="banner ok">Held, waiting for {} to be approved. Its YAML is checked then. You can replace it meanwhile, and the new file gets checked instead.</div>"#,
+            r#"<div class="banner ok">Held, waiting for {}. Its YAML is checked against it once it's installed (a new upload needs a moderator's approval first). You can replace it meanwhile, and the new file gets checked instead.</div>"#,
             esc(w)
         )),
         _ => {}

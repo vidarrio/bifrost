@@ -174,17 +174,18 @@ impl Db {
         .unwrap_or_default()
     }
 
-    /// Hold the season's signups for `game` that aren't held already for
-    /// `file`, the newer version of it just installed, so each is checked
-    /// against that. Returns how many.
-    pub async fn hold_game(&self, season: Id, game: &str, file: &str) -> u64 {
+    /// Hold the season's signups for `game`, and those held for `old` (the
+    /// version it replaced), for `file`, the newer version just installed, so
+    /// each is checked against that. Returns how many.
+    pub async fn hold_game(&self, season: Id, game: &str, old: &str, file: &str) -> u64 {
         sqlx::query(
             "UPDATE submission SET held_for = ?, held_err = NULL
-             WHERE season_id = ? AND game = ? AND held_for IS NULL",
+             WHERE season_id = ? AND ((game = ? AND held_for IS NULL) OR held_for = ?)",
         )
         .bind(file)
         .bind(season)
         .bind(game)
+        .bind(old)
         .execute(&self.pool)
         .await
         .map(|r| r.rows_affected())

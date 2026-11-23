@@ -170,6 +170,23 @@ async fn can_replace(db: &Db, season: Id) -> bool {
 /// Install `bytes` as `file` in place of `old` (the season's world for
 /// `game`), then hold the season's signups for the game and check each
 /// against the new version: those that pass go ahead, the rest are flagged.
+/// One lock per season, held by generation while it moves the season to
+/// generating and by a replacement from its state check until the signups
+/// are held: a season is never generated with a world its signups weren't
+/// checked against.
+pub async fn season_lock(season: Id) -> tokio::sync::OwnedMutexGuard<()> {
+    static LOCKS: std::sync::Mutex<
+        std::collections::BTreeMap<Id, std::sync::Arc<tokio::sync::Mutex<()>>>,
+    > = std::sync::Mutex::new(std::collections::BTreeMap::new());
+    let lock = LOCKS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .entry(season)
+        .or_default()
+        .clone();
+    lock.lock_owned().await
+}
+
 async fn replace_world(
     db: &Db,
     season: Id,
@@ -179,26 +196,34 @@ async fn replace_world(
     pin: Pin,
     game: &str,
 ) -> Result<(), String> {
+    let _lock = season_lock(season).await;
     if !can_replace(db, season).await {
         return Err(format!(
             "The season has been generated, so it keeps the {game} its seed was made with."
         ));
     }
     let dirs = config::get().season(season);
-    if old != file {
-        if ap_adapter::world_pins(&dirs).contains_key(file) {
-            return Err(format!(
-                "A different {file} is already installed this season. Ask a moderator to remove it first."
-            ));
-        }
-        crate::generate::delete_apworld(season, old).await?;
+    if old != file && ap_adapter::world_pins(&dirs).contains_key(file) {
+        return Err(format!(
+            "A different {file} is already installed this season. Ask a moderator to remove it first."
+        ));
     }
+    // The new one first: if that fails, the season still has the old.
     install(dirs, file.to_string(), bytes, pin).await?;
-    let n = db.hold_game(season, game, file).await;
+    if old != file
+        && let Err(e) = crate::generate::delete_apworld(season, old).await
+    {
+        tracing::warn!("season {season}: removing {old}, replaced by {file}: {e}");
+    }
+    let n = db.hold_game(season, game, old, file).await;
     tracing::info!("season {season}: {game} replaced by {file}; re-checking {n} signup(s)");
+    Ok(())
+}
+
+/// Check the signups held for `file`, in the background.
+fn recheck_later(db: &Db, season: Id, file: &str) {
     let (db, file) = (db.clone(), file.to_string());
     tokio::spawn(async move { recheck_held(&db, season, &file).await });
-    Ok(())
 }
 
 /// The world a season already has for `game` (Bifrost's own aside): its file
@@ -509,6 +534,36 @@ pub async fn place_upload(
             uploaded_at: crate::clock::now(),
             ..Pin::default()
         };
+        // The catalog has this game at least as new: use the catalog's.
+        if let Some(cat) = &cat
+            && version_newer(&cat.version, &old)
+            && !version_newer(&m.version, &cat.version)
+        {
+            let bytes = tokio::fs::read(catalog_file(&cat.sha256))
+                .await
+                .map_err(|e| format!("reading the catalog copy: {e}"))?;
+            if crate::text::sha256_hex(&bytes) != cat.sha256 {
+                return Err(
+                    "The catalog copy doesn't match its hash. Ask a sysadmin to re-add it.".into(),
+                );
+            }
+            let pin = Pin {
+                uploaded_by: uploader.to_string(),
+                uploaded_at: crate::clock::now(),
+                approved_by: cat.added_by.clone(),
+                catalog: true,
+                ..Pin::default()
+            };
+            replace_world(db, season, &old_file, &cat.file, bytes, pin, &m.game).await?;
+            recheck_later(db, season, &cat.file);
+            return Ok(Placed::Replaced {
+                game: m.game,
+                file: cat.file.clone(),
+                version: cat.version.clone(),
+                old,
+                offered: offered.is_some(),
+            });
+        }
         let now = if let Some(cat) = db.catalog_world(&sha).await {
             Some(Pin {
                 catalog: true,
@@ -522,6 +577,7 @@ pub async fn place_upload(
         };
         if let Some(pin) = now {
             replace_world(db, season, &old_file, file, bytes, pin, &m.game).await?;
+            recheck_later(db, season, file);
             return Ok(Placed::Replaced {
                 game: m.game,
                 file: file.to_string(),
@@ -736,6 +792,7 @@ pub async fn approve(db: &Db, season: Id, file: &str, by: &str) -> Result<WorldR
         replace_world(db, season, &have, &req.file, bytes, pin, &req.game).await?;
         let _ = tokio::fs::remove_file(&path).await;
         db.take_world_request(season, file).await;
+        recheck_later(db, season, &req.file);
         return Ok(req);
     }
     if !installed_conflict(&dirs, &req.file, &req.sha256)? {
