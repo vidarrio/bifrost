@@ -161,6 +161,7 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
             post(signup_apworld).layer(upload_limit()),
         )
         .route("/signup/check", post(signup_check))
+        .route("/signup/template", get(signup_template))
         .route("/signup/delete", post(signup_delete))
         .route("/signups", get(signups_list))
         .route("/worlds", get(games_page))

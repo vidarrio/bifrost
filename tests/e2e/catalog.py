@@ -166,13 +166,33 @@ try:
           (core or "")[:300])
     check("…which the home page links to", 'href="/worlds"' in anon.get(srv.base + "/").text)
     page = get(bob, f"{S}/signup").text
-    check("signup offers the catalog", f'value="{sha}"' in page and "Bar Finder 1.0.0 (bar.apworld)" in page)
+    check("signup offers the catalog", f'data-kind="cat" data-value="{sha}" data-game="Bar Finder"><span>Bar Finder <span class="tag">custom</span></span><span class="v">1.0.0</span>' in page)
     j = post(bob, f"{S}/signup/apworld", files={"catalog": (None, sha)}).json()
     check("catalog pick installs right away", j.get("ok") and not j.get("pending") and j.get("world") == "bar.apworld", j)
     adm = get(root, f"{S}/admin").text
     check("catalog install shows provenance", "from the catalog" in adm)
     r = post(bob, f"{S}/signup/check", files={"yaml": ("bar.yaml", fixture("bar.yaml"))}).json()
     check("catalog world checks", r.get("ok"), r)
+
+    # The wizard's starting YAMLs: written on first ask (202 until then).
+    def template(sess, sid, game):
+        r = None
+        for _ in range(80):
+            r = sess.get(srv.base + f"/s/{sid}/signup/template", params={"game": game})
+            if r.status_code != 202:
+                return r
+            time.sleep(3)
+        return r
+    r = template(bob, S.removeprefix("/s/"), "Bar Finder")
+    check("a custom world installed in the season has a starting YAML",
+          r.status_code == 200 and b"game: Bar Finder" in r.content and b"Bar Finder:" in r.content, (r.status_code, r.content[:200]))
+    r = template(bob, S.removeprefix("/s/"), "ChecksFinder")
+    check("…and so does a core game", r.status_code == 200 and b"game: ChecksFinder" in r.content, (r.status_code, r.content[:200]))
+    r = bob.get(srv.base + f"{S}/signup/template", params={"game": "No Such Game"})
+    check("…but not a game the season can't play", r.status_code == 404, r.status_code)
+    page = get(bob, f"{S}/signup").text
+    check("the wizard lists the season's custom world with its version",
+          re.search(r'data-kind="season" data-value="Bar Finder" data-game="Bar Finder"><span>Bar Finder <span class="tag">custom</span></span><span class="v">1.0.0</span>', page), page[-1500:])
     check("installed upload can be added to the catalog (button shown)", "add to catalog" in adm)
     post(root, f"{S}/admin/worlds/to-catalog", data={"name": "foo.apworld"})
     cat = get(root, "/admin/catalog").text

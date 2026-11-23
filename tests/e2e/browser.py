@@ -134,7 +134,7 @@ try:
             ctx = web.context(b, srv, root, width=width)
             pg = ctx.new_page()
             settled(pg, f"/s/{sid}/signup")
-            pg.check("input[name=gtype][value=custom]")
+            pg.click("#gamelist li[data-kind=upload]")
             f, btn = web.box(pg, "#apfile"), web.box(pg, "#apbtn")
             if not (f and btn):
                 check(f"signup at {width} px: the apworld field and its button are shown", False, (f, btn))
@@ -145,6 +145,31 @@ try:
                 check("signup: on a phone, Upload apworld gets a full-width line under its field",
                       btn["y"] > f["y"] + f["height"] - 1 and btn["width"] == f["width"] and btn["height"] >= 40, (f, btn))
             ctx.close()
+
+        # --- the signup wizard's game list: one searchable list, and a
+        # starting YAML for the game picked
+        ctx = web.context(b, srv, root)
+        pg = ctx.new_page()
+        if wait_for(lambda: "<span>ChecksFinder" in get(root, f"/s/{sid}/signup").text, timeout=240, every=3):
+            settled(pg, f"/s/{sid}/signup")
+            pg.fill("#gamefind", "checksf")
+            shown = pg.evaluate("[...document.querySelectorAll('#gamelist li')].filter(li => li.getClientRects().length).map(li => li.dataset.kind + ':' + li.dataset.game)")
+            check("searching narrows the game list (the upload entry stays)", shown == ["core:ChecksFinder", "upload:"], shown)
+            check("Next waits for a game", pg.is_disabled("#tostep2"))
+            pg.click("#gamelist li[data-game='ChecksFinder']")
+            check("picking a core game lets you go on", not pg.is_disabled("#tostep2"))
+            pg.click("#tostep2")
+            check("step 2 offers that game's starting YAML", pg.is_visible("#tpllink") and "ChecksFinder" in (pg.text_content("#tpllink") or ""))
+            with pg.expect_download(timeout=240_000) as dl:
+                pg.click("#tpllink")
+            path = dl.value.path()
+            text = open(path, encoding="utf-8-sig").read() if path else ""
+            check("…and downloads Archipelago's template for it",
+                  dl.value.suggested_filename == "ChecksFinder.yaml" and "game: ChecksFinder" in text and "ChecksFinder:" in text,
+                  (dl.value.suggested_filename, text[:200]))
+        else:
+            check("the signup wizard lists the core games within 4 minutes", False)
+        ctx.close()
 
         # --- signing out and in: the next page never shows the old identity
         ctx = web.context(b, srv, root)

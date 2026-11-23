@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The signup wizard offers a **starting YAML** for the game you pick:
+  Archipelago's own template, with every option, its default and what it
+  does, from the season's Archipelago version. It's written on first use and
+  kept, for core games and installed or vetted custom worlds.
+
+### Changed
+
+- The signup wizard's first step is one searchable list of every game the
+  season can play, each with the version the server has: core games, the
+  catalog's custom games and custom games already in the season, plus an
+  entry to upload another custom world. It replaces choosing between core,
+  catalog and upload first.
+
 ## [0.5.0] - 2026-11-23
 
 **Upgrading:** the database gains a column (catalog entries' public notes). The first

@@ -49,6 +49,7 @@ mod scope;
 mod season;
 mod seccomp;
 mod selfupdate;
+mod templates;
 mod text;
 mod web;
 mod worlds;
@@ -249,6 +250,7 @@ async fn main() {
     release_check::spawn();
     // The Games page's list for the version new seasons use.
     games::ensure(apinstall::active());
+    templates::ensure_core(apinstall::active());
     load::spawn_sampler(cfg.data_dir.clone());
 
     let shutdown_seasons = seasons.clone();

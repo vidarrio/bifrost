@@ -73,17 +73,24 @@ Open **Sign up for a season** from the home page and pick a season from those
 open for signup. Its page shows the games so far and who's playing them. If you
 have no game there yet, the signup wizard is on the page too, with two steps:
 
-1. **Pick the game.** Choose one of:
-   - a core (officially supported) game;
-   - a world from the server's catalog (custom worlds the admins have vetted);
-   - an upload of another custom world's `.apworld` file.
+1. **Pick the game.** One list holds every game the season can play, with
+   the version the server has, and a search box to narrow it: the core
+   (officially supported) games of the season's Archipelago version, the
+   custom games the admins have vetted, and custom games already installed in
+   the season (marked *custom*). Its last entry uploads another custom world's
+   `.apworld` file. Custom games are listed only if the server allows them;
+   otherwise the page says they're turned off.
 
-   The last two are offered only if the server allows custom worlds;
-   otherwise the page says custom games are turned off. If you upload a
-   game the server already has, the server's version is used: the season's
-   own copy if it has one (a season keeps one world per game), else the
-   catalog's, and a core game needs nothing installed. If yours is newer
-   than the catalog's, it's passed to the server's admins to consider.
+   If you upload a game the server already has, the server's version is
+   used: the season's own copy if it has one (a season keeps one world per
+   game), else the catalog's, and a core game needs nothing installed. If
+   yours is newer than the catalog's, it's passed to the server's admins to
+   consider.
+
+   Once you've picked a game, step 2 offers a **starting YAML** for it to
+   download: Archipelago's own template, with every option, its default and
+   what it does, from the season's Archipelago version. An upload still
+   waiting for approval has none until it's approved.
 2. **Upload your options YAML.** It is checked against the season's installed
    worlds with Archipelago's own code, and has to pass before you can
    continue. Its `name:` has to be one plain name of at most 16 characters, without

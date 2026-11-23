@@ -430,6 +430,73 @@ pub async fn list_games(ap: &Install) -> Result<Vec<GameEntry>, String> {
     }
 }
 
+#[derive(serde::Deserialize)]
+struct TemplateList {
+    templates: Option<std::collections::BTreeMap<String, String>>,
+    error: Option<String>,
+}
+
+/// Write Archipelago's template YAMLs (one per game it loads) into a fresh
+/// scratch dir, and return that dir and which file is which game's. With
+/// `world` (a custom world's file, and the name to give it), that world is
+/// the only custom one loaded: its own code runs, sandboxed like a YAML
+/// check, read-only apart from the scratch dir, with no network. The caller
+/// removes the dir.
+pub async fn write_templates(
+    ap: &Install,
+    world: Option<(&Path, &str)>,
+) -> Result<(PathBuf, std::collections::BTreeMap<String, String>), String> {
+    let cfg = config::get();
+    let scratch = scratch_dir("templates").await?;
+    let res = async {
+        if let Some((path, file)) = world {
+            let worlds = scratch.join("worlds");
+            tokio::fs::create_dir_all(&worlds)
+                .await
+                .map_err(|e| format!("templates: {e}"))?;
+            tokio::fs::copy(path, worlds.join(file))
+                .await
+                .map_err(|e| format!("templates: copying the world: {e}"))?;
+        }
+        let out = scratch.join("out");
+        let job = Job {
+            program: &ap.python,
+            args: vec![
+                cfg.script("bifrost_templates.py").into_os_string(),
+                out.clone().into_os_string(),
+            ],
+            cwd: &scratch,
+            env: vec![
+                ("BIFROST_AP_DIR", ap.dir.clone().into_os_string()),
+                ("BIFROST_SEASON_DIR", scratch.clone().into_os_string()),
+                ("PYTHONDONTWRITEBYTECODE", "1".into()),
+                ("SKIP_REQUIREMENTS_UPDATE", "1".into()),
+            ],
+            read: vec![ap.dir.clone(), cfg.runtime_dir.join("scripts")],
+            write: vec![scratch.clone()],
+            network: false,
+        };
+        let out_run = sandbox::run(sandbox::get().command(&job), GAMES_TIMEOUT)
+            .await
+            .map_err(|e| format!("templates: {e}"))?;
+        let list: TemplateList =
+            last_json_line(&out_run.stdout, "{}").map_err(|e| format!("templates: {e}"))?;
+        match (list.templates, list.error) {
+            (Some(t), _) => Ok((out, t)),
+            (None, Some(e)) => Err(format!("templates: {e}")),
+            (None, None) => Err(format!(
+                "templates: none written ({})",
+                stderr_tail(&out_run, 2)
+            )),
+        }
+    }
+    .await;
+    if res.is_err() {
+        let _ = tokio::fs::remove_dir_all(&scratch).await;
+    }
+    res
+}
+
 /// Validate a player YAML (raw contents) against the season's worlds with AP's
 /// own `roll_settings`. The caller serializes runs (each loads every world).
 pub async fn check_yaml(season: &SeasonDirs, yaml: &str) -> Result<CheckResult, String> {
