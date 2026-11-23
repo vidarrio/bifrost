@@ -587,7 +587,6 @@ pub(crate) async fn admin_world_reject(
     }
 }
 
-/// Add a world installed in this season to the instance catalog (sysadmin).
 /// Update an installed world to the catalog's newer version of its game.
 pub(crate) async fn admin_world_update(
     State(st): State<AppState>,
@@ -608,6 +607,7 @@ pub(crate) async fn admin_world_update(
     }
 }
 
+/// Add a world installed in this season to the instance catalog (sysadmin).
 pub(crate) async fn admin_world_to_catalog(
     State(st): State<AppState>,
     ctx: scope::SeasonCtx,

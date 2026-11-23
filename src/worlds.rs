@@ -207,7 +207,7 @@ async fn replace_world(
     let dirs = config::get().season(season);
     if old != file && ap_adapter::world_pins(&dirs).contains_key(file) {
         return Err(format!(
-            "A different {file} is already installed this season. Ask a moderator to remove it first."
+            "A different {file} is already installed this season. It has to be removed (from the season admin page) before this can take its place."
         ));
     }
     // The new one first: if that fails, the season still has the old.
@@ -824,8 +824,6 @@ pub async fn install_from_catalog(
     Ok(cat.file)
 }
 
-/// Approve a pending upload: install it, then check the signups held for it
-/// (in the background — each check can take a while).
 /// The catalog's version of an installed world's game, if it's newer than
 /// the season's copy (`file`): what [`update_from_catalog`] would install.
 pub fn catalog_update<'a>(
@@ -839,7 +837,9 @@ pub fn catalog_update<'a>(
     }
     let m = manifest_of(&dirs.worlds.join(file));
     let cat = catalog_for_game(catalog, &m.game)?;
-    (cat.sha256 != pin.sha256 && version_newer(&cat.version, &m.version)).then_some(cat)
+    // Newer, or the season's copy declares no version to compare with.
+    let newer = version_newer(&cat.version, &m.version) || version_parts(&m.version).is_none();
+    (cat.sha256 != pin.sha256 && newer).then_some(cat)
 }
 
 /// Replace a season's world with the catalog's newer version of its game,
@@ -876,7 +876,8 @@ pub async fn update_from_catalog(
     ))
 }
 
-/// Approve a pending upload. `force`: a moderator's override, replacing the
+/// Approve a pending upload: install it, then check the signups held for it
+/// (in the background — each check can take a while). `force`: a moderator's override, replacing the
 /// season's world for the game even when the upload doesn't declare a newer
 /// version (say, neither declares one).
 pub async fn approve_with(
@@ -911,11 +912,22 @@ pub async fn approve_with(
                 req.game
             ));
         }
-        let pin = Pin {
-            uploaded_by: req.uploaded_by.clone(),
-            uploaded_at: req.uploaded_at,
-            approved_by: by.to_string(),
-            ..Pin::default()
+        // The catalog's own file (held only because its version couldn't be
+        // compared) installs as the catalog's.
+        let pin = match db.catalog_world(&req.sha256).await {
+            Some(cat) => Pin {
+                uploaded_by: req.uploaded_by.clone(),
+                uploaded_at: req.uploaded_at,
+                approved_by: cat.added_by,
+                catalog: true,
+                ..Pin::default()
+            },
+            None => Pin {
+                uploaded_by: req.uploaded_by.clone(),
+                uploaded_at: req.uploaded_at,
+                approved_by: by.to_string(),
+                ..Pin::default()
+            },
         };
         replace_world(db, season, &have, &req.file, bytes, pin, &req.game).await?;
         let _ = tokio::fs::remove_file(&path).await;

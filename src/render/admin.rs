@@ -463,6 +463,7 @@ pub fn admin_page(
             // A newer version of a game the season has replaces it.
             let dirs = crate::config::get().season(season.id);
             let mut not_newer = false;
+            let mut versions = String::new();
             let game = match crate::worlds::installed_for_game(&dirs, &r.game) {
                 Some((have, sha, ver)) if sha != r.sha256 => {
                     let have = esc(if ver.is_empty() { &have } else { &ver });
@@ -474,6 +475,19 @@ pub fn admin_page(
                         )
                     } else {
                         not_newer = true;
+                        let v = |v: &str| {
+                            if v.is_empty() {
+                                "no version".to_string()
+                            } else {
+                                v.to_string()
+                            }
+                        };
+                        versions = format!(
+                            "{} (declares {}) in place of the season's {}",
+                            r.file,
+                            v(&theirs),
+                            v(&ver)
+                        );
                         format!(
                             "{game} · the season already has {have}, and this doesn't declare a newer version: reject it, or replace it anyway"
                         )
@@ -494,8 +508,8 @@ pub fn admin_page(
                         "replace anyway",
                         false,
                         &format!(
-                            "Replace the season's {} with {} although it doesn't declare a newer version? Every signup for the game is checked against it again.",
-                            r.game, r.file
+                            "Install {versions}, for {}? It doesn't declare a newer version. Every signup for the game is checked against it again.",
+                            r.game
                         ),
                     )
                 } else if pre_gen && sysadmin {

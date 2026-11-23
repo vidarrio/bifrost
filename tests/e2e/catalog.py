@@ -441,6 +441,19 @@ try:
     installed = os.listdir(os.path.join(srv.data, "seasons", sid4, "worlds"))
     check("…or not, unticked", "plain.apworld" in installed and "Plain Game" not in get(root, "/admin/catalog").text, installed)
 
+    # A season moderator (not a sysadmin) can update a world to the catalog's
+    # version, under the catalog's own file name; a player can't.
+    late40 = variant("baz.apworld", "Late Game", "4.0.0")
+    post(root, "/admin/catalog/add", files={"apworld": ("late40.apworld", late40)})
+    r = post(erin, f"/s/{sid4}/admin/worlds/update", data={"name": "late.apworld"})
+    sid4_worlds = os.path.join(srv.data, "seasons", sid4, "worlds")
+    check("a player can't update a season's world", "late40.apworld" not in os.listdir(sid4_worlds))
+    check("a moderator is offered the update", ">update to the catalog's 4.0.0<" in get(dave, f"/s/{sid4}/admin").text)
+    r = post(dave, f"/s/{sid4}/admin/worlds/update", data={"name": "late.apworld"})
+    installed = os.listdir(sid4_worlds)
+    check("…and can update, to the catalog's file name", "Updated Late Game to the catalog's 4.0.0" in r.text
+          and "late40.apworld" in installed and "late.apworld" not in installed, (installed, re.findall(r'class="banner[^"]*">[^<]*', r.text)))
+
     # remove from catalog; installed copies stay
     newsha = re.search(r'<tr><td[^>]*>Bar Finder.*?action="/admin/catalog/remove".*?name="sha256" value="([0-9a-f]{64})"', get(root, "/admin/catalog").text, re.S)
     post(root, "/admin/catalog/remove", data={"sha256": newsha.group(1) if newsha else sha})

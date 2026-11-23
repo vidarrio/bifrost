@@ -92,10 +92,10 @@ have no game there yet, the signup wizard is on the page too, with two steps:
    the catalog's own version; otherwise it waits for a moderator's approval,
    even on a server that approves uploads automatically, and your signup is
    held until then. If either copy declares no version that can be compared,
-   a moderator decides whether yours replaces the season's. Every signup for that game is then
-   checked again against the new version. Those that pass carry on; those
-   that don't are flagged, as a held signup is, until the player replaces the
-   YAML or a moderator removes the signup. If the new version is rejected,
+   a moderator decides whether yours replaces the season's. Every signup for
+   that game is then checked again against the new version. Those that pass
+   carry on; those that don't are flagged, as a held signup is, until the
+   player replaces the YAML or a moderator removes the signup. If the new version is rejected,
    the signups held for it are checked against the season's copy instead.
    Once the season is generated, it keeps the version its seed was made
    with. If the catalog has the game at least as new as your upload,

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- When the catalog has a newer version of a season's installed world, the
+  season admin page offers **update to the catalog's** version, which
+  replaces it and checks every signup for the game again.
 - A sysadmin approving an upload in a season can add it to the catalog in the
   same step (the approve button's box, ticked by default). A season
   moderator's approval offers the world to the sysadmins instead, on the
@@ -24,9 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   approval even where uploads are auto-approved (unless it's the catalog's
   own version). An upload whose version can't be compared with the season's
   copy also waits, and a moderator can **replace anyway**.
-- When the catalog has a newer version of a season's installed world, the
-  season admin page offers **update to the catalog's** version, which
-  replaces it and checks every signup for the game again.
 - The signup wizard's first step is one searchable list of every game the
   season can play, each with the version the server has: core games, the
   catalog's custom games and custom games already in the season, plus an
