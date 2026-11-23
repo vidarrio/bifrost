@@ -260,16 +260,40 @@ pub async fn forget(version: &str) {
 /// Drop the custom worlds' templates no one can ask for any more: those of
 /// files neither in the catalog nor installed in any season. Returns how many.
 pub async fn prune(db: &crate::db::Db) -> usize {
-    let mut keep: BTreeSet<String> = db.catalog().await.into_iter().map(|w| w.sha256).collect();
-    for s in db.seasons().await {
-        let dirs = config::get().season(s.id);
-        keep.extend(
-            crate::ap_adapter::world_pins(&dirs)
-                .into_values()
-                .map(|p| p.sha256),
-        );
+    let pins_of = |id| crate::ap_adapter::try_world_pins(&config::get().season(id));
+    match keep_set(db, pins_of).await {
+        Ok(keep) => prune_keeping(&config::get().data_dir.join("templates"), &keep).await,
+        Err(e) => {
+            tracing::warn!("templates: not pruning this time: {e}");
+            0
+        }
     }
-    prune_keeping(&config::get().data_dir.join("templates"), &keep).await
+}
+
+/// The hashes whose templates may still be asked for: the catalog's and every
+/// season's installed worlds (`pins_of`: a season's pins, None if they can't
+/// be read). An error if any of it can't be read, so a failed read never
+/// passes for "nothing to keep".
+async fn keep_set(
+    db: &crate::db::Db,
+    pins_of: impl Fn(crate::id::Id) -> Option<BTreeMap<String, crate::ap_adapter::Pin>>,
+) -> Result<BTreeSet<String>, String> {
+    let mut keep: BTreeSet<String> = db
+        .catalog_hashes()
+        .await
+        .map_err(|e| format!("reading the catalog: {e}"))?
+        .into_iter()
+        .collect();
+    for id in db
+        .season_ids()
+        .await
+        .map_err(|e| format!("reading the seasons: {e}"))?
+    {
+        let pins =
+            pins_of(id).ok_or_else(|| format!("season {id}'s worlds.lock.json can't be read"))?;
+        keep.extend(pins.into_values().map(|p| p.sha256));
+    }
+    Ok(keep)
 }
 
 async fn prune_keeping(templates: &Path, keep: &BTreeSet<String>) -> usize {
@@ -321,6 +345,48 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[tokio::test]
+    async fn the_keep_set_is_the_catalog_and_every_seasons_pins() {
+        let path = std::env::temp_dir().join(format!("bifrost-tpl-keep-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let db = crate::db::Db::open(&path.to_string_lossy()).await.unwrap();
+        let live = db.create_season("Live", None, 0).await.unwrap();
+        let old = db.create_season("Old", None, 0).await.unwrap();
+        db.transition(old, crate::db::State::Archived, 1).await.ok();
+        let cat = crate::db::CatalogWorld {
+            sha256: "c".repeat(64),
+            file: "c.apworld".into(),
+            game: "C".into(),
+            version: "1".into(),
+            note: String::new(),
+            public_note: String::new(),
+            added_by: "root".into(),
+            added_at: 0,
+        };
+        db.catalog_add(&cat).await.unwrap();
+        let pin = |sha: &str| {
+            BTreeMap::from([(
+                "w.apworld".to_string(),
+                crate::ap_adapter::Pin {
+                    sha256: sha.to_string(),
+                    ..Default::default()
+                },
+            )])
+        };
+        let (l, o) = ("l".repeat(64), "o".repeat(64));
+        let keep = keep_set(&db, |id| Some(pin(if id == live { &l } else { &o })))
+            .await
+            .unwrap();
+        assert_eq!(keep, BTreeSet::from(["c".repeat(64), l.clone(), o.clone()]));
+        // A season whose pins can't be read: no keep set, so nothing pruned.
+        assert!(
+            keep_set(&db, |id| (id == live).then(|| pin(&l)))
+                .await
+                .is_err()
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     #[tokio::test]
