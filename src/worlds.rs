@@ -138,6 +138,92 @@ pub enum Placed {
         version: String,
         offered: Option<String>,
     },
+    /// A newer version of a game the season has, installed in its place
+    /// (`old`: the version it replaced). The season's signups for the game
+    /// are being checked against it.
+    Replaced {
+        game: String,
+        file: String,
+        version: String,
+        old: String,
+        offered: bool,
+    },
+    /// A newer version of a game the season has, waiting for approval; once
+    /// approved it replaces the season's (`old`).
+    Replacing {
+        game: String,
+        version: String,
+        old: String,
+        offered: bool,
+    },
+}
+
+/// Whether a season can still take a newer version of a game: not once it's
+/// been generated, as its seed was made with the version it has.
+async fn can_replace(db: &Db, season: Id) -> bool {
+    use crate::db::State;
+    db.season(season)
+        .await
+        .is_some_and(|s| matches!(s.state.0, State::Draft | State::Signup))
+}
+
+/// Install `bytes` as `file` in place of `old` (the season's world for
+/// `game`), then hold the season's signups for the game and check each
+/// against the new version: those that pass go ahead, the rest are flagged.
+/// One lock per season, held by generation while it moves the season to
+/// generating and by a replacement from its state check until the signups
+/// are held: a season is never generated with a world its signups weren't
+/// checked against.
+pub async fn season_lock(season: Id) -> tokio::sync::OwnedMutexGuard<()> {
+    static LOCKS: std::sync::Mutex<
+        std::collections::BTreeMap<Id, std::sync::Arc<tokio::sync::Mutex<()>>>,
+    > = std::sync::Mutex::new(std::collections::BTreeMap::new());
+    let lock = LOCKS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .entry(season)
+        .or_default()
+        .clone();
+    lock.lock_owned().await
+}
+
+async fn replace_world(
+    db: &Db,
+    season: Id,
+    old: &str,
+    file: &str,
+    bytes: Vec<u8>,
+    pin: Pin,
+    game: &str,
+) -> Result<(), String> {
+    let _lock = season_lock(season).await;
+    if !can_replace(db, season).await {
+        return Err(format!(
+            "The season has been generated, so it keeps the {game} its seed was made with."
+        ));
+    }
+    let dirs = config::get().season(season);
+    if old != file && ap_adapter::world_pins(&dirs).contains_key(file) {
+        return Err(format!(
+            "A different {file} is already installed this season. Ask a moderator to remove it first."
+        ));
+    }
+    // The new one first: if that fails, the season still has the old.
+    install(dirs, file.to_string(), bytes, pin).await?;
+    if old != file
+        && let Err(e) = crate::generate::delete_apworld(season, old).await
+    {
+        tracing::warn!("season {season}: removing {old}, replaced by {file}: {e}");
+    }
+    let n = db.hold_game(season, game, old, file).await;
+    tracing::info!("season {season}: {game} replaced by {file}; re-checking {n} signup(s)");
+    Ok(())
+}
+
+/// Check the signups held for `file`, in the background.
+fn recheck_later(db: &Db, season: Id, file: &str) {
+    let (db, file) = (db.clone(), file.to_string());
+    tokio::spawn(async move { recheck_held(&db, season, &file).await });
 }
 
 /// The world a season already has for `game` (Bifrost's own aside): its file
@@ -426,13 +512,113 @@ pub async fn place_upload(
         }
         _ => None,
     };
-    // The season's own world for the game (this very file, or another).
-    if let Some((have, _, version)) = installed_for_game(&dirs, &m.game) {
-        return Ok(Placed::Season {
+    // The season's own world for the game (this very file, or another). A
+    // newer version replaces it until the season is generated: at once if
+    // it's the catalog's or the server auto-approves, else once approved.
+    let mut replaces = None;
+    if let Some((have, have_sha, version)) = installed_for_game(&dirs, &m.game) {
+        if have_sha == sha || !version_newer(&m.version, &version) || !can_replace(db, season).await
+        {
+            return Ok(Placed::Season {
+                game: m.game,
+                file: have,
+                version,
+                offered,
+            });
+        }
+        replaces = Some((have, version));
+    }
+    if let Some((old_file, old)) = replaces {
+        let base = Pin {
+            uploaded_by: uploader.to_string(),
+            uploaded_at: crate::clock::now(),
+            ..Pin::default()
+        };
+        // The catalog has this game at least as new: use the catalog's.
+        if let Some(cat) = &cat
+            && version_newer(&cat.version, &old)
+            && !version_newer(&m.version, &cat.version)
+        {
+            let bytes = tokio::fs::read(catalog_file(&cat.sha256))
+                .await
+                .map_err(|e| format!("reading the catalog copy: {e}"))?;
+            if crate::text::sha256_hex(&bytes) != cat.sha256 {
+                return Err(
+                    "The catalog copy doesn't match its hash. Ask a sysadmin to re-add it.".into(),
+                );
+            }
+            let pin = Pin {
+                uploaded_by: uploader.to_string(),
+                uploaded_at: crate::clock::now(),
+                approved_by: cat.added_by.clone(),
+                catalog: true,
+                ..Pin::default()
+            };
+            replace_world(db, season, &old_file, &cat.file, bytes, pin, &m.game).await?;
+            recheck_later(db, season, &cat.file);
+            return Ok(Placed::Replaced {
+                game: m.game,
+                file: cat.file.clone(),
+                version: cat.version.clone(),
+                old,
+                offered: offered.is_some(),
+            });
+        }
+        let now = if let Some(cat) = db.catalog_world(&sha).await {
+            Some(Pin {
+                catalog: true,
+                approved_by: cat.added_by,
+                ..base
+            })
+        } else if db.approval().await == Approval::Auto {
+            Some(base)
+        } else {
+            None
+        };
+        if let Some(pin) = now {
+            replace_world(db, season, &old_file, file, bytes, pin, &m.game).await?;
+            recheck_later(db, season, file);
+            return Ok(Placed::Replaced {
+                game: m.game,
+                file: file.to_string(),
+                version: m.version,
+                old,
+                offered: offered.is_some(),
+            });
+        }
+        // Waits for approval, as a new world would (below), unless another
+        // upload of the game already does.
+        if let Some(req) = db.world_request(season, file).await {
+            return if req.sha256 == sha {
+                Ok(Placed::Replacing {
+                    game: m.game,
+                    version: m.version,
+                    old,
+                    offered: offered.is_some(),
+                })
+            } else {
+                Err(format!(
+                    "Another version of {file} is already waiting for approval."
+                ))
+            };
+        }
+        if let Some(req) = db
+            .world_requests(season)
+            .await
+            .into_iter()
+            .find(|r| r.game == m.game)
+        {
+            return Ok(Placed::Waiting {
+                game: m.game,
+                file: req.file,
+            });
+        }
+        store_request(db, season, &dirs, file, &sha, &m.game, &bytes, uploader).await?;
+        return Ok(Placed::Replacing {
             game: m.game,
-            file: have,
-            version,
-            offered,
+            version: m.version,
+            old,
+            offered: offered.is_some(),
         });
     }
     if let Some(cat) = cat {
@@ -496,26 +682,40 @@ pub async fn place_upload(
             Ok(Placed::Installed { catalog: false })
         }
         Approval::Manual => {
-            let game = manifest(&bytes).game;
-            tokio::fs::create_dir_all(&dirs.pending)
-                .await
-                .map_err(|e| format!("pending dir: {e}"))?;
-            tokio::fs::write(dirs.pending.join(file), &bytes)
-                .await
-                .map_err(|e| format!("storing the upload: {e}"))?;
-            let req = WorldRequest {
-                file: file.to_string(),
-                sha256: sha,
-                game,
-                uploaded_by: uploader.to_string(),
-                uploaded_at: base.uploaded_at,
-            };
-            db.add_world_request(season, &req)
-                .await
-                .map_err(|e| e.to_string())?;
+            store_request(db, season, &dirs, file, &sha, &m.game, &bytes, uploader).await?;
             Ok(Placed::Pending)
         }
     }
+}
+
+/// Keep an upload to wait for a moderator's approval.
+#[allow(clippy::too_many_arguments)]
+async fn store_request(
+    db: &Db,
+    season: Id,
+    dirs: &SeasonDirs,
+    file: &str,
+    sha: &str,
+    game: &str,
+    bytes: &[u8],
+    uploader: &str,
+) -> Result<(), String> {
+    tokio::fs::create_dir_all(&dirs.pending)
+        .await
+        .map_err(|e| format!("pending dir: {e}"))?;
+    tokio::fs::write(dirs.pending.join(file), bytes)
+        .await
+        .map_err(|e| format!("storing the upload: {e}"))?;
+    let req = WorldRequest {
+        file: file.to_string(),
+        sha256: sha.to_string(),
+        game: game.to_string(),
+        uploaded_by: uploader.to_string(),
+        uploaded_at: crate::clock::now(),
+    };
+    db.add_world_request(season, &req)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Install a catalog world into `season`. Returns the file name it took.
@@ -572,15 +772,28 @@ pub async fn approve(db: &Db, season: Id, file: &str, by: &str) -> Result<WorldR
             "{file} changed since it was uploaded. Reject it and ask for a new upload."
         ));
     }
-    // A season keeps one world per game: one installed since this upload
-    // came in (from the catalog, or another approval) wins.
-    if let Some((have, _, _)) = installed_for_game(&dirs, &req.game)
-        && have != req.file
+    // A season keeps one world per game. A newer version replaces the one
+    // it has (until it's generated); otherwise the one it has wins.
+    if let Some((have, have_sha, version)) = installed_for_game(&dirs, &req.game)
+        && have_sha != req.sha256
     {
-        return Err(format!(
-            "This season already has {} installed ({have}). Reject this upload; signups held for it can use that.",
-            req.game
-        ));
+        if !version_newer(&manifest(&bytes).version, &version) {
+            return Err(format!(
+                "This season already has {} installed ({have}), and this upload isn't newer. Reject it; signups held for it can use that.",
+                req.game
+            ));
+        }
+        let pin = Pin {
+            uploaded_by: req.uploaded_by.clone(),
+            uploaded_at: req.uploaded_at,
+            approved_by: by.to_string(),
+            ..Pin::default()
+        };
+        replace_world(db, season, &have, &req.file, bytes, pin, &req.game).await?;
+        let _ = tokio::fs::remove_file(&path).await;
+        db.take_world_request(season, file).await;
+        recheck_later(db, season, &req.file);
+        return Ok(req);
     }
     if !installed_conflict(&dirs, &req.file, &req.sha256)? {
         let pin = Pin {
@@ -604,7 +817,16 @@ pub async fn reject(db: &Db, season: Id, file: &str, by: &str) -> Result<(), Str
         .take_world_request(season, file)
         .await
         .ok_or("Nothing is waiting under that name.")?;
-    let _ = tokio::fs::remove_file(config::get().season(season).pending.join(&req.file)).await;
+    let dirs = config::get().season(season);
+    let _ = tokio::fs::remove_file(dirs.pending.join(&req.file)).await;
+    // A newer version of a game the season has: its signups use the one it
+    // has instead, if their YAMLs pass that.
+    if let Some((have, _, _)) = installed_for_game(&dirs, &req.game) {
+        db.rehold(season, &req.file, &have).await;
+        let db = db.clone();
+        tokio::spawn(async move { recheck_held(&db, season, &have).await });
+        return Ok(());
+    }
     let why = format!(
         "{} was rejected by {by}: replace the YAML with an installed game's, or remove this signup",
         req.file

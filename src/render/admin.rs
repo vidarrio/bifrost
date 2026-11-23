@@ -25,10 +25,7 @@ pub(super) fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool, pre_gen: 
                 r#"<div class="meta" style="color:var(--bad)">held: {}</div>"#,
                 esc(e)
             ),
-            (Some(w), None) => format!(
-                r#"<div class="meta">held, waiting for {} to be approved</div>"#,
-                esc(w)
-            ),
+            (Some(w), None) => format!(r#"<div class="meta">held, waiting for {}</div>"#, esc(w)),
             _ => String::new(),
         };
         let del = if pre_gen && (is_admin || s.username == me) {
@@ -462,6 +459,25 @@ pub fn admin_page(
                 game
             } else {
                 format!("{game} · signups waiting: {}", waiting.join(", "))
+            };
+            // A newer version of a game the season has replaces it.
+            let dirs = crate::config::get().season(season.id);
+            let game = match crate::worlds::installed_for_game(&dirs, &r.game) {
+                Some((have, sha, ver)) if sha != r.sha256 => {
+                    let have = esc(if ver.is_empty() { &have } else { &ver });
+                    let theirs = crate::worlds::manifest_of(&dirs.pending.join(&r.file)).version;
+                    if crate::worlds::version_newer(&theirs, &ver) {
+                        format!(
+                            "{game} · <b>replaces the season's {have}</b>; approving checks every signup for {} against it again",
+                            esc(&r.game)
+                        )
+                    } else {
+                        format!(
+                            "{game} · the season already has {have}, and this isn't newer: reject it"
+                        )
+                    }
+                }
+                _ => game,
             };
             b.push_str(&format!(
                 r#"<div class="hintrow"><span>{}{game} <span class="statline">· sha256 {}… · uploaded by {} · {}</span></span><span>{} {}</span></div>"#,

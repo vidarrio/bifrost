@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   catalog's custom games and custom games already in the season, plus an
   entry to upload another custom world. It replaces choosing between core,
   catalog and upload first.
+- A newer version of a custom game a season already has now replaces the
+  season's copy, until the season is generated, instead of the season keeping
+  its first version. It's approved like any other upload (at once if it's the
+  catalog's version or uploads are auto-approved; if the catalog has the game
+  at least as new, the catalog's is used). Every signup for that game is then
+  checked against the new version, and those that fail are flagged as held
+  signups are. If it's rejected, the signups held for it are checked against
+  the season's copy instead.
 
 ## [0.5.0] - 2026-11-23
 

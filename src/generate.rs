@@ -514,6 +514,8 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
         // under one lock keeps requests sent together from all passing.
         #[cfg(feature = "demo")]
         let _gate = crate::demo::GO_LIVE.lock().await;
+        // Not while a newer version of a world is replacing the old.
+        let _replacing = crate::worlds::season_lock(season).await;
         #[cfg(feature = "demo")]
         if let Some(e) = crate::demo::live_full(&db).await {
             return set(&state, false, e);

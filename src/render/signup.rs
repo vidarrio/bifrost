@@ -182,7 +182,7 @@ pub fn signup_page(
       <div id="pickmsg" class="inlinemsg"></div>"#
     );
     if worlds.custom_allowed {
-        step1.push_str(r#"<p class="hint">Each game shows the version the server has. If you have a newer version of a custom game, upload it: your signup uses the server's version for now, and yours is passed to the server's admins to consider.</p>"#);
+        step1.push_str(r#"<p class="hint">Each game shows the version the server has. If you have a newer version of a custom game, upload it. Once it's approved it replaces the season's version, and signups for that game are checked against it again.</p>"#);
     }
     if !worlds.custom_allowed {
         step1.push_str(
@@ -479,7 +479,7 @@ pub fn signup_game_page(g: &SignupGame) -> Html<String> {
             esc(&sentence(e))
         )),
         (Some(w), None) => b.push_str(&format!(
-            r#"<div class="banner ok">Held, waiting for {} to be approved. Its YAML is checked then. You can replace it meanwhile, and the new file gets checked instead.</div>"#,
+            r#"<div class="banner ok">Held, waiting for {}. Its YAML is checked against it once it's installed (a new upload needs a moderator's approval first). You can replace it meanwhile, and the new file gets checked instead.</div>"#,
             esc(w)
         )),
         _ => {}
