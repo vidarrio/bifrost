@@ -188,6 +188,9 @@ try:
             settled(pg, "/")
             if w == 1100:
                 check("the mailbox glows with unread mail", "glow" in (pg.get_attribute("#mailbtn", "class") or ""))
+            mb, pill = web.box(pg, "#mailbtn"), web.box(pg, "#adminslot .pill")
+            check(f"the mail button lines up with the pills ({w}px)",
+                  mb and pill and mb["height"] == pill["height"] and mb["y"] == pill["y"], (mb, pill))
             pg.click("#mailbtn")
             pg.wait_for_selector("#mailbox li")
             bx = web.box(pg, "#mailbox")

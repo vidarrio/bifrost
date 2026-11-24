@@ -173,7 +173,8 @@ function bifMail(m){
  b.setAttribute('aria-expanded','false');b.setAttribute('aria-haspopup','dialog');bifMailGlow(b,m.unread);
  // An envelope, from nodes like the rest of the header.
  var ns='http://www.w3.org/2000/svg';function el(n,a){var e=document.createElementNS(ns,n);for(var k in a)e.setAttribute(k,a[k]);return e}
- var svg=el('svg',{viewBox:'0 0 24 24',width:'17',height:'17','aria-hidden':'true'});
+ // 15px with 2px of padding: as tall as the pills beside it.
+ var svg=el('svg',{viewBox:'0 0 24 24',width:'15',height:'15','aria-hidden':'true'});
  var ink={fill:'none',stroke:'currentColor','stroke-width':'1.8','stroke-linejoin':'round'};
  svg.appendChild(el('rect',Object.assign({x:'3',y:'5.5',width:'18',height:'13',rx:'2'},ink)));
  svg.appendChild(el('path',Object.assign({d:'M3.8 7l8.2 6.2L20.2 7'},ink)));
@@ -311,7 +312,7 @@ header .spacer{flex:1}
 .pill{white-space:nowrap;display:inline-flex;align-items:center;font-family:var(--mono);font-size:11px;line-height:1;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);text-decoration:none;border:1px solid var(--bd);border-radius:999px;padding:4px 11px}.pill:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
 #adminslot,#homeslot{display:contents}
 #mailslot{display:inline-flex}
-.mail{background:none;border:1px solid var(--bd);border-radius:999px;color:var(--muted);padding:3px 9px;cursor:pointer;display:inline-flex;align-items:center;line-height:0}
+.mail{background:none;border:1px solid var(--bd);border-radius:999px;color:var(--muted);padding:2px 10px;cursor:pointer;display:inline-flex;align-items:center;line-height:0}
 .mail:hover{border-color:var(--accent);color:var(--accent)}
 .mail.glow{color:var(--accent);border-color:var(--accent);animation:mailglow 2.4s ease-in-out infinite}
 @keyframes mailglow{0%,100%{box-shadow:0 0 2px 0 color-mix(in srgb,var(--accent) 55%,transparent)}50%{box-shadow:0 0 11px 2px color-mix(in srgb,var(--accent) 55%,transparent)}}
@@ -324,7 +325,7 @@ header .spacer{flex:1}
 .mailbox li a{color:inherit}.mailbox li a:hover{color:var(--accent)}
 .mailbox .when{display:block;font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:2px}
 .mailbox .none{padding:10px 12px;font-size:13px;color:var(--muted)}
-@media (pointer:coarse){.mail{padding:6px 12px}}
+@media (pointer:coarse){.mail{padding:5px 12px}}
 /* A long label is cut short on a narrow screen instead of widening the page. */
 .pill.home{display:block;min-width:5em;max-width:25vw;overflow:hidden;text-overflow:ellipsis;text-align:center}
 header .who b,header .who a{white-space:nowrap}
