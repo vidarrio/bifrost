@@ -239,8 +239,9 @@ try:
 
         # --- the moderator log: numbered pages, each sized to fit the window
         with srv.db() as c:
-            c.executemany("INSERT INTO mod_action (at, username, action, detail, status, outcome) VALUES (?, 'mia', '/admin/generate', ?, 200, 'ok')",
-                          [(1_000_000 + i, f"row {i}" + (" long" * 120 if i % 3 == 0 else "")) for i in range(300)])
+            c.executemany("INSERT INTO mod_action (at, username, season_name, action, detail, status, outcome) VALUES (?, 'mia', ?, '/admin/generate', ?, 200, ?)",
+                          [(1_000_000 + i, "A season with a very long name indeed, all eighty characters of it" if i % 5 == 0 else "Spring",
+                            f"row {i}" + (" long" * 120 if i % 3 == 0 else ""), "unfinished" if i % 7 == 0 else "ok") for i in range(300)])
         per_of = lambda pg: int(re.search(r"per=(\d+)", pg.url).group(1))
         def settled_log(pg):
             """Wait for the fit to land, then for nothing more to happen."""
@@ -271,16 +272,42 @@ try:
                 check("…page 2 goes on where page 1 ended, with the same size",
                       f"per={per}" in pg.url and first.startswith(f"row {299 - per}"), (pg.url, first[:30]))
                 pg.set_viewport_size({"width": 1100, "height": 620})
-                pg.wait_for_url(lambda u: "fit=620" in u, timeout=10_000)
+                pg.wait_for_url(lambda u: "x620" in u, timeout=10_000)
                 web.settle(pg)
                 smaller = per_of(pg)
                 f = fits(pg)
                 check("…a smaller window gets fewer rows a page, still fitting", smaller < per and f["doc"] <= f["h"], (per, smaller, f))
                 pg.go_back()
-                pg.wait_for_url(lambda u: "fit=620" in u, timeout=10_000)
+                pg.wait_for_url(lambda u: "x620" in u, timeout=10_000)
                 web.settle(pg)
                 f = fits(pg)
                 check("…and going Back to a page fitted for a bigger window fits it again", f["doc"] <= f["h"], (pg.url, f))
+                # A narrower window, at the same height, refits too (and here
+                # crosses into the phone layout).
+                pg.set_viewport_size({"width": 500, "height": 800})
+                pg.wait_for_url(lambda u: "fit=500x800" in u, timeout=10_000)
+                web.settle(pg)
+                f = fits(pg)
+                check("…as does a narrower one", f["doc"] <= f["h"] and not web.overflow_x(pg), (pg.url, f))
+                pg.set_viewport_size({"width": 1100, "height": 800})
+                pg.wait_for_url(lambda u: "fit=1100x800" in u, timeout=10_000)
+                web.settle(pg)
+                # Middle pages, whose pager takes more room, still fit.
+                pg.click(".pager a[aria-label='Last page']")
+                web.settle(pg)
+                for _ in range(4):
+                    link = pg.query_selector(".pager a[aria-label='Newer page']")
+                    if not link:
+                        break
+                    link.click()
+                    settled_log(pg)
+                f = fits(pg)
+                check("…and a page further in fits as well", f["doc"] <= f["h"], (pg.url, f))
+                # A row pressed shows all of itself.
+                row = pg.query_selector("#modlog tr[tabindex]")
+                closed = row.bounding_box()["height"]
+                row.click()
+                check("pressing an entry shows all of it", row.get_attribute("aria-expanded") == "true", row.get_attribute("class"))
             check(f"no page errors on the log ({w}px)", not web.take_errors(), web.ERRORS)
             ctx.close()
         # Storage blocked (a private window, a strict browser): it still settles.

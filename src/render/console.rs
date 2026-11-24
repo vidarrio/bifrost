@@ -870,7 +870,7 @@ pub fn audit_page(
         format!(
             r#"<input type="hidden" name="per" value="{}"><input type="hidden" name="fit" value="{}">"#,
             f.per(),
-            f.fit
+            esc(&f.fit)
         )
     };
     body.push_str(&format!(
@@ -902,7 +902,10 @@ pub fn audit_page(
                     esc(if name.is_empty() { "?" } else { name })
                 ),
                 (None, "") => "—".to_string(),
-                (None, name) => format!("{} <span class=\"statline\">(gone)</span>", esc(name)),
+                (None, name) => format!(
+                    "<span title=\"{0} (gone)\">{0} <span class=\"statline\">(gone)</span></span>",
+                    esc(name)
+                ),
             };
             let answer = match r.outcome.as_str() {
                 "ok" => "ok".to_string(),
@@ -910,7 +913,7 @@ pub fn audit_page(
                 _ => format!("refused ({})", r.status),
             };
             body.push_str(&format!(
-                r#"<tr><td class="mono">{when}</td><td>{}</td><td>{season}</td><td title="{}">{}</td><td class="mono det" title="{}">{}</td><td>{answer}</td></tr>"#,
+                r#"<tr tabindex="0" aria-expanded="false"><td class="mono">{when}</td><td>{}</td><td>{season}</td><td title="{}">{}</td><td class="mono det" title="{}">{}</td><td>{answer}</td></tr>"#,
                 esc(&r.username),
                 esc(&r.action),
                 esc(crate::modlog::label(&r.action)),
@@ -931,18 +934,27 @@ pub fn audit_page(
 const AUDIT_CSS: &str = r#"<style>
 .pager{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0}.pager .statline{margin-right:6px}
 .pager .pill.pg-cur{border-color:var(--accent);color:var(--accent)}.pager .pill.pg-off{opacity:.4}
+/* A long season name doesn't widen its filter past the screen. */
+.logfilter select{max-width:12em}.logfilter label{max-width:100%}
 details.about{position:relative}
 details.about summary{cursor:pointer;color:var(--muted);font-size:13px;margin-bottom:6px}
 details.about[open] .statline{position:absolute;z-index:5;left:0;right:0;top:100%;margin:0;padding:10px 12px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.3)}
+#modlog{table-layout:fixed}
+#modlog th:nth-child(1){width:15%}#modlog th:nth-child(2){width:11%}#modlog th:nth-child(3){width:14%}
+#modlog th:nth-child(4){width:18%}#modlog th:nth-child(6){width:12%}
 #modlog td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#modlog td.det{max-width:0;width:40%}
+#modlog tr[tabindex]{cursor:pointer}#modlog tr[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+/* A row pressed (or entered from the keyboard) shows all of itself. */
+#modlog tr.open td{white-space:normal;overflow:visible;overflow-wrap:anywhere}
 @media (max-width:560px){
 #modlog tr{display:flex;flex-wrap:wrap;gap:2px 8px;padding:6px 10px;margin:0 0 6px;font-size:12px}
 #modlog tr:has(th){display:none}
-#modlog td{display:block;padding:0;border:0;text-align:left;max-width:100%}
+#modlog{table-layout:auto}
+#modlog td{display:block;padding:0;border:0;text-align:left;max-width:100%;min-width:0}
 #modlog td+td{border-top:0}
 #modlog td::before,#modlog td::after{content:none}
 #modlog td.det{order:9;flex-basis:100%;width:auto;max-width:100%;color:var(--muted)}
+#modlog tr.open{flex-wrap:wrap}#modlog tr.open td{flex-basis:100%}
 }
 </style>"#;
 
@@ -957,26 +969,37 @@ const AUDIT_FIT_JS: &str = r#"<script>
 (function(){
  var t=document.getElementById('modlog');if(!t)return;
  var per=+t.dataset.per,page=+t.dataset.page;
- function fitted(){return +new URL(location.href).searchParams.get('fit')===innerHeight}
- function fit(){
+ function size(){return innerWidth+'x'+innerHeight}
+ function fitted(){return new URL(location.href).searchParams.get('fit')===size()}
+ function count(){
   var rows=[].slice.call(t.rows).filter(function(r){return r.cells.length&&r.cells[0].tagName==='TD'});
-  if(!rows.length)return;
-  var h=innerHeight,top0=rows[0].getBoundingClientRect().top;
+  if(!rows.length)return 0;
+  var top0=rows[0].getBoundingClientRect().top;
   var each=0;rows.forEach(function(r){each=Math.max(each,r.getBoundingClientRect().height)});
   if(rows.length>1)each=Math.max(each,(rows[rows.length-1].getBoundingClientRect().top-top0)/(rows.length-1));
-  if(!(each>0))return;
+  if(!(each>0))return 0;
   var last=rows[rows.length-1].getBoundingClientRect().bottom;
   var below=Math.max(0,document.body.getBoundingClientRect().bottom-last);
-  var n=Math.max(1,Math.min(200,Math.floor((h-(top0+scrollY)-below)/each)));
+  return Math.max(1,Math.min(200,Math.floor((innerHeight-(top0+scrollY)-below)/each)));
+ }
+ function go(n){
   var u=new URL(location.href);
-  u.searchParams.set('per',n);u.searchParams.set('fit',h);
+  u.searchParams.set('per',n);u.searchParams.set('fit',size());
   u.searchParams.set('page',Math.floor((page-1)*per/n)+1);
   if(u.toString()!==location.href)location.replace(u.toString());
  }
+ function fit(){var n=count();if(n)go(n)}
  if(!fitted())fit();
+ // Fitted for this window, but this page's pager took more room than the
+ // one it was fitted on: fewer rows, never more, so it can only settle.
+ else if(document.documentElement.scrollHeight>innerHeight){var n=count();if(n&&n<per)go(n)}
  // Back to a page kept from before (the back-forward cache) fitted elsewhere.
  addEventListener('pageshow',function(e){if(e.persisted&&!fitted())fit()});
  var w;addEventListener('resize',function(){clearTimeout(w);w=setTimeout(function(){if(!fitted())fit()},500)});
+ // A row pressed, or entered from the keyboard, shows all of itself.
+ function toggle(tr){var o=tr.classList.toggle('open');tr.setAttribute('aria-expanded',o?'true':'false')}
+ t.addEventListener('click',function(e){var tr=e.target.closest('tr[tabindex]');if(tr&&!e.target.closest('a'))toggle(tr)});
+ t.addEventListener('keydown',function(e){var tr=e.target.closest('tr[tabindex]');if(tr&&(e.key==='Enter'||e.key===' ')){e.preventDefault();toggle(tr)}});
 })();
 </script>"#;
 

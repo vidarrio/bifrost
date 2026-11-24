@@ -29,9 +29,9 @@ pub struct ModLogFilter {
     pub action: String,
     pub page: i64,
     pub per: i64,
-    /// The window height the page size was fitted to (kept in its links, so
-    /// the page knows it's fitted already; 0 when not).
-    pub fit: i64,
+    /// The window (`<width>x<height>`) the page size was fitted to, kept in
+    /// its links so the page knows it's fitted already; empty when not.
+    pub fit: String,
 }
 
 /// The fewest and most rows a page may ask for.
@@ -211,7 +211,7 @@ mod tests {
             action: a.into(),
             page: 1,
             per: 0,
-            fit: 0,
+            fit: String::new(),
         };
         assert_eq!(
             db.mod_actions(&f("MIA", "", "")).await.len(),

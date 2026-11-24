@@ -33,7 +33,8 @@ pub(crate) struct AuditQuery {
     action: String,
     page: Option<i64>,
     per: Option<i64>,
-    fit: Option<i64>,
+    #[serde(default)]
+    fit: String,
 }
 
 /// The moderator log (sysadmins only).
@@ -51,7 +52,13 @@ pub(crate) async fn audit_view(
         action: q.action.trim().to_string(),
         page: 1,
         per: q.per.unwrap_or(0),
-        fit: q.fit.unwrap_or(0).clamp(0, 100_000),
+        // `<width>x<height>`, numbers only.
+        fit: q
+            .fit
+            .split_once('x')
+            .and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)))
+            .map(|(w, h)| format!("{w}x{h}"))
+            .unwrap_or_default(),
     };
     // A page past the last shows the last.
     let total = st.db.mod_actions_count(&f).await;
