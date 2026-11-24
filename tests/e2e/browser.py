@@ -242,7 +242,7 @@ try:
             c.executemany("INSERT INTO mod_action (at, username, season_name, action, detail, status, outcome) VALUES (?, 'mia', ?, '/admin/generate', ?, 200, ?)",
                           [(1_000_000 + i, "A season with a very long name indeed, all eighty characters of it" if i % 5 == 0 else "Spring",
                             f"row {i}" + (" long" * 120 if i % 3 == 0 else ""), "unfinished" if i % 7 == 0 else "ok") for i in range(300)])
-        per_of = lambda pg: int(re.search(r"per=(\d+)", pg.url).group(1))
+        per_of = lambda pg: int(re.search(r"rpp=(\d+)", pg.url).group(1))
         def settled_log(pg):
             """Wait for the fit to land, then for nothing more to happen."""
             pg.wait_for_url(lambda u: "fit=" in u, timeout=10_000)
@@ -261,19 +261,24 @@ try:
             check(f"a log page settles on its size ({w}x{h})", settled_log(pg), pg.url)
             f = fits(pg)
             check(f"…and fits the window, long details and all ({w}x{h})", f["rows"] >= 1 and f["last"] <= f["h"] and f["doc"] <= f["h"], f)
-            pager = pg.text_content(".pager") or ""
-            check(f"…numbered, with its count ({w}px)", "Page 1 of" in pager and "300 entries" in pager and "older ›" in pager, pager)
+            cur = pg.text_content(".pager .pg.cur") or ""
+            check(f"…with the activity log's pager, on page 1 ({w}px)", cur == "1" and pg.query_selector(".pager a.pgnav[title=older]") is not None
+                  and pg.query_selector(".pager span.pg.pgnav.disabled") is not None, cur)
             check(f"…and nothing wider than the screen ({w}px)", not web.overflow_x(pg), web.overflow_x(pg))
+            mid = pg.evaluate("""(() => { const t = document.getElementById('modlog').getBoundingClientRect();
+                const b = [...document.querySelectorAll('.pager .pg')].map(e => e.getBoundingClientRect());
+                return [Math.round((t.left + t.right) / 2), Math.round((Math.min(...b.map(r => r.left)) + Math.max(...b.map(r => r.right))) / 2)]; })()""")
+            check(f"…its pager centred under the rows ({w}px)", abs(mid[0] - mid[1]) <= 2, mid)
             if w == 390:
                 hs = pg.evaluate("[...document.querySelectorAll('#modlog tr[tabindex]')].map(r => Math.round(r.getBoundingClientRect().height))")
                 check("…phone rows are two lines, the same height", len(set(hs)) == 1 and hs[0] < 60, hs)
             if w == 1100:
                 per = per_of(pg)
-                pg.click(".pager a[aria-label='Page 2']")
+                pg.click(".pager a.pg:text-is('2')")
                 web.settle(pg)
                 first = pg.text_content("#modlog tr:nth-child(2) td:nth-child(5)") or ""
                 check("…page 2 goes on where page 1 ended, with the same size",
-                      f"per={per}" in pg.url and first.startswith(f"row {299 - per}"), (pg.url, first[:30]))
+                      f"rpp={per}" in pg.url and first.startswith(f"row {299 - per}"), (pg.url, first[:30]))
                 pg.set_viewport_size({"width": 1100, "height": 620})
                 pg.wait_for_url(lambda u: "x620" in u, timeout=10_000)
                 web.settle(pg)
@@ -296,10 +301,10 @@ try:
                 pg.wait_for_url(lambda u: "fit=1100x800" in u, timeout=10_000)
                 web.settle(pg)
                 # Middle pages, whose pager takes more room, still fit.
-                pg.click(".pager a[aria-label='Last page']")
+                pg.click(".pager a.pg:not(.pgnav) >> nth=-1")
                 web.settle(pg)
                 for _ in range(4):
-                    link = pg.query_selector(".pager a[aria-label='Newer page']")
+                    link = pg.query_selector(".pager a.pgnav[title=newer]")
                     if not link:
                         break
                     link.click()
@@ -318,6 +323,13 @@ try:
                 check("…and no row's time is cut short", not cut)
             check(f"no page errors on the log ({w}px)", not web.take_errors(), web.ERRORS)
             ctx.close()
+        # A single page has no pager, as in the activity log.
+        ctx = web.context(b, srv, root, width=1100, height=800)
+        pg = ctx.new_page()
+        pg.goto(srv.base + "/admin/audit?user=root")
+        web.settle(pg)
+        check("one page of the log has no pager", pg.query_selector("#modlog") is not None and pg.query_selector(".pager") is None)
+        ctx.close()
         # Storage blocked (a private window, a strict browser): it still settles.
         ctx = web.context(b, srv, root, width=1100, height=800)
         ctx.add_init_script("Object.defineProperty(window, 'sessionStorage', {get() { throw new DOMException('blocked', 'SecurityError'); }});"
