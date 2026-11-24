@@ -118,6 +118,8 @@ async fn supervise(
     // The last start attempt failed (e.g. the port is still held): retry on
     // the backoff rather than wait for a redeploy that may never come.
     let mut failed = false;
+    // Starts failed in a row: one (a port still held a moment) isn't news.
+    let mut fails = 0u32;
     loop {
         if running.is_none() && dirs.current_zip().exists() {
             // The passwords as they are now (a moderator may have changed the
@@ -133,12 +135,19 @@ async fn supervise(
                 Ok(r) => {
                     running = Some(r);
                     failed = false;
+                    fails = 0;
                 }
                 Err(e) => {
                     tracing::warn!(
                         "season {season}: AP server didn't start: {e}; retrying in {}s",
                         backoff.as_secs()
                     );
+                    fails += 1;
+                    // Every third failure in a row (a redeploy doesn't reset
+                    // the count); the six-hour window keeps it from repeating.
+                    if fails.is_multiple_of(3) {
+                        crate::notify::server_wont_start(&db, season, &e).await;
+                    }
                     failed = true;
                 }
             }
@@ -162,6 +171,16 @@ async fn supervise(
                             "season {season}: AP server exited ({status:?}); restarting in {}s",
                             backoff.as_secs()
                         );
+                        // A clean exit is a moderator's /exit, not news.
+                        match &status {
+                            Ok(s) if s.success() => {}
+                            Ok(s) => {
+                                crate::notify::server_stopped(&db, season, &s.to_string()).await
+                            }
+                            Err(e) => {
+                                crate::notify::server_stopped(&db, season, &e.to_string()).await
+                            }
+                        }
                         running = None;
                         tokio::time::sleep(backoff).await;
                         backoff = (backoff * 2).min(Duration::from_secs(60));

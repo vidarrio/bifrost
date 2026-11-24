@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prioritizes a hint for an item in your world, when your signup needs
   attention (a failed check, or its world rejected), and when a moderator
   approves or rejects a world you uploaded.
+  Moderators hear about their seasons' waiting uploads, signups that need
+  attention, generation results and game servers that stop unexpectedly;
+  sysadmins about catalog offers, new Bifrost releases, failed nightly
+  backups and failed Archipelago installs.
 - When the catalog has a newer version of a season's installed world, the
   season admin page offers **update to the catalog's** version, which
   replaces it and checks every signup for the game again.

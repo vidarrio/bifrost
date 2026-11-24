@@ -485,7 +485,9 @@ pub fn spawn_nightly(db: Db) {
         loop {
             let wait = until_next(crate::clock::now(), hour);
             tokio::time::sleep(std::time::Duration::from_secs(wait as u64)).await;
-            let _ = create(&db, &p).await;
+            if let Err(e) = create(&db, &p).await {
+                crate::notify::backup_failed(&db, &e).await;
+            }
         }
     });
 }

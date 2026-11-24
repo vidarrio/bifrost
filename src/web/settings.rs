@@ -96,7 +96,7 @@ pub(crate) async fn ap_install(
     if !me.can(auth::Action::ManageInstance) {
         return sysadmin_only();
     }
-    match apupdate::start_install(f.version.trim()) {
+    match apupdate::start_install(f.version.trim(), Some(st.db.clone())) {
         Ok(()) => Redirect::to("/admin/settings#ap").into_response(),
         Err(e) => settings_notice(&st, Some(&e)).await,
     }

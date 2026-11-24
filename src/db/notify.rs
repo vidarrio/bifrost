@@ -53,7 +53,8 @@ impl Db {
     }
 
     /// [`Db::notify`], unless the account has the same text among those it
-    /// keeps already (a priority turned off and on again, say).
+    /// keeps already (a priority turned off and on again, say), or, with
+    /// `within`, among those from the last `within` seconds.
     pub async fn notify_once(
         &self,
         account: i64,
@@ -61,12 +62,14 @@ impl Db {
         text: &str,
         link: &str,
         now: i64,
+        within: Option<i64>,
     ) -> Result<bool, sqlx::Error> {
         let seen: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM notification WHERE account_id = ? AND text = ?",
+            "SELECT COUNT(*) FROM notification WHERE account_id = ? AND text = ? AND created_at >= ?",
         )
         .bind(account)
         .bind(text)
+        .bind(within.map_or(i64::MIN, |w| now - w))
         .fetch_one(&self.pool)
         .await?;
         if seen > 0 {
@@ -74,6 +77,28 @@ impl Db {
         }
         self.notify(account, season, text, link, now).await?;
         Ok(true)
+    }
+
+    /// A season's owner and co-moderators who can still moderate: enabled,
+    /// with a moderator's role or higher.
+    pub async fn active_season_mods(&self, season: Id) -> Vec<i64> {
+        sqlx::query_scalar(
+            "SELECT id FROM account WHERE disabled = 0 AND role IN ('moderator', 'sysadmin') AND id IN (
+                 SELECT created_by FROM season WHERE id = ?1 AND created_by IS NOT NULL
+                 UNION SELECT account_id FROM season_mod WHERE season_id = ?1)",
+        )
+        .bind(season)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default()
+    }
+
+    /// The sysadmins' accounts (enabled ones).
+    pub async fn sysadmin_ids(&self) -> Vec<i64> {
+        sqlx::query_scalar("SELECT id FROM account WHERE role = 'sysadmin' AND disabled = 0")
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default()
     }
 
     /// An account's notifications, newest first.
@@ -160,6 +185,20 @@ mod tests {
         );
         assert_eq!(n[1].season_id, Some(s));
         assert_eq!(db.unread_notifications(a).await, 2);
+
+        // Once: the same text again isn't told twice, unless outside `within`.
+        assert!(!db.notify_once(a, None, "two", "", 5, None).await.unwrap());
+        assert!(
+            !db.notify_once(a, None, "two", "", 5, Some(10))
+                .await
+                .unwrap()
+        );
+        assert!(
+            db.notify_once(a, None, "two", "", 100, Some(10))
+                .await
+                .unwrap()
+        );
+        let n = db.notifications(a).await;
 
         // Read up to what was seen: a newer one stays unread.
         db.mark_notifications_read(a, n[0].id).await;
