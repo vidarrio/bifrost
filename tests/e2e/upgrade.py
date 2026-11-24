@@ -138,9 +138,9 @@ srv = server(BIFROST_BACKUP_DIR=blocked)
 check("a failed backup doesn't stop a start that keeps the schema", refused(srv) is None)
 check("it says so", "pre-upgrade backup failed" in srv.logtext() and "starting anyway" in srv.logtext())
 # A start that would migrate: the database as the schema before this one left
-# it (schema 2 added the catalog's public note), with a row in it.
+# it (schema 3 added notifications), with a row in it.
 with srv.db() as db:
-    db.execute("ALTER TABLE catalog_world DROP COLUMN public_note")
+    db.execute("DROP TABLE notification")
     db.execute("INSERT INTO catalog_world (sha256, file, game, version, note, added_by, added_at) "
                "VALUES (?, 'keep.apworld', 'Keep', '1.0', 'kept', 'root', 0)", ("ab" * 32,))
 stamp(srv, version="0.0.0-old", schema=schema - 1)
@@ -168,7 +168,10 @@ if taken:
 check("then migrates", stamp(srv)[0] == schema, stamp(srv))
 with srv.db() as db:
     row = db.execute("SELECT note, public_note FROM catalog_world WHERE sha256 = ?", ("ab" * 32,)).fetchone()
-check("keeping existing rows, new columns at their default", row == ("kept", ""), row)
+check("keeping existing rows", row == ("kept", ""), row)
+with srv.db() as db:
+    have = db.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'notification'").fetchone()[0]
+check("…and adding the new table", have == 1, have)
 check("and matching a fresh database's schema", schema_of(srv) == fresh_schema)
 stamp(srv, version="99.0.0", schema=schema + 1)
 srv = server()

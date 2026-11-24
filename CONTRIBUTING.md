@@ -360,6 +360,11 @@ what it holds after every step since. It's made by
 from the build that gets tagged. After that it stands for what 0.3.0 wrote, and
 CI keeps it as released.
 
+The same suite also checks a one-step migration. It takes a database at the
+current schema, undoes the newest step by hand, and starts the build again. So
+a new step also means updating that undo in `tests/e2e/upgrade.py` (the block
+after "A start that would migrate") to reverse the new step instead.
+
 ### End-to-end tests
 
 The suites in `tests/e2e/` start real Bifrost instances on throwaway data
