@@ -162,6 +162,11 @@ async fn supervise(
                             "season {season}: AP server exited ({status:?}); restarting in {}s",
                             backoff.as_secs()
                         );
+                        let how = match &status {
+                            Ok(s) => s.to_string(),
+                            Err(e) => e.to_string(),
+                        };
+                        crate::notify::server_stopped(&db, season, &how).await;
                         running = None;
                         tokio::time::sleep(backoff).await;
                         backoff = (backoff * 2).min(Duration::from_secs(60));

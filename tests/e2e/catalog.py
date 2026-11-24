@@ -119,6 +119,9 @@ try:
     mail = lambda s: s.get(srv.base + "/api/notifications").json()["notifications"]
     check("…in their mailbox too", any("Your signup Bofoo in" in n["text"] and "needs attention" in n["text"]
                                        and n["link"].startswith(f"{S}/signup/game/") for n in mail(bob)), mail(bob))
+    check("the season's moderators heard it was waiting", any(n["text"].startswith("alice uploaded foo.apworld (Foo Finder) in") and "waiting for approval" in n["text"]
+                                                            and n["link"] == f"{S}/admin" for n in mail(root)), mail(root))
+    check("…and that a signup needs attention", any(n["text"].startswith("The signup Bofoo in") for n in mail(root)), mail(root))
     check("the uploader hears their world was approved", any(n["text"].startswith("root approved your foo.apworld in") for n in mail(alice)), mail(alice))
     adm = get(root, f"{S}/admin").text
     check("…and the moderators, who can dismiss it", "Signups that need attention" in adm and ">dismiss<" in adm)
@@ -239,6 +242,7 @@ try:
     check("a newer upload of a catalog game installs the catalog's version",
           j.get("ok") and j.get("world") == "bar.apworld" and "vetted version 1.0.0" in j.get("note", ""), j)
     check("…and is passed to the admins", "passed to the server" in j.get("note", ""), j)
+    check("…who hear it in their mailbox", any("offered for the catalog" in n["text"] and n["link"] == "/admin/catalog" for n in mail(root)), mail(root))
     check("…not installed itself", "my-bar.apworld" not in pins(sid2))
     cat = get(root, "/admin/catalog").text
     check("the catalog page offers it as a replacement, with its file to vet",
@@ -470,6 +474,7 @@ try:
     check("a newer version waits for approval without a signup", j.get("pending"), j)
     gen = generate(root, S.removeprefix("/s/"), 240)
     check("generates once nothing is held", gen and gen.startswith("Generated"), gen)
+    check("…and its moderators hear it", any(n["text"].startswith("Spring: Generated") or ": Generated" in n["text"] for n in mail(root)), [n["text"] for n in mail(root)][:5])
     post(root, f"{S}/admin/worlds/approve", data={"name": "foo.apworld"})
     check("after generation, approving a newer version doesn't replace the season's", installed_foo() == foo11)
 finally:

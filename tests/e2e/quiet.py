@@ -96,7 +96,7 @@ try:
         with srv.db() as c:
             check("…nor is prioritized", c.execute("SELECT COUNT(*) FROM hint_priority WHERE season_id = ? AND location = ?",
                                                     (sid, int(fake["location"]))).fetchone()[0] == 0)
-        check("…nor root, who did it", root.get(srv.base + "/api/notifications").json()["notifications"] == [])
+        check("…nor root, who did it", not any("prioritized" in n["text"] for n in root.get(srv.base + "/api/notifications").json()["notifications"]))
         r = finn.post(srv.base + "/api/notifications/read", data=dict(upto=notes[0]["id"]))
         check("reading them stops the glow, and keeps them listed",
               r.ok and me().get("unread") == 0 and finn.get(srv.base + "/api/notifications").json()["notifications"][0]["read"])
@@ -271,6 +271,8 @@ asyncio.run(main())
         os.kill(ap_servers(srv)[0][0], signal.SIGKILL)
         p.kill()
         check("…and not after the server's killed", wait_for(lambda: card(tracked) == "idle", 90, 2), card(tracked))
+        mail = root.get(srv.base + "/api/notifications").json()["notifications"]
+        check("the season's moderators hear its server stopped", any("game server stopped unexpectedly" in n["text"] for n in mail), [n["text"] for n in mail][:5])
 finally:
     srv.stop()
 

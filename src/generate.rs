@@ -527,26 +527,28 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
             return set(&state, false, format!("Failed: {e}"));
         }
     }
-    match run_inner(&db, &rts, &state, season).await {
+    let told = match run_inner(&db, &rts, &state, season).await {
         Ok(msg) => match db.transition(season, State::Live, now()).await {
             Ok(()) => {
                 rts.start_live(season).await;
-                set(&state, false, msg)
+                set(&state, false, msg.clone());
+                msg
             }
             Err(e) => {
                 let _ = db.transition(season, prev, now()).await;
-                set(
-                    &state,
-                    false,
-                    format!("Generated, but couldn't go live: {e}"),
-                )
+                let msg = format!("Generated, but couldn't go live: {e}");
+                set(&state, false, msg.clone());
+                msg
             }
         },
         Err(e) => {
             let _ = db.transition(season, prev, now()).await;
-            set(&state, false, format!("Failed: {e}"))
+            set(&state, false, format!("Failed: {e}"));
+            format!("generating it failed: {e}")
         }
-    }
+    };
+    // Its moderators hear how it went, wherever they are.
+    crate::notify::generated(&db, season, &told).await;
 }
 
 /// Re-roll a live season's lineup: reuse its staged Players/ + installed

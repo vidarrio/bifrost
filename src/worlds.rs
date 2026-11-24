@@ -464,10 +464,13 @@ pub async fn offer_approved(db: &Db, season: Id, req: &WorldRequest, by: &str) {
         approved_by: by.to_string(),
     };
     match offer_store(&offer, &bytes).await {
-        Ok(true) => tracing::info!(
-            "{by} approved {} in season {season}: offered to sysadmins for the catalog",
-            req.file
-        ),
+        Ok(true) => {
+            tracing::info!(
+                "{by} approved {} in season {season}: offered to sysadmins for the catalog",
+                req.file
+            );
+            crate::notify::catalog_offer(db, &offer).await;
+        }
         Ok(false) => {}
         Err(e) => tracing::warn!("{e}"),
     }
@@ -553,6 +556,7 @@ pub async fn place_upload(
             };
             match offer_store(&offer, &bytes).await {
                 Ok(true) => {
+                    crate::notify::catalog_offer(db, &offer).await;
                     tracing::info!(
                         "{uploader} uploaded {} {} (the catalog has {}): offered to sysadmins",
                         cat.game,
@@ -784,7 +788,9 @@ async fn store_request(
     };
     db.add_world_request(season, &req)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    crate::notify::upload_waiting(db, season, uploader, file, game).await;
+    Ok(())
 }
 
 /// Install a catalog world into `season`. Returns the file name it took.
@@ -974,6 +980,7 @@ pub async fn reject(db: &Db, season: Id, file: &str, by: &str) -> Result<WorldRe
     for (id, yaml) in db.held_submissions(season, &req.file).await {
         if matches!(db.set_held_err(id, &yaml, &why).await, Ok(true)) {
             crate::notify::signup_flagged(db, season, id, &why).await;
+            crate::notify::signup_flagged_for_mods(db, season, id, &why).await;
         }
     }
     Ok(req)
@@ -994,6 +1001,7 @@ pub async fn settle_held(db: &Db, season: Id, id: Id, yaml: &str, file: &str) {
         );
         if matches!(db.set_held_err(id, yaml, &why).await, Ok(true)) {
             crate::notify::signup_flagged(db, season, id, &why).await;
+            crate::notify::signup_flagged_for_mods(db, season, id, &why).await;
         }
     }
 }
@@ -1040,6 +1048,7 @@ pub async fn recheck_held(db: &Db, season: Id, file: &str) {
             // A check that couldn't run is tried again: no verdict to tell.
             if changed && !e.starts_with("couldn't be checked") {
                 crate::notify::signup_flagged(db, season, id, &e).await;
+                crate::notify::signup_flagged_for_mods(db, season, id, &e).await;
             }
         }
     }
