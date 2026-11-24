@@ -32,7 +32,8 @@ pub(crate) struct AuditQuery {
     #[serde(default)]
     action: String,
     page: Option<i64>,
-    per: Option<i64>,
+    /// Rows per page, as the activity log calls it.
+    rpp: Option<i64>,
     #[serde(default)]
     fit: String,
 }
@@ -51,7 +52,7 @@ pub(crate) async fn audit_view(
         season: q.season.trim().to_string(),
         action: q.action.trim().to_string(),
         page: 1,
-        per: q.per.unwrap_or(0),
+        per: q.rpp.unwrap_or(0),
         // `<width>x<height>`, numbers only.
         fit: q
             .fit
