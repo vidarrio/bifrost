@@ -83,7 +83,8 @@ try:
         post(root, f"/s/{sid}/prioritize", data=prio)
         notes = finn.get(srv.base + "/api/notifications").json()["notifications"]
         check("prioritizing tells the finder's player", len(notes) == 1 and "root prioritized" in notes[0]["text"]
-              and "in your world" in notes[0]["text"] and notes[0]["link"] == f"/s/{sid}/board" and not notes[0]["read"], notes)
+              and "in your world" in notes[0]["text"] and re.fullmatch(rf"/s/{sid}/game/[0-9a-z]+", notes[0]["link"]) and not notes[0]["read"], notes)
+        check("…linking to the finder's game page", get(finn, notes[0]["link"]).status_code == 200 if form else False)
         check("…and their mailbox glows", me().get("unread") == 1, me())
         post(root, f"/s/{sid}/prioritize", data=prio)  # off again: nothing to tell
         check("…but not taking the priority back", len(finn.get(srv.base + "/api/notifications").json()["notifications"]) == 1)
