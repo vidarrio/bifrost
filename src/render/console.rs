@@ -868,7 +868,7 @@ pub fn audit_page(
         String::new()
     } else {
         format!(
-            r#"<input type="hidden" name="per" value="{}"><input type="hidden" name="fit" value="{}">"#,
+            r#"<input type="hidden" name="rpp" value="{}"><input type="hidden" name="fit" value="{}">"#,
             f.per(),
             esc(&f.fit)
         )
@@ -876,8 +876,6 @@ pub fn audit_page(
     body.push_str(&format!(
         r#"<form class="logfilter" method="get" action="/admin/audit"><label>Who <select name="user">{who}</select></label> <label>Season <select name="season">{wher}</select></label> <label>Action <select name="action">{what}</select></label> {keep_per}<button type="submit">Filter</button> <a class="pill" href="/admin/audit">clear</a></form>"#
     ));
-    let pager = audit_pager(f, total);
-    body.push_str(&pager);
     if rows.is_empty() {
         body.push_str(r#"<div class="empty">Nothing logged that matches.</div>"#);
     } else {
@@ -924,6 +922,14 @@ pub fn audit_page(
             ));
         }
         body.push_str("</table>");
+        // The activity log's pager, under the rows.
+        body.push_str(&super::log::activity_pager(
+            "/admin/audit",
+            &audit_query(f),
+            f.page.clamp(1, pages),
+            pages,
+            f.per(),
+        ));
     }
     body.push_str(AUDIT_FIT_JS);
     auth_page("Console", r#"<a href="/">← home</a>"#, None, &body)
@@ -934,10 +940,11 @@ pub fn audit_page(
 /// can be fitted to the window exactly. On a phone a row is compact: one line
 /// of when, who, where, what and the answer, the details under it.
 const AUDIT_CSS: &str = r#"<style>
-.pager{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0}.pager .statline{margin-right:6px}
-.pager .pill.pg-cur{border-color:var(--accent);color:var(--accent)}.pager .pill.pg-off{opacity:.4}
 /* A long season name doesn't widen its filter past the screen. */
 .logfilter select{max-width:12em}.logfilter label{max-width:100%}
+/* The shared pager is as wide as the activity log's feed; under this wider
+   table it spans the table, so it's centred under it. */
+#modlog+.pager{max-width:none}
 details.about{position:relative}
 details.about summary{cursor:pointer;color:var(--muted);font-size:13px;margin-bottom:6px}
 details.about[open] .statline{position:absolute;z-index:5;left:0;right:0;top:100%;margin:0;padding:10px 12px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.3)}
@@ -988,7 +995,7 @@ const AUDIT_FIT_JS: &str = r#"<script>
  }
  function go(n){
   var u=new URL(location.href);
-  u.searchParams.set('per',n);u.searchParams.set('fit',size());
+  u.searchParams.set('rpp',n);u.searchParams.set('fit',size());
   u.searchParams.set('page',Math.floor((page-1)*per/n)+1);
   if(u.toString()!==location.href)location.replace(u.toString());
  }
@@ -1009,67 +1016,22 @@ const AUDIT_FIT_JS: &str = r#"<script>
 })();
 </script>"#;
 
-/// The moderator log's page links: "Page 3 of 12 · 590 entries", then first,
-/// previous, the pages around this one, next and last, keeping the filters.
-fn audit_pager(f: &crate::db::ModLogFilter, total: i64) -> String {
-    let per = f.per();
-    let pages = ((total + per - 1) / per).max(1);
-    let page = f.page.clamp(1, pages);
-    let mut keep = if f.per == 0 {
-        String::new()
-    } else {
-        format!("&per={per}&fit={}", f.fit)
-    };
+/// The log's filters (and the window it was fitted to) as a query string for
+/// the pager's links: HTML-escaped and `&amp;`-joined, as `activity_pager`
+/// takes it.
+fn audit_query(f: &crate::db::ModLogFilter) -> String {
+    let mut parts = Vec::new();
     for (k, v) in [
         ("user", &f.username),
         ("season", &f.season),
         ("action", &f.action),
+        ("fit", &f.fit),
     ] {
         if !v.is_empty() {
-            keep.push_str(&format!("&{k}={}", url_enc(v)));
+            parts.push(format!("{k}={}", esc(&url_enc(v))));
         }
     }
-    let link = |p: i64, text: &str, label: &str| {
-        if p == page || p < 1 || p > pages {
-            format!(r#"<span class="pill pg-off">{text}</span>"#)
-        } else {
-            format!(
-                r#"<a class="pill" href="/admin/audit?page={p}{keep}" aria-label="{label}">{text}</a>"#
-            )
-        }
-    };
-    let entries = if total == 1 {
-        "1 entry".to_string()
-    } else {
-        format!("{total} entries")
-    };
-    let mut out = format!(
-        r#"<nav class="pager" aria-label="Pages"><span class="statline">Page {page} of {pages} · {entries}</span>"#
-    );
-    if pages > 1 {
-        out.push_str(&link(1, "« first", "First page"));
-        out.push_str(&link(page - 1, "‹ newer", "Newer page"));
-        let (from, to) = ((page - 2).max(1), (page + 2).min(pages));
-        if from > 1 {
-            out.push_str("<span class=\"statline\">…</span>");
-        }
-        for p in from..=to {
-            if p == page {
-                out.push_str(&format!(
-                    r#"<span class="pill pg-cur" aria-current="page">{p}</span>"#
-                ));
-            } else {
-                out.push_str(&link(p, &p.to_string(), &format!("Page {p}")));
-            }
-        }
-        if to < pages {
-            out.push_str("<span class=\"statline\">…</span>");
-        }
-        out.push_str(&link(page + 1, "older ›", "Older page"));
-        out.push_str(&link(pages, "last »", "Last page"));
-    }
-    out.push_str("</nav>");
-    out
+    parts.join("&amp;")
 }
 
 /// A query-string value, percent-encoded.
