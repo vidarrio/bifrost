@@ -1023,7 +1023,7 @@ pub const ONE_GAME_PER_FILE: &str = "That YAML holds several players. Sign up on
 /// the reason.
 pub async fn recheck_held(db: &Db, season: Id, file: &str) {
     let dirs = config::get().season(season);
-    let mut flagged: Vec<(String, String)> = Vec::new();
+    let mut flagged: Vec<(String, String, i64)> = Vec::new();
     for (id, yaml_path) in db.held_submissions(season, file).await {
         let read = match config::get().data_file(&yaml_path) {
             Some(p) => tokio::fs::read_to_string(p).await,
@@ -1058,8 +1058,8 @@ pub async fn recheck_held(db: &Db, season: Id, file: &str) {
             // A check that couldn't run is tried again: no verdict to tell.
             if changed && !e.starts_with("couldn't be checked") {
                 crate::notify::signup_flagged(db, season, id, &e).await;
-                if let Some((_, slot)) = db.submission_owner(id).await {
-                    flagged.push((slot, e));
+                if let Some((owner, slot)) = db.submission_owner(id).await {
+                    flagged.push((slot, e, owner));
                 }
             }
         }
@@ -1067,19 +1067,15 @@ pub async fn recheck_held(db: &Db, season: Id, file: &str) {
     // The moderators hear once, however many failed.
     match flagged.as_slice() {
         [] => {}
-        [(slot, why)] => {
-            crate::notify::signups_flagged_for_mods(
-                db,
-                season,
-                std::slice::from_ref(slot),
-                why,
-                None,
-            )
-            .await
+        // One: its own reason, and not to its owner, who hears as the player.
+        [(slot, why, owner)] => {
+            let slots = std::slice::from_ref(slot);
+            crate::notify::signups_flagged_for_mods(db, season, slots, why, Some(*owner)).await
         }
         many => {
-            let slots: Vec<String> = many.iter().map(|(s, _)| s.clone()).collect();
-            let why = format!("their YAMLs didn't pass a check against {file}");
+            let slots: Vec<String> = many.iter().map(|(s, _, _)| s.clone()).collect();
+            let why =
+                format!("checked against {file}, each is held; the season admin page says why");
             crate::notify::signups_flagged_for_mods(db, season, &slots, &why, None).await;
         }
     }

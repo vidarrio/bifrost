@@ -205,12 +205,18 @@ pub async fn signups_flagged_for_mods(
             "The signup {one} in {name} needs attention: {}.",
             sentence(why)
         ),
-        many => format!(
-            "{} signups in {name} need attention ({}): {}.",
-            many.len(),
-            many.join(", "),
-            sentence(why)
-        ),
+        many => {
+            // A long list stops at ten names.
+            let mut names = many.iter().take(10).cloned().collect::<Vec<_>>().join(", ");
+            if many.len() > 10 {
+                names.push_str(&format!(" and {} more", many.len() - 10));
+            }
+            format!(
+                "{} signups in {name} need attention ({names}): {}.",
+                many.len(),
+                sentence(why)
+            )
+        }
     };
     to_mods(db, season, except, &text, Again::Always).await;
 }

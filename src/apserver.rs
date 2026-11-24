@@ -143,7 +143,9 @@ async fn supervise(
                         backoff.as_secs()
                     );
                     fails += 1;
-                    if fails == 3 {
+                    // Every third failure in a row (a redeploy doesn't reset
+                    // the count); the six-hour window keeps it from repeating.
+                    if fails.is_multiple_of(3) {
                         crate::notify::server_wont_start(&db, season, &e).await;
                     }
                     failed = true;

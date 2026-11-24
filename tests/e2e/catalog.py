@@ -340,7 +340,9 @@ try:
     post(root, f"{S}/admin/worlds/approve", data={"name": "foo.apworld"})
     check("approving it replaces the season's version", installed_foo() == foo11)
     flagged = wait_for(lambda: "no later than 1.0.0" in (t := get(root, f"{S}/admin").text) and t, 180, 2)
-    check("its moderators hear the re-check flagged a signup", wait_for(lambda: any(n["text"].startswith("The signup Rfoo in") for n in mail(root)), 60, 2), [n["text"] for n in mail(root)][:6])
+    # Rfoo is root's own signup: root hears it as its player, not again as moderator.
+    check("a moderator's own flagged signup is told once", wait_for(lambda: any(n["text"].startswith("Your signup Rfoo in") for n in mail(root)), 60, 2)
+          and not any(n["text"].startswith("The signup Rfoo in") for n in mail(root)), [n["text"] for n in mail(root)][:6])
     check("a signup whose YAML fails the new version is flagged", flagged and "Rfoo" in flagged.split("no later than 1.0.0")[0][-600:], (flagged or "")[-600:])
     adm = wait_for(lambda: not held_in(t := get(root, f"{S}/admin").text, "Pfoo") and not held_in(t, "Bfoo") and t, 180, 2)
     check("…the others go ahead on it", adm and listed(adm, "Pfoo") and listed(adm, "Bfoo"))
