@@ -79,7 +79,13 @@ pub async fn prioritized(
     let text = format!(
         "{by} prioritized {receiver}'s {item}, at {location} in your world {finder} ({name})."
     );
-    let link = format!("/s/{season}/board");
+    // The board, at the finder's card: that's where a hint for someone
+    // else's item in your world shows ("wanted from you"); the game page
+    // lists only hints for the slot's own items.
+    let link = match db.game_of_ap_slot(season, finding).await {
+        Some(game) => format!("/s/{season}/board#g-{game}"),
+        None => format!("/s/{season}/board"),
+    };
     for account in db.ap_slot_claimants(season, finding).await {
         if account != by_account
             && let Err(e) = db

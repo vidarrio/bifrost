@@ -75,14 +75,14 @@ try:
     check("the board shows each by its name", wait_for(lambda: "Clique Vanilla" in board() and "Foo Modded" in board(), 60), board()[-2000:])
     b = board()
     check("each shows its own address", "vanilla.example:25565" in b and "modded.example:25565" in b)
-    gid = lambda name: re.search(r'href="game/([0-9a-z]+)"><span class="st">[^<]*</span><div class="game">' + re.escape(name) + "<", board()).group(1)
+    gid = lambda name: re.search(r'href="game/([0-9a-z]+)"(?: id="g-[0-9a-z]+")?><span class="st">[^<]*</span><div class="game">' + re.escape(name) + "<", board()).group(1)
     van = f"/s/{sid}/game/{gid('Clique Vanilla')}"
 
     page = wait_for(lambda: (x := get(carl, van).text) and "isn't up yet" not in x and x, 60)
     j = get(carl, van + "/live").json()
     check("a common game's page keeps its figures and hints live too", re.fullmatch(r"\d+ locations · \d+ left · sent \d+ · received \d+", j.get("stats", "")) and isinstance(j.get("hints"), str), j)
     check("a common game's page goes by its setup's name", "<h1>Clique Vanilla</h1>" in page, (h := re.search(r"<h1>[^<]*</h1>", page)) and h.group(0))
-    regular = get(carl, f"/s/{sid}/game/{re.search(r'href=\"game/([0-9a-z]+)\"><span class=\"st\">[^<]*</span><div class=\"game\">ChecksFinder<', board()).group(1)}").text
+    regular = get(carl, f"/s/{sid}/game/{re.search(r'href=\"game/([0-9a-z]+)\"(?: id=\"g-[0-9a-z]+\")?><span class=\"st\">[^<]*</span><div class=\"game\">ChecksFinder<', board()).group(1)}").text
     check("…and a regular game's by its game", "<h1>ChecksFinder</h1>" in regular, (h := re.search(r"<h1>[^<]*</h1>", regular)) and h.group(0))
     check("someone not on the allowlist yet lands on How to join", 'class="gtab on" data-tab="tab-join"' in page and 'id="tab-hints" hidden' in page)
     check("the guide fills in the address and slot", "<strong>vanilla.example:25565</strong>" in page and "<code>Vanilla</code>" in page, page[-3000:])

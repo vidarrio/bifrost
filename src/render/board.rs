@@ -226,8 +226,9 @@ pub(super) fn board_inner(
                 .find_map(|r| r.common_key.as_deref())
                 .and_then(|k| commons.iter().find(|c| c.key == k));
             out.push_str(&format!(
-                r#"<a class="slot cardlink {cls}" href="game/{}"><span class="st">{label}</span><div class="game">{}</div>
+                r#"<a class="slot cardlink {cls}" href="game/{}" id="g-{}"><span class="st">{label}</span><div class="game">{}</div>
 <div class="meta">{}&nbsp;locations · {}&nbsp;left · sent&nbsp;{} · recv&nbsp;{}{avail}</div>"#,
+                g.rows[0].game_id,
                 g.rows[0].game_id,
                 esc(common.map_or(g.game, |c| c.name.as_str())),
                 live.world_size,

@@ -137,6 +137,17 @@ impl Db {
         .unwrap_or_default()
     }
 
+    /// The game (its page's id) an AP slot is, in a season.
+    pub async fn game_of_ap_slot(&self, season: Id, ap_slot: i64) -> Option<String> {
+        sqlx::query_scalar("SELECT game_id FROM slot WHERE season_id = ? AND ap_slot = ? LIMIT 1")
+            .bind(season)
+            .bind(ap_slot)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten()
+    }
+
     /// A signup's owner and slot name.
     pub async fn submission_owner(&self, id: Id) -> Option<(i64, String)> {
         sqlx::query_as("SELECT account_id, slot_name FROM submission WHERE id = ?")
