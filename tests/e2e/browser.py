@@ -171,6 +171,39 @@ try:
             check("the signup wizard lists the core games within 4 minutes", False)
         ctx.close()
 
+        # --- the mailbox: glows while anything's unread, opens a box of
+        # notifications (links only to this site), and reading clears the glow
+        with srv.db() as c:
+            acct = c.execute("SELECT id FROM account WHERE username = 'root'").fetchone()[0]
+            c.execute("INSERT INTO notification (account_id, season_id, text, link, created_at) VALUES (?, ?, ?, ?, strftime('%s','now'))",
+                      (acct, sid, "Your signup <b>X</b> needs attention.", f"/s/{sid}/signup"))
+            c.execute("INSERT INTO notification (account_id, text, link, created_at) VALUES (?, ?, ?, strftime('%s','now'))",
+                      (acct, "Elsewhere", "https://evil.example/"))
+        for w, h in ((1100, 800), (390, 844)):
+            ctx = web.context(b, srv, root, width=w, height=h)
+            pg = ctx.new_page()
+            settled(pg, "/")
+            if w == 1100:
+                check("the mailbox glows with unread mail", "glow" in (pg.get_attribute("#mailbtn", "class") or ""))
+            pg.click("#mailbtn")
+            pg.wait_for_selector("#mailbox li")
+            bx = web.box(pg, "#mailbox")
+            check(f"the mailbox fits a {w}px screen", bx and bx["x"] >= 0 and bx["x"] + bx["width"] <= w, bx)
+            texts = pg.eval_on_selector_all("#mailbox li", "els => els.map(e => [e.className, e.querySelector('a') ? e.querySelector('a').getAttribute('href') : null, e.firstChild.textContent])")
+            if w == 1100:
+                check("…opening it lists them, newest first, as text", texts[0][2] == "Elsewhere" and texts[1][2] == "Your signup <b>X</b> needs attention.", texts)
+                check("…linking only to this site", texts[0][1] is None and texts[1][1] == f"/s/{sid}/signup", texts)
+                pg.wait_for_function("!document.getElementById('mailbtn').classList.contains('glow')")
+                check("…and reading them stops the glow", True)
+                settled(pg, "/worlds")
+                check("…on the next page too", "glow" not in (pg.get_attribute("#mailbtn", "class") or ""))
+                pg.click("#mailbtn")
+                pg.wait_for_selector("#mailbox li")
+            pg.keyboard.press("Escape")
+            check(f"…and Escape closes it ({w}px)", pg.query_selector("#mailbox") is None)
+            check(f"no page errors around the mailbox ({w}px)", not web.take_errors(), web.ERRORS)
+            ctx.close()
+
         # --- signing out and in: the next page never shows the old identity
         ctx = web.context(b, srv, root)
         pg = ctx.new_page()

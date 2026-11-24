@@ -12,6 +12,7 @@ use sqlx::{FromRow, SqlitePool};
 mod auth;
 mod common;
 mod migrate;
+mod notify;
 pub use migrate::SCHEMA_VERSION;
 mod seasons;
 mod seats;

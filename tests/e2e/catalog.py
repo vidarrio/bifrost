@@ -116,6 +116,10 @@ try:
     needs = wait_for(lambda: "needs attention" in (t := get(bob, f"{S}/signup").text) and t, 120, 2)
     check("others only see that it's held", "99.0.0" not in get(alice, f"{S}/signup").text and "99.0.0" not in get(alice, f"{S}/signup/game/{badg}").text)
     check("a failed check tells the player", needs and "Bofoo needs attention" in needs, get(bob, f"{S}/signup").text[-500:])
+    mail = lambda s: s.get(srv.base + "/api/notifications").json()["notifications"]
+    check("…in their mailbox too", any("Your signup Bofoo in" in n["text"] and "needs attention" in n["text"]
+                                       and n["link"].startswith(f"{S}/signup/game/") for n in mail(bob)), mail(bob))
+    check("the uploader hears their world was approved", any(n["text"].startswith("root approved your foo.apworld in") for n in mail(alice)), mail(alice))
     adm = get(root, f"{S}/admin").text
     check("…and the moderators, who can dismiss it", "Signups that need attention" in adm and ">dismiss<" in adm)
     post(root, f"{S}/admin/generate")
@@ -140,6 +144,7 @@ try:
     post(root, f"{S}/admin/worlds/reject", data={"name": "baz.apworld"})
     page = get(bob, f"{S}/signup").text
     check("rejected: held signup says so", "baz.apworld was rejected by root" in page, page[-500:])
+    check("…and the uploader hears it", any(n["text"].startswith("root rejected your baz.apworld in") for n in mail(bob)), mail(bob))
     adm = get(root, f"{S}/admin").text
     check("rejected world isn't installed", "baz.apworld" not in adm.split("Installed apworlds")[1].split("Clear all apworlds")[0])
     # remove bob's dead signup

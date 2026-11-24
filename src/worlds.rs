@@ -952,7 +952,7 @@ pub async fn approve_with(
 }
 
 /// Reject a pending upload; its held signups say so until they're replaced or removed.
-pub async fn reject(db: &Db, season: Id, file: &str, by: &str) -> Result<(), String> {
+pub async fn reject(db: &Db, season: Id, file: &str, by: &str) -> Result<WorldRequest, String> {
     let req = db
         .take_world_request(season, file)
         .await
@@ -965,7 +965,7 @@ pub async fn reject(db: &Db, season: Id, file: &str, by: &str) -> Result<(), Str
         db.rehold(season, &req.file, &have).await;
         let db = db.clone();
         tokio::spawn(async move { recheck_held(&db, season, &have).await });
-        return Ok(());
+        return Ok(req);
     }
     let why = format!(
         "{} was rejected by {by}: replace the YAML with an installed game's, or remove this signup",
@@ -973,8 +973,9 @@ pub async fn reject(db: &Db, season: Id, file: &str, by: &str) -> Result<(), Str
     );
     for (id, yaml) in db.held_submissions(season, &req.file).await {
         let _ = db.set_held_err(id, &yaml, &why).await;
+        crate::notify::signup_flagged(db, season, id, &why).await;
     }
-    Ok(())
+    Ok(req)
 }
 
 /// A signup just stored as held for `file`: if its world was decided while that was
@@ -991,6 +992,7 @@ pub async fn settle_held(db: &Db, season: Id, id: Id, yaml: &str, file: &str) {
             "{file} was rejected: replace the YAML with an installed game's, or remove this signup"
         );
         let _ = db.set_held_err(id, yaml, &why).await;
+        crate::notify::signup_flagged(db, season, id, &why).await;
     }
 }
 
@@ -1033,6 +1035,10 @@ pub async fn recheck_held(db: &Db, season: Id, file: &str) {
         if let Err(e) = res {
             tracing::info!("held signup {id} in season {season} still held: {e}");
             let _ = db.set_held_err(id, &yaml_path, &e).await;
+            // A check that couldn't run is tried again: no verdict to tell.
+            if !e.starts_with("couldn't be checked") {
+                crate::notify::signup_flagged(db, season, id, &e).await;
+            }
         }
     }
 }
