@@ -13,9 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 log). The first start of 0.6.0 takes a pre-upgrade backup, then migrates; to go
 back to 0.5.x, restore that backup (see Updating Bifrost in the user guide). As
 with 0.5.0, it won't start if that backup can't be written, so make room or set
-`BIFROST_BACKUP_DIR` first. On servers that approve uploads automatically, a
-newer version of a game a season already has (and an upload Bifrost can't tie
-to a game) now waits for a season moderator.
+`BIFROST_BACKUP_DIR` first. A newer version of a game a season already has can
+now replace the season's copy before generation, once a season moderator
+approves it, even on servers that approve uploads automatically. Those servers
+also hold for a moderator any upload whose manifest names no game, and every
+upload to a season one of whose custom worlds names no game.
 
 ### Added
 
@@ -31,12 +33,14 @@ to a game) now waits for a season moderator.
   attention (a failed check, or its world rejected), and when a moderator
   approves or rejects a world you uploaded.
   Moderators hear about their seasons' waiting uploads, signups that need
-  attention, generation results and game servers that stop unexpectedly;
+  attention, generation results and game servers that stop unexpectedly or
+  won't start;
   sysadmins about catalog offers, new Bifrost releases, failed nightly
   backups and failed Archipelago installs.
 - When the catalog has a newer version of a season's installed world, the
-  season admin page offers **update to the catalog's** version, which
-  replaces it and checks every signup for the game again.
+  season admin page offers **update to the catalog's** version until the
+  season is generated. It replaces the world and checks every signup for the
+  game again.
 - A sysadmin approving an upload in a season can add it to the catalog in the
   same step (the approve button's box, ticked by default). A season
   moderator's approval offers the world to the sysadmins instead, on the
@@ -49,6 +53,8 @@ to a game) now waits for a season moderator.
 
 ### Changed
 
+- Prioritizing a hint is limited to 30 times in 10 minutes per player, and a
+  hint the live board doesn't have can't be prioritized.
 - The native bundle's Python is a newer build of Python 3.13.18
   (python-build-standalone 20261123, with libffi 3.8.1).
 - The signup wizard's first step is one searchable list of every game the
@@ -58,10 +64,10 @@ to a game) now waits for a season moderator.
   catalog and upload first.
 - A newer version of a custom game a season already has now replaces the
   season's copy, until the season is generated, instead of the season keeping
-  its first version. It installs at once only if it's the catalog's own
-  version (and if the catalog has the game at least as new as the upload, the
-  catalog's is used); otherwise it waits for a moderator, even where uploads
-  are auto-approved. An upload whose version can't be compared with the
+  its first version. If the upload is the catalog's own version, or the
+  catalog has the game at least as new, the catalog's version is installed at
+  once. Otherwise the upload waits for a moderator, even where uploads are
+  auto-approved. An upload whose version can't be compared with the
   season's copy waits too, and a moderator can **replace anyway**. Every
   signup for that game is then checked against the new version, and those
   that fail are flagged as held signups are. If it's rejected, the signups
