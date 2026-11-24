@@ -87,12 +87,29 @@ try:
         check("…and their mailbox glows", me().get("unread") == 1, me())
         post(root, f"/s/{sid}/prioritize", data=prio)  # off again: nothing to tell
         check("…but not taking the priority back", len(finn.get(srv.base + "/api/notifications").json()["notifications"]) == 1)
+        post(root, f"/s/{sid}/prioritize", data=prio)  # and on again: told already
+        check("…nor setting it again", len(finn.get(srv.base + "/api/notifications").json()["notifications"]) == 1)
+        post(root, f"/s/{sid}/prioritize", data=prio)  # off, for the rest of the suite
+        fake = dict(prio, location=str(int(prio["location"]) + 987654))
+        post(root, f"/s/{sid}/prioritize", data=fake)
+        check("…and a hint the board doesn't have tells no one", len(finn.get(srv.base + "/api/notifications").json()["notifications"]) == 1)
+        with srv.db() as c:
+            check("…nor is prioritized", c.execute("SELECT COUNT(*) FROM hint_priority WHERE season_id = ? AND location = ?",
+                                                    (sid, int(fake["location"]))).fetchone()[0] == 0)
         check("…nor root, who did it", root.get(srv.base + "/api/notifications").json()["notifications"] == [])
         r = finn.post(srv.base + "/api/notifications/read", data=dict(upto=notes[0]["id"]))
         check("reading them stops the glow, and keeps them listed",
               r.ok and me().get("unread") == 0 and finn.get(srv.base + "/api/notifications").json()["notifications"][0]["read"])
-        check("someone else can't read them", srv.session().get(srv.base + "/api/notifications").status_code in (401, 302, 303)
-              or srv.session().get(srv.base + "/api/notifications").json().get("notifications") == [])
+        gail = srv.invite_user(root, "gail")
+        check("another account doesn't see them", gail.get(srv.base + "/api/notifications").json()["notifications"] == [])
+        finn.post(srv.base + "/api/notifications/read", data=dict(upto=0))
+        with srv.db() as c:
+            c.execute("UPDATE notification SET read = 0 WHERE id = ?", (notes[0]["id"],))
+        gail.post(srv.base + "/api/notifications/read", data=dict(upto=notes[0]["id"] + 100))
+        check("…nor mark them read", me().get("unread") == 1, me())
+        finn.post(srv.base + "/api/notifications/read", data=dict(upto=notes[0]["id"]))
+        anon = srv.session().get(srv.base + "/api/notifications")
+        check("…and nor does anyone signed out", anon.status_code in (401, 302, 303) or anon.json().get("notifications") == [])
         # The slot goes back to root, whom the rest of the suite hints as.
         with srv.db() as c:
             rid = c.execute("SELECT id FROM account WHERE username = 'root'").fetchone()[0]

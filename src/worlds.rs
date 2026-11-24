@@ -972,8 +972,9 @@ pub async fn reject(db: &Db, season: Id, file: &str, by: &str) -> Result<WorldRe
         req.file
     );
     for (id, yaml) in db.held_submissions(season, &req.file).await {
-        let _ = db.set_held_err(id, &yaml, &why).await;
-        crate::notify::signup_flagged(db, season, id, &why).await;
+        if matches!(db.set_held_err(id, &yaml, &why).await, Ok(true)) {
+            crate::notify::signup_flagged(db, season, id, &why).await;
+        }
     }
     Ok(req)
 }
@@ -991,8 +992,9 @@ pub async fn settle_held(db: &Db, season: Id, id: Id, yaml: &str, file: &str) {
         let why = format!(
             "{file} was rejected: replace the YAML with an installed game's, or remove this signup"
         );
-        let _ = db.set_held_err(id, yaml, &why).await;
-        crate::notify::signup_flagged(db, season, id, &why).await;
+        if matches!(db.set_held_err(id, yaml, &why).await, Ok(true)) {
+            crate::notify::signup_flagged(db, season, id, &why).await;
+        }
     }
 }
 
@@ -1034,9 +1036,9 @@ pub async fn recheck_held(db: &Db, season: Id, file: &str) {
         };
         if let Err(e) = res {
             tracing::info!("held signup {id} in season {season} still held: {e}");
-            let _ = db.set_held_err(id, &yaml_path, &e).await;
+            let changed = matches!(db.set_held_err(id, &yaml_path, &e).await, Ok(true));
             // A check that couldn't run is tried again: no verdict to tell.
-            if !e.starts_with("couldn't be checked") {
+            if changed && !e.starts_with("couldn't be checked") {
                 crate::notify::signup_flagged(db, season, id, &e).await;
             }
         }

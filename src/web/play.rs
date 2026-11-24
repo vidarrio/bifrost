@@ -28,7 +28,14 @@ pub(crate) async fn prioritize_post(
     // A hint is prioritized by the item's owner: a claimant of the receiving
     // slot (whose items the hint is about), or an admin. The finder's world can
     // be someone else's, so we gate on `receiving`, not `finding`.
-    if !is_found && (is_admin || st.db.claims_ap_slot(season, my_id, f.receiving).await) {
+    // A hint the board doesn't have isn't one to prioritize (while the board
+    // is there to ask).
+    let unknown = ctx
+        .rt
+        .with_board(|b| b.has_hint(f.finding, f.location, f.item, f.receiving))
+        == Some(false);
+    if !is_found && !unknown && (is_admin || st.db.claims_ap_slot(season, my_id, f.receiving).await)
+    {
         let now_on = st
             .db
             .toggle_priority(season, f.finding, f.location, f.item)

@@ -179,6 +179,9 @@ try:
                       (acct, sid, "Your signup <b>X</b> needs attention.", f"/s/{sid}/signup"))
             c.execute("INSERT INTO notification (account_id, text, link, created_at) VALUES (?, ?, ?, strftime('%s','now'))",
                       (acct, "Elsewhere", "https://evil.example/"))
+            for bent in ("/\\evil.example/", "/\t/evil.example/", "//evil.example/"):
+                c.execute("INSERT INTO notification (account_id, text, link, created_at) VALUES (?, ?, ?, strftime('%s','now'))",
+                          (acct, "Bent " + repr(bent), bent))
         for w, h in ((1100, 800), (390, 844)):
             ctx = web.context(b, srv, root, width=w, height=h)
             pg = ctx.new_page()
@@ -191,10 +194,14 @@ try:
             check(f"the mailbox fits a {w}px screen", bx and bx["x"] >= 0 and bx["x"] + bx["width"] <= w, bx)
             texts = pg.eval_on_selector_all("#mailbox li", "els => els.map(e => [e.className, e.querySelector('a') ? e.querySelector('a').getAttribute('href') : null, e.firstChild.textContent])")
             if w == 1100:
-                check("…opening it lists them, newest first, as text", texts[0][2] == "Elsewhere" and texts[1][2] == "Your signup <b>X</b> needs attention.", texts)
-                check("…linking only to this site", texts[0][1] is None and texts[1][1] == f"/s/{sid}/signup", texts)
-                pg.wait_for_function("!document.getElementById('mailbtn').classList.contains('glow')")
-                check("…and reading them stops the glow", True)
+                check("…opening it lists them, newest first, as text", texts[3][2] == "Elsewhere" and texts[4][2] == "Your signup <b>X</b> needs attention.", texts)
+                check("…linking only to this site", texts[4][1] == f"/s/{sid}/signup" and all(t[1] is None for t in texts[:4]), texts)
+                try:
+                    pg.wait_for_function("!document.getElementById('mailbtn').classList.contains('glow')", timeout=10_000)
+                    cleared = True
+                except Exception:
+                    cleared = False
+                check("…and reading them stops the glow", cleared)
                 settled(pg, "/worlds")
                 check("…on the next page too", "glow" not in (pg.get_attribute("#mailbtn", "class") or ""))
                 pg.click("#mailbtn")

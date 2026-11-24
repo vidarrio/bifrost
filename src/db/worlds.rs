@@ -257,16 +257,19 @@ impl Db {
         id: Id,
         yaml_file: &str,
         err: &str,
-    ) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "UPDATE submission SET held_err = ? WHERE id = ? AND yaml_file = ? AND held_for IS NOT NULL",
+    ) -> Result<bool, sqlx::Error> {
+        // Whether it changed: the same reason again (a re-check after a
+        // restart) or a file replaced meanwhile isn't news to tell anyone.
+        let r = sqlx::query(
+            "UPDATE submission SET held_err = ?1 WHERE id = ?2 AND yaml_file = ?3 AND held_for IS NOT NULL
+               AND held_err IS NOT ?1",
         )
         .bind(err)
         .bind(id)
         .bind(yaml_file)
         .execute(&self.pool)
         .await?;
-        Ok(())
+        Ok(r.rows_affected() > 0)
     }
 }
 

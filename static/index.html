@@ -57,7 +57,7 @@
   .mail.glow{color:var(--accent);border-color:var(--accent);animation:mailglow 2.4s ease-in-out infinite}
   @keyframes mailglow{0%,100%{box-shadow:0 0 2px 0 color-mix(in srgb,var(--accent) 55%,transparent)}50%{box-shadow:0 0 11px 2px color-mix(in srgb,var(--accent) 55%,transparent)}}
   @media (prefers-reduced-motion:reduce){.mail.glow{animation:none;box-shadow:0 0 7px 1px color-mix(in srgb,var(--accent) 55%,transparent)}}
-  .mailbox{position:fixed;max-height:min(420px,70vh);overflow:auto;background:var(--panel);border:1px solid var(--bd);border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.35);z-index:50;padding:6px 0;text-align:left}
+  .mailbox{position:absolute;max-height:min(420px,70vh);overflow:auto;background:var(--panel);border:1px solid var(--bd);border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.35);z-index:50;padding:6px 0;text-align:left}
   .mailbox h3{margin:4px 12px 6px;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
   .mailbox ul{list-style:none;margin:0;padding:0}
   .mailbox li{padding:8px 12px;border-top:1px solid var(--bd);font-size:13px;line-height:1.4;color:var(--muted);overflow-wrap:anywhere}

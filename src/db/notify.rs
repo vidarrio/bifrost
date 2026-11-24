@@ -52,6 +52,30 @@ impl Db {
         Ok(())
     }
 
+    /// [`Db::notify`], unless the account has the same text among those it
+    /// keeps already (a priority turned off and on again, say).
+    pub async fn notify_once(
+        &self,
+        account: i64,
+        season: Option<Id>,
+        text: &str,
+        link: &str,
+        now: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let seen: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM notification WHERE account_id = ? AND text = ?",
+        )
+        .bind(account)
+        .bind(text)
+        .fetch_one(&self.pool)
+        .await?;
+        if seen > 0 {
+            return Ok(false);
+        }
+        self.notify(account, season, text, link, now).await?;
+        Ok(true)
+    }
+
     /// An account's notifications, newest first.
     pub async fn notifications(&self, account: i64) -> Vec<Notification> {
         sqlx::query_as(

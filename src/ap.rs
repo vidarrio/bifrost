@@ -245,7 +245,8 @@ impl Board {
     }
 
     /// A hint's names, for telling people about it: (finder's slot, receiver's
-    /// slot, item, location). None until the data package has loaded.
+    /// slot, item, location). None if the board has no such unfound hint, or
+    /// until the data package has loaded.
     pub fn hint_names(
         &self,
         finding: i64,
@@ -256,12 +257,33 @@ impl Board {
         let m = self.meta.as_ref()?;
         let finder = self.slots.get(&finding)?;
         let receiver = self.slots.get(&receiving)?;
+        // Only a hint the board has, still unfound: nobody is told about one
+        // made up in a form.
+        receiver.hint_list.iter().find(|h| {
+            h.receiving == receiving
+                && h.finding == finding
+                && h.location == location
+                && h.item == item
+                && !h.found
+        })?;
         Some((
             finder.name.clone(),
             receiver.name.clone(),
             m.item_name(&receiver.game, item)?.to_string(),
             m.location_name(&finder.game, location)?.to_string(),
         ))
+    }
+
+    /// Whether `receiving`'s hint list has the hint (found or not).
+    pub fn has_hint(&self, finding: i64, location: i64, item: i64, receiving: i64) -> bool {
+        self.slots.get(&receiving).is_some_and(|s| {
+            s.hint_list.iter().any(|h| {
+                h.receiving == receiving
+                    && h.finding == finding
+                    && h.location == location
+                    && h.item == item
+            })
+        })
     }
 
     /// Whether the hint (finding, location, item) has been found, from the raw

@@ -163,13 +163,14 @@ document.addEventListener('submit',function(e){var a=e.target.getAttribute('acti
 // box of recent notifications (read ones too). Opening it marks them read.
 function bifMail(m){
  var s=document.getElementById('mailslot');if(!s)return;
+ var old=document.getElementById('mailbtn');
+ // The same account again (/api/me confirming the cached identity): only
+ // the glow changes, so a box opened meanwhile stays open.
+ if(old&&m&&m.user&&old.dataset.user===m.user){bifMailGlow(old,m.unread);return}
  s.textContent='';var box=document.getElementById('mailbox');if(box)box.remove();
  if(!(m&&m.user))return;
- var b=document.createElement('button');b.type='button';b.id='mailbtn';
- b.className='mail'+(m.unread?' glow':'');
- b.title=m.unread?(m.unread+' new'):'Notifications';
- b.setAttribute('aria-label',m.unread?('Notifications, '+m.unread+' new'):'Notifications');
- b.setAttribute('aria-expanded','false');b.setAttribute('aria-haspopup','dialog');
+ var b=document.createElement('button');b.type='button';b.id='mailbtn';b.className='mail';b.dataset.user=m.user;
+ b.setAttribute('aria-expanded','false');b.setAttribute('aria-haspopup','dialog');bifMailGlow(b,m.unread);
  // An envelope, from nodes like the rest of the header.
  var ns='http://www.w3.org/2000/svg';function el(n,a){var e=document.createElementNS(ns,n);for(var k in a)e.setAttribute(k,a[k]);return e}
  var svg=el('svg',{viewBox:'0 0 24 24',width:'17',height:'17','aria-hidden':'true'});
@@ -180,6 +181,13 @@ function bifMail(m){
  b.onclick=function(e){e.stopPropagation();bifMailToggle(b)};
  s.appendChild(b);
 }
+function bifMailGlow(b,n){b.classList.toggle('glow',!!n);b.title=n?(n+' new'):'Notifications';
+ b.setAttribute('aria-label',n?('Notifications, '+n+' new'):'Notifications')}
+// Where the box goes: under the button, in the page (so it scrolls with the
+// header), kept on screen.
+function bifMailPlace(box,b){var r=b.getBoundingClientRect(),vw=document.documentElement.clientWidth,w=Math.min(340,vw-32);
+ var right=Math.max(16,vw-r.right);if(vw-right-w<16)right=vw-16-w;
+ box.style.top=(r.bottom+8+window.scrollY)+'px';box.style.right=right+'px';box.style.width=w+'px'}
 // When, as the activity log words it ("5m ago"), then a date after a week.
 // (Its own: the landing page has no activity script.)
 function bifMailAgo(t){var d=Math.max(0,Math.floor(Date.now()/1000-t));
@@ -189,32 +197,38 @@ function bifMailClose(){var x=document.getElementById('mailbox');if(x)x.remove()
 function bifMailToggle(b){
  if(document.getElementById('mailbox')){bifMailClose();return}
  var box=document.createElement('div');box.id='mailbox';box.className='mailbox';box.setAttribute('role','dialog');box.setAttribute('aria-label','Notifications');
- var r=b.getBoundingClientRect(),w=Math.min(340,innerWidth-32),right=Math.max(16,innerWidth-r.right);
- if(innerWidth-right-w<16)right=innerWidth-16-w;
- box.style.top=(r.bottom+8)+'px';box.style.right=right+'px';box.style.width=w+'px';
+ box.tabIndex=-1;bifMailPlace(box,b);
  var h=document.createElement('h3');h.textContent='Notifications';box.appendChild(h);
  var p=document.createElement('div');p.className='none';p.textContent='Loading…';box.appendChild(p);
  box.addEventListener('click',function(e){e.stopPropagation()});
  document.body.appendChild(box);b.setAttribute('aria-expanded','true');
- fetch('/api/notifications').then(function(r){return r.json()}).then(function(j){
+ // Keyboard users land in the box, not at the end of the page.
+ box.focus();
+ fetch('/api/notifications').then(function(r){if(!r.ok)throw r.status;return r.json()}).then(function(j){
   var list=(j&&j.notifications)||[];p.remove();
   if(!list.length){var n=document.createElement('div');n.className='none';n.textContent='No notifications yet.';box.appendChild(n);return}
   var ul=document.createElement('ul'),upto=0,unread=false;
   list.forEach(function(x){var li=document.createElement('li');if(!x.read){li.className='new';unread=true}
    upto=Math.max(upto,x.id);
-   // Only this site's own paths are links.
-   var t=(typeof x.link==='string'&&/^\/(?!\/)/.test(x.link))?document.createElement('a'):document.createElement('span');
+   // Only this site's own paths are links: a plain path (no backslash or
+   // whitespace, which browsers bend into another host) that resolves here.
+   var ok=typeof x.link==='string'&&/^\/(?![\/\\])[^\\\s]*$/.test(x.link);
+   try{ok=ok&&new URL(x.link,location.href).origin===location.origin}catch(e){ok=false}
+   var t=ok?document.createElement('a'):document.createElement('span');
    if(t.tagName==='A')t.href=x.link;t.textContent=x.text;li.appendChild(t);
    var w=document.createElement('span');w.className='when';w.textContent=bifMailAgo(x.created_at);li.appendChild(w);ul.appendChild(li)});
   box.appendChild(ul);
-  if(unread)fetch('/api/notifications/read',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'upto='+upto}).then(function(){
-   b.classList.remove('glow');b.title='Notifications';b.setAttribute('aria-label','Notifications');
+  if(unread)fetch('/api/notifications/read',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'upto='+upto}).then(function(r){
+   if(!r.ok)return;bifMailGlow(b,0);
    // The cached identity's unread count too, so the next page doesn't glow.
    try{var k='bifme',c=JSON.parse(localStorage.getItem(k)||'null');if(c){c.unread=0;localStorage.setItem(k,JSON.stringify(c))}}catch(e){}
   }).catch(function(){});
  }).catch(function(){p.textContent='Couldn\'t load them.'});
 }
 document.addEventListener('click',bifMailClose);
+addEventListener('resize',function(){var x=document.getElementById('mailbox'),b=document.getElementById('mailbtn');if(x&&b)bifMailPlace(x,b)});
+// Read in another tab: stop glowing here too.
+addEventListener('storage',function(e){if(e.key!=='bifme')return;try{var c=JSON.parse(e.newValue||'null'),b=document.getElementById('mailbtn');if(c&&b&&!c.unread)bifMailGlow(b,0)}catch(x){}});
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.getElementById('mailbox')){bifMailClose();var b=document.getElementById('mailbtn');if(b)b.focus()}});
 function bifApplyMe(m){
  var w=document.getElementById('who');
@@ -302,7 +316,7 @@ header .spacer{flex:1}
 .mail.glow{color:var(--accent);border-color:var(--accent);animation:mailglow 2.4s ease-in-out infinite}
 @keyframes mailglow{0%,100%{box-shadow:0 0 2px 0 color-mix(in srgb,var(--accent) 55%,transparent)}50%{box-shadow:0 0 11px 2px color-mix(in srgb,var(--accent) 55%,transparent)}}
 @media (prefers-reduced-motion:reduce){.mail.glow{animation:none;box-shadow:0 0 7px 1px color-mix(in srgb,var(--accent) 55%,transparent)}}
-.mailbox{position:fixed;max-height:min(420px,70vh);overflow:auto;background:var(--panel);border:1px solid var(--bd);border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.35);z-index:50;padding:6px 0;text-align:left}
+.mailbox{position:absolute;max-height:min(420px,70vh);overflow:auto;background:var(--panel);border:1px solid var(--bd);border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.35);z-index:50;padding:6px 0;text-align:left}
 .mailbox h3{margin:4px 12px 6px;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
 .mailbox ul{list-style:none;margin:0;padding:0}
 .mailbox li{padding:8px 12px;border-top:1px solid var(--bd);font-size:13px;line-height:1.4;color:var(--muted);overflow-wrap:anywhere}
@@ -801,11 +815,19 @@ mod tests {
         // A field drawn but not cached appears late and shifts the header
         // (the home pill did), so every `m.<field>` bifApplyMe reads must be
         // in what the script caches.
-        let apply = IDENTITY_JS
-            .split("function bifApplyMe(m){")
-            .nth(1)
-            .and_then(|r| r.split("\n}\n").next())
-            .expect("bifApplyMe");
+        // bifApplyMe and the mailbox it draws (bifMail).
+        let body = |f: &str| {
+            IDENTITY_JS
+                .split(f)
+                .nth(1)
+                .and_then(|r| r.split("\n}\n").next())
+                .unwrap_or_else(|| panic!("{f}"))
+        };
+        let apply = format!(
+            "{}{}",
+            body("function bifApplyMe(m){"),
+            body("function bifMail(m){")
+        );
         let cached = IDENTITY_JS
             .lines()
             .find(|l| l.contains("localStorage.setItem('bifme'"))
@@ -823,6 +845,7 @@ mod tests {
         fields.sort_unstable();
         fields.dedup();
         assert!(fields.contains(&"home_label"), "{fields:?}");
+        assert!(fields.contains(&"unread"), "{fields:?}");
         for f in fields {
             assert!(
                 cached.contains(&format!("{{{f}:")) || cached.contains(&format!(",{f}:")),

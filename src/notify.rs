@@ -79,9 +79,14 @@ pub async fn prioritized(
     let text = format!(
         "{by} prioritized {receiver}'s {item}, at {location} in your world {finder} ({name})."
     );
+    let link = format!("/s/{season}/board");
     for account in db.ap_slot_claimants(season, finding).await {
-        if account != by_account {
-            leave(db, account, season, &text, &format!("/s/{season}/board")).await;
+        if account != by_account
+            && let Err(e) = db
+                .notify_once(account, Some(season), &text, &link, crate::clock::now())
+                .await
+        {
+            tracing::warn!("notifying account {account}: {e}");
         }
     }
 }
