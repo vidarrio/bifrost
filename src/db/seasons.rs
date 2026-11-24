@@ -245,6 +245,14 @@ impl Db {
     }
 
     /// Every season, newest first.
+    /// Every season's id, or the error: for a caller that must not take a
+    /// failed read for no seasons.
+    pub async fn season_ids(&self) -> Result<Vec<Id>, sqlx::Error> {
+        sqlx::query_scalar("SELECT id FROM season")
+            .fetch_all(&self.pool)
+            .await
+    }
+
     pub async fn seasons(&self) -> Vec<SeasonRow> {
         sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {COLS} FROM season ORDER BY created_at DESC, rowid DESC"

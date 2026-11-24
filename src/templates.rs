@@ -257,6 +257,80 @@ pub async fn forget(version: &str) {
         .retain(|k, _| !k.starts_with(&format!("{version}/")));
 }
 
+/// Drop the custom worlds' templates no one can ask for any more: those of
+/// files neither in the catalog nor installed in any season. Returns how many.
+pub async fn prune(db: &crate::db::Db) -> usize {
+    let pins_of = |id| crate::ap_adapter::try_world_pins(&config::get().season(id));
+    match keep_set(db, pins_of).await {
+        Ok(keep) => prune_keeping(&config::get().data_dir.join("templates"), &keep).await,
+        Err(e) => {
+            tracing::warn!("templates: not pruning this time: {e}");
+            0
+        }
+    }
+}
+
+/// The hashes whose templates may still be asked for: the catalog's and every
+/// season's installed worlds (`pins_of`: a season's pins, None if they can't
+/// be read). An error if any of it can't be read, so a failed read never
+/// passes for "nothing to keep".
+async fn keep_set(
+    db: &crate::db::Db,
+    pins_of: impl Fn(crate::id::Id) -> Option<BTreeMap<String, crate::ap_adapter::Pin>>,
+) -> Result<BTreeSet<String>, String> {
+    let mut keep: BTreeSet<String> = db
+        .catalog_hashes()
+        .await
+        .map_err(|e| format!("reading the catalog: {e}"))?
+        .into_iter()
+        .collect();
+    for id in db
+        .season_ids()
+        .await
+        .map_err(|e| format!("reading the seasons: {e}"))?
+    {
+        let pins =
+            pins_of(id).ok_or_else(|| format!("season {id}'s worlds.lock.json can't be read"))?;
+        keep.extend(pins.into_values().map(|p| p.sha256));
+    }
+    Ok(keep)
+}
+
+async fn prune_keeping(templates: &Path, keep: &BTreeSet<String>) -> usize {
+    let mut removed = 0;
+    let Ok(mut versions) = tokio::fs::read_dir(templates).await else {
+        return 0;
+    };
+    while let Ok(Some(v)) = versions.next_entry().await {
+        let Ok(mut files) = tokio::fs::read_dir(v.path().join("world")).await else {
+            continue;
+        };
+        while let Ok(Some(f)) = files.next_entry().await {
+            let name = f.file_name().to_string_lossy().to_string();
+            let Some(sha) = name.strip_suffix(".yaml") else {
+                continue;
+            };
+            if !keep.contains(sha) && tokio::fs::remove_file(f.path()).await.is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    removed
+}
+
+/// Prune now and then once a day.
+pub fn spawn_pruner(db: crate::db::Db) {
+    tokio::spawn(async move {
+        loop {
+            let n = prune(&db).await;
+            if n > 0 {
+                tracing::info!("templates: removed {n} no one can ask for any more");
+            }
+            tokio::time::sleep(Duration::from_secs(24 * 3600)).await;
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,6 +345,75 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[tokio::test]
+    async fn the_keep_set_is_the_catalog_and_every_seasons_pins() {
+        let path = std::env::temp_dir().join(format!("bifrost-tpl-keep-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let db = crate::db::Db::open(&path.to_string_lossy()).await.unwrap();
+        let live = db.create_season("Live", None, 0).await.unwrap();
+        let old = db.create_season("Old", None, 0).await.unwrap();
+        db.transition(old, crate::db::State::Archived, 1).await.ok();
+        let cat = crate::db::CatalogWorld {
+            sha256: "c".repeat(64),
+            file: "c.apworld".into(),
+            game: "C".into(),
+            version: "1".into(),
+            note: String::new(),
+            public_note: String::new(),
+            added_by: "root".into(),
+            added_at: 0,
+        };
+        db.catalog_add(&cat).await.unwrap();
+        let pin = |sha: &str| {
+            BTreeMap::from([(
+                "w.apworld".to_string(),
+                crate::ap_adapter::Pin {
+                    sha256: sha.to_string(),
+                    ..Default::default()
+                },
+            )])
+        };
+        let (l, o) = ("l".repeat(64), "o".repeat(64));
+        let keep = keep_set(&db, |id| Some(pin(if id == live { &l } else { &o })))
+            .await
+            .unwrap();
+        assert_eq!(keep, BTreeSet::from(["c".repeat(64), l.clone(), o.clone()]));
+        // A season whose pins can't be read: no keep set, so nothing pruned.
+        assert!(
+            keep_set(&db, |id| (id == live).then(|| pin(&l)))
+                .await
+                .is_err()
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn pruning_keeps_only_the_files_asked_for() {
+        let base = std::env::temp_dir().join(format!("bifrost-tpl-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let d = Dir(base);
+        let (a, b) = ("a".repeat(64), "b".repeat(64));
+        for v in ["0.6.7", "0.6.8"] {
+            let w = d.path().join(v).join("world");
+            std::fs::create_dir_all(&w).unwrap();
+            std::fs::write(w.join(format!("{a}.yaml")), "x").unwrap();
+            std::fs::write(w.join(format!("{b}.yaml")), "x").unwrap();
+            std::fs::create_dir_all(d.path().join(v).join("core")).unwrap();
+            std::fs::write(d.path().join(v).join("core/index.json"), "{}").unwrap();
+        }
+        let keep = BTreeSet::from([a.clone()]);
+        assert_eq!(prune_keeping(d.path(), &keep).await, 2);
+        for v in ["0.6.7", "0.6.8"] {
+            assert!(d.path().join(v).join(format!("world/{a}.yaml")).is_file());
+            assert!(!d.path().join(v).join(format!("world/{b}.yaml")).exists());
+            assert!(
+                d.path().join(v).join("core/index.json").is_file(),
+                "core templates stay"
+            );
+        }
+        assert_eq!(prune_keeping(&d.path().join("missing"), &keep).await, 0);
     }
 
     #[test]

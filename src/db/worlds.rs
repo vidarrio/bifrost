@@ -43,6 +43,14 @@ impl Db {
         .unwrap_or_default()
     }
 
+    /// Every catalog world's hash, or the error: for a caller that must not
+    /// take a failed read for an empty catalog.
+    pub async fn catalog_hashes(&self) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar("SELECT sha256 FROM catalog_world")
+            .fetch_all(&self.pool)
+            .await
+    }
+
     pub async fn catalog_world(&self, sha256: &str) -> Option<CatalogWorld> {
         sqlx::query_as::<_, CatalogWorld>(
             "SELECT sha256, file, game, version, note, public_note, added_by, added_at
