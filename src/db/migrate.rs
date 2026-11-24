@@ -26,6 +26,7 @@ use super::Db;
 const STEPS: &[&str] = &[
     include_str!("steps/0002.sql"),
     include_str!("steps/0003.sql"),
+    include_str!("steps/0004.sql"),
 ];
 
 /// The schema at version 1.

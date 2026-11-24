@@ -158,6 +158,7 @@ pub(super) fn auth_page(title: &str, crumb: &str, err: Option<&str>, body: &str)
         esc(title)
     ));
     if let Some(e) = err {
+        b.push_str(crate::modlog::REFUSED_MARK);
         b.push_str(&format!(r#"<div class="banner bad">{}</div>"#, esc(e)));
     }
     b.push_str(&label_cells(body));

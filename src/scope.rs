@@ -50,6 +50,7 @@ const INSTANCE_ROUTES: &[&str] = &[
     "/admin/common-games",
     "/admin/users",
     "/admin/links",
+    "/admin/audit",
     "/api",
     "/export",
     "/login",
@@ -68,7 +69,6 @@ pub fn select(req: &mut Request, id: Id) {
 }
 
 /// Is `path` an instance-level page (one of [`INSTANCE_ROUTES`])?
-#[cfg(feature = "demo")]
 pub fn is_instance(path: &str) -> bool {
     INSTANCE_ROUTES.iter().any(|r| {
         path.strip_prefix(r)
@@ -147,7 +147,6 @@ pub async fn rewrite(mut req: Request, next: Next) -> Response {
 }
 
 /// The season a request under `/s/{id}/` is about, once [`rewrite`] has run.
-#[cfg(feature = "demo")]
 pub fn selected(req: &Request) -> Option<Id> {
     req.extensions().get::<Selected>().map(|s| s.0)
 }

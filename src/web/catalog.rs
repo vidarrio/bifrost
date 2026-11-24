@@ -23,6 +23,37 @@ pub(crate) async fn catalog_view(State(st): State<AppState>, me: auth::Me) -> Re
     catalog_page(&st, None, None).await.into_response()
 }
 
+#[derive(Deserialize, Default)]
+pub(crate) struct AuditQuery {
+    #[serde(default)]
+    user: String,
+    #[serde(default)]
+    season: String,
+    #[serde(default)]
+    action: String,
+    before: Option<i64>,
+}
+
+/// The moderator log (sysadmins only).
+pub(crate) async fn audit_view(
+    State(st): State<AppState>,
+    me: auth::Me,
+    Query(q): Query<AuditQuery>,
+) -> Response {
+    if !me.can(auth::Action::ManageInstance) {
+        return sysadmin_only();
+    }
+    let f = db::ModLogFilter {
+        username: q.user.trim().to_string(),
+        season: q.season.trim().to_string(),
+        action: q.action.trim().to_string(),
+        before: q.before,
+    };
+    let rows = st.db.mod_actions(&f).await;
+    let choices = st.db.mod_log_choices().await;
+    render::audit_page(&rows, &choices, &f).into_response()
+}
+
 pub(crate) async fn catalog_upload(
     State(st): State<AppState>,
     me: auth::Me,

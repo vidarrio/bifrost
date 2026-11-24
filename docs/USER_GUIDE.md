@@ -728,6 +728,31 @@ schema, so restore the backup first.
   ends their existing sessions.
 - **Roles**: user, moderator, sysadmin. You can also disable accounts.
 
+### The moderator log
+
+The console's **Moderator log** tab (sysadmins only) lists the changes
+moderators and sysadmins make in season or instance administration, newest
+first: approvals and rejections, generating and re-rolling, removing signups
+and worlds, adding moderators, assigning slots, role changes, settings, and
+every command typed into a season's server console. It also lists what they
+do with a moderator's powers on players' pages: replacing or removing
+someone's signup, finishing a slot, PopTracker packs, prioritizing as admin.
+
+Each entry says who did it, in which season, the form they sent (passwords
+and tokens left out, a password set from the console too) and how it went:
+
+- *ok*: Bifrost answered without refusing. A few refusals on players' pages
+  send you back where you were instead of showing an error, so they show as
+  *ok*; the form they sent is in the entry all the same.
+- *refused*: an error page or reply.
+- *unfinished*: the request never completed. Each entry is written before
+  the action runs, so one that's cut short is still there.
+
+Filter it by moderator, season and action, and page with **older** and
+**newest**. Entries are kept for a year, and they stay when the season or
+account is deleted (marked *gone*). Players' own actions, such as signing up
+or hinting, aren't in it.
+
 ### The apworld catalog and approval
 
 **Console → Apworlds** holds the **catalog**: custom worlds you have vetted.

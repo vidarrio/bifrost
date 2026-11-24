@@ -207,6 +207,7 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         .route("/admin/worlds/to-catalog", post(admin_world_to_catalog))
         .route("/admin/worlds/update", post(admin_world_update))
         .route("/admin/catalog", get(catalog_view))
+        .route("/admin/audit", get(audit_view))
         .route(
             "/admin/catalog/add",
             post(catalog_upload).layer(upload_limit()),
@@ -265,6 +266,11 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         // Rate-limit auth + expensive endpoints (inside auth: knows the account).
         // After the routes: it only reaches those already added.
         .method_not_allowed_fallback(method_not_allowed)
+        // The moderator log (inside auth: knows who's asking).
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::modlog::middleware,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             Arc::new(ratelimit::Limiter::new(trusted_proxies)),
             ratelimit::middleware,
