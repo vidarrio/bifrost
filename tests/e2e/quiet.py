@@ -102,7 +102,6 @@ try:
               r.ok and me().get("unread") == 0 and finn.get(srv.base + "/api/notifications").json()["notifications"][0]["read"])
         gail = srv.invite_user(root, "gail")
         check("another account doesn't see them", gail.get(srv.base + "/api/notifications").json()["notifications"] == [])
-        finn.post(srv.base + "/api/notifications/read", data=dict(upto=0))
         with srv.db() as c:
             c.execute("UPDATE notification SET read = 0 WHERE id = ?", (notes[0]["id"],))
         gail.post(srv.base + "/api/notifications/read", data=dict(upto=notes[0]["id"] + 100))
