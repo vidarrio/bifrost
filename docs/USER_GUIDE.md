@@ -264,6 +264,13 @@ read. You're told when:
   rejected;
 - a moderator approves or rejects a world you uploaded.
 
+Moderators are also told, for the seasons they run, when an upload is waiting
+for their approval, when a signup needs attention, when generating finishes or
+fails, and when the season's game server stops unexpectedly (at most once in
+six hours while it keeps stopping). Sysadmins are told when a world is offered
+for the catalog, when a newer Bifrost is out, when a nightly backup fails, and
+when installing an Archipelago version fails.
+
 ### Past seasons
 
 Archived seasons stay on the home page under *Past seasons*. Each card opens

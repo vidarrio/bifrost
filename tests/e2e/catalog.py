@@ -119,6 +119,9 @@ try:
     mail = lambda s: s.get(srv.base + "/api/notifications").json()["notifications"]
     check("…in their mailbox too", any("Your signup Bofoo in" in n["text"] and "needs attention" in n["text"]
                                        and n["link"].startswith(f"{S}/signup/game/") for n in mail(bob)), mail(bob))
+    check("the season's moderators heard it was waiting", any(n["text"].startswith("alice uploaded foo.apworld (Foo Finder) in") and "waiting for approval" in n["text"]
+                                                            and n["link"] == f"{S}/admin" for n in mail(root)), mail(root))
+    check("…and that a signup needs attention", any(n["text"].startswith("The signup Bofoo in") for n in mail(root)), mail(root))
     check("the uploader hears their world was approved", any(n["text"].startswith("root approved your foo.apworld in") for n in mail(alice)), mail(alice))
     adm = get(root, f"{S}/admin").text
     check("…and the moderators, who can dismiss it", "Signups that need attention" in adm and ">dismiss<" in adm)
@@ -239,6 +242,7 @@ try:
     check("a newer upload of a catalog game installs the catalog's version",
           j.get("ok") and j.get("world") == "bar.apworld" and "vetted version 1.0.0" in j.get("note", ""), j)
     check("…and is passed to the admins", "passed to the server" in j.get("note", ""), j)
+    check("…who hear it in their mailbox", any("offered for the catalog" in n["text"] and n["link"] == "/admin/catalog" for n in mail(root)), mail(root))
     check("…not installed itself", "my-bar.apworld" not in pins(sid2))
     cat = get(root, "/admin/catalog").text
     check("the catalog page offers it as a replacement, with its file to vet",
@@ -336,6 +340,9 @@ try:
     post(root, f"{S}/admin/worlds/approve", data={"name": "foo.apworld"})
     check("approving it replaces the season's version", installed_foo() == foo11)
     flagged = wait_for(lambda: "no later than 1.0.0" in (t := get(root, f"{S}/admin").text) and t, 180, 2)
+    # Rfoo is root's own signup: root hears it as its player, not again as moderator.
+    check("a moderator's own flagged signup is told once", wait_for(lambda: any(n["text"].startswith("Your signup Rfoo in") for n in mail(root)), 60, 2)
+          and not any(n["text"].startswith("The signup Rfoo in") for n in mail(root)), [n["text"] for n in mail(root)][:6])
     check("a signup whose YAML fails the new version is flagged", flagged and "Rfoo" in flagged.split("no later than 1.0.0")[0][-600:], (flagged or "")[-600:])
     adm = wait_for(lambda: not held_in(t := get(root, f"{S}/admin").text, "Pfoo") and not held_in(t, "Bfoo") and t, 180, 2)
     check("…the others go ahead on it", adm and listed(adm, "Pfoo") and listed(adm, "Bfoo"))
@@ -345,6 +352,8 @@ try:
     # A rejected newer version: its signups use the season's version instead.
     upload(bob, "foo.apworld", variant("foo.apworld", "Foo Finder", "1.2.0"))
     r = post(bob, f"{S}/signup", files={"yaml": ("b2.yaml", foo_yaml("Bfoo2"))}, data={"is_custom": "1", "pending_world": "foo.apworld"})
+    check("…and each upload of it reaches the moderators", sum(n["text"].startswith("bob uploaded foo.apworld (Foo Finder) in") for n in mail(root)) >= 2,
+          [n["text"] for n in mail(root)][:8])
     check("a second newer version holds its signup too", "held until a moderator approves foo.apworld" in r.text, r.text[-400:])
     check("…which the admin page shows", held_in(get(root, f"{S}/admin").text, "Bfoo2"))
     check("…and the approval list says it replaces the season's version",
@@ -510,6 +519,7 @@ try:
     check("a newer version waits for approval without a signup", j.get("pending"), j)
     gen = generate(root, S.removeprefix("/s/"), 240)
     check("generates once nothing is held", gen and gen.startswith("Generated"), gen)
+    check("…and its moderators hear it", any(n["text"].startswith("Spring: Generated") and "couldn't go live" not in n["text"] for n in mail(root)), [n["text"] for n in mail(root)][:5])
     post(root, f"{S}/admin/worlds/approve", data={"name": "foo.apworld"})
     check("after generation, approving a newer version doesn't replace the season's", installed_foo() == foo11)
 finally:

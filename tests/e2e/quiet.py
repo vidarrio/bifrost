@@ -83,7 +83,10 @@ try:
         post(root, f"/s/{sid}/prioritize", data=prio)
         notes = finn.get(srv.base + "/api/notifications").json()["notifications"]
         check("prioritizing tells the finder's player", len(notes) == 1 and "root prioritized" in notes[0]["text"]
-              and "in your world" in notes[0]["text"] and notes[0]["link"] == f"/s/{sid}/board" and not notes[0]["read"], notes)
+              and "in your world" in notes[0]["text"] and re.fullmatch(rf"/s/{sid}/board#g-[0-9a-z]+", notes[0]["link"]) and not notes[0]["read"], notes)
+        card = notes[0]["link"].split("#")[1]
+        board = get(finn, f"/s/{sid}/board").text
+        check("…linking to the finder's card on the board", f'id="{card}"' in board, card)
         check("…and their mailbox glows", me().get("unread") == 1, me())
         post(root, f"/s/{sid}/prioritize", data=prio)  # off again: nothing to tell
         check("…but not taking the priority back", len(finn.get(srv.base + "/api/notifications").json()["notifications"]) == 1)
@@ -96,7 +99,7 @@ try:
         with srv.db() as c:
             check("…nor is prioritized", c.execute("SELECT COUNT(*) FROM hint_priority WHERE season_id = ? AND location = ?",
                                                     (sid, int(fake["location"]))).fetchone()[0] == 0)
-        check("…nor root, who did it", root.get(srv.base + "/api/notifications").json()["notifications"] == [])
+        check("…nor root, who did it", not any("prioritized" in n["text"] for n in root.get(srv.base + "/api/notifications").json()["notifications"]))
         r = finn.post(srv.base + "/api/notifications/read", data=dict(upto=notes[0]["id"]))
         check("reading them stops the glow, and keeps them listed",
               r.ok and me().get("unread") == 0 and finn.get(srv.base + "/api/notifications").json()["notifications"][0]["read"])
@@ -273,6 +276,8 @@ asyncio.run(main())
         os.kill(ap_servers(srv)[0][0], signal.SIGKILL)
         p.kill()
         check("…and not after the server's killed", wait_for(lambda: card(tracked) == "idle", 90, 2), card(tracked))
+        mail = root.get(srv.base + "/api/notifications").json()["notifications"]
+        check("the season's moderators hear its server stopped", any("game server stopped unexpectedly" in n["text"] for n in mail), [n["text"] for n in mail][:5])
 finally:
     srv.stop()
 

@@ -63,15 +63,23 @@ pub fn newer() -> Option<Newer> {
 }
 
 /// The daily check loop.
-pub fn spawn() {
+pub fn spawn(db: crate::db::Db) {
     if !enabled() {
         tracing::info!("checks for newer Bifrost releases are off (BIFROST_UPDATE_CHECK)");
         return;
     }
-    tokio::spawn(async {
+    tokio::spawn(async move {
         tokio::time::sleep(FIRST).await;
         loop {
+            let before = newer();
             let wait = if check().await { EVERY } else { RETRY };
+            // A release this check found that the last didn't: tell the
+            // sysadmins (once: the same text isn't told twice).
+            if let Some(n) = newer()
+                && before.as_ref() != Some(&n)
+            {
+                crate::notify::release_out(&db, &n.version, current()).await;
+            }
             tokio::time::sleep(wait).await;
         }
     });

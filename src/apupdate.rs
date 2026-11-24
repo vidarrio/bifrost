@@ -133,7 +133,7 @@ pub async fn ensure(tag: &str) -> Result<(), String> {
         if apinstall::find(tag).is_some() {
             return Ok(());
         }
-        let ours = match start_install(tag) {
+        let ours = match start_install(tag, None) {
             Ok(()) => true,
             Err(e) if e.contains("already running") => false,
             Err(e) => return Err(e),
@@ -153,7 +153,8 @@ pub async fn ensure(tag: &str) -> Result<(), String> {
 }
 
 /// Start installing release `tag` in the background.
-pub fn start_install(tag: &str) -> Result<(), String> {
+/// `db`: to tell the sysadmins if it fails (None when the caller does).
+pub fn start_install(tag: &str, db: Option<crate::db::Db>) -> Result<(), String> {
     if !apinstall::valid_version(tag) {
         return Err("That isn't a release tag.".into());
     }
@@ -177,7 +178,12 @@ pub fn start_install(tag: &str) -> Result<(), String> {
         let outcome = install(&tag).await;
         match &outcome {
             Ok(m) => tracing::info!("AP install {tag}: {m}"),
-            Err(e) => tracing::warn!("AP install {tag} failed: {e}"),
+            Err(e) => {
+                tracing::warn!("AP install {tag} failed: {e}");
+                if let Some(db) = &db {
+                    crate::notify::ap_install_failed(db, &tag, e).await;
+                }
+            }
         }
         if let Some(j) = UPDATES.lock().unwrap().job.as_mut() {
             j.outcome = Some(outcome);

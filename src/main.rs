@@ -226,7 +226,7 @@ async fn main() {
                 // the bundled install): reinstall that release before its
                 // server starts, rather than run the game on another version.
                 Some(v) => {
-                    let (seasons, id) = (seasons.clone(), season.id);
+                    let (seasons, id, db) = (seasons.clone(), season.id, db.clone());
                     tokio::spawn(async move {
                         tracing::warn!(
                             "season {id} runs Archipelago {v}, which isn't installed; installing it first"
@@ -235,6 +235,13 @@ async fn main() {
                             tracing::error!(
                                 "season {id}: couldn't install Archipelago {v} ({e}); starting it on the active version"
                             );
+                            let name = db.season(id).await.map(|s| s.name).unwrap_or_default();
+                            crate::notify::ap_install_failed(
+                                &db,
+                                &v,
+                                &format!("{e}; {name}, which runs it, started on the active version instead"),
+                            )
+                            .await;
                         }
                         seasons.start_live(id).await;
                     });
@@ -249,7 +256,7 @@ async fn main() {
     }
 
     backup::spawn_nightly(db.clone());
-    release_check::spawn();
+    release_check::spawn(db.clone());
     // The Games page's list for the version new seasons use.
     games::ensure(apinstall::active());
     templates::ensure_core(apinstall::active());

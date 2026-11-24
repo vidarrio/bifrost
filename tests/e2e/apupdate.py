@@ -100,6 +100,12 @@ try:
     check("archived season no longer pins", "Beta" not in row(TAG))
     post(root, "/admin/settings/ap/remove", data={"version": TAG})
     check("unused version removed", not os.path.exists(os.path.join(srv.data, "ap", TAG)) and f"{TAG}</td>" not in get(root, "/admin/settings").text)
+
+    # A failed install tells the sysadmins in their mailbox.
+    post(root, "/admin/settings/ap/install", data={"version": "0.0.9"})
+    wait_for(lambda: "page refreshes" not in get(root, "/admin/settings").text, 300, 3)
+    mail = root.get(srv.base + "/api/notifications").json()["notifications"]
+    check("a failed install tells the sysadmins", any(n["text"].startswith("Installing Archipelago 0.0.9 failed:") and n["link"] == "/admin/settings" for n in mail), mail)
 finally:
     srv.stop()
 
