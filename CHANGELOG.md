@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-24
+
+**Upgrading:** the database gains two tables (notifications, and the moderator
+log). The first start of 0.6.0 takes a pre-upgrade backup, then migrates; to go
+back to 0.5.x, restore that backup (see Updating Bifrost in the user guide). As
+with 0.5.0, it won't start if that backup can't be written, so make room or set
+`BIFROST_BACKUP_DIR` first. On servers that approve uploads automatically, a
+newer version of a game a season already has (and an upload Bifrost can't tie
+to a game) now waits for a season moderator.
+
 ### Added
 
 - A **moderator log** for sysadmins, the console's *Moderator log* tab. It
@@ -41,13 +51,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The native bundle's Python is a newer build of Python 3.13.18
   (python-build-standalone 20261123, with libffi 3.8.1).
-- A newer version of a game a season already has waits for a moderator's
-  approval even where uploads are auto-approved (unless it's the catalog's
-  own version). An upload whose version can't be compared with the season's
-  copy also waits, and a moderator can **replace anyway**. So does an
-  auto-approved upload that might be a game the season has: one whose
-  manifest names no game, or any upload while one of the season's worlds
-  names no game. The uploader and the moderators are told why.
 - The signup wizard's first step is one searchable list of every game the
   season can play, each with the version the server has: core games, the
   catalog's custom games and custom games already in the season, plus an
@@ -55,12 +58,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   catalog and upload first.
 - A newer version of a custom game a season already has now replaces the
   season's copy, until the season is generated, instead of the season keeping
-  its first version. It's approved like any other upload (at once if it's the
-  catalog's version or uploads are auto-approved; if the catalog has the game
-  at least as new, the catalog's is used). Every signup for that game is then
-  checked against the new version, and those that fail are flagged as held
-  signups are. If it's rejected, the signups held for it are checked against
-  the season's copy instead.
+  its first version. It installs at once only if it's the catalog's own
+  version (and if the catalog has the game at least as new as the upload, the
+  catalog's is used); otherwise it waits for a moderator, even where uploads
+  are auto-approved. An upload whose version can't be compared with the
+  season's copy waits too, and a moderator can **replace anyway**. Every
+  signup for that game is then checked against the new version, and those
+  that fail are flagged as held signups are. If it's rejected, the signups
+  held for it are checked against the season's copy instead.
+- Where uploads are auto-approved, an upload that might be a game the season
+  already has waits for a moderator too: one whose manifest names no game, or
+  any upload while one of the season's worlds names no game. The uploader and
+  the moderators are told why.
 
 ## [0.5.0] - 2026-11-23
 
@@ -554,7 +563,8 @@ Upgrading from 0.1.x:
   a given version), checked against the release's checksums. Going back means
   restoring the pre-upgrade backup and the previous file, which it keeps.
 
-[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/vidarrio/bifrost/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/vidarrio/bifrost/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/vidarrio/bifrost/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/vidarrio/bifrost/compare/v0.4.1...v0.4.2
