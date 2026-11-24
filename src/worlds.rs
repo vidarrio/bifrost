@@ -115,6 +115,9 @@ pub enum Placed {
     Installed { catalog: bool },
     /// Waiting for approval.
     Pending,
+    /// Waiting for approval although uploads are auto-approved: `why` it
+    /// can't be taken for a new game.
+    Held { why: String },
     /// Its game is one of the season's core games: nothing installed, the
     /// signup uses the core game (AP would ignore the upload anyway).
     Core { game: String },
@@ -749,12 +752,12 @@ pub async fn place_upload(
         Approval::Auto => {
             // Auto-approval is for new games. When it can't be told this
             // is one, a moderator decides, as for a replacement (#180).
-            if let Some(why) = unsure_its_new(&dirs, &m, &bytes) {
+            if let Some(why) = unsure_its_new(&dirs, &m.game) {
                 tracing::info!(
                     "{uploader}'s {file} waits for a moderator in season {season}: {why}"
                 );
                 store_request(db, season, &dirs, file, &sha, &m.game, &bytes, uploader).await?;
-                return Ok(Placed::Pending);
+                return Ok(Placed::Held { why });
             }
             install(dirs, file.to_string(), bytes, base).await?;
             Ok(Placed::Installed { catalog: false })
@@ -767,46 +770,19 @@ pub async fn place_upload(
 }
 
 /// Why an upload can't be taken for a game new to the season, if it can't:
-/// its manifest names no game, a custom world the season has names none (so
-/// it could be the same game), or it ships a package an installed world
-/// already is (an apworld's package is its file's name).
-fn unsure_its_new(dirs: &SeasonDirs, m: &Manifest, bytes: &[u8]) -> Option<String> {
-    if m.game.is_empty() {
+/// its manifest names no game (`game`), or a custom world the season has
+/// names none, so this could be the same game under another name. Then
+/// auto-approval doesn't apply, and a moderator decides.
+pub fn unsure_its_new(dirs: &SeasonDirs, game: &str) -> Option<String> {
+    if game.trim().is_empty() {
         return Some("its manifest names no game".into());
     }
-    let installed: Vec<String> = ap_adapter::world_pins(dirs)
+    ap_adapter::world_pins(dirs)
         .into_iter()
         .filter(|(_, pin)| !pin.shipped && !pin.common)
         .map(|(file, _)| file)
-        .collect();
-    if let Some(f) = installed
-        .iter()
-        .find(|f| manifest_of(&dirs.worlds.join(f)).game.is_empty())
-    {
-        return Some(format!(
-            "the season's {f} names no game, so this could be the same one"
-        ));
-    }
-    let ours = packages(bytes);
-    installed
-        .iter()
-        .filter_map(|f| f.strip_suffix(".apworld"))
-        .find(|stem| ours.contains(*stem))
-        .map(|stem| format!("it ships the package {stem}, which the season has installed"))
-}
-
-/// The top-level folders in an apworld's zip: the packages it ships.
-fn packages(bytes: &[u8]) -> std::collections::BTreeSet<String> {
-    let Ok(zip) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else {
-        return Default::default();
-    };
-    (0..zip.len())
-        .filter_map(|i| {
-            let name = zip.name_for_index(i)?.ok()?.into_owned();
-            let (top, _) = name.split_once('/')?;
-            (!top.is_empty()).then(|| top.to_string())
-        })
-        .collect()
+        .find(|f| manifest_of(&dirs.worlds.join(f)).game.trim().is_empty())
+        .map(|f| format!("the season's {f} names no game, so this could be the same one"))
 }
 
 /// Keep an upload to wait for a moderator's approval.
@@ -1526,18 +1502,6 @@ mod version_tests {
         }
         z.finish().unwrap();
         out.into_inner()
-    }
-
-    #[test]
-    fn an_apworld_ships_its_top_level_folders() {
-        let z = zip_of(&[
-            ("foo/__init__.py", ""),
-            ("foo/archipelago.json", "{}"),
-            ("bar/x.py", ""),
-            ("top.txt", ""),
-        ]);
-        assert_eq!(packages(&z), ["bar", "foo"].map(String::from).into());
-        assert!(packages(b"not a zip").is_empty());
     }
 
     #[test]

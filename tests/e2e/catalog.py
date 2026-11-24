@@ -396,14 +396,13 @@ try:
     post(root, "/admin/catalog/approval", data={"mode": "auto"})
     j = post(erin, f"/s/{sid2}/signup/apworld", files={"apworld": ("nogame.apworld", renamed("baz.apworld", "nogame", "", "1.0.0"))}).json()
     check("auto mode holds an upload whose manifest names no game", j.get("ok") and j.get("pending") and "nogame.apworld" not in os.listdir(sid2_worlds), j)
-    j = post(erin, f"/s/{sid2}/signup/apworld", files={"apworld": ("barx.apworld", variant("bar.apworld", "Bar X", "1.0.0"))}).json()
-    check("…and one shipping a package the season has (bar/) under another name",
-          j.get("ok") and j.get("pending") and "barx.apworld" not in os.listdir(sid2_worlds), j)
-    post(root, f"/s/{sid2}/admin/worlds/reject", data={"name": "barx.apworld"})
+    check("…telling the uploader why", "a moderator has to approve it first" in j.get("note", "") and "names no game" in j.get("note", ""), j)
+    check("…and the moderator", "Its manifest names no game" in get(root, f"/s/{sid2}/admin").text)
     post(root, f"/s/{sid2}/admin/worlds/approve", data={"name": "nogame.apworld"})
     j = post(erin, f"/s/{sid2}/signup/apworld", files={"apworld": ("zed.apworld", renamed("baz.apworld", "zed", "Zed Game", "1.0.0"))}).json()
     check("…and any upload while a world the season has names no game",
           j.get("ok") and j.get("pending") and "zed.apworld" not in os.listdir(sid2_worlds), j)
+    check("…saying which", "The season's nogame.apworld names no game, so this could be the same one" in get(root, f"/s/{sid2}/admin").text)
     post(root, f"/s/{sid2}/admin/worlds/reject", data={"name": "zed.apworld"})
     post(root, f"/s/{sid2}/admin/delete-apworld", data={"name": "nogame.apworld"})
     j = post(erin, f"/s/{sid2}/signup/apworld", files={"apworld": ("zed.apworld", renamed("baz.apworld", "zed", "Zed Game", "1.0.0"))}).json()

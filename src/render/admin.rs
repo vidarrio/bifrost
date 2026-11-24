@@ -62,6 +62,14 @@ pub(super) fn roster(subs: &[SubmissionRow], me: &str, is_admin: bool, pre_gen: 
 
 /// A one-field POST form rendered as a single button (optionally with a
 /// confirm() guard and a danger style).
+/// `s` with its first letter in capitals.
+fn sentence_case(s: &str) -> String {
+    let mut c = s.chars();
+    c.next()
+        .map(|f| f.to_uppercase().chain(c).collect())
+        .unwrap_or_default()
+}
+
 pub(super) fn action_btn(
     action: &str,
     fields: &[(&str, &str)],
@@ -494,6 +502,15 @@ pub fn admin_page(
                     }
                 }
                 _ => game,
+            };
+            // Why it couldn't be taken for a new game, so the moderator
+            // knows what to look for.
+            let game = match crate::worlds::unsure_its_new(&dirs, &r.game) {
+                Some(why) => format!(
+                    r#"{game} · <span style="color:var(--warn)">{}</span>"#,
+                    esc(&sentence_case(&why))
+                ),
+                None => game,
             };
             b.push_str(&format!(
                 r#"<div class="hintrow"><span>{}{game} <span class="statline">· sha256 {}… · uploaded by {} · {}</span></span><span>{} {}</span></div>"#,
