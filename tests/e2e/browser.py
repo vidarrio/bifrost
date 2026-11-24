@@ -197,7 +197,7 @@ try:
             pg.wait_for_selector("#mailbox li")
             bx = web.box(pg, "#mailbox")
             check(f"the mailbox fits a {w}px screen", bx and bx["x"] >= 0 and bx["x"] + bx["width"] <= w, bx)
-            texts = pg.eval_on_selector_all("#mailbox li", "els => els.map(e => [e.className, e.querySelector('a') ? e.querySelector('a').getAttribute('href') : null, e.firstChild.textContent])")
+            texts = pg.eval_on_selector_all("#mailbox li", "els => els.map(e => [e.className, e.querySelector('a') ? e.querySelector('a').getAttribute('href') : null, e.querySelector('.txt').textContent])")
             if w == 1100:
                 check("…opening it lists them, newest first, as text", texts[3][2] == "Elsewhere" and texts[4][2] == "Your signup <b>X</b> needs attention.", texts)
                 check("…linking only to this site", texts[4][1] == f"/s/{sid}/signup" and all(t[1] is None for t in texts[:4]), texts)
@@ -207,6 +207,10 @@ try:
                 except Exception:
                     cleared = False
                 check("…and reading them stops the glow", cleared)
+                # The whole entry is the link: pressing beside its words goes there too.
+                with pg.expect_navigation():
+                    pg.click("#mailbox li:nth-child(5) .when")
+                check("…and pressing one takes you to its page", pg.url.endswith(f"/s/{sid}/signup"), pg.url)
                 settled(pg, "/worlds")
                 check("…on the next page too", "glow" not in (pg.get_attribute("#mailbtn", "class") or ""))
                 pg.click("#mailbtn")
