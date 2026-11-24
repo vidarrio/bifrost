@@ -36,7 +36,14 @@ pub(crate) async fn render_admin(
         .with_genstate(|g| (g.0, g.1.clone()))
         .unwrap_or((false, "unknown".into()));
     let subs = st.db.submissions(ctx.id).await.unwrap_or_default();
-    let apworlds = generate::list_apworlds(ctx.id).await;
+    let mut apworlds = generate::list_apworlds(ctx.id).await;
+    {
+        let dirs = config::get().season(ctx.id);
+        let catalog = st.db.catalog().await;
+        for w in &mut apworlds {
+            w.update = worlds::catalog_update(&dirs, &catalog, &w.file).map(|c| c.version.clone());
+        }
+    }
     // Per-player files the generator produced, with each slot's game resolved
     // from the Bifrost slots for the current seed (filename carries the slot
     // name; db carries name→game).
@@ -495,6 +502,10 @@ pub(crate) struct ApworldForm {
     /// On approval, by a sysadmin: add it to the catalog too.
     #[serde(default)]
     pub(crate) catalog: Option<String>,
+    /// On approval: replace the season's world for the game even if this
+    /// isn't declared newer.
+    #[serde(default)]
+    pub(crate) force: Option<String>,
 }
 
 const LOCKED_WORLDS: &str = "A generated season's apworlds are locked: a re-roll needs them.";
@@ -528,7 +539,7 @@ pub(crate) async fn admin_world_approve(
     if !matches!(ctx.state(), db::State::Draft | db::State::Signup) {
         return render::notice(LOCKED_WORLDS, false, "admin").into_response();
     }
-    let req = match worlds::approve(&st.db, ctx.id, &f.name, &who).await {
+    let req = match worlds::approve_with(&st.db, ctx.id, &f.name, &who, f.force.is_some()).await {
         Ok(req) => req,
         Err(e) => return render::notice(&e, false, "admin").into_response(),
     };
@@ -572,6 +583,26 @@ pub(crate) async fn admin_world_reject(
     }
     match worlds::reject(&st.db, ctx.id, &f.name, &who).await {
         Ok(()) => Redirect::to(&ctx.url("/admin")).into_response(),
+        Err(e) => render::notice(&e, false, "admin").into_response(),
+    }
+}
+
+/// Update an installed world to the catalog's newer version of its game.
+pub(crate) async fn admin_world_update(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    Form(f): Form<ApworldForm>,
+) -> Response {
+    let (who, is_admin) = ctx.ident(&me);
+    if !is_admin {
+        return render::notice("Admins only.", false, "board").into_response();
+    }
+    if !matches!(ctx.state(), db::State::Draft | db::State::Signup) {
+        return render::notice(LOCKED_WORLDS, false, "admin").into_response();
+    }
+    match worlds::update_from_catalog(&st.db, ctx.id, &f.name, &who).await {
+        Ok(msg) => render::notice(&msg, true, "admin").into_response(),
         Err(e) => render::notice(&e, false, "admin").into_response(),
     }
 }

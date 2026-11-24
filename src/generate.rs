@@ -419,6 +419,8 @@ pub struct Apworld {
     pub pinned: bool,
     /// Installed from the catalog.
     pub catalog: bool,
+    /// The catalog's version of its game, when that's newer than this.
+    pub update: Option<String>,
 }
 
 pub async fn list_apworlds(season: Id) -> Vec<Apworld> {
@@ -437,6 +439,7 @@ pub async fn list_apworlds(season: Id) -> Vec<Apworld> {
                 detail: String::new(),
                 pinned: false,
                 catalog: false,
+                update: None,
             };
             w.detail = if !custom.contains(&name) {
                 "shipped with Bifrost".to_string()

@@ -494,7 +494,7 @@ pub fn catalog_page(
         r#"<h2>Uploads</h2>
 <form class="authform" method="post" action="/admin/catalog/approval">
 <label class="chk"><input type="radio" name="mode" value="manual"{}> <span><b>Manual approval</b>: an uploaded apworld that isn't in the catalog waits until a moderator of that season (or a sysadmin) approves it. Signups that need it are held, then checked on approval.</span></label>
-<label class="chk"><input type="radio" name="mode" value="auto"{}> <span><b>Automatic</b>: uploads install right away (still pinned by hash, and still run only in the sandbox).</span></label>
+<label class="chk"><input type="radio" name="mode" value="auto"{}> <span><b>Automatic</b>: uploads of new games install right away (still pinned by hash, and still run only in the sandbox). A newer version of a game a season has still waits for its moderators.</span></label>
 <button type="submit">Save</button></form>"#,
         checked(Approval::Manual),
         checked(Approval::Auto),

@@ -499,10 +499,26 @@ pub(crate) async fn signup_apworld(
             version,
             old,
             offered,
+            unknown,
         }) => {
-            let mut note = format!(
-                "Your {game} {version} is newer than the season's {old}. Once a moderator approves it, it replaces that, and every signup for {game} is checked against it. You can continue; your signup is held until then."
-            );
+            let mut note = if unknown {
+                let v = |v: &str| {
+                    if v.is_empty() {
+                        "no version".to_string()
+                    } else {
+                        v.to_string()
+                    }
+                };
+                format!(
+                    "This season already has {game} ({}), and yours ({}) can't be compared with it. A moderator can approve yours to replace it, and then every signup for {game} is checked against it. You can continue; your signup is held until then.",
+                    v(&old),
+                    v(&version)
+                )
+            } else {
+                format!(
+                    "Your {game} {version} is newer than the season's {old}. Once a moderator approves it, it replaces that, and every signup for {game} is checked against it. You can continue; your signup is held until then."
+                )
+            };
             if offered {
                 note.push_str(
                     " It was also passed to the server's admins to consider for the catalog.",

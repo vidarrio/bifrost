@@ -149,12 +149,14 @@ pub enum Placed {
         offered: bool,
     },
     /// A newer version of a game the season has, waiting for approval; once
-    /// approved it replaces the season's (`old`).
+    /// approved it replaces the season's (`old`). `unknown`: one of the two
+    /// declares no version that can be compared, so a moderator decides.
     Replacing {
         game: String,
         version: String,
         old: String,
         offered: bool,
+        unknown: bool,
     },
 }
 
@@ -205,7 +207,7 @@ async fn replace_world(
     let dirs = config::get().season(season);
     if old != file && ap_adapter::world_pins(&dirs).contains_key(file) {
         return Err(format!(
-            "A different {file} is already installed this season. Ask a moderator to remove it first."
+            "A different {file} is already installed this season. It has to be removed (from the season admin page) before this can take its place."
         ));
     }
     // The new one first: if that fails, the season still has the old.
@@ -573,8 +575,14 @@ pub async fn place_upload(
     // newer version replaces it until the season is generated: at once if
     // it's the catalog's or the server auto-approves, else once approved.
     let mut replaces = None;
+    // When either version can't be read, which is newer can't be told: a
+    // moderator decides (see `approve_with`'s override).
+    let mut unknown = false;
     if let Some((have, have_sha, version)) = installed_for_game(&dirs, &m.game) {
-        if have_sha == sha || !version_newer(&m.version, &version) || !can_replace(db, season).await
+        unknown = version_parts(&m.version).is_none() || version_parts(&version).is_none();
+        if have_sha == sha
+            || !(unknown || version_newer(&m.version, &version))
+            || !can_replace(db, season).await
         {
             return Ok(Placed::Season {
                 game: m.game,
@@ -593,6 +601,7 @@ pub async fn place_upload(
         };
         // The catalog has this game at least as new: use the catalog's.
         if let Some(cat) = &cat
+            && !unknown
             && version_newer(&cat.version, &old)
             && !version_newer(&m.version, &cat.version)
         {
@@ -621,16 +630,17 @@ pub async fn place_upload(
                 offered: offered.is_some(),
             });
         }
-        let now = if let Some(cat) = db.catalog_world(&sha).await {
-            Some(Pin {
+        // Only the catalog's own file replaces it at once. Anything else
+        // waits for a moderator, even where uploads are auto-approved: it
+        // changes the code everyone signed up with the game plays.
+        let now = if unknown {
+            None
+        } else {
+            db.catalog_world(&sha).await.map(|cat| Pin {
                 catalog: true,
                 approved_by: cat.added_by,
                 ..base
             })
-        } else if db.approval().await == Approval::Auto {
-            Some(base)
-        } else {
-            None
         };
         if let Some(pin) = now {
             replace_world(db, season, &old_file, file, bytes, pin, &m.game).await?;
@@ -652,6 +662,7 @@ pub async fn place_upload(
                     version: m.version,
                     old,
                     offered: offered.is_some(),
+                    unknown,
                 })
             } else {
                 Err(format!(
@@ -676,6 +687,7 @@ pub async fn place_upload(
             version: m.version,
             old,
             offered: offered.is_some(),
+            unknown,
         });
     }
     if let Some(cat) = cat {
@@ -812,9 +824,69 @@ pub async fn install_from_catalog(
     Ok(cat.file)
 }
 
+/// The catalog's version of an installed world's game, if it's newer than
+/// the season's copy (`file`): what [`update_from_catalog`] would install.
+pub fn catalog_update<'a>(
+    dirs: &SeasonDirs,
+    catalog: &'a [CatalogWorld],
+    file: &str,
+) -> Option<&'a CatalogWorld> {
+    let pin = ap_adapter::world_pins(dirs).get(file).cloned()?;
+    if pin.shipped || pin.common {
+        return None;
+    }
+    let m = manifest_of(&dirs.worlds.join(file));
+    let cat = catalog_for_game(catalog, &m.game)?;
+    // Newer, or the season's copy declares no version to compare with.
+    let newer = version_newer(&cat.version, &m.version) || version_parts(&m.version).is_none();
+    (cat.sha256 != pin.sha256 && newer).then_some(cat)
+}
+
+/// Replace a season's world with the catalog's newer version of its game,
+/// and check the season's signups for it again. Before generation only.
+pub async fn update_from_catalog(
+    db: &Db,
+    season: Id,
+    file: &str,
+    by: &str,
+) -> Result<String, String> {
+    let dirs = config::get().season(season);
+    let catalog = db.catalog().await;
+    let cat = catalog_update(&dirs, &catalog, file)
+        .cloned()
+        .ok_or("The catalog has no newer version of that world's game.")?;
+    let bytes = tokio::fs::read(catalog_file(&cat.sha256))
+        .await
+        .map_err(|e| format!("reading the catalog copy: {e}"))?;
+    if crate::text::sha256_hex(&bytes) != cat.sha256 {
+        return Err("The catalog copy doesn't match its hash. Ask a sysadmin to re-add it.".into());
+    }
+    let pin = Pin {
+        uploaded_by: by.to_string(),
+        uploaded_at: crate::clock::now(),
+        approved_by: cat.added_by.clone(),
+        catalog: true,
+        ..Pin::default()
+    };
+    replace_world(db, season, file, &cat.file, bytes, pin, &cat.game).await?;
+    recheck_later(db, season, &cat.file);
+    Ok(format!(
+        "Updated {} to the catalog's {}. Its signups are being checked against it again.",
+        cat.game, cat.version
+    ))
+}
+
 /// Approve a pending upload: install it, then check the signups held for it
-/// (in the background — each check can take a while).
-pub async fn approve(db: &Db, season: Id, file: &str, by: &str) -> Result<WorldRequest, String> {
+/// (in the background — each check can take a while). `force`: a moderator's override, replacing the
+/// season's world for the game even when the upload doesn't declare a newer
+/// version (say, neither declares one).
+pub async fn approve_with(
+    db: &Db,
+    season: Id,
+    file: &str,
+    by: &str,
+    force: bool,
+) -> Result<WorldRequest, String> {
     let dirs = config::get().season(season);
     let req = db
         .world_request(season, file)
@@ -834,17 +906,28 @@ pub async fn approve(db: &Db, season: Id, file: &str, by: &str) -> Result<WorldR
     if let Some((have, have_sha, version)) = installed_for_game(&dirs, &req.game)
         && have_sha != req.sha256
     {
-        if !version_newer(&manifest(&bytes).version, &version) {
+        if !force && !version_newer(&manifest(&bytes).version, &version) {
             return Err(format!(
-                "This season already has {} installed ({have}), and this upload isn't newer. Reject it; signups held for it can use that.",
+                "This season already has {} installed ({have}), and this upload doesn't declare a newer version. Reject it (signups held for it can use that), or replace the season's anyway.",
                 req.game
             ));
         }
-        let pin = Pin {
-            uploaded_by: req.uploaded_by.clone(),
-            uploaded_at: req.uploaded_at,
-            approved_by: by.to_string(),
-            ..Pin::default()
+        // The catalog's own file (held only because its version couldn't be
+        // compared) installs as the catalog's.
+        let pin = match db.catalog_world(&req.sha256).await {
+            Some(cat) => Pin {
+                uploaded_by: req.uploaded_by.clone(),
+                uploaded_at: req.uploaded_at,
+                approved_by: cat.added_by,
+                catalog: true,
+                ..Pin::default()
+            },
+            None => Pin {
+                uploaded_by: req.uploaded_by.clone(),
+                uploaded_at: req.uploaded_at,
+                approved_by: by.to_string(),
+                ..Pin::default()
+            },
         };
         replace_world(db, season, &have, &req.file, bytes, pin, &req.game).await?;
         let _ = tokio::fs::remove_file(&path).await;

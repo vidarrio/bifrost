@@ -462,6 +462,8 @@ pub fn admin_page(
             };
             // A newer version of a game the season has replaces it.
             let dirs = crate::config::get().season(season.id);
+            let mut not_newer = false;
+            let mut versions = String::new();
             let game = match crate::worlds::installed_for_game(&dirs, &r.game) {
                 Some((have, sha, ver)) if sha != r.sha256 => {
                     let have = esc(if ver.is_empty() { &have } else { &ver });
@@ -472,8 +474,22 @@ pub fn admin_page(
                             esc(&r.game)
                         )
                     } else {
+                        not_newer = true;
+                        let v = |v: &str| {
+                            if v.is_empty() {
+                                "no version".to_string()
+                            } else {
+                                v.to_string()
+                            }
+                        };
+                        versions = format!(
+                            "{} (declares {}) in place of the season's {}",
+                            r.file,
+                            v(&theirs),
+                            v(&ver)
+                        );
                         format!(
-                            "{game} · the season already has {have}, and this isn't newer: reject it"
+                            "{game} · the season already has {have}, and this doesn't declare a newer version: reject it, or replace it anyway"
                         )
                     }
                 }
@@ -485,7 +501,18 @@ pub fn admin_page(
                 esc(&r.sha256[..12.min(r.sha256.len())]),
                 esc(&r.uploaded_by),
                 fmt_date(r.uploaded_at),
-                if pre_gen && sysadmin {
+                if pre_gen && not_newer {
+                    action_btn(
+                        "admin/worlds/approve",
+                        &[("name", &r.file), ("force", "1")],
+                        "replace anyway",
+                        false,
+                        &format!(
+                            "Install {versions}, for {}? It doesn't declare a newer version. Every signup for the game is checked against it again.",
+                            r.game
+                        ),
+                    )
+                } else if pre_gen && sysadmin {
                     format!(
                         r#"<form method="post" action="admin/worlds/approve" style="display:inline"><input type="hidden" name="name" value="{}"><label class="inlinechk" title="Vetted for every season: catalog worlds install without approval"><input type="checkbox" name="catalog" value="1" checked> and add to the catalog</label> <button class="ghost" type="submit">approve</button></form>"#,
                         esc(&r.file)
@@ -523,8 +550,21 @@ pub fn admin_page(
             } else {
                 String::new()
             };
+            let update = match &w.update {
+                Some(v) if pre_gen => action_btn(
+                    "admin/worlds/update",
+                    &[("name", &w.file)],
+                    &format!("update to the catalog's {v}"),
+                    false,
+                    &format!(
+                        "Replace {} with the catalog's version {v}? Every signup for its game is checked against it again.",
+                        w.file
+                    ),
+                ),
+                _ => String::new(),
+            };
             b.push_str(&format!(
-                r#"<div class="hintrow"><span>{} <span class="statline">· {}</span></span><span>{to_catalog} {}</span></div>"#,
+                r#"<div class="hintrow"><span>{} <span class="statline">· {}</span></span><span>{update} {to_catalog} {}</span></div>"#,
                 esc(&w.file),
                 esc(&w.detail),
                 if pre_gen {
