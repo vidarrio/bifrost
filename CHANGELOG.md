@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The native bundle's Python is a newer build of Python 3.13.18
+  (python-build-standalone 20261123, with libffi 3.8.1).
 - A newer version of a game a season already has waits for a moderator's
   approval even where uploads are auto-approved (unless it's the catalog's
   own version). An upload whose version can't be compared with the season's
