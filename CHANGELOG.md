@@ -34,7 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A newer version of a game a season already has waits for a moderator's
   approval even where uploads are auto-approved (unless it's the catalog's
   own version). An upload whose version can't be compared with the season's
-  copy also waits, and a moderator can **replace anyway**.
+  copy also waits, and a moderator can **replace anyway**. So does any
+  auto-approved upload that can't be told apart from a game the season has:
+  one whose manifest names no game, one that ships a package an installed
+  world already is, or any upload while one of the season's worlds names no
+  game.
 - The signup wizard's first step is one searchable list of every game the
   season can play, each with the version the server has: core games, the
   catalog's custom games and custom games already in the season, plus an

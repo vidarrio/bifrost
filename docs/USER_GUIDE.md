@@ -764,7 +764,10 @@ The **approval toggle** decides what happens to other uploads:
   then, Archipelago never loads them.
 - **Automatic**: uploads of new games install straight away. A newer version
   of a game a season already has still waits for a season moderator, since it
-  would change the code everyone signed up with that game plays.
+  would change the code everyone signed up with that game plays. So does an
+  upload Bifrost can't tell apart from a game the season has: its manifest
+  names no game, it ships a package one of the season's worlds already is, or
+  one of the season's worlds names no game.
 
 Every installed world is pinned by its SHA-256. A world file that changes
 after upload, or appears without going through Bifrost, is refused.
