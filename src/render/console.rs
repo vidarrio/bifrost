@@ -822,9 +822,10 @@ pub fn common_setup_page(
 
 /// The moderator log (sysadmins): what moderators and sysadmins did, newest
 /// first, filterable by who, season and action.
+#[allow(clippy::type_complexity)]
 pub fn audit_page(
     rows: &[crate::db::ModAction],
-    choices: &(Vec<String>, Vec<(String, String)>, Vec<String>),
+    choices: &(Vec<String>, Vec<(String, String, bool)>, Vec<String>),
     f: &crate::db::ModLogFilter,
 ) -> Html<String> {
     let (users, seasons, actions) = choices;
@@ -843,13 +844,18 @@ pub fn audit_page(
         who.push_str(&opt(u, u, u.eq_ignore_ascii_case(&f.username)));
     }
     let mut wher = opt("", "any season", f.season.is_empty());
-    for (key, name) in seasons {
-        let label = if name.is_empty() {
+    for (key, name, gone) in seasons {
+        let name = if name.is_empty() {
             key.as_str()
         } else {
             name.as_str()
         };
-        wher.push_str(&opt(key, label, *key == f.season));
+        let label = if *gone {
+            format!("{name} (gone)")
+        } else {
+            name.to_string()
+        };
+        wher.push_str(&opt(key, &label, *key == f.season));
     }
     let mut what = opt("", "any action", f.action.is_empty());
     for a in actions {
@@ -858,6 +864,9 @@ pub fn audit_page(
     body.push_str(&format!(
         r#"<form class="logfilter" method="get" action="/admin/audit"><label>Who <select name="user">{who}</select></label> <label>Season <select name="season">{wher}</select></label> <label>Action <select name="action">{what}</select></label> <button type="submit">Filter</button> <a class="pill" href="/admin/audit">clear</a></form>"#
     ));
+    // One row more than a page: there's an older page.
+    let more = rows.len() as i64 > crate::db::modlog_page();
+    let rows = &rows[..rows.len().min(crate::db::modlog_page() as usize)];
     if rows.is_empty() {
         body.push_str(r#"<div class="empty">Nothing logged that matches.</div>"#);
     } else {
@@ -877,10 +886,10 @@ pub fn audit_page(
                 (None, "") => "—".to_string(),
                 (None, name) => format!("{} <span class=\"statline\">(gone)</span>", esc(name)),
             };
-            let answer = if (200..400).contains(&r.status) {
-                "ok".to_string()
-            } else {
-                format!("refused ({})", r.status)
+            let answer = match r.outcome.as_str() {
+                "ok" => "ok".to_string(),
+                "unfinished" => "unfinished (the request never completed)".to_string(),
+                _ => format!("refused ({})", r.status),
             };
             body.push_str(&format!(
                 r#"<tr><td class="mono">{when}</td><td>{}</td><td>{season}</td><td title="{}">{}</td><td class="mono" style="overflow-wrap:anywhere">{}</td><td>{answer}</td></tr>"#,
@@ -891,21 +900,34 @@ pub fn audit_page(
             ));
         }
         body.push_str("</table>");
-        if rows.len() as i64 == crate::db::modlog_page() {
-            let last = rows.last().map(|r| r.id).unwrap_or(0);
-            let q = |k: &str, v: &str| {
-                if v.is_empty() {
-                    String::new()
-                } else {
-                    format!("&{k}={}", url_enc(v))
-                }
-            };
-            body.push_str(&format!(
-                r#"<p><a class="pill" href="/admin/audit?before={last}{}{}{}">older →</a></p>"#,
-                q("user", &f.username),
-                q("season", &f.season),
-                q("action", &f.action)
+        let q = |k: &str, v: &str| {
+            if v.is_empty() {
+                String::new()
+            } else {
+                format!("&{k}={}", url_enc(v))
+            }
+        };
+        let keep = format!(
+            "{}{}{}",
+            q("user", &f.username),
+            q("season", &f.season),
+            q("action", &f.action)
+        );
+        let mut nav = String::new();
+        if f.before.is_some() {
+            nav.push_str(&format!(
+                r#"<a class="pill" href="/admin/audit?{}">← newest</a> "#,
+                keep.trim_start_matches('&')
             ));
+        }
+        if more {
+            let last = rows.last().map(|r| r.id).unwrap_or(0);
+            nav.push_str(&format!(
+                r#"<a class="pill" href="/admin/audit?before={last}{keep}">older →</a>"#
+            ));
+        }
+        if !nav.is_empty() {
+            body.push_str(&format!("<p>{nav}</p>"));
         }
     }
     auth_page("Console", r#"<a href="/">← home</a>"#, None, &body)

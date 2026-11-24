@@ -453,8 +453,19 @@ try:
     check("the moderator log has dave's approval, with its season and form",
           "approve an apworld" in rows and "name=modg.apworld, catalog=1" in rows and f'href="/s/{sid4}/admin"' in rows, rows[:1500])
     check("…filtered to dave", '"Who">root</td>' not in rows and '"Who">dave</td>' in rows, rows[:900])
-    log = get(root, "/admin/audit", params={"action": "/admin/worlds/approve", "season": sid4}).text
-    check("…by action and season", "approve an apworld" in log and "add a moderator" not in log.split("<table")[1] if "<table" in log else False)
+    table = lambda page: page.split("<table")[1] if "<table" in page else ""
+    rows = table(get(root, "/admin/audit", params={"action": "/admin/worlds/approve", "season": sid4}).text)
+    check("…by action and season", "modg.apworld" in rows and "foo.apworld" not in rows and f'/s/{sid}/admin"' not in rows, rows[:600])
+    # Refused, a season's YAML replaced through a player route, a season deleted.
+    post(dave, f"{S}/admin/worlds/reject", data={"name": "nothing.apworld"})
+    rows = table(get(root, "/admin/audit", params={"user": "dave", "season": sid}).text)
+    check("a moderator trying a season they don't run is logged as refused", "reject an apworld" in rows and "refused" in rows, rows[:600])
+    rows = table(get(root, "/admin/audit", params={"user": "root"}).text)
+    check("a moderator's YAML replacement through a player route is logged", "replace a signup's YAML" in rows, rows[:400])
+    gone = new_season(root, "Doomed")
+    post(root, f"/s/{gone}/admin/season/delete", data={"name": "Doomed"})
+    page = get(root, "/admin/audit", params={"action": "/admin/season/delete"}).text
+    check("deleting a season is logged, its name kept", "delete a season" in table(page) and "Doomed" in table(page) and "(gone)" in page, table(page)[:600])
     check("…which a moderator can't open", "approve an apworld" not in get(dave, "/admin/audit").text)
     check("…nor a player", "approve an apworld" not in get(erin, "/admin/audit").text)
     cat = get(root, "/admin/catalog").text

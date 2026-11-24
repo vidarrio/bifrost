@@ -10,7 +10,11 @@ CREATE TABLE mod_action (
     season_name TEXT NOT NULL DEFAULT '',
     action TEXT NOT NULL,
     detail TEXT NOT NULL DEFAULT '',
-    status INTEGER NOT NULL
+    -- The HTTP status, 0 until the request finishes.
+    status INTEGER NOT NULL,
+    -- How it went: 'ok', 'refused' (an error page or reply), or
+    -- 'unfinished' (the request never completed: written before it ran).
+    outcome TEXT NOT NULL DEFAULT 'unfinished'
 ) STRICT;
 CREATE INDEX mod_action_account ON mod_action (account_id);
 CREATE INDEX mod_action_season ON mod_action (season_id);

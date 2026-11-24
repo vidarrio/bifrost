@@ -16,6 +16,7 @@ pub struct ModAction {
     pub action: String,
     pub detail: String,
     pub status: i64,
+    pub outcome: String,
 }
 
 /// What to show: each filter is off when empty. `before`: only rows older
@@ -37,6 +38,8 @@ pub fn modlog_page() -> i64 {
 }
 
 impl Db {
+    /// Start a row, before the request runs (so a request that never
+    /// finishes, or deletes what it's about, is still logged). Returns its id.
     #[allow(clippy::too_many_arguments)]
     pub async fn log_mod_action(
         &self,
@@ -47,11 +50,10 @@ impl Db {
         season_name: &str,
         action: &str,
         detail: &str,
-        status: u16,
-    ) -> Result<(), sqlx::Error> {
-        sqlx::query(
+    ) -> Result<i64, sqlx::Error> {
+        let r = sqlx::query(
             "INSERT INTO mod_action (at, account_id, username, season_id, season_name, action, detail, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
         )
         .bind(at)
         .bind(account)
@@ -60,23 +62,33 @@ impl Db {
         .bind(season_name)
         .bind(action)
         .bind(detail)
-        .bind(status as i64)
         .execute(&self.pool)
         .await?;
-        Ok(())
+        Ok(r.last_insert_rowid())
     }
 
-    /// The newest rows matching `f`, newest first, at most [`PAGE`]. The
+    /// Finish a row: the request's status and how it went.
+    pub async fn finish_mod_action(&self, id: i64, status: u16, outcome: &str) {
+        let _ = sqlx::query("UPDATE mod_action SET status = ?, outcome = ? WHERE id = ?")
+            .bind(status as i64)
+            .bind(outcome)
+            .bind(id)
+            .execute(&self.pool)
+            .await;
+    }
+
+    /// The newest rows matching `f`, newest first, at most [`PAGE`] (and one
+    /// more, so the page knows there's an older one). The
     /// season filter matches the season's id, or its name for rows whose
     /// season is gone.
     pub async fn mod_actions(&self, f: &ModLogFilter) -> Vec<ModAction> {
         sqlx::query_as(
-            "SELECT id, at, username, season_id, season_name, action, detail, status FROM mod_action
+            "SELECT id, at, username, season_id, season_name, action, detail, status, outcome FROM mod_action
              WHERE (?1 = '' OR username = ?1 COLLATE NOCASE)
                AND (?2 = '' OR season_id = ?2 OR (season_id IS NULL AND season_name = ?2))
                AND (?3 = '' OR action = ?3)
                AND (?4 IS NULL OR id < ?4)
-             ORDER BY id DESC LIMIT ?5",
+             ORDER BY id DESC LIMIT ?5 + 1",
         )
         .bind(&f.username)
         .bind(&f.season)
@@ -88,10 +100,11 @@ impl Db {
         .unwrap_or_default()
     }
 
-    /// What the filters can choose from: (usernames, seasons as (key, name),
-    /// actions), each sorted. A season's key is its id, or its name once it's
-    /// gone.
-    pub async fn mod_log_choices(&self) -> (Vec<String>, Vec<(String, String)>, Vec<String>) {
+    /// What the filters can choose from: (usernames, seasons as (key, name,
+    /// gone), actions), each sorted. A season's key is its id, or its name
+    /// once it's gone.
+    #[allow(clippy::type_complexity)]
+    pub async fn mod_log_choices(&self) -> (Vec<String>, Vec<(String, String, bool)>, Vec<String>) {
         let users = sqlx::query_scalar(
             "SELECT DISTINCT username FROM mod_action ORDER BY username COLLATE NOCASE",
         )
@@ -99,7 +112,7 @@ impl Db {
         .await
         .unwrap_or_default();
         let seasons = sqlx::query_as(
-            "SELECT DISTINCT COALESCE(season_id, season_name), season_name FROM mod_action
+            "SELECT DISTINCT COALESCE(season_id, season_name), season_name, season_id IS NULL FROM mod_action
              WHERE season_id IS NOT NULL OR season_name != '' ORDER BY season_name COLLATE NOCASE",
         )
         .fetch_all(&self.pool)
@@ -139,18 +152,11 @@ mod tests {
             .unwrap();
         let s = db.create_season("Spring", None, 0).await.unwrap();
         let t = db.create_season("Summer", None, 0).await.unwrap();
-        db.log_mod_action(
-            1,
-            Some(m),
-            "mia",
-            Some(s),
-            "Spring",
-            "/admin/generate",
-            "",
-            200,
-        )
-        .await
-        .unwrap();
+        let first = db
+            .log_mod_action(1, Some(m), "mia", Some(s), "Spring", "/admin/generate", "")
+            .await
+            .unwrap();
+        db.finish_mod_action(first, 200, "ok").await;
         db.log_mod_action(
             2,
             Some(m),
@@ -159,24 +165,20 @@ mod tests {
             "Summer",
             "/admin/console",
             "cmd=/players",
-            200,
         )
         .await
         .unwrap();
-        db.log_mod_action(
-            3,
-            None,
-            "root",
-            None,
-            "",
-            "/admin/users/role",
-            "role=user",
-            303,
-        )
-        .await
-        .unwrap();
+        db.log_mod_action(3, None, "root", None, "", "/admin/users/role", "role=user")
+            .await
+            .unwrap();
         let all = db.mod_actions(&ModLogFilter::default()).await;
         assert_eq!(all.iter().map(|a| a.at).collect::<Vec<_>>(), [3, 2, 1]);
+        assert_eq!((all[2].status, all[2].outcome.as_str()), (200, "ok"));
+        assert_eq!(
+            (all[1].status, all[1].outcome.as_str()),
+            (0, "unfinished"),
+            "not finished yet"
+        );
         let f = |u: &str, s: &str, a: &str| ModLogFilter {
             username: u.into(),
             season: s.into(),
@@ -203,11 +205,33 @@ mod tests {
         assert_eq!(seasons.len(), 2);
         assert_eq!(actions.len(), 3);
 
-        // The season goes; its rows stay, found by its name.
+        // The season goes (its own row written first, as the middleware
+        // does); its rows stay, found by its name.
+        let del = db
+            .log_mod_action(
+                4,
+                Some(m),
+                "mia",
+                Some(s),
+                "Spring",
+                "/admin/season/delete",
+                "",
+            )
+            .await
+            .unwrap();
         db.delete_season(s, true).await.unwrap();
+        db.finish_mod_action(del, 303, "ok").await;
         let gone = db.mod_actions(&f("", "Spring", "")).await;
-        assert_eq!(gone.len(), 1);
-        assert_eq!(gone[0].season_id, None);
+        assert_eq!(gone.len(), 2);
+        assert!(gone.iter().all(|g| g.season_id.is_none()));
+        assert_eq!(gone[0].outcome, "ok", "the deletion's own row is finished");
+        assert!(
+            db.mod_log_choices()
+                .await
+                .1
+                .iter()
+                .any(|(k, n, gone)| k == "Spring" && n == "Spring" && *gone)
+        );
 
         assert_eq!(db.prune_mod_actions(3).await, 2, "the rows at 1 and 2");
         let _ = std::fs::remove_file(&path);

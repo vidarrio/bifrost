@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - A **moderator log** for sysadmins (the console's *Moderator log* tab):
-  every change a moderator or sysadmin makes in season or instance
-  administration, console commands included, with who, the season, the
+  what moderators and sysadmins do in season or instance administration,
+  console commands included, and with a moderator's powers on players' pages, with who, the season, the
   form's fields (secrets left out) and the outcome. Filterable by moderator,
   season and action; kept for a year.
 - A **mailbox** in the header: an envelope that glows while you have unread
