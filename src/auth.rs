@@ -782,6 +782,7 @@ pub enum Tier {
 /// Route tiers: plain path-prefix match (as the proxy's
 /// `PathPrefix` did), most specific first, public by default.
 const SYSADMIN_PREFIXES: &[&str] = &[
+    "/admin/audit",
     "/admin/users",
     "/admin/links",
     "/admin/settings",

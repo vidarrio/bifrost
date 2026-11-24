@@ -114,6 +114,8 @@ try:
             rid = c.execute("SELECT id FROM account WHERE username = 'root'").fetchone()[0]
             c.execute("UPDATE claim SET account_id = ? WHERE slot_id = ?", (rid, finder_slot))
     r = post(root, f"/s/{sid}/admin/console", data=dict(cmd="/players")).json()  # admin relay
+    log = get(root, "/admin/audit", params={"action": "/admin/console"}).text
+    check("console commands are in the moderator log", "console command" in log and "cmd=/players" in log, log[-800:])
     check("admin relay works", r.get("ok"), r)
 
     def inlogic_rows():

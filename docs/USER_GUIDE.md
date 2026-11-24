@@ -721,6 +721,19 @@ schema, so restore the backup first.
   ends their existing sessions.
 - **Roles**: user, moderator, sysadmin. You can also disable accounts.
 
+### The moderator log
+
+The console's **Moderator log** tab (sysadmins only) lists every change a
+moderator or sysadmin made in season or instance administration, newest
+first. That covers approvals and rejections, generating and re-rolling,
+removing signups and worlds, adding moderators, assigning slots, role changes,
+settings, and every command typed into a season's server console. Each entry
+says who did it, in which season, the form they sent (passwords and tokens
+left out) and whether it went through. Filter it by moderator, season and
+action, and page back with **older**. Entries are kept for a year, and they
+stay when the season or account is deleted (marked *gone*). Players' own
+actions, such as signing up or hinting, aren't in it.
+
 ### The apworld catalog and approval
 
 **Console → Apworlds** holds the **catalog**: custom worlds you have vetted.

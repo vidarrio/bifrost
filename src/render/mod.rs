@@ -677,6 +677,7 @@ fn console_nav_with(
         ("/admin/catalog", "Apworlds"),
         ("/admin/common-games", "Common games"),
         ("/admin/settings", "Settings"),
+        ("/admin/audit", "Moderator log"),
     ] {
         if !sysadmin && href != "/admin/seasons" {
             continue;

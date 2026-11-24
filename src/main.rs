@@ -38,6 +38,7 @@ mod inlogic;
 mod load;
 mod meta;
 mod mine;
+mod modlog;
 mod net;
 mod notify;
 mod ptrack;
@@ -253,6 +254,7 @@ async fn main() {
     games::ensure(apinstall::active());
     templates::ensure_core(apinstall::active());
     templates::spawn_pruner(db.clone());
+    modlog::spawn_pruner(db.clone());
     load::spawn_sampler(cfg.data_dir.clone());
 
     let shutdown_seasons = seasons.clone();

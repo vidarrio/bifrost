@@ -819,3 +819,106 @@ pub fn common_setup_page(
     }
     auth_page("Console", r#"<a href="/">← home</a>"#, err, &body)
 }
+
+/// The moderator log (sysadmins): what moderators and sysadmins did, newest
+/// first, filterable by who, season and action.
+pub fn audit_page(
+    rows: &[crate::db::ModAction],
+    choices: &(Vec<String>, Vec<(String, String)>, Vec<String>),
+    f: &crate::db::ModLogFilter,
+) -> Html<String> {
+    let (users, seasons, actions) = choices;
+    let mut body = console_nav("/admin/audit", true);
+    body.push_str(r#"<h2>Moderator log</h2><p class="statline">Every change a moderator or sysadmin made in season or instance administration, console commands included: who, where, what (the form's fields, passwords and tokens left out) and the answer it got. Kept for a year.</p>"#);
+    let opt = |value: &str, label: &str, on: bool| {
+        format!(
+            r#"<option value="{}"{}>{}</option>"#,
+            esc(value),
+            if on { " selected" } else { "" },
+            esc(label)
+        )
+    };
+    let mut who = opt("", "anyone", f.username.is_empty());
+    for u in users {
+        who.push_str(&opt(u, u, u.eq_ignore_ascii_case(&f.username)));
+    }
+    let mut wher = opt("", "any season", f.season.is_empty());
+    for (key, name) in seasons {
+        let label = if name.is_empty() {
+            key.as_str()
+        } else {
+            name.as_str()
+        };
+        wher.push_str(&opt(key, label, *key == f.season));
+    }
+    let mut what = opt("", "any action", f.action.is_empty());
+    for a in actions {
+        what.push_str(&opt(a, crate::modlog::label(a), *a == f.action));
+    }
+    body.push_str(&format!(
+        r#"<form class="logfilter" method="get" action="/admin/audit"><label>Who <select name="user">{who}</select></label> <label>Season <select name="season">{wher}</select></label> <label>Action <select name="action">{what}</select></label> <button type="submit">Filter</button> <a class="pill" href="/admin/audit">clear</a></form>"#
+    ));
+    if rows.is_empty() {
+        body.push_str(r#"<div class="empty">Nothing logged that matches.</div>"#);
+    } else {
+        body.push_str(r#"<table class="utable"><tr><th>When (UTC)</th><th>Who</th><th>Season</th><th>Action</th><th>Details</th><th>Answer</th></tr>"#);
+        for r in rows {
+            let when = format!(
+                "{} {:02}:{:02}",
+                fmt_date(r.at),
+                r.at.rem_euclid(86_400) / 3600,
+                r.at.rem_euclid(3600) / 60
+            );
+            let season = match (&r.season_id, r.season_name.as_str()) {
+                (Some(id), name) => format!(
+                    r#"<a href="/s/{id}/admin">{}</a>"#,
+                    esc(if name.is_empty() { "?" } else { name })
+                ),
+                (None, "") => "—".to_string(),
+                (None, name) => format!("{} <span class=\"statline\">(gone)</span>", esc(name)),
+            };
+            let answer = if (200..400).contains(&r.status) {
+                "ok".to_string()
+            } else {
+                format!("refused ({})", r.status)
+            };
+            body.push_str(&format!(
+                r#"<tr><td class="mono">{when}</td><td>{}</td><td>{season}</td><td title="{}">{}</td><td class="mono" style="overflow-wrap:anywhere">{}</td><td>{answer}</td></tr>"#,
+                esc(&r.username),
+                esc(&r.action),
+                esc(crate::modlog::label(&r.action)),
+                esc(&r.detail),
+            ));
+        }
+        body.push_str("</table>");
+        if rows.len() as i64 == crate::db::modlog_page() {
+            let last = rows.last().map(|r| r.id).unwrap_or(0);
+            let q = |k: &str, v: &str| {
+                if v.is_empty() {
+                    String::new()
+                } else {
+                    format!("&{k}={}", url_enc(v))
+                }
+            };
+            body.push_str(&format!(
+                r#"<p><a class="pill" href="/admin/audit?before={last}{}{}{}">older →</a></p>"#,
+                q("user", &f.username),
+                q("season", &f.season),
+                q("action", &f.action)
+            ));
+        }
+    }
+    auth_page("Console", r#"<a href="/">← home</a>"#, None, &body)
+}
+
+/// A query-string value, percent-encoded.
+fn url_enc(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
