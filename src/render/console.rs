@@ -942,6 +942,9 @@ pub fn audit_page(
 const AUDIT_CSS: &str = r#"<style>
 /* A long season name doesn't widen its filter past the screen. */
 .logfilter select{max-width:12em}.logfilter label{max-width:100%}
+/* The shared pager is as wide as the activity log's feed; under this wider
+   table it spans the table, so it's centred under it. */
+#modlog+.pager{max-width:none}
 details.about{position:relative}
 details.about summary{cursor:pointer;color:var(--muted);font-size:13px;margin-bottom:6px}
 details.about[open] .statline{position:absolute;z-index:5;left:0;right:0;top:100%;margin:0;padding:10px 12px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.3)}

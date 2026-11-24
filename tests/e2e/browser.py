@@ -265,6 +265,10 @@ try:
             check(f"…with the activity log's pager, on page 1 ({w}px)", cur == "1" and pg.query_selector(".pager a.pgnav[title=older]") is not None
                   and pg.query_selector(".pager span.pg.pgnav.disabled") is not None, cur)
             check(f"…and nothing wider than the screen ({w}px)", not web.overflow_x(pg), web.overflow_x(pg))
+            mid = pg.evaluate("""(() => { const t = document.getElementById('modlog').getBoundingClientRect();
+                const b = [...document.querySelectorAll('.pager .pg')].map(e => e.getBoundingClientRect());
+                return [Math.round((t.left + t.right) / 2), Math.round((Math.min(...b.map(r => r.left)) + Math.max(...b.map(r => r.right))) / 2)]; })()""")
+            check(f"…its pager centred under the rows ({w}px)", abs(mid[0] - mid[1]) <= 2, mid)
             if w == 390:
                 hs = pg.evaluate("[...document.querySelectorAll('#modlog tr[tabindex]')].map(r => Math.round(r.getBoundingClientRect().height))")
                 check("…phone rows are two lines, the same height", len(set(hs)) == 1 and hs[0] < 60, hs)
@@ -319,6 +323,13 @@ try:
                 check("…and no row's time is cut short", not cut)
             check(f"no page errors on the log ({w}px)", not web.take_errors(), web.ERRORS)
             ctx.close()
+        # A single page has no pager, as in the activity log.
+        ctx = web.context(b, srv, root, width=1100, height=800)
+        pg = ctx.new_page()
+        pg.goto(srv.base + "/admin/audit?user=root")
+        web.settle(pg)
+        check("one page of the log has no pager", pg.query_selector("#modlog") is not None and pg.query_selector(".pager") is None)
+        ctx.close()
         # Storage blocked (a private window, a strict browser): it still settles.
         ctx = web.context(b, srv, root, width=1100, height=800)
         ctx.add_init_script("Object.defineProperty(window, 'sessionStorage', {get() { throw new DOMException('blocked', 'SecurityError'); }});"
