@@ -748,8 +748,9 @@ and tokens left out, a password set from the console too) and how it went:
 - *unfinished*: the request never completed. Each entry is written before
   the action runs, so one that's cut short is still there.
 
-Filter it by moderator, season and action, and page with **older** and
-**newest**. Entries are kept for a year, and they stay when the season or
+Filter it by moderator, season and action. It's split into numbered pages,
+each holding as many entries as fit your window, so a page never needs
+scrolling; resize the window and the pages follow. Entries are kept for a year, and they stay when the season or
 account is deleted (marked *gone*). Players' own actions, such as signing up
 or hinting, aren't in it.
 

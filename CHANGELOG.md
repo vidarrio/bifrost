@@ -13,8 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   records what moderators and sysadmins do in season and instance
   administration (console commands included) and with a moderator's powers
   on players' pages: who, the season, the form's fields (secrets left out)
-  and the outcome. Filterable by moderator, season and action; kept for a
-  year.
+  and the outcome. Filterable by moderator, season and action, in numbered
+  pages sized to fit the window; kept for a year.
 - A **mailbox** in the header: an envelope that glows while you have unread
   notifications, opening a box of your recent ones. You're told when someone
   prioritizes a hint for an item in your world, when your signup needs

@@ -6,6 +6,7 @@ fields.
 
 Each check here stands for a bug a browser found that HTTP checks and the
 fake-DOM node tests didn't. Add to it when a page script or layout breaks."""
+import re
 import sys
 
 from lib import Server, check, get, new_season, post, summary, wait_for
@@ -235,6 +236,35 @@ try:
             check(f"the mail button lines up with the pills on a touch screen ({path})",
                   mb and pill and mb["height"] == pill["height"] == 27 and mb["y"] == pill["y"], (mb, pill))
         tctx.close()
+
+        # --- the moderator log: numbered pages, each sized to fit the window
+        with srv.db() as c:
+            c.executemany("INSERT INTO mod_action (at, username, action, detail, status, outcome) VALUES (?, 'mia', '/admin/generate', ?, 200, 'ok')",
+                          [(1_000_000 + i, f"row {i}") for i in range(300)])
+        for w, h in ((1100, 800), (390, 844)):
+            ctx = web.context(b, srv, root, width=w, height=h)
+            pg = ctx.new_page()
+            pg.goto(srv.base + "/admin/audit?user=mia")
+            pg.wait_for_url(lambda u: "per=" in u, timeout=10_000)
+            web.settle(pg)
+            fits = pg.evaluate("(() => { const r = [...document.querySelectorAll('#modlog tr')].slice(1); return [r.length, r[r.length-1].getBoundingClientRect().bottom, innerHeight]; })()")
+            check(f"a log page fits the window ({w}x{h})", fits[0] >= 1 and fits[1] <= fits[2], fits)
+            pager = pg.text_content(".pager") or ""
+            check(f"…numbered, with its count ({w}px)", "Page 1 of" in pager and "300 entries" in pager and "older ›" in pager, pager)
+            check(f"…and nothing wider than the screen ({w}px)", not web.overflow_x(pg), web.overflow_x(pg))
+            if w == 1100:
+                per = int(re.search(r"per=(\d+)", pg.url).group(1))
+                pg.click(".pager a[aria-label='Page 2']")
+                web.settle(pg)
+                first = pg.text_content("#modlog tr:nth-child(2) td:nth-child(5)")
+                check("…page 2 goes on where page 1 ended, with the same size", f"per={per}" in pg.url and first == f"row {299 - per}", (pg.url, first))
+                pg.set_viewport_size({"width": 1100, "height": 500})
+                pg.wait_for_url(lambda u: f"per={per}" not in u, timeout=10_000)
+                web.settle(pg)
+                smaller = int(re.search(r"per=(\d+)", pg.url).group(1))
+                check("…and a smaller window gets fewer rows a page", smaller < per, (per, smaller))
+            check(f"no page errors on the log ({w}px)", not web.take_errors(), web.ERRORS)
+            ctx.close()
 
         # --- signing out and in: the next page never shows the old identity
         ctx = web.context(b, srv, root)
