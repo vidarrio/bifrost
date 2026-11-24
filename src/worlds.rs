@@ -115,6 +115,9 @@ pub enum Placed {
     Installed { catalog: bool },
     /// Waiting for approval.
     Pending,
+    /// Waiting for approval although uploads are auto-approved: `why` it
+    /// can't be taken for a new game.
+    Held { why: String },
     /// Its game is one of the season's core games: nothing installed, the
     /// signup uses the core game (AP would ignore the upload anyway).
     Core { game: String },
@@ -747,6 +750,15 @@ pub async fn place_upload(
     }
     match db.approval().await {
         Approval::Auto => {
+            // Auto-approval is for new games. When it can't be told this
+            // is one, a moderator decides, as for a replacement (#180).
+            if let Some(why) = unsure_its_new(&dirs, &m.game) {
+                tracing::info!(
+                    "{uploader}'s {file} waits for a moderator in season {season}: {why}"
+                );
+                store_request(db, season, &dirs, file, &sha, &m.game, &bytes, uploader).await?;
+                return Ok(Placed::Held { why });
+            }
             install(dirs, file.to_string(), bytes, base).await?;
             Ok(Placed::Installed { catalog: false })
         }
@@ -755,6 +767,22 @@ pub async fn place_upload(
             Ok(Placed::Pending)
         }
     }
+}
+
+/// Why an upload can't be taken for a game new to the season, if it can't:
+/// its manifest names no game (`game`), or a custom world the season has
+/// names none, so this could be the same game under another name. Then
+/// auto-approval doesn't apply, and a moderator decides.
+pub fn unsure_its_new(dirs: &SeasonDirs, game: &str) -> Option<String> {
+    if game.trim().is_empty() {
+        return Some("its manifest names no game".into());
+    }
+    ap_adapter::world_pins(dirs)
+        .into_iter()
+        .filter(|(_, pin)| !pin.shipped && !pin.common)
+        .map(|(file, _)| file)
+        .find(|f| manifest_of(&dirs.worlds.join(f)).game.trim().is_empty())
+        .map(|f| format!("the season's {f} names no game, so this could be the same one"))
 }
 
 /// Keep an upload to wait for a moderator's approval.

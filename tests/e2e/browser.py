@@ -188,6 +188,11 @@ try:
             settled(pg, "/")
             if w == 1100:
                 check("the mailbox glows with unread mail", "glow" in (pg.get_attribute("#mailbtn", "class") or ""))
+            def lined_up(where):
+                mb, pill = web.box(pg, "#mailbtn"), web.box(pg, "#adminslot .pill")
+                check(f"the mail button lines up with the pills ({where})",
+                      mb and pill and mb["height"] == pill["height"] and mb["y"] == pill["y"], (mb, pill))
+            lined_up(f"landing page, {w}px")
             pg.click("#mailbtn")
             pg.wait_for_selector("#mailbox li")
             bx = web.box(pg, "#mailbox")
@@ -209,7 +214,23 @@ try:
             pg.keyboard.press("Escape")
             check(f"…and Escape closes it ({w}px)", pg.query_selector("#mailbox") is None)
             check(f"no page errors around the mailbox ({w}px)", not web.take_errors(), web.ERRORS)
+            # The other pages' copy of the rules, and the touch-screen one.
+            settled(pg, "/worlds")
+            lined_up(f"rendered page, {w}px")
             ctx.close()
+        tctx = b.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True)
+        signed_in = web.context(b, srv, root)
+        tctx.add_cookies(signed_in.cookies())
+        signed_in.close()
+        tpg = tctx.new_page()
+        for path in ("/", "/worlds"):
+            with tpg.expect_event("requestfinished", lambda r: r.url.endswith("/api/me")):
+                tpg.goto(srv.base + path)
+            tpg.wait_for_selector("#mailbtn")
+            mb, pill = web.box(tpg, "#mailbtn"), web.box(tpg, "#adminslot .pill")
+            check(f"the mail button lines up with the pills on a touch screen ({path})",
+                  mb and pill and mb["height"] == pill["height"] == 27 and mb["y"] == pill["y"], (mb, pill))
+        tctx.close()
 
         # --- signing out and in: the next page never shows the old identity
         ctx = web.context(b, srv, root)

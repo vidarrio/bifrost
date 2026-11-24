@@ -528,6 +528,10 @@ pub(crate) async fn signup_apworld(
                 serde_json::json!({"ok": true, "world": file, "pending": true, "game": game, "note": note}),
             )
         }
+        Ok(worlds::Placed::Held { why }) => Json(serde_json::json!({
+            "ok": true, "world": file, "pending": true, "game": uploaded_game,
+            "note": format!("Uploaded {file}. New games install right away here, but {why}, so a moderator has to approve it first. You can continue; your signup is held until then.")
+        })),
         Ok(placed) => Json(serde_json::json!({
             "ok": true, "world": file, "pending": placed == worlds::Placed::Pending, "game": uploaded_game
         })),
