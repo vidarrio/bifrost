@@ -264,6 +264,9 @@ try:
             pager = pg.text_content(".pager") or ""
             check(f"…numbered, with its count ({w}px)", "Page 1 of" in pager and "300 entries" in pager and "older ›" in pager, pager)
             check(f"…and nothing wider than the screen ({w}px)", not web.overflow_x(pg), web.overflow_x(pg))
+            if w == 390:
+                hs = pg.evaluate("[...document.querySelectorAll('#modlog tr[tabindex]')].map(r => Math.round(r.getBoundingClientRect().height))")
+                check("…phone rows are two lines, the same height", len(set(hs)) == 1 and hs[0] < 60, hs)
             if w == 1100:
                 per = per_of(pg)
                 pg.click(".pager a[aria-label='Page 2']")
@@ -305,9 +308,14 @@ try:
                 check("…and a page further in fits as well", f["doc"] <= f["h"], (pg.url, f))
                 # A row pressed shows all of itself.
                 row = pg.query_selector("#modlog tr[tabindex]")
-                closed = row.bounding_box()["height"]
                 row.click()
                 check("pressing an entry shows all of it", row.get_attribute("aria-expanded") == "true", row.get_attribute("class"))
+                url = pg.url
+                pg.set_viewport_size({"width": 1100, "height": 760})
+                pg.wait_for_timeout(1200)
+                check("…and it stays open when the window's height changes", pg.url == url and row.get_attribute("aria-expanded") == "true", pg.url)
+                cut = pg.evaluate("[...document.querySelectorAll('#modlog tr[tabindex]:not(.open) td:first-child')].some(td => td.scrollWidth > td.clientWidth)")
+                check("…and no row's time is cut short", not cut)
             check(f"no page errors on the log ({w}px)", not web.take_errors(), web.ERRORS)
             ctx.close()
         # Storage blocked (a private window, a strict browser): it still settles.

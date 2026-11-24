@@ -909,7 +909,9 @@ pub fn audit_page(
             };
             let answer = match r.outcome.as_str() {
                 "ok" => "ok".to_string(),
-                "unfinished" => "unfinished (the request never completed)".to_string(),
+                "unfinished" => {
+                    r#"<span title="The request never completed">unfinished</span>"#.to_string()
+                }
                 _ => format!("refused ({})", r.status),
             };
             body.push_str(&format!(
@@ -940,21 +942,23 @@ details.about{position:relative}
 details.about summary{cursor:pointer;color:var(--muted);font-size:13px;margin-bottom:6px}
 details.about[open] .statline{position:absolute;z-index:5;left:0;right:0;top:100%;margin:0;padding:10px 12px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.3)}
 #modlog{table-layout:fixed}
-#modlog th:nth-child(1){width:15%}#modlog th:nth-child(2){width:11%}#modlog th:nth-child(3){width:14%}
-#modlog th:nth-child(4){width:18%}#modlog th:nth-child(6){width:12%}
+#modlog th:nth-child(1){width:19ch}#modlog th:nth-child(2){width:11%}#modlog th:nth-child(3){width:14%}
+#modlog th:nth-child(4){width:18%}#modlog th:nth-child(6){width:11ch}
 #modlog td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #modlog tr[tabindex]{cursor:pointer}#modlog tr[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 /* A row pressed (or entered from the keyboard) shows all of itself. */
 #modlog tr.open td{white-space:normal;overflow:visible;overflow-wrap:anywhere}
 @media (max-width:560px){
-#modlog tr{display:flex;flex-wrap:wrap;gap:2px 8px;padding:6px 10px;margin:0 0 6px;font-size:12px}
+/* Two lines: when, who and season; then action, answer and details. */
+#modlog tr{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:2px 8px;padding:6px 10px;margin:0 0 6px;font-size:12px}
+#modlog td:nth-child(4){grid-row:2;grid-column:1}#modlog td:nth-child(6){grid-row:2;grid-column:2}
 #modlog tr:has(th){display:none}
 #modlog{table-layout:auto}
 #modlog td{display:block;padding:0;border:0;text-align:left;max-width:100%;min-width:0}
 #modlog td+td{border-top:0}
 #modlog td::before,#modlog td::after{content:none}
-#modlog td.det{order:9;flex-basis:100%;width:auto;max-width:100%;color:var(--muted)}
-#modlog tr.open{flex-wrap:wrap}#modlog tr.open td{flex-basis:100%}
+#modlog td.det{grid-row:2;grid-column:3;width:auto;max-width:100%;color:var(--muted)}
+#modlog tr.open{grid-template-columns:minmax(0,1fr)}#modlog tr.open td{grid-row:auto;grid-column:1}
 }
 </style>"#;
 
@@ -995,11 +999,13 @@ const AUDIT_FIT_JS: &str = r#"<script>
  else if(document.documentElement.scrollHeight>innerHeight){var n=count();if(n&&n<per)go(n)}
  // Back to a page kept from before (the back-forward cache) fitted elsewhere.
  addEventListener('pageshow',function(e){if(e.persisted&&!fitted())fit()});
- var w;addEventListener('resize',function(){clearTimeout(w);w=setTimeout(function(){if(!fitted())fit()},500)});
+ // Not while a row is open: on a phone, scrolling it shows or hides the
+ // address bar, which is a resize, and a refit would close it.
+ var w;addEventListener('resize',function(){clearTimeout(w);w=setTimeout(function(){if(!fitted()&&!t.querySelector('tr.open'))fit()},500)});
  // A row pressed, or entered from the keyboard, shows all of itself.
  function toggle(tr){var o=tr.classList.toggle('open');tr.setAttribute('aria-expanded',o?'true':'false')}
  t.addEventListener('click',function(e){var tr=e.target.closest('tr[tabindex]');if(tr&&!e.target.closest('a'))toggle(tr)});
- t.addEventListener('keydown',function(e){var tr=e.target.closest('tr[tabindex]');if(tr&&(e.key==='Enter'||e.key===' ')){e.preventDefault();toggle(tr)}});
+ t.addEventListener('keydown',function(e){var tr=e.target.closest('tr[tabindex]');if(tr&&!e.target.closest('a')&&(e.key==='Enter'||e.key===' ')){e.preventDefault();toggle(tr)}});
 })();
 </script>"#;
 
