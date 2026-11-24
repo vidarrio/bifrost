@@ -108,7 +108,13 @@ pub fn summarize(body: &[u8]) -> String {
     out
 }
 
-/// Whether a reply says no: an error banner on a page, or `"ok": false`.
+/// The mark a page that refuses something carries (`render::notice` with an
+/// error, or a page drawn with its error banner), so the log can tell it
+/// from a page that merely shows an old message.
+pub const REFUSED_MARK: &str = "<!--bifrost:refused-->";
+
+/// Whether a reply says no: a page marked [`REFUSED_MARK`], or JSON with
+/// `"ok": false` or an `error`.
 fn refused(content_type: &str, body: &[u8]) -> bool {
     let text = String::from_utf8_lossy(body);
     if content_type.starts_with("application/json") {
@@ -116,7 +122,29 @@ fn refused(content_type: &str, body: &[u8]) -> bool {
             v.get("ok") == Some(&serde_json::Value::Bool(false)) || v.get("error").is_some()
         });
     }
-    content_type.starts_with("text/html") && text.contains(r#"class="banner bad""#)
+    content_type.starts_with("text/html") && text.contains(REFUSED_MARK)
+}
+
+/// A route as the log keeps it: an id in it (a game's, a signup's, a common
+/// game's key) replaced by `*`, so each kind of action is one in the filter,
+/// and the id itself, for the details.
+fn shape(path: &str) -> (String, Option<String>) {
+    let seg: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    let at = match seg.as_slice() {
+        ["game", _, ..] => Some(1),
+        ["signup", "game", _, ..] => Some(2),
+        ["admin", "common-games", key, ..] if *key != "new" => Some(2),
+        _ => None,
+    };
+    match at {
+        Some(i) => {
+            let id = seg[i].to_string();
+            let mut s = seg.clone();
+            s[i] = "*";
+            (format!("/{}", s.join("/")), Some(id))
+        }
+        None => (path.to_string(), None),
+    }
 }
 
 pub async fn middleware(State(st): State<AppState>, req: Request, next: Next) -> Response {
@@ -178,6 +206,12 @@ pub async fn middleware(State(st): State<AppState>, req: Request, next: Next) ->
     let (sid, sname) = season
         .map(|s| (Some(s.id), s.name))
         .unwrap_or((None, String::new()));
+    let (action, id) = shape(&path);
+    let detail = match id {
+        Some(id) if detail.is_empty() => format!("id={id}"),
+        Some(id) => format!("id={id}, {detail}"),
+        None => detail,
+    };
     let row = st
         .db
         .log_mod_action(
@@ -186,7 +220,7 @@ pub async fn middleware(State(st): State<AppState>, req: Request, next: Next) ->
             &who.username,
             sid,
             &sname,
-            &path,
+            &action,
             &detail,
         )
         .await;
@@ -210,6 +244,8 @@ pub async fn middleware(State(st): State<AppState>, req: Request, next: Next) ->
         (res, "refused")
     } else if status.is_success()
         && (ct.starts_with("text/html") || ct.starts_with("application/json"))
+        // A reply too big to look at goes out as it is.
+        && axum::body::HttpBody::size_hint(res.body()).upper().is_some_and(|n| n <= REPLY_MAX as u64)
     {
         let (parts, body) = res.into_parts();
         match axum::body::to_bytes(body, REPLY_MAX).await {
@@ -281,12 +317,20 @@ pub fn label(action: &str) -> &str {
         "/admin/links/revoke" => "revoke a link",
         "/prioritize" => "prioritize a hint (as admin)",
         "/signup/delete" => "remove a signup (player route)",
-        a if a.starts_with("/admin/common-games") => "common games setup",
-        a if a.starts_with("/game/") && a.ends_with("/finish") => "finish a slot",
-        a if a.starts_with("/game/") && a.contains("/poptracker") => "PopTracker pack",
-        a if a.starts_with("/signup/game/") && a.ends_with("/yaml") => "replace a signup's YAML",
-        a if a.starts_with("/signup/game/") && a.ends_with("/notes") => "edit a signup's notes",
-        a if a.starts_with("/signup/game/") && a.contains("/seat/") => "change a signup's seats",
+        "/admin/common-games/new" => "new common game",
+        "/admin/common-games/*" => "save a common game's setup",
+        "/admin/common-games/*/apworld" => "upload a common game's apworld",
+        "/admin/common-games/*/download" => "upload a common game's download",
+        "/admin/common-games/*/remove" => "remove a common game's file",
+        "/admin/common-games/*/delete" => "delete a common game",
+        "/game/*/finish" => "finish a slot",
+        "/game/*/poptracker" => "upload a PopTracker pack",
+        "/game/*/poptracker/remove" => "remove a PopTracker pack",
+        "/signup/game/*/yaml" => "replace a signup's YAML",
+        "/signup/game/*/notes" => "edit a signup's notes",
+        "/signup/game/*/seat/remove" => "remove a signup's seat",
+        "/signup/game/*/seat/rename" => "rename a signup's seat",
+        a if a.starts_with("/admin/common-games") => "common games",
         _ => action,
     }
 }
@@ -386,10 +430,35 @@ mod tests {
     }
 
     #[test]
+    fn routes_keep_their_shape_and_their_id() {
+        assert_eq!(
+            shape("/game/ab12/finish"),
+            ("/game/*/finish".into(), Some("ab12".into()))
+        );
+        assert_eq!(
+            shape("/signup/game/cd34/yaml"),
+            ("/signup/game/*/yaml".into(), Some("cd34".into()))
+        );
+        assert_eq!(
+            shape("/admin/common-games/mc/delete"),
+            ("/admin/common-games/*/delete".into(), Some("mc".into()))
+        );
+        assert_eq!(
+            shape("/admin/common-games/new"),
+            ("/admin/common-games/new".into(), None)
+        );
+        assert_eq!(shape("/admin/console"), ("/admin/console".into(), None));
+        assert_eq!(label("/game/*/finish"), "finish a slot");
+    }
+
+    #[test]
     fn refusals_are_told_from_successes() {
-        assert!(refused(
-            "text/html; charset=utf-8",
-            br#"<div class="banner bad">Admins only.</div>"#
+        let refusal = crate::render::notice("Admins only.", false, "/").0;
+        assert!(refused("text/html; charset=utf-8", refusal.as_bytes()));
+        // A page that merely shows an old error isn't a refusal.
+        assert!(!refused(
+            "text/html",
+            br#"<div class="banner bad">Installing failed earlier.</div>"#
         ));
         assert!(!refused(
             "text/html",

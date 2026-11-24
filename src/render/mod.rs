@@ -631,6 +631,9 @@ fn fmt_ago(sec: i64) -> String {
 pub fn notice(text: &str, ok: bool, back: &str) -> Html<String> {
     let mut b = page_head(None);
     let cls = if ok { "banner ok" } else { "banner bad" };
+    if !ok {
+        b.push_str(crate::modlog::REFUSED_MARK);
+    }
     b.push_str(&format!(
         r#"<h1>Heads up</h1><div class="crumb"><a href="{}">← back</a></div>
 <div class="{cls}">{}</div>"#,

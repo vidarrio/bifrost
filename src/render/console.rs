@@ -830,7 +830,7 @@ pub fn audit_page(
 ) -> Html<String> {
     let (users, seasons, actions) = choices;
     let mut body = console_nav("/admin/audit", true);
-    body.push_str(r#"<h2>Moderator log</h2><p class="statline">Every change a moderator or sysadmin made in season or instance administration, console commands included: who, where, what (the form's fields, passwords and tokens left out) and the answer it got. Kept for a year.</p>"#);
+    body.push_str(r#"<h2>Moderator log</h2><p class="statline">Every change a moderator or sysadmin made in season or instance administration, console commands included: who, where, what (the form's fields, passwords and tokens left out) and the answer it got: ok, refused, or unfinished. A few refusals on players' pages redirect instead of showing an error, so they show as ok. Kept for a year.</p>"#);
     let opt = |value: &str, label: &str, on: bool| {
         format!(
             r#"<option value="{}"{}>{}</option>"#,
