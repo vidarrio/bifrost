@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-24
+
+**Upgrading:** the database gains two tables (notifications, and the moderator
+log). The first start of 0.6.0 takes a pre-upgrade backup, then migrates; to go
+back to 0.5.x, restore that backup (see Updating Bifrost in the user guide). As
+with 0.5.0, it won't start if that backup can't be written, so make room or set
+`BIFROST_BACKUP_DIR` first. A newer version of a game a season already has can
+now replace the season's copy before generation, once a season moderator
+approves it, even on servers that approve uploads automatically. Those servers
+also hold for a moderator any upload whose manifest names no game, and every
+upload to a season one of whose custom worlds names no game.
+
 ### Added
 
 - A **moderator log** for sysadmins, the console's *Moderator log* tab. It
@@ -21,12 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attention (a failed check, or its world rejected), and when a moderator
   approves or rejects a world you uploaded.
   Moderators hear about their seasons' waiting uploads, signups that need
-  attention, generation results and game servers that stop unexpectedly;
+  attention, generation results and game servers that stop unexpectedly or
+  won't start;
   sysadmins about catalog offers, new Bifrost releases, failed nightly
   backups and failed Archipelago installs.
 - When the catalog has a newer version of a season's installed world, the
-  season admin page offers **update to the catalog's** version, which
-  replaces it and checks every signup for the game again.
+  season admin page offers **update to the catalog's** version until the
+  season is generated. It replaces the world and checks every signup for the
+  game again.
 - A sysadmin approving an upload in a season can add it to the catalog in the
   same step (the approve button's box, ticked by default). A season
   moderator's approval offers the world to the sysadmins instead, on the
@@ -39,15 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Prioritizing a hint is limited to 30 times in 10 minutes per player, and a
+  hint the live board doesn't have can't be prioritized.
 - The native bundle's Python is a newer build of Python 3.13.18
   (python-build-standalone 20261123, with libffi 3.8.1).
-- A newer version of a game a season already has waits for a moderator's
-  approval even where uploads are auto-approved (unless it's the catalog's
-  own version). An upload whose version can't be compared with the season's
-  copy also waits, and a moderator can **replace anyway**. So does an
-  auto-approved upload that might be a game the season has: one whose
-  manifest names no game, or any upload while one of the season's worlds
-  names no game. The uploader and the moderators are told why.
 - The signup wizard's first step is one searchable list of every game the
   season can play, each with the version the server has: core games, the
   catalog's custom games and custom games already in the season, plus an
@@ -55,12 +64,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   catalog and upload first.
 - A newer version of a custom game a season already has now replaces the
   season's copy, until the season is generated, instead of the season keeping
-  its first version. It's approved like any other upload (at once if it's the
-  catalog's version or uploads are auto-approved; if the catalog has the game
-  at least as new, the catalog's is used). Every signup for that game is then
-  checked against the new version, and those that fail are flagged as held
-  signups are. If it's rejected, the signups held for it are checked against
-  the season's copy instead.
+  its first version. If the upload is the catalog's own version, or the
+  catalog has the game at least as new, the catalog's version is installed at
+  once. Otherwise the upload waits for a moderator, even where uploads are
+  auto-approved. An upload whose version can't be compared with the
+  season's copy waits too, and a moderator can **replace anyway**. Every
+  signup for that game is then checked against the new version, and those
+  that fail are flagged as held signups are. If it's rejected, the signups
+  held for it are checked against the season's copy instead.
+- Where uploads are auto-approved, an upload that might be a game the season
+  already has waits for a moderator too: one whose manifest names no game, or
+  any upload while one of the season's worlds names no game. The uploader and
+  the moderators are told why.
 
 ## [0.5.0] - 2026-11-23
 
@@ -554,7 +569,8 @@ Upgrading from 0.1.x:
   a given version), checked against the release's checksums. Going back means
   restoring the pre-upgrade backup and the previous file, which it keeps.
 
-[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/vidarrio/bifrost/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/vidarrio/bifrost/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/vidarrio/bifrost/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/vidarrio/bifrost/compare/v0.4.1...v0.4.2
