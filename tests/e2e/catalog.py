@@ -340,6 +340,7 @@ try:
     post(root, f"{S}/admin/worlds/approve", data={"name": "foo.apworld"})
     check("approving it replaces the season's version", installed_foo() == foo11)
     flagged = wait_for(lambda: "no later than 1.0.0" in (t := get(root, f"{S}/admin").text) and t, 180, 2)
+    check("its moderators hear the re-check flagged a signup", wait_for(lambda: any(n["text"].startswith("The signup Rfoo in") for n in mail(root)), 60, 2), [n["text"] for n in mail(root)][:6])
     check("a signup whose YAML fails the new version is flagged", flagged and "Rfoo" in flagged.split("no later than 1.0.0")[0][-600:], (flagged or "")[-600:])
     adm = wait_for(lambda: not held_in(t := get(root, f"{S}/admin").text, "Pfoo") and not held_in(t, "Bfoo") and t, 180, 2)
     check("…the others go ahead on it", adm and listed(adm, "Pfoo") and listed(adm, "Bfoo"))
@@ -349,6 +350,8 @@ try:
     # A rejected newer version: its signups use the season's version instead.
     upload(bob, "foo.apworld", variant("foo.apworld", "Foo Finder", "1.2.0"))
     r = post(bob, f"{S}/signup", files={"yaml": ("b2.yaml", foo_yaml("Bfoo2"))}, data={"is_custom": "1", "pending_world": "foo.apworld"})
+    check("…and each upload of it reaches the moderators", sum(n["text"].startswith("bob uploaded foo.apworld (Foo Finder) in") for n in mail(root)) >= 2,
+          [n["text"] for n in mail(root)][:8])
     check("a second newer version holds its signup too", "held until a moderator approves foo.apworld" in r.text, r.text[-400:])
     check("…which the admin page shows", held_in(get(root, f"{S}/admin").text, "Bfoo2"))
     check("…and the approval list says it replaces the season's version",
@@ -474,7 +477,7 @@ try:
     check("a newer version waits for approval without a signup", j.get("pending"), j)
     gen = generate(root, S.removeprefix("/s/"), 240)
     check("generates once nothing is held", gen and gen.startswith("Generated"), gen)
-    check("…and its moderators hear it", any(n["text"].startswith("Spring: Generated") or ": Generated" in n["text"] for n in mail(root)), [n["text"] for n in mail(root)][:5])
+    check("…and its moderators hear it", any(n["text"].startswith("Spring: Generated") and "couldn't go live" not in n["text"] for n in mail(root)), [n["text"] for n in mail(root)][:5])
     post(root, f"{S}/admin/worlds/approve", data={"name": "foo.apworld"})
     check("after generation, approving a newer version doesn't replace the season's", installed_foo() == foo11)
 finally:

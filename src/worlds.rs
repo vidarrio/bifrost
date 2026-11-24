@@ -977,12 +977,18 @@ pub async fn reject(db: &Db, season: Id, file: &str, by: &str) -> Result<WorldRe
         "{} was rejected by {by}: replace the YAML with an installed game's, or remove this signup",
         req.file
     );
+    let mut flagged = Vec::new();
     for (id, yaml) in db.held_submissions(season, &req.file).await {
         if matches!(db.set_held_err(id, &yaml, &why).await, Ok(true)) {
             crate::notify::signup_flagged(db, season, id, &why).await;
-            crate::notify::signup_flagged_for_mods(db, season, id, &why).await;
+            if let Some((_, slot)) = db.submission_owner(id).await {
+                flagged.push(slot);
+            }
         }
     }
+    // The other moderators: whoever rejected it knows.
+    let rejecter = db.account_by_name(by).await.map(|a| a.id);
+    crate::notify::signups_flagged_for_mods(db, season, &flagged, &why, rejecter).await;
     Ok(req)
 }
 
@@ -1001,7 +1007,10 @@ pub async fn settle_held(db: &Db, season: Id, id: Id, yaml: &str, file: &str) {
         );
         if matches!(db.set_held_err(id, yaml, &why).await, Ok(true)) {
             crate::notify::signup_flagged(db, season, id, &why).await;
-            crate::notify::signup_flagged_for_mods(db, season, id, &why).await;
+            if let Some((owner, slot)) = db.submission_owner(id).await {
+                crate::notify::signups_flagged_for_mods(db, season, &[slot], &why, Some(owner))
+                    .await;
+            }
         }
     }
 }
@@ -1014,6 +1023,7 @@ pub const ONE_GAME_PER_FILE: &str = "That YAML holds several players. Sign up on
 /// the reason.
 pub async fn recheck_held(db: &Db, season: Id, file: &str) {
     let dirs = config::get().season(season);
+    let mut flagged: Vec<(String, String)> = Vec::new();
     for (id, yaml_path) in db.held_submissions(season, file).await {
         let read = match config::get().data_file(&yaml_path) {
             Some(p) => tokio::fs::read_to_string(p).await,
@@ -1048,8 +1058,29 @@ pub async fn recheck_held(db: &Db, season: Id, file: &str) {
             // A check that couldn't run is tried again: no verdict to tell.
             if changed && !e.starts_with("couldn't be checked") {
                 crate::notify::signup_flagged(db, season, id, &e).await;
-                crate::notify::signup_flagged_for_mods(db, season, id, &e).await;
+                if let Some((_, slot)) = db.submission_owner(id).await {
+                    flagged.push((slot, e));
+                }
             }
+        }
+    }
+    // The moderators hear once, however many failed.
+    match flagged.as_slice() {
+        [] => {}
+        [(slot, why)] => {
+            crate::notify::signups_flagged_for_mods(
+                db,
+                season,
+                std::slice::from_ref(slot),
+                why,
+                None,
+            )
+            .await
+        }
+        many => {
+            let slots: Vec<String> = many.iter().map(|(s, _)| s.clone()).collect();
+            let why = format!("their YAMLs didn't pass a check against {file}");
+            crate::notify::signups_flagged_for_mods(db, season, &slots, &why, None).await;
         }
     }
 }

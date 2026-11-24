@@ -544,7 +544,7 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
         Err(e) => {
             let _ = db.transition(season, prev, now()).await;
             set(&state, false, format!("Failed: {e}"));
-            format!("generating it failed: {e}")
+            format!("generation failed: {e}")
         }
     };
     // Its moderators hear how it went, wherever they are.
@@ -563,6 +563,11 @@ pub async fn regenerate(db: Db, rts: Arc<Runtimes>, season: Id) {
     let r = regen_inner(&db, &rts, &state, season).await;
     // Live either way: on failure the previous seed is still deployed.
     let _ = db.transition(season, State::Live, now()).await;
+    let told = match &r {
+        Ok(msg) => msg.clone(),
+        Err(e) => format!("the re-roll failed, so the previous seed stays: {e}"),
+    };
+    crate::notify::generated(&db, season, &told).await;
     match r {
         Ok(msg) => set(&state, false, msg),
         Err(e) => set(&state, false, format!("Failed: {e}")),

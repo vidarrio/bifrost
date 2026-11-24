@@ -234,7 +234,13 @@ async fn main() {
                             tracing::error!(
                                 "season {id}: couldn't install Archipelago {v} ({e}); starting it on the active version"
                             );
-                            crate::notify::ap_install_failed(&db, &v, &format!("{e}; a live season that runs it started on the active version instead")).await;
+                            let name = db.season(id).await.map(|s| s.name).unwrap_or_default();
+                            crate::notify::ap_install_failed(
+                                &db,
+                                &v,
+                                &format!("{e}; {name}, which runs it, started on the active version instead"),
+                            )
+                            .await;
                         }
                         seasons.start_live(id).await;
                     });

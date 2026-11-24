@@ -79,6 +79,20 @@ impl Db {
         Ok(true)
     }
 
+    /// A season's owner and co-moderators who can still moderate: enabled,
+    /// with a moderator's role or higher.
+    pub async fn active_season_mods(&self, season: Id) -> Vec<i64> {
+        sqlx::query_scalar(
+            "SELECT id FROM account WHERE disabled = 0 AND role IN ('moderator', 'sysadmin') AND id IN (
+                 SELECT created_by FROM season WHERE id = ?1 AND created_by IS NOT NULL
+                 UNION SELECT account_id FROM season_mod WHERE season_id = ?1)",
+        )
+        .bind(season)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default()
+    }
+
     /// The sysadmins' accounts (enabled ones).
     pub async fn sysadmin_ids(&self) -> Vec<i64> {
         sqlx::query_scalar("SELECT id FROM account WHERE role = 'sysadmin' AND disabled = 0")
