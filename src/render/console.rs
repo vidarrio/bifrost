@@ -867,7 +867,11 @@ pub fn audit_page(
     let keep_per = if f.per == 0 {
         String::new()
     } else {
-        format!(r#"<input type="hidden" name="per" value="{}">"#, f.per())
+        format!(
+            r#"<input type="hidden" name="per" value="{}"><input type="hidden" name="fit" value="{}">"#,
+            f.per(),
+            f.fit
+        )
     };
     body.push_str(&format!(
         r#"<form class="logfilter" method="get" action="/admin/audit"><label>Who <select name="user">{who}</select></label> <label>Season <select name="season">{wher}</select></label> <label>Action <select name="action">{what}</select></label> {keep_per}<button type="submit">Filter</button> <a class="pill" href="/admin/audit">clear</a></form>"#
@@ -877,7 +881,14 @@ pub fn audit_page(
     if rows.is_empty() {
         body.push_str(r#"<div class="empty">Nothing logged that matches.</div>"#);
     } else {
-        body.push_str(r#"<table class="utable" id="modlog"><tr><th>When (UTC)</th><th>Who</th><th>Season</th><th>Action</th><th>Details</th><th>Answer</th></tr>"#);
+        // The page and its size as the server used them, for the fit script.
+        let pages = ((total + f.per() - 1) / f.per()).max(1);
+        body.push_str(&format!(
+            r#"<table class="utable" id="modlog" data-page="{}" data-per="{}">"#,
+            f.page.clamp(1, pages),
+            f.per()
+        ));
+        body.push_str(r#"<tr><th>When (UTC)</th><th>Who</th><th>Season</th><th>Action</th><th>Details</th><th>Answer</th></tr>"#);
         for r in rows {
             let when = format!(
                 "{} {:02}:{:02}",
@@ -899,10 +910,11 @@ pub fn audit_page(
                 _ => format!("refused ({})", r.status),
             };
             body.push_str(&format!(
-                r#"<tr><td class="mono">{when}</td><td>{}</td><td>{season}</td><td title="{}">{}</td><td class="mono" style="overflow-wrap:anywhere">{}</td><td>{answer}</td></tr>"#,
+                r#"<tr><td class="mono">{when}</td><td>{}</td><td>{season}</td><td title="{}">{}</td><td class="mono det" title="{}">{}</td><td>{answer}</td></tr>"#,
                 esc(&r.username),
                 esc(&r.action),
                 esc(crate::modlog::label(&r.action)),
+                esc(&r.detail),
                 esc(&r.detail),
             ));
         }
@@ -912,47 +924,59 @@ pub fn audit_page(
     auth_page("Console", r#"<a href="/">← home</a>"#, None, &body)
 }
 
-/// The log's own layout: a compact row on a phone (one line of who, where,
-/// what and the answer, the details under it), so a page holds several.
+/// The log's own layout. Every cell is one line, cut short with "…" (the
+/// whole of it in its tooltip), so every row is as tall as the next and a page
+/// can be fitted to the window exactly. On a phone a row is compact: one line
+/// of when, who, where, what and the answer, the details under it.
 const AUDIT_CSS: &str = r#"<style>
 .pager{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0}.pager .statline{margin-right:6px}
 .pager .pill.pg-cur{border-color:var(--accent);color:var(--accent)}.pager .pill.pg-off{opacity:.4}
+details.about{position:relative}
 details.about summary{cursor:pointer;color:var(--muted);font-size:13px;margin-bottom:6px}
+details.about[open] .statline{position:absolute;z-index:5;left:0;right:0;top:100%;margin:0;padding:10px 12px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.3)}
+#modlog td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#modlog td.det{max-width:0;width:40%}
 @media (max-width:560px){
 #modlog tr{display:flex;flex-wrap:wrap;gap:2px 8px;padding:6px 10px;margin:0 0 6px;font-size:12px}
 #modlog tr:has(th){display:none}
-#modlog td{display:block;padding:0;border:0;text-align:left}
+#modlog td{display:block;padding:0;border:0;text-align:left;max-width:100%}
 #modlog td+td{border-top:0}
 #modlog td::before,#modlog td::after{content:none}
-#modlog td:nth-child(5){order:9;flex-basis:100%;color:var(--muted)}
+#modlog td.det{order:9;flex-basis:100%;width:auto;max-width:100%;color:var(--muted)}
 }
 </style>"#;
 
-/// Fits a page of the moderator log to the window: from the rows shown and
-/// the room left below the first, how many fit; if that isn't the page size,
-/// load that many, keeping the first row shown on the page. It measures again
-/// only when the window's height changes (on a resize, or a visit from a
-/// window of another height), so it settles at once.
+/// Fits a page of the moderator log to the window. From the rows shown (all
+/// one height: see `AUDIT_CSS`), the room from the first row down, and the
+/// space the page keeps under its last row, how many fit; then load that many,
+/// keeping the first row shown on its page. The window height it fitted for
+/// goes into the URL (`fit`), and a page fitted for this height is left as it
+/// is: it can't reload more than once, storage or not, and going Back to a
+/// page fitted for another height fits it again.
 const AUDIT_FIT_JS: &str = r#"<script>
 (function(){
  var t=document.getElementById('modlog');if(!t)return;
- var key='bifModlogH';
- function fit(force){
-  var rows=[].slice.call(t.rows).slice(1);if(!rows.length)return;
-  var h=innerHeight,u=new URL(location.href),had=u.searchParams.get('per');
-  try{if(!force&&had&&sessionStorage.getItem(key)===String(h))return}catch(e){}
-  var first=rows[0].getBoundingClientRect(),last=rows[rows.length-1].getBoundingClientRect();
-  var each=(last.bottom-first.top)/rows.length;if(!(each>0))return;
-  var top=first.top+scrollY,room=h-top-16;
-  var n=Math.max(1,Math.min(200,Math.floor(room/each)));
-  try{sessionStorage.setItem(key,String(h))}catch(e){}
-  var per=parseInt(had||'50',10),page=parseInt(u.searchParams.get('page')||'1',10);
-  if(n===per)return;
-  u.searchParams.set('per',n);u.searchParams.set('page',Math.floor((page-1)*per/n)+1);
-  location.replace(u.toString());
+ var per=+t.dataset.per,page=+t.dataset.page;
+ function fitted(){return +new URL(location.href).searchParams.get('fit')===innerHeight}
+ function fit(){
+  var rows=[].slice.call(t.rows).filter(function(r){return r.cells.length&&r.cells[0].tagName==='TD'});
+  if(!rows.length)return;
+  var h=innerHeight,top0=rows[0].getBoundingClientRect().top;
+  var each=0;rows.forEach(function(r){each=Math.max(each,r.getBoundingClientRect().height)});
+  if(rows.length>1)each=Math.max(each,(rows[rows.length-1].getBoundingClientRect().top-top0)/(rows.length-1));
+  if(!(each>0))return;
+  var last=rows[rows.length-1].getBoundingClientRect().bottom;
+  var below=Math.max(0,document.body.getBoundingClientRect().bottom-last);
+  var n=Math.max(1,Math.min(200,Math.floor((h-(top0+scrollY)-below)/each)));
+  var u=new URL(location.href);
+  u.searchParams.set('per',n);u.searchParams.set('fit',h);
+  u.searchParams.set('page',Math.floor((page-1)*per/n)+1);
+  if(u.toString()!==location.href)location.replace(u.toString());
  }
- fit(false);
- var w;addEventListener('resize',function(){clearTimeout(w);w=setTimeout(function(){fit(true)},400)});
+ if(!fitted())fit();
+ // Back to a page kept from before (the back-forward cache) fitted elsewhere.
+ addEventListener('pageshow',function(e){if(e.persisted&&!fitted())fit()});
+ var w;addEventListener('resize',function(){clearTimeout(w);w=setTimeout(function(){if(!fitted())fit()},500)});
 })();
 </script>"#;
 
@@ -965,7 +989,7 @@ fn audit_pager(f: &crate::db::ModLogFilter, total: i64) -> String {
     let mut keep = if f.per == 0 {
         String::new()
     } else {
-        format!("&per={per}")
+        format!("&per={per}&fit={}", f.fit)
     };
     for (k, v) in [
         ("user", &f.username),
@@ -978,7 +1002,7 @@ fn audit_pager(f: &crate::db::ModLogFilter, total: i64) -> String {
     }
     let link = |p: i64, text: &str, label: &str| {
         if p == page || p < 1 || p > pages {
-            format!(r#"<span class="pill pg-off" aria-disabled="true">{text}</span>"#)
+            format!(r#"<span class="pill pg-off">{text}</span>"#)
         } else {
             format!(
                 r#"<a class="pill" href="/admin/audit?page={p}{keep}" aria-label="{label}">{text}</a>"#

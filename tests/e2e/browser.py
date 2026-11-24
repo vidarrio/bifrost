@@ -240,31 +240,60 @@ try:
         # --- the moderator log: numbered pages, each sized to fit the window
         with srv.db() as c:
             c.executemany("INSERT INTO mod_action (at, username, action, detail, status, outcome) VALUES (?, 'mia', '/admin/generate', ?, 200, 'ok')",
-                          [(1_000_000 + i, f"row {i}") for i in range(300)])
+                          [(1_000_000 + i, f"row {i}" + (" long" * 120 if i % 3 == 0 else "")) for i in range(300)])
+        per_of = lambda pg: int(re.search(r"per=(\d+)", pg.url).group(1))
+        def settled_log(pg):
+            """Wait for the fit to land, then for nothing more to happen."""
+            pg.wait_for_url(lambda u: "fit=" in u, timeout=10_000)
+            web.settle(pg)
+            url = pg.url
+            pg.wait_for_timeout(1500)
+            return pg.url == url
+        def fits(pg):
+            return pg.evaluate("""(() => { const r = [...document.querySelectorAll('#modlog tr')].filter(t => t.querySelector('td'));
+                return {rows: r.length, last: r[r.length-1].getBoundingClientRect().bottom,
+                        doc: document.documentElement.scrollHeight, h: innerHeight}; })()""")
         for w, h in ((1100, 800), (390, 844)):
             ctx = web.context(b, srv, root, width=w, height=h)
             pg = ctx.new_page()
             pg.goto(srv.base + "/admin/audit?user=mia")
-            pg.wait_for_url(lambda u: "per=" in u, timeout=10_000)
-            web.settle(pg)
-            fits = pg.evaluate("(() => { const r = [...document.querySelectorAll('#modlog tr')].slice(1); return [r.length, r[r.length-1].getBoundingClientRect().bottom, innerHeight]; })()")
-            check(f"a log page fits the window ({w}x{h})", fits[0] >= 1 and fits[1] <= fits[2], fits)
+            check(f"a log page settles on its size ({w}x{h})", settled_log(pg), pg.url)
+            f = fits(pg)
+            check(f"…and fits the window, long details and all ({w}x{h})", f["rows"] >= 1 and f["last"] <= f["h"] and f["doc"] <= f["h"], f)
             pager = pg.text_content(".pager") or ""
             check(f"…numbered, with its count ({w}px)", "Page 1 of" in pager and "300 entries" in pager and "older ›" in pager, pager)
             check(f"…and nothing wider than the screen ({w}px)", not web.overflow_x(pg), web.overflow_x(pg))
             if w == 1100:
-                per = int(re.search(r"per=(\d+)", pg.url).group(1))
+                per = per_of(pg)
                 pg.click(".pager a[aria-label='Page 2']")
                 web.settle(pg)
-                first = pg.text_content("#modlog tr:nth-child(2) td:nth-child(5)")
-                check("…page 2 goes on where page 1 ended, with the same size", f"per={per}" in pg.url and first == f"row {299 - per}", (pg.url, first))
-                pg.set_viewport_size({"width": 1100, "height": 500})
-                pg.wait_for_url(lambda u: f"per={per}" not in u, timeout=10_000)
+                first = pg.text_content("#modlog tr:nth-child(2) td:nth-child(5)") or ""
+                check("…page 2 goes on where page 1 ended, with the same size",
+                      f"per={per}" in pg.url and first.startswith(f"row {299 - per}"), (pg.url, first[:30]))
+                pg.set_viewport_size({"width": 1100, "height": 620})
+                pg.wait_for_url(lambda u: "fit=620" in u, timeout=10_000)
                 web.settle(pg)
-                smaller = int(re.search(r"per=(\d+)", pg.url).group(1))
-                check("…and a smaller window gets fewer rows a page", smaller < per, (per, smaller))
+                smaller = per_of(pg)
+                f = fits(pg)
+                check("…a smaller window gets fewer rows a page, still fitting", smaller < per and f["doc"] <= f["h"], (per, smaller, f))
+                pg.go_back()
+                pg.wait_for_url(lambda u: "fit=620" in u, timeout=10_000)
+                web.settle(pg)
+                f = fits(pg)
+                check("…and going Back to a page fitted for a bigger window fits it again", f["doc"] <= f["h"], (pg.url, f))
             check(f"no page errors on the log ({w}px)", not web.take_errors(), web.ERRORS)
             ctx.close()
+        # Storage blocked (a private window, a strict browser): it still settles.
+        ctx = web.context(b, srv, root, width=1100, height=800)
+        ctx.add_init_script("Object.defineProperty(window, 'sessionStorage', {get() { throw new DOMException('blocked', 'SecurityError'); }});"
+                            "Object.defineProperty(window, 'localStorage', {get() { throw new DOMException('blocked', 'SecurityError'); }});")
+        pg = ctx.new_page()
+        navs = []
+        pg.on("framenavigated", lambda fr: navs.append(fr.url) if fr == pg.main_frame else None)
+        pg.goto(srv.base + "/admin/audit?user=mia")
+        check("with storage blocked the log still settles, reloading at most once", settled_log(pg) and len(navs) <= 2, navs[:5])
+        web.take_errors()
+        ctx.close()
 
         # --- signing out and in: the next page never shows the old identity
         ctx = web.context(b, srv, root)

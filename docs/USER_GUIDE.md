@@ -749,10 +749,9 @@ and tokens left out, a password set from the console too) and how it went:
   the action runs, so one that's cut short is still there.
 
 Filter it by moderator, season and action. It's split into numbered pages,
-each holding as many entries as fit your window, so a page never needs
-scrolling; resize the window and the pages follow. Entries are kept for a year, and they stay when the season or
-account is deleted (marked *gone*). Players' own actions, such as signing up
-or hinting, aren't in it.
+each holding as many entries as fit your window (at least one), so a page
+doesn't need scrolling, and resizing the window refits it. An entry's details
+are cut to one line; hover over them for the rest.
 
 ### The apworld catalog and approval
 

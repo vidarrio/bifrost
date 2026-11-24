@@ -29,6 +29,9 @@ pub struct ModLogFilter {
     pub action: String,
     pub page: i64,
     pub per: i64,
+    /// The window height the page size was fitted to (kept in its links, so
+    /// the page knows it's fitted already; 0 when not).
+    pub fit: i64,
 }
 
 /// The fewest and most rows a page may ask for.
@@ -208,6 +211,7 @@ mod tests {
             action: a.into(),
             page: 1,
             per: 0,
+            fit: 0,
         };
         assert_eq!(
             db.mod_actions(&f("MIA", "", "")).await.len(),
@@ -232,7 +236,13 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(db.mod_actions_count(&bulk(1)).await, PAGE);
-        assert_eq!(db.mod_actions(&bulk(1)).await.len() as i64, PAGE);
+        let first = db.mod_actions(&bulk(1)).await;
+        assert_eq!(first.len() as i64, PAGE);
+        assert_eq!(
+            (first[0].at, first[first.len() - 1].at),
+            (10 + PAGE - 1, 10),
+            "the newest first, then down to the oldest"
+        );
         assert_eq!(db.mod_actions(&bulk(0)).await.len() as i64, PAGE);
         assert!(db.mod_actions(&bulk(2)).await.is_empty());
         let small = ModLogFilter {
@@ -254,7 +264,7 @@ mod tests {
             .per()
         };
         assert_eq!((per(0), per(-3), per(9999)), (PAGE, PER_MIN, PER_MAX));
-        let mut all = db
+        let all = db
             .mod_actions(&ModLogFilter {
                 page: 2,
                 ..Default::default()
@@ -265,7 +275,6 @@ mod tests {
             [3, 2, 1],
             "page 2: the oldest three"
         );
-        all.clear();
         let (users, seasons, actions) = db.mod_log_choices().await;
         assert_eq!(users, ["bulk", "mia", "root"]);
         assert_eq!(seasons.len(), 2);
