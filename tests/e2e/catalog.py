@@ -391,6 +391,25 @@ try:
     r = post(dave, f"/s/{sid2}/signup/check", files={"yaml": ("baz.yaml", fixture("baz.yaml"))}).json()
     check("…and the new one loads", r.get("ok"), r)
 
+    # Auto mode is for new games: when an upload can't be told apart from one
+    # the season has, it waits for a moderator too (#180).
+    post(root, "/admin/catalog/approval", data={"mode": "auto"})
+    j = post(erin, f"/s/{sid2}/signup/apworld", files={"apworld": ("nogame.apworld", renamed("baz.apworld", "nogame", "", "1.0.0"))}).json()
+    check("auto mode holds an upload whose manifest names no game", j.get("ok") and j.get("pending") and "nogame.apworld" not in os.listdir(sid2_worlds), j)
+    check("…telling the uploader why", "a moderator has to approve it first" in j.get("note", "") and "names no game" in j.get("note", ""), j)
+    check("…and the moderator", "Its manifest names no game" in get(root, f"/s/{sid2}/admin").text)
+    post(root, f"/s/{sid2}/admin/worlds/approve", data={"name": "nogame.apworld"})
+    j = post(erin, f"/s/{sid2}/signup/apworld", files={"apworld": ("zed.apworld", renamed("baz.apworld", "zed", "Zed Game", "1.0.0"))}).json()
+    check("…and any upload while a world the season has names no game",
+          j.get("ok") and j.get("pending") and "zed.apworld" not in os.listdir(sid2_worlds), j)
+    check("…saying which", "The season's nogame.apworld names no game, so this could be the same one" in get(root, f"/s/{sid2}/admin").text)
+    post(root, f"/s/{sid2}/admin/worlds/reject", data={"name": "zed.apworld"})
+    post(root, f"/s/{sid2}/admin/delete-apworld", data={"name": "nogame.apworld"})
+    j = post(erin, f"/s/{sid2}/signup/apworld", files={"apworld": ("zed.apworld", renamed("baz.apworld", "zed", "Zed Game", "1.0.0"))}).json()
+    check("…while a new game still installs at once", j.get("ok") and j.get("pending") is False and "zed.apworld" in os.listdir(sid2_worlds), j)
+    post(root, f"/s/{sid2}/admin/delete-apworld", data={"name": "zed.apworld"})
+    post(root, "/admin/catalog/approval", data={"mode": "manual"})
+
     # An upload whose version can't be compared with the season's: a
     # moderator decides, and can replace the season's anyway.
     unversioned = renamed("baz.apworld", "baz2", "Baz Finder", "")
