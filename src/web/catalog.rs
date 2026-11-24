@@ -31,7 +31,10 @@ pub(crate) struct AuditQuery {
     season: String,
     #[serde(default)]
     action: String,
-    before: Option<i64>,
+    page: Option<i64>,
+    per: Option<i64>,
+    #[serde(default)]
+    fit: String,
 }
 
 /// The moderator log (sysadmins only).
@@ -47,11 +50,26 @@ pub(crate) async fn audit_view(
         username: q.user.trim().to_string(),
         season: q.season.trim().to_string(),
         action: q.action.trim().to_string(),
-        before: q.before,
+        page: 1,
+        per: q.per.unwrap_or(0),
+        // `<width>x<height>`, numbers only.
+        fit: q
+            .fit
+            .split_once('x')
+            .and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)))
+            .map(|(w, h)| format!("{w}x{h}"))
+            .unwrap_or_default(),
+    };
+    // A page past the last shows the last.
+    let total = st.db.mod_actions_count(&f).await;
+    let pages = ((total + f.per() - 1) / f.per()).max(1);
+    let f = db::ModLogFilter {
+        page: q.page.unwrap_or(1).clamp(1, pages),
+        ..f
     };
     let rows = st.db.mod_actions(&f).await;
     let choices = st.db.mod_log_choices().await;
-    render::audit_page(&rows, &choices, &f).into_response()
+    render::audit_page(&rows, &choices, &f, total).into_response()
 }
 
 pub(crate) async fn catalog_upload(

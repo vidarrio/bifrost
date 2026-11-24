@@ -827,10 +827,12 @@ pub fn audit_page(
     rows: &[crate::db::ModAction],
     choices: &(Vec<String>, Vec<(String, String, bool)>, Vec<String>),
     f: &crate::db::ModLogFilter,
+    total: i64,
 ) -> Html<String> {
     let (users, seasons, actions) = choices;
     let mut body = console_nav("/admin/audit", true);
-    body.push_str(r#"<h2>Moderator log</h2><p class="statline">Every change a moderator or sysadmin made in season or instance administration, console commands included: who, where, what (the form's fields, passwords and tokens left out) and the answer it got: ok, refused, or unfinished. A few refusals on players' pages redirect instead of showing an error, so they show as ok. Kept for a year.</p>"#);
+    body.push_str(r#"<h2>Moderator log</h2><details class="about"><summary>What's in it</summary><p class="statline">Every change a moderator or sysadmin made in season or instance administration, console commands included, and what they did with a moderator's powers on players' pages: who, where, what (the form's fields, passwords and tokens left out) and the answer: ok, refused, or unfinished (the request never completed). A few refusals on players' pages redirect instead of showing an error, so they show as ok. Kept for a year. Each page holds as many entries as fit your window.</p></details>"#);
+    body.push_str(AUDIT_CSS);
     let opt = |value: &str, label: &str, on: bool| {
         format!(
             r#"<option value="{}"{}>{}</option>"#,
@@ -861,16 +863,32 @@ pub fn audit_page(
     for a in actions {
         what.push_str(&opt(a, crate::modlog::label(a), *a == f.action));
     }
+    // A filter keeps the page size the screen asked for.
+    let keep_per = if f.per == 0 {
+        String::new()
+    } else {
+        format!(
+            r#"<input type="hidden" name="per" value="{}"><input type="hidden" name="fit" value="{}">"#,
+            f.per(),
+            esc(&f.fit)
+        )
+    };
     body.push_str(&format!(
-        r#"<form class="logfilter" method="get" action="/admin/audit"><label>Who <select name="user">{who}</select></label> <label>Season <select name="season">{wher}</select></label> <label>Action <select name="action">{what}</select></label> <button type="submit">Filter</button> <a class="pill" href="/admin/audit">clear</a></form>"#
+        r#"<form class="logfilter" method="get" action="/admin/audit"><label>Who <select name="user">{who}</select></label> <label>Season <select name="season">{wher}</select></label> <label>Action <select name="action">{what}</select></label> {keep_per}<button type="submit">Filter</button> <a class="pill" href="/admin/audit">clear</a></form>"#
     ));
-    // One row more than a page: there's an older page.
-    let more = rows.len() as i64 > crate::db::modlog_page();
-    let rows = &rows[..rows.len().min(crate::db::modlog_page() as usize)];
+    let pager = audit_pager(f, total);
+    body.push_str(&pager);
     if rows.is_empty() {
         body.push_str(r#"<div class="empty">Nothing logged that matches.</div>"#);
     } else {
-        body.push_str(r#"<table class="utable"><tr><th>When (UTC)</th><th>Who</th><th>Season</th><th>Action</th><th>Details</th><th>Answer</th></tr>"#);
+        // The page and its size as the server used them, for the fit script.
+        let pages = ((total + f.per() - 1) / f.per()).max(1);
+        body.push_str(&format!(
+            r#"<table class="utable" id="modlog" data-page="{}" data-per="{}">"#,
+            f.page.clamp(1, pages),
+            f.per()
+        ));
+        body.push_str(r#"<tr><th>When (UTC)</th><th>Who</th><th>Season</th><th>Action</th><th>Details</th><th>Answer</th></tr>"#);
         for r in rows {
             let when = format!(
                 "{} {:02}:{:02}",
@@ -884,53 +902,174 @@ pub fn audit_page(
                     esc(if name.is_empty() { "?" } else { name })
                 ),
                 (None, "") => "—".to_string(),
-                (None, name) => format!("{} <span class=\"statline\">(gone)</span>", esc(name)),
+                (None, name) => format!(
+                    "<span title=\"{0} (gone)\">{0} <span class=\"statline\">(gone)</span></span>",
+                    esc(name)
+                ),
             };
             let answer = match r.outcome.as_str() {
                 "ok" => "ok".to_string(),
-                "unfinished" => "unfinished (the request never completed)".to_string(),
+                "unfinished" => {
+                    r#"<span title="The request never completed">unfinished</span>"#.to_string()
+                }
                 _ => format!("refused ({})", r.status),
             };
             body.push_str(&format!(
-                r#"<tr><td class="mono">{when}</td><td>{}</td><td>{season}</td><td title="{}">{}</td><td class="mono" style="overflow-wrap:anywhere">{}</td><td>{answer}</td></tr>"#,
+                r#"<tr tabindex="0" aria-expanded="false"><td class="mono">{when}</td><td>{}</td><td>{season}</td><td title="{}">{}</td><td class="mono det" title="{}">{}</td><td>{answer}</td></tr>"#,
                 esc(&r.username),
                 esc(&r.action),
                 esc(crate::modlog::label(&r.action)),
                 esc(&r.detail),
+                esc(&r.detail),
             ));
         }
         body.push_str("</table>");
-        let q = |k: &str, v: &str| {
-            if v.is_empty() {
-                String::new()
-            } else {
-                format!("&{k}={}", url_enc(v))
-            }
-        };
-        let keep = format!(
-            "{}{}{}",
-            q("user", &f.username),
-            q("season", &f.season),
-            q("action", &f.action)
-        );
-        let mut nav = String::new();
-        if f.before.is_some() {
-            nav.push_str(&format!(
-                r#"<a class="pill" href="/admin/audit?{}">← newest</a> "#,
-                keep.trim_start_matches('&')
-            ));
-        }
-        if more {
-            let last = rows.last().map(|r| r.id).unwrap_or(0);
-            nav.push_str(&format!(
-                r#"<a class="pill" href="/admin/audit?before={last}{keep}">older →</a>"#
-            ));
-        }
-        if !nav.is_empty() {
-            body.push_str(&format!("<p>{nav}</p>"));
+    }
+    body.push_str(AUDIT_FIT_JS);
+    auth_page("Console", r#"<a href="/">← home</a>"#, None, &body)
+}
+
+/// The log's own layout. Every cell is one line, cut short with "…" (the
+/// whole of it in its tooltip), so every row is as tall as the next and a page
+/// can be fitted to the window exactly. On a phone a row is compact: one line
+/// of when, who, where, what and the answer, the details under it.
+const AUDIT_CSS: &str = r#"<style>
+.pager{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0}.pager .statline{margin-right:6px}
+.pager .pill.pg-cur{border-color:var(--accent);color:var(--accent)}.pager .pill.pg-off{opacity:.4}
+/* A long season name doesn't widen its filter past the screen. */
+.logfilter select{max-width:12em}.logfilter label{max-width:100%}
+details.about{position:relative}
+details.about summary{cursor:pointer;color:var(--muted);font-size:13px;margin-bottom:6px}
+details.about[open] .statline{position:absolute;z-index:5;left:0;right:0;top:100%;margin:0;padding:10px 12px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.3)}
+#modlog{table-layout:fixed}
+#modlog th:nth-child(1){width:19ch}#modlog th:nth-child(2){width:11%}#modlog th:nth-child(3){width:14%}
+#modlog th:nth-child(4){width:18%}#modlog th:nth-child(6){width:11ch}
+#modlog td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#modlog tr[tabindex]{cursor:pointer}#modlog tr[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+/* A row pressed (or entered from the keyboard) shows all of itself. */
+#modlog tr.open td{white-space:normal;overflow:visible;overflow-wrap:anywhere}
+@media (max-width:560px){
+/* Two lines: when, who and season; then action, answer and details. */
+#modlog tr{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:2px 8px;padding:6px 10px;margin:0 0 6px;font-size:12px}
+#modlog td:nth-child(4){grid-row:2;grid-column:1}#modlog td:nth-child(6){grid-row:2;grid-column:2}
+#modlog tr:has(th){display:none}
+#modlog{table-layout:auto}
+#modlog td{display:block;padding:0;border:0;text-align:left;max-width:100%;min-width:0}
+#modlog td+td{border-top:0}
+#modlog td::before,#modlog td::after{content:none}
+#modlog td.det{grid-row:2;grid-column:3;width:auto;max-width:100%;color:var(--muted)}
+#modlog tr.open{grid-template-columns:minmax(0,1fr)}#modlog tr.open td{grid-row:auto;grid-column:1}
+}
+</style>"#;
+
+/// Fits a page of the moderator log to the window. From the rows shown (all
+/// one height: see `AUDIT_CSS`), the room from the first row down, and the
+/// space the page keeps under its last row, how many fit; then load that many,
+/// keeping the first row shown on its page. The window height it fitted for
+/// goes into the URL (`fit`), and a page fitted for this height is left as it
+/// is: it can't reload more than once, storage or not, and going Back to a
+/// page fitted for another height fits it again.
+const AUDIT_FIT_JS: &str = r#"<script>
+(function(){
+ var t=document.getElementById('modlog');if(!t)return;
+ var per=+t.dataset.per,page=+t.dataset.page;
+ function size(){return innerWidth+'x'+innerHeight}
+ function fitted(){return new URL(location.href).searchParams.get('fit')===size()}
+ function count(){
+  var rows=[].slice.call(t.rows).filter(function(r){return r.cells.length&&r.cells[0].tagName==='TD'});
+  if(!rows.length)return 0;
+  var top0=rows[0].getBoundingClientRect().top;
+  var each=0;rows.forEach(function(r){each=Math.max(each,r.getBoundingClientRect().height)});
+  if(rows.length>1)each=Math.max(each,(rows[rows.length-1].getBoundingClientRect().top-top0)/(rows.length-1));
+  if(!(each>0))return 0;
+  var last=rows[rows.length-1].getBoundingClientRect().bottom;
+  var below=Math.max(0,document.body.getBoundingClientRect().bottom-last);
+  return Math.max(1,Math.min(200,Math.floor((innerHeight-(top0+scrollY)-below)/each)));
+ }
+ function go(n){
+  var u=new URL(location.href);
+  u.searchParams.set('per',n);u.searchParams.set('fit',size());
+  u.searchParams.set('page',Math.floor((page-1)*per/n)+1);
+  if(u.toString()!==location.href)location.replace(u.toString());
+ }
+ function fit(){var n=count();if(n)go(n)}
+ if(!fitted())fit();
+ // Fitted for this window, but this page's pager took more room than the
+ // one it was fitted on: fewer rows, never more, so it can only settle.
+ else if(document.documentElement.scrollHeight>innerHeight){var n=count();if(n&&n<per)go(n)}
+ // Back to a page kept from before (the back-forward cache) fitted elsewhere.
+ addEventListener('pageshow',function(e){if(e.persisted&&!fitted())fit()});
+ // Not while a row is open: on a phone, scrolling it shows or hides the
+ // address bar, which is a resize, and a refit would close it.
+ var w;addEventListener('resize',function(){clearTimeout(w);w=setTimeout(function(){if(!fitted()&&!t.querySelector('tr.open'))fit()},500)});
+ // A row pressed, or entered from the keyboard, shows all of itself.
+ function toggle(tr){var o=tr.classList.toggle('open');tr.setAttribute('aria-expanded',o?'true':'false')}
+ t.addEventListener('click',function(e){var tr=e.target.closest('tr[tabindex]');if(tr&&!e.target.closest('a'))toggle(tr)});
+ t.addEventListener('keydown',function(e){var tr=e.target.closest('tr[tabindex]');if(tr&&!e.target.closest('a')&&(e.key==='Enter'||e.key===' ')){e.preventDefault();toggle(tr)}});
+})();
+</script>"#;
+
+/// The moderator log's page links: "Page 3 of 12 · 590 entries", then first,
+/// previous, the pages around this one, next and last, keeping the filters.
+fn audit_pager(f: &crate::db::ModLogFilter, total: i64) -> String {
+    let per = f.per();
+    let pages = ((total + per - 1) / per).max(1);
+    let page = f.page.clamp(1, pages);
+    let mut keep = if f.per == 0 {
+        String::new()
+    } else {
+        format!("&per={per}&fit={}", f.fit)
+    };
+    for (k, v) in [
+        ("user", &f.username),
+        ("season", &f.season),
+        ("action", &f.action),
+    ] {
+        if !v.is_empty() {
+            keep.push_str(&format!("&{k}={}", url_enc(v)));
         }
     }
-    auth_page("Console", r#"<a href="/">← home</a>"#, None, &body)
+    let link = |p: i64, text: &str, label: &str| {
+        if p == page || p < 1 || p > pages {
+            format!(r#"<span class="pill pg-off">{text}</span>"#)
+        } else {
+            format!(
+                r#"<a class="pill" href="/admin/audit?page={p}{keep}" aria-label="{label}">{text}</a>"#
+            )
+        }
+    };
+    let entries = if total == 1 {
+        "1 entry".to_string()
+    } else {
+        format!("{total} entries")
+    };
+    let mut out = format!(
+        r#"<nav class="pager" aria-label="Pages"><span class="statline">Page {page} of {pages} · {entries}</span>"#
+    );
+    if pages > 1 {
+        out.push_str(&link(1, "« first", "First page"));
+        out.push_str(&link(page - 1, "‹ newer", "Newer page"));
+        let (from, to) = ((page - 2).max(1), (page + 2).min(pages));
+        if from > 1 {
+            out.push_str("<span class=\"statline\">…</span>");
+        }
+        for p in from..=to {
+            if p == page {
+                out.push_str(&format!(
+                    r#"<span class="pill pg-cur" aria-current="page">{p}</span>"#
+                ));
+            } else {
+                out.push_str(&link(p, &p.to_string(), &format!("Page {p}")));
+            }
+        }
+        if to < pages {
+            out.push_str("<span class=\"statline\">…</span>");
+        }
+        out.push_str(&link(page + 1, "older ›", "Older page"));
+        out.push_str(&link(pages, "last »", "Last page"));
+    }
+    out.push_str("</nav>");
+    out
 }
 
 /// A query-string value, percent-encoded.

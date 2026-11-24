@@ -22,7 +22,7 @@ mod worlds;
 pub use auth::{AccountRow, LinkKind, LinkRow, RedeemError};
 pub use common::{SeasonCommon, SetIdentOutcome};
 pub use migrate::PRE_0_3;
-pub use modlog::{ModAction, ModLogFilter, modlog_page};
+pub use modlog::{ModAction, ModLogFilter};
 pub use seasons::{MAX_DAILY_HINTS, MAX_GAMES_LIMIT, SeasonRow, State};
 pub use seats::{JoinOutcome, SeatLink, SeatRow, name_clash, seat_name_error};
 pub use settings::{Approval, DEFAULT_HOME_LABEL, Discord, HOME_LABEL_MAX, Instance};

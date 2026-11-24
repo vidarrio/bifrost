@@ -19,23 +19,43 @@ pub struct ModAction {
     pub outcome: String,
 }
 
-/// What to show: each filter is off when empty. `before`: only rows older
-/// than this id (paging).
+/// What to show: each filter is off when empty. `page`: which page, newest
+/// first, from 1, of `per` rows (the page asks for as many as fit the
+/// screen; 0 means [`PAGE`]).
 #[derive(Debug, Default, Clone)]
 pub struct ModLogFilter {
     pub username: String,
     pub season: String,
     pub action: String,
-    pub before: Option<i64>,
+    pub page: i64,
+    pub per: i64,
+    /// The window (`<width>x<height>`) the page size was fitted to, kept in
+    /// its links so the page knows it's fitted already; empty when not.
+    pub fit: String,
 }
+
+/// The fewest and most rows a page may ask for.
+pub const PER_MIN: i64 = 1;
+pub const PER_MAX: i64 = 200;
+
+impl ModLogFilter {
+    /// Rows per page, within bounds.
+    pub fn per(&self) -> i64 {
+        if self.per == 0 {
+            PAGE
+        } else {
+            self.per.clamp(PER_MIN, PER_MAX)
+        }
+    }
+}
+
+/// The filters' WHERE clause (?1 user, ?2 season, ?3 action).
+const WHERE: &str = "WHERE (?1 = '' OR username = ?1 COLLATE NOCASE)
+               AND (?2 = '' OR season_id = ?2 OR (season_id IS NULL AND season_name = ?2))
+               AND (?3 = '' OR action = ?3)";
 
 /// A page of the log.
-pub const PAGE: i64 = 100;
-
-/// [`PAGE`], for pages that list it.
-pub fn modlog_page() -> i64 {
-    PAGE
-}
+pub const PAGE: i64 = 50;
 
 impl Db {
     /// Start a row, before the request runs (so a request that never
@@ -77,27 +97,33 @@ impl Db {
             .await;
     }
 
-    /// The newest rows matching `f`, newest first, at most [`PAGE`] (and one
-    /// more, so the page knows there's an older one). The
-    /// season filter matches the season's id, or its name for rows whose
-    /// season is gone.
+    /// Page `f.page` of the rows matching `f`, newest first.
     pub async fn mod_actions(&self, f: &ModLogFilter) -> Vec<ModAction> {
-        sqlx::query_as(
-            "SELECT id, at, username, season_id, season_name, action, detail, status, outcome FROM mod_action
-             WHERE (?1 = '' OR username = ?1 COLLATE NOCASE)
-               AND (?2 = '' OR season_id = ?2 OR (season_id IS NULL AND season_name = ?2))
-               AND (?3 = '' OR action = ?3)
-               AND (?4 IS NULL OR id < ?4)
-             ORDER BY id DESC LIMIT ?5 + 1",
-        )
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT id, at, username, season_id, season_name, action, detail, status, outcome
+             FROM mod_action {WHERE} ORDER BY id DESC LIMIT ?4 OFFSET ?5"
+        )))
         .bind(&f.username)
         .bind(&f.season)
         .bind(&f.action)
-        .bind(f.before)
-        .bind(PAGE)
+        .bind(f.per())
+        .bind((f.page.max(1) - 1) * f.per())
         .fetch_all(&self.pool)
         .await
         .unwrap_or_default()
+    }
+
+    /// How many rows match `f` (its page aside).
+    pub async fn mod_actions_count(&self, f: &ModLogFilter) -> i64 {
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM mod_action {WHERE}"
+        )))
+        .bind(&f.username)
+        .bind(&f.season)
+        .bind(&f.action)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0)
     }
 
     /// What the filters can choose from: (usernames, seasons as (key, name,
@@ -183,7 +209,9 @@ mod tests {
             username: u.into(),
             season: s.into(),
             action: a.into(),
-            before: None,
+            page: 1,
+            per: 0,
+            fit: String::new(),
         };
         assert_eq!(
             db.mod_actions(&f("MIA", "", "")).await.len(),
@@ -195,13 +223,60 @@ mod tests {
             "cmd=/players"
         );
         assert_eq!(db.mod_actions(&f("", "", "/admin/generate")).await.len(), 1);
-        let before = ModLogFilter {
-            before: Some(all[1].id),
+        assert_eq!(db.mod_actions_count(&f("mia", "", "")).await, 2);
+        // Pages of PAGE: a page past the rows is empty, a page of 0 is the first.
+        for i in 0..PAGE {
+            db.log_mod_action(10 + i, None, "bulk", None, "", "/admin/generate", "")
+                .await
+                .unwrap();
+        }
+        let bulk = |page| ModLogFilter {
+            username: "bulk".into(),
+            page,
             ..Default::default()
         };
-        assert_eq!(db.mod_actions(&before).await.len(), 1);
+        assert_eq!(db.mod_actions_count(&bulk(1)).await, PAGE);
+        let first = db.mod_actions(&bulk(1)).await;
+        assert_eq!(first.len() as i64, PAGE);
+        assert_eq!(
+            (first[0].at, first[first.len() - 1].at),
+            (10 + PAGE - 1, 10),
+            "the newest first, then down to the oldest"
+        );
+        assert_eq!(db.mod_actions(&bulk(0)).await.len() as i64, PAGE);
+        assert!(db.mod_actions(&bulk(2)).await.is_empty());
+        let small = ModLogFilter {
+            username: "bulk".into(),
+            page: 2,
+            per: 10,
+            ..Default::default()
+        };
+        assert_eq!(
+            db.mod_actions(&small).await.len(),
+            10,
+            "a page of its own size"
+        );
+        let per = |per| {
+            ModLogFilter {
+                per,
+                ..Default::default()
+            }
+            .per()
+        };
+        assert_eq!((per(0), per(-3), per(9999)), (PAGE, PER_MIN, PER_MAX));
+        let all = db
+            .mod_actions(&ModLogFilter {
+                page: 2,
+                ..Default::default()
+            })
+            .await;
+        assert_eq!(
+            all.iter().map(|a| a.at).collect::<Vec<_>>(),
+            [3, 2, 1],
+            "page 2: the oldest three"
+        );
         let (users, seasons, actions) = db.mod_log_choices().await;
-        assert_eq!(users, ["mia", "root"]);
+        assert_eq!(users, ["bulk", "mia", "root"]);
         assert_eq!(seasons.len(), 2);
         assert_eq!(actions.len(), 3);
 
