@@ -250,6 +250,20 @@ the name you play it under, such as your Minecraft username. Register it there
 before joining. One name covers every setup of its kind, so your Minecraft
 username serves every Minecraft server, and nobody else can register it.
 
+### Notifications
+
+The envelope in the header, once you're signed in, is your mailbox. It glows
+while there's something you haven't read; click it for your recent
+notifications (read ones stay listed, up to the last 50), which marks them
+read. You're told when:
+
+- someone prioritizes a hint for an item that's in your world, so you know
+  what they're waiting on;
+- your signup needs attention: its YAML failed a check (say, after a newer
+  version of its world was installed), or the world it was waiting for was
+  rejected;
+- a moderator approves or rejects a world you uploaded.
+
 ### Past seasons
 
 Archived seasons stay on the home page under *Past seasons*. Each card opens

@@ -59,6 +59,8 @@ pub fn rule_for(method: &Method, path: &str) -> Option<Rule> {
         "/login" => r("login", 20, 10, true),
         "/setup" => r("link", 10, 10, true),
         "/hint" => r("hint", 30, 10, false),
+        // Each one that turns a priority on can notify another player.
+        "/prioritize" => r("prioritize", 30, 10, false),
         "/minesweeper/new" => r("minesweeper", 60, 10, false),
         // Each upload unpacks a pack and runs its Lua in a worker.
         p if p.starts_with("/game/") && p.ends_with("/poptracker") => r("pack", 20, 60, false),
@@ -268,6 +270,7 @@ mod tests {
             "/invite/abc",
             "/reset/abc",
             "/hint",
+            "/prioritize",
             "/minesweeper/new",
             "/game/1/poptracker",
         ] {

@@ -543,6 +543,7 @@ pub(crate) async fn admin_world_approve(
         Ok(req) => req,
         Err(e) => return render::notice(&e, false, "admin").into_response(),
     };
+    crate::notify::world_decided(&st.db, ctx.id, &req.uploaded_by, &req.file, true, &who).await;
     // A sysadmin's approval can add it to the catalog at once; a season
     // moderator's offers it to the sysadmins instead.
     if !me.can(auth::Action::ManageInstance) {
@@ -582,7 +583,11 @@ pub(crate) async fn admin_world_reject(
         return render::notice("Admins only.", false, "board").into_response();
     }
     match worlds::reject(&st.db, ctx.id, &f.name, &who).await {
-        Ok(()) => Redirect::to(&ctx.url("/admin")).into_response(),
+        Ok(req) => {
+            crate::notify::world_decided(&st.db, ctx.id, &req.uploaded_by, &req.file, false, &who)
+                .await;
+            Redirect::to(&ctx.url("/admin")).into_response()
+        }
         Err(e) => render::notice(&e, false, "admin").into_response(),
     }
 }

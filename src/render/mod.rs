@@ -159,6 +159,77 @@ function bifForgetMe(){bifForgot=true;try{localStorage.removeItem('bifme')}catch
 // Every form that signs someone in or out: sign-in, first-run setup, an
 // invite, a password reset, sign-out.
 document.addEventListener('submit',function(e){var a=e.target.getAttribute('action')||'';if(/^\/(login|logout|setup)$|^\/(invite|reset)\//.test(a))bifForgetMe()});
+// The mailbox: a button that glows while there's anything unread, opening a
+// box of recent notifications (read ones too). Opening it marks them read.
+function bifMail(m){
+ var s=document.getElementById('mailslot');if(!s)return;
+ var old=document.getElementById('mailbtn');
+ // The same account again (/api/me confirming the cached identity): only
+ // the glow changes, so a box opened meanwhile stays open.
+ if(old&&m&&m.user&&old.dataset.user===m.user){bifMailGlow(old,m.unread);return}
+ s.textContent='';var box=document.getElementById('mailbox');if(box)box.remove();
+ if(!(m&&m.user))return;
+ var b=document.createElement('button');b.type='button';b.id='mailbtn';b.className='mail';b.dataset.user=m.user;
+ b.setAttribute('aria-expanded','false');b.setAttribute('aria-haspopup','dialog');bifMailGlow(b,m.unread);
+ // An envelope, from nodes like the rest of the header.
+ var ns='http://www.w3.org/2000/svg';function el(n,a){var e=document.createElementNS(ns,n);for(var k in a)e.setAttribute(k,a[k]);return e}
+ var svg=el('svg',{viewBox:'0 0 24 24',width:'17',height:'17','aria-hidden':'true'});
+ var ink={fill:'none',stroke:'currentColor','stroke-width':'1.8','stroke-linejoin':'round'};
+ svg.appendChild(el('rect',Object.assign({x:'3',y:'5.5',width:'18',height:'13',rx:'2'},ink)));
+ svg.appendChild(el('path',Object.assign({d:'M3.8 7l8.2 6.2L20.2 7'},ink)));
+ b.appendChild(svg);
+ b.onclick=function(e){e.stopPropagation();bifMailToggle(b)};
+ s.appendChild(b);
+}
+function bifMailGlow(b,n){b.classList.toggle('glow',!!n);b.title=n?(n+' new'):'Notifications';
+ b.setAttribute('aria-label',n?('Notifications, '+n+' new'):'Notifications')}
+// Where the box goes: under the button, in the page (so it scrolls with the
+// header), kept on screen.
+function bifMailPlace(box,b){var r=b.getBoundingClientRect(),vw=document.documentElement.clientWidth,w=Math.min(340,vw-32);
+ var right=Math.max(16,vw-r.right);if(vw-right-w<16)right=vw-16-w;
+ box.style.top=(r.bottom+8+window.scrollY)+'px';box.style.right=right+'px';box.style.width=w+'px'}
+// When, as the activity log words it ("5m ago"), then a date after a week.
+// (Its own: the landing page has no activity script.)
+function bifMailAgo(t){var d=Math.max(0,Math.floor(Date.now()/1000-t));
+ if(d<60)return d+'s ago';if(d<3600)return Math.floor(d/60)+'m ago';if(d<86400)return Math.floor(d/3600)+'h ago';
+ if(d<86400*7)return Math.floor(d/86400)+'d ago';return new Date(t*1000).toLocaleDateString()}
+function bifMailClose(){var x=document.getElementById('mailbox');if(x)x.remove();var b=document.getElementById('mailbtn');if(b)b.setAttribute('aria-expanded','false')}
+function bifMailToggle(b){
+ if(document.getElementById('mailbox')){bifMailClose();return}
+ var box=document.createElement('div');box.id='mailbox';box.className='mailbox';box.setAttribute('role','dialog');box.setAttribute('aria-label','Notifications');
+ box.tabIndex=-1;bifMailPlace(box,b);
+ var h=document.createElement('h3');h.textContent='Notifications';box.appendChild(h);
+ var p=document.createElement('div');p.className='none';p.textContent='Loading…';box.appendChild(p);
+ box.addEventListener('click',function(e){e.stopPropagation()});
+ document.body.appendChild(box);b.setAttribute('aria-expanded','true');
+ // Keyboard users land in the box, not at the end of the page.
+ box.focus();
+ fetch('/api/notifications').then(function(r){if(!r.ok)throw r.status;return r.json()}).then(function(j){
+  var list=(j&&j.notifications)||[];p.remove();
+  if(!list.length){var n=document.createElement('div');n.className='none';n.textContent='No notifications yet.';box.appendChild(n);return}
+  var ul=document.createElement('ul'),upto=0,unread=false;
+  list.forEach(function(x){var li=document.createElement('li');if(!x.read){li.className='new';unread=true}
+   upto=Math.max(upto,x.id);
+   // Only this site's own paths are links: a plain path (no backslash or
+   // whitespace, which browsers bend into another host) that resolves here.
+   var ok=typeof x.link==='string'&&/^\/(?![\/\\])[^\\\s]*$/.test(x.link);
+   try{ok=ok&&new URL(x.link,location.href).origin===location.origin}catch(e){ok=false}
+   var t=ok?document.createElement('a'):document.createElement('span');
+   if(t.tagName==='A')t.href=x.link;t.textContent=x.text;li.appendChild(t);
+   var w=document.createElement('span');w.className='when';w.textContent=bifMailAgo(x.created_at);li.appendChild(w);ul.appendChild(li)});
+  box.appendChild(ul);
+  if(unread)fetch('/api/notifications/read',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'upto='+upto}).then(function(r){
+   if(!r.ok)return;bifMailGlow(b,0);
+   // The cached identity's unread count too, so the next page doesn't glow.
+   try{var k='bifme',c=JSON.parse(localStorage.getItem(k)||'null');if(c){c.unread=0;localStorage.setItem(k,JSON.stringify(c))}}catch(e){}
+  }).catch(function(){});
+ }).catch(function(){p.textContent='Couldn\'t load them.'});
+}
+document.addEventListener('click',bifMailClose);
+addEventListener('resize',function(){var x=document.getElementById('mailbox'),b=document.getElementById('mailbtn');if(x&&b)bifMailPlace(x,b)});
+// Read in another tab: stop glowing here too.
+addEventListener('storage',function(e){if(e.key!=='bifme')return;try{var c=JSON.parse(e.newValue||'null'),b=document.getElementById('mailbtn');if(c&&b&&!c.unread)bifMailGlow(b,0)}catch(x){}});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.getElementById('mailbox')){bifMailClose();var b=document.getElementById('mailbtn');if(b)b.focus()}});
 function bifApplyMe(m){
  var w=document.getElementById('who');
  // Built from DOM nodes, not markup: the cached identity is replayed on every
@@ -169,13 +240,14 @@ function bifApplyMe(m){
  if(a)a.innerHTML=(m&&m.admin)?'<a class="pill" href="/admin/seasons">admin</a>':'';
  var h=document.getElementById('homeslot');
  if(h){h.innerHTML='';if(m&&m.home){var l=document.createElement('a');l.className='pill home';l.href=m.home;l.textContent=m.home_label||'HOME';h.appendChild(l)}}
+ bifMail(m);
 }
 try{var _m=localStorage.getItem('bifme');if(_m)bifApplyMe(JSON.parse(_m));}catch(e){}
 fetch('/api/me').then(function(r){return r.json()}).then(function(m){
  bifApplyMe(m);
  // Everything bifApplyMe draws, so a page paints the same header from the cache
  // as it will once /api/me answers (a missing home pill shifted the rest).
- if(!bifForgot)try{localStorage.setItem('bifme',JSON.stringify({user:(m&&m.user)||null,admin:!!(m&&m.admin),sign_in:m&&m.sign_in,sign_out:m&&m.sign_out,home:(m&&m.home)||'',home_label:(m&&m.home_label)||''}));}catch(e){}
+ if(!bifForgot)try{localStorage.setItem('bifme',JSON.stringify({user:(m&&m.user)||null,admin:!!(m&&m.admin),sign_in:m&&m.sign_in,sign_out:m&&m.sign_out,home:(m&&m.home)||'',home_label:(m&&m.home_label)||'',unread:(m&&m.unread)||0}));}catch(e){}
 }).catch(function(){});
 "#, demo_js!())
     };
@@ -238,6 +310,21 @@ header .spacer{flex:1}
 .who{font-family:var(--mono);font-size:12px;color:var(--muted)}.who b{color:var(--fg)}.who a{color:var(--accent)}
 .pill{white-space:nowrap;display:inline-flex;align-items:center;font-family:var(--mono);font-size:11px;line-height:1;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);text-decoration:none;border:1px solid var(--bd);border-radius:999px;padding:4px 11px}.pill:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
 #adminslot,#homeslot{display:contents}
+#mailslot{display:inline-flex}
+.mail{background:none;border:1px solid var(--bd);border-radius:999px;color:var(--muted);padding:3px 9px;cursor:pointer;display:inline-flex;align-items:center;line-height:0}
+.mail:hover{border-color:var(--accent);color:var(--accent)}
+.mail.glow{color:var(--accent);border-color:var(--accent);animation:mailglow 2.4s ease-in-out infinite}
+@keyframes mailglow{0%,100%{box-shadow:0 0 2px 0 color-mix(in srgb,var(--accent) 55%,transparent)}50%{box-shadow:0 0 11px 2px color-mix(in srgb,var(--accent) 55%,transparent)}}
+@media (prefers-reduced-motion:reduce){.mail.glow{animation:none;box-shadow:0 0 7px 1px color-mix(in srgb,var(--accent) 55%,transparent)}}
+.mailbox{position:absolute;max-height:min(420px,70vh);overflow:auto;background:var(--panel);border:1px solid var(--bd);border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.35);z-index:50;padding:6px 0;text-align:left}
+.mailbox h3{margin:4px 12px 6px;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.mailbox ul{list-style:none;margin:0;padding:0}
+.mailbox li{padding:8px 12px;border-top:1px solid var(--bd);font-size:13px;line-height:1.4;color:var(--muted);overflow-wrap:anywhere}
+.mailbox li.new{color:var(--fg)}.mailbox li.new::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent);margin-right:6px;vertical-align:1px}
+.mailbox li a{color:inherit}.mailbox li a:hover{color:var(--accent)}
+.mailbox .when{display:block;font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:2px}
+.mailbox .none{padding:10px 12px;font-size:13px;color:var(--muted)}
+@media (pointer:coarse){.mail{padding:6px 12px}}
 /* A long label is cut short on a narrow screen instead of widening the page. */
 .pill.home{display:block;min-width:5em;max-width:25vw;overflow:hidden;text-overflow:ellipsis;text-align:center}
 header .who b,header .who a{white-space:nowrap}
@@ -361,7 +448,7 @@ pre.out{background:#0b0f14;border:1px solid var(--bd);border-radius:8px;padding:
 #conlog{max-height:320px;overflow:auto;margin-bottom:8px}
 .warnnote{color:var(--warn);font-size:12px;margin:4px 0}
 </style></head><body>
-<header><div class="hwrap"><a class="brand" href="/"><img src="/favicon.svg" alt="">Bifrost</a><span class="spacer"></span><span class="who" id="who"></span><span id="adminslot"></span><span id="homeslot"></span></div></header>
+<header><div class="hwrap"><a class="brand" href="/"><img src="/favicon.svg" alt="">Bifrost</a><span class="spacer"></span><span class="who" id="who"></span><span id="mailslot"></span><span id="adminslot"></span><span id="homeslot"></span></div></header>
 <script>
 "#,
     identity_js!(),
@@ -728,11 +815,19 @@ mod tests {
         // A field drawn but not cached appears late and shifts the header
         // (the home pill did), so every `m.<field>` bifApplyMe reads must be
         // in what the script caches.
-        let apply = IDENTITY_JS
-            .split("function bifApplyMe(m){")
-            .nth(1)
-            .and_then(|r| r.split("\n}\n").next())
-            .expect("bifApplyMe");
+        // bifApplyMe and the mailbox it draws (bifMail).
+        let body = |f: &str| {
+            IDENTITY_JS
+                .split(f)
+                .nth(1)
+                .and_then(|r| r.split("\n}\n").next())
+                .unwrap_or_else(|| panic!("{f}"))
+        };
+        let apply = format!(
+            "{}{}",
+            body("function bifApplyMe(m){"),
+            body("function bifMail(m){")
+        );
         let cached = IDENTITY_JS
             .lines()
             .find(|l| l.contains("localStorage.setItem('bifme'"))
@@ -750,6 +845,7 @@ mod tests {
         fields.sort_unstable();
         fields.dedup();
         assert!(fields.contains(&"home_label"), "{fields:?}");
+        assert!(fields.contains(&"unread"), "{fields:?}");
         for f in fields {
             assert!(
                 cached.contains(&format!("{{{f}:")) || cached.contains(&format!(",{f}:")),

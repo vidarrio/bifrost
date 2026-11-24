@@ -259,6 +259,8 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         .route("/minesweeper/pause", post(mine_pause))
         .route("/minesweeper/leaderboard", get(mine_leaderboard))
         .route("/api/me", get(api_me))
+        .route("/api/notifications", get(api_notifications))
+        .route("/api/notifications/read", post(api_notifications_read))
         .merge(account::routes())
         // Rate-limit auth + expensive endpoints (inside auth: knows the account).
         // After the routes: it only reaches those already added.

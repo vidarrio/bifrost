@@ -31,7 +31,40 @@ pub(crate) async fn api_me(State(st): State<AppState>, me: auth::Me) -> Json<ser
         "admin": me.can(auth::Action::CreateSeason),
         "sign_in": st.auth.sign_in_url(),
         "sign_out": st.auth.sign_out_url(),
+        // The header's mailbox: whether to make it glow.
+        "unread": if me.id() == 0 { 0 } else { st.db.unread_notifications(me.id()).await },
     }))
+}
+
+/// The signed-in account's notifications, newest first (the header's mailbox).
+pub(crate) async fn api_notifications(
+    State(st): State<AppState>,
+    me: auth::Me,
+) -> Json<serde_json::Value> {
+    let list = if me.id() == 0 {
+        Vec::new()
+    } else {
+        st.db.notifications(me.id()).await
+    };
+    Json(serde_json::json!({ "notifications": list }))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ReadForm {
+    /// The newest notification the viewer saw.
+    upto: i64,
+}
+
+/// Mark the account's notifications read, up to the newest it saw.
+pub(crate) async fn api_notifications_read(
+    State(st): State<AppState>,
+    me: auth::Me,
+    Form(f): Form<ReadForm>,
+) -> Json<serde_json::Value> {
+    if me.id() != 0 {
+        st.db.mark_notifications_read(me.id(), f.upto).await;
+    }
+    Json(serde_json::json!({ "ok": true }))
 }
 
 pub(crate) async fn landing(State(st): State<AppState>, me: auth::Me) -> Html<String> {

@@ -39,6 +39,7 @@ mod load;
 mod meta;
 mod mine;
 mod net;
+mod notify;
 mod ptrack;
 mod ratelimit;
 mod release_check;

@@ -60,6 +60,59 @@ try:
         and "exact item name" not in j.get("message", "") and j
     j = wait_for(bonus, 90, 3) or {}
     check("a bonus hint is placed for one credit", j.get("ok") and "spent a bonus hint" in j.get("message", "") and credits() == 0, j)
+
+    # Notifications: prioritizing a hint tells the players of the world the
+    # item is in (here finn, given the finder's slot), in their mailbox.
+    finn = srv.invite_user(root, "finn")
+    game = get(root, f"/s/{sid}/game/{first_game(root, sid)}").text
+    form = re.search(r'name="finding" value="(\d+)"><input type="hidden" name="location" value="(\d+)">\s*'
+                     r'<input type="hidden" name="item" value="(\d+)"><input type="hidden" name="receiving" value="(\d+)">', game)
+    check("the game page offers a hint to prioritize", form, game[-800:])
+    if form:
+        finding, location, item, receiving = form.groups()
+        with srv.db() as c:
+            finder_slot = c.execute("SELECT id FROM slot WHERE season_id = ? AND ap_slot = ? AND is_seat = 0",
+                                    (sid, int(finding))).fetchone()[0]
+        # root signed up both games; the finder's goes to finn.
+        with srv.db() as c:
+            fid = c.execute("SELECT id FROM account WHERE username = 'finn'").fetchone()[0]
+            c.execute("UPDATE claim SET account_id = ? WHERE slot_id = ?", (fid, finder_slot))
+        me = lambda: finn.get(srv.base + "/api/me").json()
+        check("no mail to start with", me().get("unread") == 0, me())
+        prio = dict(finding=finding, location=location, item=item, receiving=receiving)
+        post(root, f"/s/{sid}/prioritize", data=prio)
+        notes = finn.get(srv.base + "/api/notifications").json()["notifications"]
+        check("prioritizing tells the finder's player", len(notes) == 1 and "root prioritized" in notes[0]["text"]
+              and "in your world" in notes[0]["text"] and notes[0]["link"] == f"/s/{sid}/board" and not notes[0]["read"], notes)
+        check("…and their mailbox glows", me().get("unread") == 1, me())
+        post(root, f"/s/{sid}/prioritize", data=prio)  # off again: nothing to tell
+        check("…but not taking the priority back", len(finn.get(srv.base + "/api/notifications").json()["notifications"]) == 1)
+        post(root, f"/s/{sid}/prioritize", data=prio)  # and on again: told already
+        check("…nor setting it again", len(finn.get(srv.base + "/api/notifications").json()["notifications"]) == 1)
+        post(root, f"/s/{sid}/prioritize", data=prio)  # off, for the rest of the suite
+        fake = dict(prio, location=str(int(prio["location"]) + 987654))
+        post(root, f"/s/{sid}/prioritize", data=fake)
+        check("…and a hint the board doesn't have tells no one", len(finn.get(srv.base + "/api/notifications").json()["notifications"]) == 1)
+        with srv.db() as c:
+            check("…nor is prioritized", c.execute("SELECT COUNT(*) FROM hint_priority WHERE season_id = ? AND location = ?",
+                                                    (sid, int(fake["location"]))).fetchone()[0] == 0)
+        check("…nor root, who did it", root.get(srv.base + "/api/notifications").json()["notifications"] == [])
+        r = finn.post(srv.base + "/api/notifications/read", data=dict(upto=notes[0]["id"]))
+        check("reading them stops the glow, and keeps them listed",
+              r.ok and me().get("unread") == 0 and finn.get(srv.base + "/api/notifications").json()["notifications"][0]["read"])
+        gail = srv.invite_user(root, "gail")
+        check("another account doesn't see them", gail.get(srv.base + "/api/notifications").json()["notifications"] == [])
+        with srv.db() as c:
+            c.execute("UPDATE notification SET read = 0 WHERE id = ?", (notes[0]["id"],))
+        gail.post(srv.base + "/api/notifications/read", data=dict(upto=notes[0]["id"] + 100))
+        check("…nor mark them read", me().get("unread") == 1, me())
+        finn.post(srv.base + "/api/notifications/read", data=dict(upto=notes[0]["id"]))
+        anon = srv.session().get(srv.base + "/api/notifications")
+        check("…and nor does anyone signed out", anon.status_code in (401, 302, 303) or anon.json().get("notifications") == [])
+        # The slot goes back to root, whom the rest of the suite hints as.
+        with srv.db() as c:
+            rid = c.execute("SELECT id FROM account WHERE username = 'root'").fetchone()[0]
+            c.execute("UPDATE claim SET account_id = ? WHERE slot_id = ?", (rid, finder_slot))
     r = post(root, f"/s/{sid}/admin/console", data=dict(cmd="/players")).json()  # admin relay
     check("admin relay works", r.get("ok"), r)
 

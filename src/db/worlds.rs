@@ -257,16 +257,21 @@ impl Db {
         id: Id,
         yaml_file: &str,
         err: &str,
-    ) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "UPDATE submission SET held_err = ? WHERE id = ? AND yaml_file = ? AND held_for IS NOT NULL",
+    ) -> Result<bool, sqlx::Error> {
+        // Whether it changed: the same reason again (a re-check after a
+        // restart) or a file replaced meanwhile isn't news to tell anyone.
+        // "Couldn't be checked" is no verdict: it never replaces one.
+        let r = sqlx::query(
+            "UPDATE submission SET held_err = ?1 WHERE id = ?2 AND yaml_file = ?3 AND held_for IS NOT NULL
+               AND held_err IS NOT ?1
+               AND (?1 NOT LIKE 'couldn''t be checked%' OR held_err IS NULL OR held_err LIKE 'couldn''t be checked%')",
         )
         .bind(err)
         .bind(id)
         .bind(yaml_file)
         .execute(&self.pool)
         .await?;
-        Ok(())
+        Ok(r.rows_affected() > 0)
     }
 }
 
@@ -357,7 +362,17 @@ mod tests {
             db.held_submissions(season, "foo.apworld").await,
             vec![(id, "/x.yaml".into())]
         );
-        db.set_held_err(id, "/x.yaml", "nope").await.unwrap();
+        assert!(db.set_held_err(id, "/x.yaml", "nope").await.unwrap());
+        assert!(
+            !db.set_held_err(id, "/x.yaml", "nope").await.unwrap(),
+            "the same reason isn't a change"
+        );
+        assert!(
+            !db.set_held_err(id, "/x.yaml", "couldn't be checked (busy)")
+                .await
+                .unwrap(),
+            "no verdict doesn't replace one"
+        );
         let sub = &db.submissions(season).await.unwrap()[0];
         assert!(sub.held() && sub.held_err.as_deref() == Some("nope"));
         db.release_submission(id, "/x.yaml", "Alice2", "Foo")

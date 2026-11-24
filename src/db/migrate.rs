@@ -23,7 +23,10 @@ use super::Db;
 /// (<https://sqlite.org/lang_altertable.html>). Steps run with foreign keys
 /// off, so rebuilding a table others reference doesn't cascade into them; the
 /// references are checked before the step commits.
-const STEPS: &[&str] = &[include_str!("steps/0002.sql")];
+const STEPS: &[&str] = &[
+    include_str!("steps/0002.sql"),
+    include_str!("steps/0003.sql"),
+];
 
 /// The schema at version 1.
 const BASELINE: &str = include_str!("schema.sql");
