@@ -231,6 +231,16 @@ pub fn world_pins(season: &SeasonDirs) -> std::collections::BTreeMap<String, Pin
         .unwrap_or_default()
 }
 
+/// The season's pins, or None when its `worlds.lock.json` is there but can't
+/// be read (rather than taking that for no pins). Empty if there's no file.
+pub fn try_world_pins(season: &SeasonDirs) -> Option<std::collections::BTreeMap<String, Pin>> {
+    match std::fs::read(season.worlds_lock()) {
+        Ok(b) => serde_json::from_slice(&b).ok(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(Default::default()),
+        Err(_) => None,
+    }
+}
+
 /// Serialises every read-modify-write of a season's pins (concurrent
 /// uploads, deletes).
 static PINS: std::sync::Mutex<()> = std::sync::Mutex::new(());

@@ -16,7 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The signup wizard offers a **starting YAML** for the game you pick:
   Archipelago's own template, with every option, its default and what it
   does, from the season's Archipelago version. It's written on first use and
-  kept, for core games and installed or vetted custom worlds.
+  kept, for core games and installed or vetted custom worlds (a custom
+  world's is removed once it's in neither the catalog nor any season).
 
 ### Changed
 
