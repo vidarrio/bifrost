@@ -67,12 +67,14 @@ async fn stage_players(season_id: Id, subs: &[crate::db::SubmissionRow]) -> Resu
     Ok(())
 }
 
-/// Ends a run's "running" state however it ends: if the run stops without
-/// saying how (a panic), the season isn't left looking busy until a restart.
+/// Ends a run's "running" state if the run panics, so the season isn't left
+/// looking busy until a restart. Only then: a run that ended normally has
+/// set its own outcome, and another run may have started since.
 struct Running(GenState);
 impl Drop for Running {
     fn drop(&mut self) {
-        if let Ok(mut g) = self.0.lock()
+        if std::thread::panicking()
+            && let Ok(mut g) = self.0.lock()
             && g.0
         {
             *g = (false, "Failed: it stopped unexpectedly".into());
@@ -709,30 +711,30 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
         }
     }
     forget_log(season).await;
-    let told = match run_inner(&db, &rts, &state, season).await {
+    // (shown, told): what the page says, and what its moderators are told.
+    let (shown, told) = match run_inner(&db, &rts, &state, season).await {
         Ok(msg) => match db.transition(season, State::Live, now()).await {
             Ok(()) => {
                 rts.start_live(season).await;
-                set(&state, false, msg.clone());
-                msg
+                (msg.clone(), msg)
             }
             Err(e) => {
                 let _ = db.transition(season, prev, now()).await;
                 let msg = format!("Generated, but couldn't go live: {e}");
-                set(&state, false, msg.clone());
-                msg
+                (msg.clone(), msg)
             }
         },
         Err(e) => {
             let _ = db.transition(season, prev, now()).await;
-            set(&state, false, format!("Failed: {e}"));
-            format!("generation failed: {e}")
+            (format!("Failed: {e}"), format!("generation failed: {e}"))
         }
     };
     let ok = !told.starts_with("generation failed") && !told.starts_with("Generated, but");
     record(season, "generate", ok, &told, vec![]).await;
     // Its moderators hear how it went, wherever they are.
     crate::notify::generated(&db, season, &told).await;
+    // Last: once the season shows idle, another run may start.
+    set(&state, false, shown);
 }
 
 /// Re-roll a live season's lineup: reuse its staged Players/ + installed
@@ -742,10 +744,10 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
 pub async fn regenerate(db: Db, rts: Arc<Runtimes>, season: Id) {
     let state = rts.get(season).genstate.clone();
     let _running = Running(state.clone());
-    forget_log(season).await;
     if let Err(e) = db.transition(season, State::Generating, now()).await {
         return set(&state, false, format!("Failed: {e}"));
     }
+    forget_log(season).await;
     let r = regen_inner(&db, &rts, &state, season).await;
     // Live either way: on failure the previous seed is still deployed.
     let _ = db.transition(season, State::Live, now()).await;
