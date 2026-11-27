@@ -7,15 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-27
+
 ### Added
 
 - **Test generation** for moderators, before the season is generated: it
   rolls the signups as generating would, leaving out any players you tick,
   without going live or keeping the seed. Use it to find the signup whose
   YAML passes its check but breaks generation.
-- The season admin page shows the last generation's **whole log** in a
-  scrolling box, with **Copy** and **Download** buttons, instead of only its
-  last lines.
+- The season admin page shows the last generation's **log** in a scrolling
+  box, with **Copy** and **Download** buttons, instead of only its last three
+  lines. Up to its last 2 MiB is kept for Download; the page shows the end of
+  that.
 
 ## [0.6.0] - 2026-11-24
 
@@ -579,7 +582,8 @@ Upgrading from 0.1.x:
   a given version), checked against the release's checksums. Going back means
   restoring the pre-upgrade backup and the previous file, which it keeps.
 
-[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/vidarrio/bifrost/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/vidarrio/bifrost/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/vidarrio/bifrost/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/vidarrio/bifrost/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/vidarrio/bifrost/compare/v0.4.2...v0.4.3
