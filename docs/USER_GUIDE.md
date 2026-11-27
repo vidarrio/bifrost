@@ -308,7 +308,7 @@ The season console has six tabs:
 
   After a generation, the page keeps its whole log in a box that scrolls
   (opened at its end, where an error is), with **Copy** and **Download**
-  buttons. It's open when the run failed. A YAML can pass its check and still
+  buttons. It's open when the run failed, and after a test. A YAML can pass its check and still
   break generation: a world's own code only runs when the season is
   generated. To find which signup does, use **Test generation** (before
   generation only). It rolls the signups as generating would, but nothing goes

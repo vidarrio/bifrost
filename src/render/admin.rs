@@ -117,18 +117,32 @@ fn generation_log_box(rec: &crate::generate::GenRecord, log: &str) -> String {
     } else {
         ""
     };
-    let body = if log.trim().is_empty() {
+    // The page holds the end (where an error is); Download has all of it.
+    const INLINE: usize = 200 * 1024;
+    let cut = if log.len() > INLINE {
+        let mut start = log.len() - INLINE;
+        while !log.is_char_boundary(start) {
+            start += 1;
+        }
+        format!(
+            "… (the start is cut here: Download has the whole log)\n{}",
+            &log[start..]
+        )
+    } else {
+        log.to_string()
+    };
+    let body = if cut.trim().is_empty() {
         "(it printed nothing)"
     } else {
-        log
+        cut.as_str()
     };
     format!(
         r#"<details class="genlog"{open}><summary>{what} log · {how} · <span class="ago" data-ts="{}">{}</span>{out}</summary>
 <pre id="genlog" tabindex="0">{}</pre>
 <div class="btnrow"><button type="button" class="ghost" id="genlogcopy">Copy</button> <a class="pill" href="admin/generation-log" download>Download</a> <span id="genlogmsg" class="statline"></span></div>
 <script>(function(){{var b=document.getElementById('genlogcopy'),p=document.getElementById('genlog'),m=document.getElementById('genlogmsg');
-// An error is at the end: open the box there.
-p.scrollTop=p.scrollHeight;
+// An error is at the end: open the box there (when it's opened later, too).
+function end(){{p.scrollTop=p.scrollHeight}}end();p.closest('details').addEventListener('toggle',end);
 b.addEventListener('click',function(){{var t=p.textContent;
  function done(){{m.textContent='Copied.';setTimeout(function(){{m.textContent=''}},2000)}}
  function select(){{var r=document.createRange();r.selectNodeContents(p);var s=getSelection();s.removeAllRanges();s.addRange(r);m.textContent='Selected: press Ctrl+C (or ⌘C) to copy.'}}
@@ -406,7 +420,10 @@ pub fn admin_page(
     }
     let cls = if running {
         "banner"
-    } else if gen_msg.starts_with("Failed") || gen_msg.starts_with("Generated, but") {
+    } else if gen_msg.starts_with("Failed")
+        || gen_msg.starts_with("Test failed")
+        || gen_msg.starts_with("Generated, but")
+    {
         "banner bad"
     } else {
         "banner ok"

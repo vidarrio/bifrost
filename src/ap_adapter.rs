@@ -626,7 +626,8 @@ pub async fn generate(season: &SeasonDirs) -> Result<(), String> {
         .and_then(|m| m.parse::<u64>().ok())
         .map_or(GENERATE_TIMEOUT, |m| Duration::from_secs(m * 60));
     let out = run_helper("bifrost_generate.py", vec![], season, access, timeout).await;
-    // The whole of what it said, for the season admin page.
+    // The whole of what it said, for the season admin page (what it printed,
+    // then its errors: the two aren't interleaved).
     let log = match &out {
         Ok(o) => format!(
             "{}{}",
@@ -654,8 +655,12 @@ pub fn generation_log_path(season: &SeasonDirs) -> PathBuf {
 }
 
 async fn keep_generation_log(season: &SeasonDirs, log: &str) {
-    let bytes = log.as_bytes();
-    let tail = &bytes[bytes.len().saturating_sub(GENERATION_LOG_MAX)..];
+    // The end, cut where a character starts.
+    let mut start = log.len().saturating_sub(GENERATION_LOG_MAX);
+    while !log.is_char_boundary(start) {
+        start += 1;
+    }
+    let tail = &log.as_bytes()[start..];
     if let Err(e) = crate::atomic::write_async(generation_log_path(season), tail.to_vec()).await {
         tracing::warn!("keeping the generation log: {e}");
     }

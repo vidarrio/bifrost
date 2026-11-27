@@ -67,6 +67,19 @@ async fn stage_players(season_id: Id, subs: &[crate::db::SubmissionRow]) -> Resu
     Ok(())
 }
 
+/// Ends a run's "running" state however it ends: if the run stops without
+/// saying how (a panic), the season isn't left looking busy until a restart.
+struct Running(GenState);
+impl Drop for Running {
+    fn drop(&mut self) {
+        if let Ok(mut g) = self.0.lock()
+            && g.0
+        {
+            *g = (false, "Failed: it stopped unexpectedly".into());
+        }
+    }
+}
+
 /// What the season's last generation run was, kept beside its log
 /// (`generation.json` in the season's folder, which only Bifrost writes).
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -86,7 +99,24 @@ fn record_path(season: Id) -> PathBuf {
     config::get().season(season).root.join("generation.json")
 }
 
+/// Forget the last run's log as a new one starts: a run that stops before
+/// generation itself (held signups, staging) mustn't show the old run's log.
+async fn forget_log(season: Id) {
+    let _ = tokio::fs::remove_file(ap_adapter::generation_log_path(
+        &config::get().season(season),
+    ))
+    .await;
+}
+
 async fn record(season: Id, kind: &str, ok: bool, message: &str, left_out: Vec<String>) {
+    // No log from this run: generation itself never ran.
+    let log = ap_adapter::generation_log_path(&config::get().season(season));
+    if !log.exists() {
+        let text = format!("Generation didn't run: {message}\n");
+        if let Err(e) = crate::atomic::write_async(log, text.into_bytes()).await {
+            tracing::warn!("season {season}: keeping the generation log: {e}");
+        }
+    }
     let r = GenRecord {
         kind: kind.into(),
         ok,
@@ -120,6 +150,8 @@ pub async fn last_generation(season: Id) -> Option<(GenRecord, String)> {
 /// aren't ready), and said so.
 pub async fn test_run(db: Db, rts: Arc<Runtimes>, season: Id, left_out: Vec<Id>) {
     let state = rts.get(season).genstate.clone();
+    let _running = Running(state.clone());
+    forget_log(season).await;
     let res = test_inner(&db, &state, season, &left_out).await;
     let (ok, msg, names) = match res {
         Ok((msg, names)) => (true, msg, names),
@@ -143,6 +175,11 @@ async fn test_inner(
             "a test runs only before the season is generated".into(),
             vec![],
         ));
+    }
+    // As generating does: finish re-checks cut short first.
+    if !db.stale_holds(season).await.is_empty() {
+        set(state, true, "Test generation: checking held signups…");
+        crate::worlds::recheck_stale(db, season).await;
     }
     let subs = db
         .submissions(season)
@@ -515,6 +552,10 @@ pub async fn clear_player_yamls(season: Id) -> Result<(), String> {
 /// Delete a season's logs, so a cancelled run's don't end up in its bundle.
 pub async fn clear_logs(season: Id) {
     let dirs = config::get().season(season);
+    // And the last generation's, with its record: a cancelled run's mustn't
+    // show afterwards.
+    let _ = tokio::fs::remove_file(ap_adapter::generation_log_path(&dirs)).await;
+    let _ = tokio::fs::remove_file(record_path(season)).await;
     if let Err(e) = tokio::fs::remove_dir_all(&dirs.logs).await
         && e.kind() != std::io::ErrorKind::NotFound
     {
@@ -635,6 +676,7 @@ async fn read_seed(
 /// on failure. Updates `state` as it goes.
 pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
     let state = rts.get(season).genstate.clone();
+    let _running = Running(state.clone());
     let Some(prev) = db.season(season).await.map(|s| s.state()) else {
         return set(&state, false, "Failed: no such season");
     };
@@ -666,6 +708,7 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
             return set(&state, false, format!("Failed: {e}"));
         }
     }
+    forget_log(season).await;
     let told = match run_inner(&db, &rts, &state, season).await {
         Ok(msg) => match db.transition(season, State::Live, now()).await {
             Ok(()) => {
@@ -698,6 +741,8 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
 /// submissions.
 pub async fn regenerate(db: Db, rts: Arc<Runtimes>, season: Id) {
     let state = rts.get(season).genstate.clone();
+    let _running = Running(state.clone());
+    forget_log(season).await;
     if let Err(e) = db.transition(season, State::Generating, now()).await {
         return set(&state, false, format!("Failed: {e}"));
     }

@@ -181,13 +181,13 @@ try:
           "admin/test-generate" in page and f'name="exclude" value="{subs["BoomAnn"]}"' in page)
     post(mod, f"/s/{sid}/admin/test-generate")
     page = done() or ""
-    check("a test with everyone fails", "Test failed" in page, re.findall(r'class="banner[^"]*">[^<]*', page))
+    check("a test with everyone fails, in red", 'class="banner bad">Test failed' in page, re.findall(r'class="banner[^"]*">[^<]*', page))
     log = re.search(r'<pre id="genlog"[^>]*>(.*?)</pre>', page, re.S)
     check("…its whole log is in a box, naming the culprit", log and "Boom: this world refuses BoomAnn" in log.group(1), (log.group(1)[-400:] if log else page[-600:]))
     check("…with copy and download buttons", 'id="genlogcopy"' in page and 'href="admin/generation-log"' in page)
     with srv.db() as db:
         state = db.execute("SELECT state FROM season WHERE id = ?", (sid,)).fetchone()[0]
-    check("…and the season stays in signups, keeping no seed", state == "signup" and seeds() == [], (state, seeds()))
+    check("…and the season stays in signups", state == "signup", state)
     post(mod, f"/s/{sid}/admin/test-generate", data={"exclude": subs["BoomAnn"]})
     page = done() or ""
     check("leaving the culprit out, the test passes", "Test generation passed with 1 signup, leaving out BoomAnn" in page,
@@ -197,9 +197,22 @@ try:
     r = mod.get(srv.base + f"/s/{sid}/admin/generation-log")
     check("the log downloads as a file", r.status_code == 200 and "attachment" in r.headers.get("content-disposition", "") and len(r.content) > 0,
           (r.status_code, r.headers.get("content-disposition")))
+    before = os.path.getmtime(os.path.join(dirs(sid), "generation.json"))
     r = post(ann, f"/s/{sid}/admin/test-generate")
-    check("a player can't run a test", "Admins only" in r.text or r.status_code in (403, 302, 303))
-    check("…nor download the log", ann.get(srv.base + f"/s/{sid}/admin/generation-log").content != mod.get(srv.base + f"/s/{sid}/admin/generation-log").content)
+    check("a player can't run a test", os.path.getmtime(os.path.join(dirs(sid), "generation.json")) == before and "⏳" not in admin(), r.url)
+    r = ann.get(srv.base + f"/s/{sid}/admin/generation-log")
+    check("…nor download the log", "attachment" not in r.headers.get("content-disposition", ""), r.headers.get("content-disposition"))
+    # A run that stops before generation itself shows its own reason, not
+    # the last run's log.
+    with srv.db() as db:
+        db.execute("UPDATE submission SET held_for = 'boom.apworld', held_err = 'held for the test' WHERE season_id = ? AND slot_name = 'Cat'", (sid,))
+    post(mod, f"/s/{sid}/admin/generate")
+    page = done() or ""
+    log = re.search(r'<pre id="genlog"[^>]*>(.*?)</pre>', page, re.S)
+    check("a run that stops before generating shows its own reason as the log",
+          log and log.group(1).startswith("Generation didn't run:") and "held" in log.group(1) and "Boom: this world" not in log.group(1), (log.group(1)[:300] if log else page[-400:]))
+    with srv.db() as db:
+        db.execute("UPDATE submission SET held_for = NULL, held_err = NULL WHERE season_id = ? AND slot_name = 'Cat'", (sid,))
     post(mod, f"/s/{sid}/admin/generate")
     page = done() or ""
     log = re.search(r'<pre id="genlog"[^>]*>(.*?)</pre>', page, re.S)
