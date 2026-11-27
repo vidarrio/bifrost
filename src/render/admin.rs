@@ -70,6 +70,75 @@ fn sentence_case(s: &str) -> String {
         .unwrap_or_default()
 }
 
+/// A test generation: roll the signups (but those left out) without going
+/// live, to find which one breaks generation when its log doesn't say.
+fn test_generation_form(subs: &[SubmissionRow]) -> String {
+    if subs.is_empty() {
+        return String::new();
+    }
+    let mut boxes = String::new();
+    for s in subs {
+        let held = if s.held() {
+            r#" <span class="statline">(held: left out anyway)</span>"#
+        } else {
+            ""
+        };
+        boxes.push_str(&format!(
+            r#"<label class="chk"><input type="checkbox" name="exclude" value="{}"> <span>{} <span class="statline">· {} · {}</span>{held}</span></label>"#,
+            s.id,
+            esc(&s.slot_name),
+            esc(&s.game),
+            esc(&s.username),
+        ));
+    }
+    format!(
+        r#"<details class="testgen"><summary>Test generation</summary>
+<p class="statline">Rolls the signups as generating would, without going live: the season stays as it is and the test seed is thrown away. Leave players out to find the one that breaks generation when its log doesn't say.</p>
+<form method="post" action="admin/test-generate" class="testgenform"><p class="statline">Leave out:</p>{boxes}<div class="btnrow"><button type="submit" class="ghost">Run a test generation</button></div></form></details>"#
+    )
+}
+
+/// The last generation's log, in a box of its own that scrolls, with buttons
+/// to copy it and to download it. Open when it failed, or was a test.
+fn generation_log_box(rec: &crate::generate::GenRecord, log: &str) -> String {
+    let what = match rec.kind.as_str() {
+        "test" => "Test generation",
+        "re-roll" => "Re-roll",
+        _ => "Generation",
+    };
+    let how = if rec.ok { "passed" } else { "failed" };
+    let out = if rec.left_out.is_empty() {
+        String::new()
+    } else {
+        format!(" · left out: {}", esc(&rec.left_out.join(", ")))
+    };
+    let open = if !rec.ok || rec.kind == "test" {
+        " open"
+    } else {
+        ""
+    };
+    let body = if log.trim().is_empty() {
+        "(it printed nothing)"
+    } else {
+        log
+    };
+    format!(
+        r#"<details class="genlog"{open}><summary>{what} log · {how} · <span class="ago" data-ts="{}">{}</span>{out}</summary>
+<pre id="genlog" tabindex="0">{}</pre>
+<div class="btnrow"><button type="button" class="ghost" id="genlogcopy">Copy</button> <a class="pill" href="admin/generation-log" download>Download</a> <span id="genlogmsg" class="statline"></span></div>
+<script>(function(){{var b=document.getElementById('genlogcopy'),p=document.getElementById('genlog'),m=document.getElementById('genlogmsg');
+// An error is at the end: open the box there.
+p.scrollTop=p.scrollHeight;
+b.addEventListener('click',function(){{var t=p.textContent;
+ function done(){{m.textContent='Copied.';setTimeout(function(){{m.textContent=''}},2000)}}
+ function select(){{var r=document.createRange();r.selectNodeContents(p);var s=getSelection();s.removeAllRanges();s.addRange(r);m.textContent='Selected: press Ctrl+C (or ⌘C) to copy.'}}
+ if(navigator.clipboard&&window.isSecureContext)navigator.clipboard.writeText(t).then(done,select);else select();}});}})();</script></details>"#,
+        rec.at,
+        fmt_date(rec.at),
+        esc(body),
+    )
+}
+
 pub(super) fn action_btn(
     action: &str,
     fields: &[(&str, &str)],
@@ -267,6 +336,7 @@ pub fn admin_page(
     out_slots: &[SlotRow],
     connect: Option<&str>,
     managed: bool,
+    genlog: Option<&(crate::generate::GenRecord, String)>,
 ) -> Html<String> {
     let mut b = page_head(None);
     b.push_str(&format!(
@@ -373,6 +443,15 @@ pub fn admin_page(
         };
         b.push_str(&format!(r#"<div class="btnrow">{btn}</div>"#));
         b.push_str(&season_load_line(season));
+        if matches!(
+            season.state(),
+            crate::db::State::Draft | crate::db::State::Signup
+        ) {
+            b.push_str(&test_generation_form(subs));
+        }
+        if let Some((rec, log)) = genlog {
+            b.push_str(&generation_log_box(rec, log));
+        }
     }
 
     b.push_str(&mods_section(mods));

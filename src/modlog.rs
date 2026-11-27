@@ -273,6 +273,7 @@ pub fn label(action: &str) -> &str {
         "/admin/console" => "console command",
         "/admin/generate" => "generate",
         "/admin/regenerate" => "re-roll",
+        "/admin/test-generate" => "test generation",
         "/admin/signups" => "open/close signups",
         "/admin/clear" => "clear",
         "/admin/delete-player" => "remove a signup",

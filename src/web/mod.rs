@@ -199,6 +199,8 @@ pub(crate) fn router(state: AppState, auth: auth::Auth, trusted_proxies: Vec<net
         .route("/admin/signups", post(admin_signups))
         .route("/admin/generate", post(admin_generate))
         .route("/admin/regenerate", post(admin_regenerate))
+        .route("/admin/test-generate", post(admin_test_generate))
+        .route("/admin/generation-log", get(admin_generation_log))
         .route("/admin/clear", post(admin_clear))
         .route("/admin/delete-player", post(admin_delete_player))
         .route("/admin/delete-apworld", post(admin_delete_apworld))

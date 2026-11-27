@@ -413,6 +413,10 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .wstep input[type=file],.wstep input[type=text],.wstep input[type=search]{width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:7px;padding:9px 11px;font-size:13px;margin:2px 0}
 
 /* A checkbox inside a row of buttons (the approve button's catalog box). */
+details.testgen,details.genlog{margin:12px 0}details.testgen summary,details.genlog summary{cursor:pointer;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+.testgenform{display:grid;gap:4px;margin-top:6px}.testgenform label.chk{display:flex;gap:8px;align-items:flex-start;font-size:13px}
+/* A long log scrolls in its box instead of stretching the page. */
+details.genlog pre{max-height:360px;overflow:auto;margin:8px 0;padding:10px 12px;background:var(--bg);border:1px solid var(--bd);border-radius:8px;font-family:var(--mono);font-size:12px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere}
 .inlinechk{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;color:var(--muted);margin-right:6px}.inlinechk input{margin:0}
 /* The signup wizard's game list: one searchable list of every game. */
 .gamepick{list-style:none;margin:6px 0 0;padding:0;max-height:320px;overflow-y:auto;border:1px solid var(--bd);border-radius:9px;background:var(--bg)}

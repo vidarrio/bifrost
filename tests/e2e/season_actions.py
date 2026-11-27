@@ -1,13 +1,16 @@
 """What a moderator can do to a season at each stage: delete it before
 generation, cancel a live one back to signups, delete an archived one (sysadmins
 only), and nothing that wipes part of a running season."""
+import io
+import json
 import os
 import re
 import sys
+import zipfile
 
 import requests
 
-from lib import Server, ap_servers, check, first_game, generate, get, new_season, post, summary, wait_for
+from lib import Server, ap_servers, check, first_game, fixture, generate, get, new_season, post, summary, wait_for
 
 YAML = b"name: %s\ngame: ChecksFinder\nChecksFinder: {}\n"
 srv = Server("season_actions", port=18185, ap_ports="39208-39210")
@@ -132,6 +135,77 @@ try:
     check("a sysadmin deletes it", get(root, f"/s/{sid}/season").status_code == 404 and not os.path.exists(dirs(sid)))
     check("…and its bundle", not os.path.exists(bundle))
     check("…and it's gone from the home page", "Live one" not in get(root, "/").text)
+
+    # A YAML that passes its check but breaks generation (a world's own code
+    # refusing it), as incompatible Don't Starve configs did: moderators see
+    # the whole log, and can test-generate, leaving players out, to find it.
+    def boom_world():
+        src = zipfile.ZipFile(io.BytesIO(fixture("foo.apworld")))
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as z:
+            for item in src.infolist():
+                data = src.read(item.filename)
+                name = "boom/" + item.filename.removeprefix("foo/")
+                if name == "boom/archipelago.json":
+                    m = json.loads(data)
+                    m.update(game="Boom Finder", world_version="1.0.0")
+                    data = json.dumps(m).encode()
+                if name.endswith(".py"):
+                    # The game's name is the code's, not just the manifest's.
+                    data = data.replace(b"Foo Finder", b"Boom Finder")
+                if name == "boom/__init__.py":
+                    data = data.decode().replace(
+                        "    def create_regions(self):",
+                        "    def generate_early(self):\n"
+                        "        if self.player_name.startswith('Boom'):\n"
+                        "            raise Exception('Boom: this world refuses ' + self.player_name)\n\n"
+                        "    def create_regions(self):", 1).encode()
+                z.writestr(name, data)
+        return out.getvalue()
+    sid = new_season(mod, "Boomtown")
+    post(mod, f"/s/{sid}/admin/signups", data=dict(open="1"))
+    j = post(ann, f"/s/{sid}/signup/apworld", files={"apworld": ("boom.apworld", boom_world())}).json()
+    post(mod, f"/s/{sid}/admin/worlds/approve", data={"name": "boom.apworld"})
+    post(ann, f"/s/{sid}/signup", files={"yaml": ("b.yaml", b"name: BoomAnn\ngame: Boom Finder\nBoom Finder: {}\n")},
+         data={"is_custom": "1"})
+    post(cat, f"/s/{sid}/signup", files={"yaml": ("c.yaml", YAML % b"Cat")})
+    with srv.db() as db:
+        subs = dict(db.execute("SELECT slot_name, id FROM submission WHERE season_id = ?", (sid,)).fetchall())
+        held = db.execute("SELECT COUNT(*) FROM submission WHERE season_id = ? AND held_for IS NOT NULL", (sid,)).fetchone()[0]
+    check("both signups are in, and pass their checks", set(subs) == {"BoomAnn", "Cat"} and held == 0, (subs, held))
+    admin = lambda: get(mod, f"/s/{sid}/admin").text
+    done = lambda: wait_for(lambda: (t := admin()) and "⏳" not in t and t, 300, 3)
+    seeds = lambda: [n for n in os.listdir(os.path.join(dirs(sid), "output")) if n.startswith("AP_")] if os.path.isdir(os.path.join(dirs(sid), "output")) else []
+    page = admin()
+    check("a moderator is offered a test generation, with each signup to leave out",
+          "admin/test-generate" in page and f'name="exclude" value="{subs["BoomAnn"]}"' in page)
+    post(mod, f"/s/{sid}/admin/test-generate")
+    page = done() or ""
+    check("a test with everyone fails", "Test failed" in page, re.findall(r'class="banner[^"]*">[^<]*', page))
+    log = re.search(r'<pre id="genlog"[^>]*>(.*?)</pre>', page, re.S)
+    check("…its whole log is in a box, naming the culprit", log and "Boom: this world refuses BoomAnn" in log.group(1), (log.group(1)[-400:] if log else page[-600:]))
+    check("…with copy and download buttons", 'id="genlogcopy"' in page and 'href="admin/generation-log"' in page)
+    with srv.db() as db:
+        state = db.execute("SELECT state FROM season WHERE id = ?", (sid,)).fetchone()[0]
+    check("…and the season stays in signups, keeping no seed", state == "signup" and seeds() == [], (state, seeds()))
+    post(mod, f"/s/{sid}/admin/test-generate", data={"exclude": subs["BoomAnn"]})
+    page = done() or ""
+    check("leaving the culprit out, the test passes", "Test generation passed with 1 signup, leaving out BoomAnn" in page,
+          re.findall(r'class="banner[^"]*">[^<]*', page))
+    check("…throwing its seed away", seeds() == [], seeds())
+    check("…and its log says who was left out", "left out: BoomAnn" in page)
+    r = mod.get(srv.base + f"/s/{sid}/admin/generation-log")
+    check("the log downloads as a file", r.status_code == 200 and "attachment" in r.headers.get("content-disposition", "") and len(r.content) > 0,
+          (r.status_code, r.headers.get("content-disposition")))
+    r = post(ann, f"/s/{sid}/admin/test-generate")
+    check("a player can't run a test", "Admins only" in r.text or r.status_code in (403, 302, 303))
+    check("…nor download the log", ann.get(srv.base + f"/s/{sid}/admin/generation-log").content != mod.get(srv.base + f"/s/{sid}/admin/generation-log").content)
+    post(mod, f"/s/{sid}/admin/generate")
+    page = done() or ""
+    log = re.search(r'<pre id="genlog"[^>]*>(.*?)</pre>', page, re.S)
+    check("a real generation that fails shows its log too", "Failed" in page and log and "Boom: this world refuses BoomAnn" in log.group(1),
+          re.findall(r'class="banner[^"]*">[^<]*', page))
+
 finally:
     srv.stop()
 

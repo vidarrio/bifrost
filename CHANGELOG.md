@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Test generation** for moderators, before the season is generated: it
+  rolls the signups as generating would, leaving out any players you tick,
+  without going live or keeping the seed. Use it to find the signup whose
+  YAML passes its check but breaks generation.
+- The season admin page shows the last generation's **whole log** in a
+  scrolling box, with **Copy** and **Download** buttons, instead of only its
+  last lines.
+
 ## [0.6.0] - 2026-11-24
 
 **Upgrading:** the database gains two tables (notifications, and the moderator

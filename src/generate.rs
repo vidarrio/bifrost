@@ -43,6 +43,145 @@ async fn clear_ext(dir: &Path, ext: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Stage these signups' YAMLs into the season's Players/ (and nothing else
+/// there), and clear earlier seed archives. Only the YAMLs: custom apworlds
+/// are installed into worlds/ at signup time, so that's left alone.
+async fn stage_players(season_id: Id, subs: &[crate::db::SubmissionRow]) -> Result<(), String> {
+    let season = config::get().season(season_id);
+    clear_ext(&season.players, "yaml").await?;
+    clear_old_seeds(season_id).await;
+    for sub in subs {
+        // By id too: names that slugify alike mustn't overwrite each other.
+        let dst = season.players.join(format!(
+            "{}-{}.yaml",
+            sub.id,
+            crate::text::slug(&sub.slot_name)
+        ));
+        let src = config::get()
+            .data_file(&sub.yaml_file)
+            .ok_or_else(|| format!("{}'s YAML isn't in the data directory", sub.slot_name))?;
+        tokio::fs::copy(&src, &dst)
+            .await
+            .map_err(|e| format!("staging {}'s YAML: {e}", sub.slot_name))?;
+    }
+    Ok(())
+}
+
+/// What the season's last generation run was, kept beside its log
+/// (`generation.json` in the season's folder, which only Bifrost writes).
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct GenRecord {
+    /// "generate", "re-roll" or "test".
+    pub kind: String,
+    pub ok: bool,
+    pub at: i64,
+    /// What it said when it ended.
+    pub message: String,
+    /// A test's signups left out, by name.
+    #[serde(default)]
+    pub left_out: Vec<String>,
+}
+
+fn record_path(season: Id) -> PathBuf {
+    config::get().season(season).root.join("generation.json")
+}
+
+async fn record(season: Id, kind: &str, ok: bool, message: &str, left_out: Vec<String>) {
+    let r = GenRecord {
+        kind: kind.into(),
+        ok,
+        at: now(),
+        message: message.into(),
+        left_out,
+    };
+    let json = serde_json::to_vec(&r).expect("record serializes");
+    if let Err(e) = crate::atomic::write_async(record_path(season), json).await {
+        tracing::warn!("season {season}: keeping the generation record: {e}");
+    }
+}
+
+/// The season's last generation run and its log, if one has run.
+pub async fn last_generation(season: Id) -> Option<(GenRecord, String)> {
+    let r: GenRecord =
+        serde_json::from_slice(&tokio::fs::read(record_path(season)).await.ok()?).ok()?;
+    let log = tokio::fs::read(ap_adapter::generation_log_path(
+        &config::get().season(season),
+    ))
+    .await
+    .map(|b| String::from_utf8_lossy(&b).into_owned())
+    .unwrap_or_default();
+    Some((r, log))
+}
+
+/// A test generation: roll the season's signups, but those in `left_out`
+/// (by id), as a real generation would, then throw the seed away. Nothing
+/// goes live and the season stays as it is; the log and the outcome are
+/// kept for the admin page. Held signups are left out too (their worlds
+/// aren't ready), and said so.
+pub async fn test_run(db: Db, rts: Arc<Runtimes>, season: Id, left_out: Vec<Id>) {
+    let state = rts.get(season).genstate.clone();
+    let res = test_inner(&db, &state, season, &left_out).await;
+    let (ok, msg, names) = match res {
+        Ok((msg, names)) => (true, msg, names),
+        Err((e, names)) => (false, format!("Test failed: {e}"), names),
+    };
+    record(season, "test", ok, &msg, names).await;
+    set(&state, false, msg);
+}
+
+async fn test_inner(
+    db: &Db,
+    state: &GenState,
+    season: Id,
+    left_out: &[Id],
+) -> Result<(String, Vec<String>), (String, Vec<String>)> {
+    if !matches!(
+        db.season(season).await.map(|s| s.state()),
+        Some(State::Draft | State::Signup)
+    ) {
+        return Err((
+            "a test runs only before the season is generated".into(),
+            vec![],
+        ));
+    }
+    let subs = db
+        .submissions(season)
+        .await
+        .map_err(|e| (e.to_string(), vec![]))?;
+    let (rolled, out): (Vec<_>, Vec<_>) = subs
+        .into_iter()
+        .partition(|s| !left_out.contains(&s.id) && !s.held());
+    let mut names: Vec<String> = out.iter().map(|s| s.slot_name.clone()).collect();
+    names.sort_by_key(|n| n.to_lowercase());
+    let fail = |e: String| (e, names.clone());
+    if rolled.is_empty() {
+        return Err(fail("no signups left to roll".into()));
+    }
+    set(state, true, "Test generation: staging…");
+    stage_players(season, &rolled).await.map_err(fail)?;
+    stage_commons(db, season).await.map_err(fail)?;
+    stage_tracker_apworld(season).await;
+    set(
+        state,
+        true,
+        "Test generation: generating… (this can take a minute)",
+    );
+    let res = roll(state, season).await;
+    // The seed was only a test.
+    clear_old_seeds(season).await;
+    res.map_err(fail)?;
+    let n = rolled.len();
+    let mut msg = format!(
+        "Test generation passed with {n} signup{}",
+        if n == 1 { "" } else { "s" }
+    );
+    if !names.is_empty() {
+        msg.push_str(&format!(", leaving out {}", names.join(", ")));
+    }
+    msg.push('.');
+    Ok((msg, names))
+}
+
 /// Remove previously-generated seed archives (AP_*.zip), leaving current.zip.
 async fn clear_old_seeds(season: Id) {
     if let Ok(mut rd) = tokio::fs::read_dir(config::get().season(season).output).await {
@@ -547,6 +686,8 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
             format!("generation failed: {e}")
         }
     };
+    let ok = !told.starts_with("generation failed") && !told.starts_with("Generated, but");
+    record(season, "generate", ok, &told, vec![]).await;
     // Its moderators hear how it went, wherever they are.
     crate::notify::generated(&db, season, &told).await;
 }
@@ -567,6 +708,7 @@ pub async fn regenerate(db: Db, rts: Arc<Runtimes>, season: Id) {
         Ok(msg) => msg.clone(),
         Err(e) => format!("the re-roll failed, so the previous seed stays: {e}"),
     };
+    record(season, "re-roll", r.is_ok(), &told, vec![]).await;
     crate::notify::generated(&db, season, &told).await;
     match r {
         Ok(msg) => set(&state, false, msg),
@@ -722,27 +864,8 @@ async fn run_inner(
     }
 
     set(state, true, "Staging submissions…");
-    // Only the player YAMLs are staged here; custom apworlds are installed into
-    // the season's worlds/ at signup time (so the checker can validate against them),
-    // so we leave that directory alone.
     let season_id = season;
-    let season = config::get().season(season);
-    clear_ext(&season.players, "yaml").await?;
-    clear_old_seeds(season_id).await;
-    for sub in &subs {
-        // By id too: names that slugify alike mustn't overwrite each other.
-        let dst = season.players.join(format!(
-            "{}-{}.yaml",
-            sub.id,
-            crate::text::slug(&sub.slot_name)
-        ));
-        let src = config::get()
-            .data_file(&sub.yaml_file)
-            .ok_or_else(|| format!("{}'s YAML isn't in the data directory", sub.slot_name))?;
-        tokio::fs::copy(&src, &dst)
-            .await
-            .map_err(|e| format!("staging {}'s YAML: {e}", sub.slot_name))?;
-    }
+    stage_players(season_id, &subs).await?;
 
     // Always: it also removes what an earlier roll staged for common games
     // the season no longer has.
