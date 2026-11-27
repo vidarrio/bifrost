@@ -15,9 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rolls the signups as generating would, leaving out any players you tick,
   without going live or keeping the seed. Use it to find the signup whose
   YAML passes its check but breaks generation.
-- The season admin page shows the last generation's **whole log** in a
-  scrolling box, with **Copy** and **Download** buttons, instead of only its
-  last lines.
+- The season admin page shows the last generation's **log** in a scrolling
+  box, with **Copy** and **Download** buttons, instead of only its last three
+  lines. Up to its last 2 MiB is kept for Download; the page shows the end of
+  that.
 
 ## [0.6.0] - 2026-11-24
 
