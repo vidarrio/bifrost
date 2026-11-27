@@ -84,6 +84,7 @@ pub(crate) async fn render_admin(
             .connect_address(&ctx.row, &st.db.instance().await.domain)
             .as_deref(),
         config::get().ap_managed,
+        crate::generate::last_generation(ctx.id).await.as_ref(),
     )
 }
 
@@ -148,6 +149,61 @@ pub(crate) async fn admin_generate(
         }
     }
     Redirect::to(&ctx.url("/admin"))
+}
+
+/// Run a test generation, leaving out the signups ticked (`exclude`).
+pub(crate) async fn admin_test_generate(
+    State(st): State<AppState>,
+    ctx: scope::SeasonCtx,
+    me: auth::Me,
+    body: axum::body::Bytes,
+) -> Response {
+    // The ticked boxes, if any (no box ticked can mean no body at all).
+    let fields: Vec<(String, String)> = serde_urlencoded::from_bytes(&body).unwrap_or_default();
+    let (_me, is_admin) = ctx.ident(&me);
+    if !is_admin {
+        return render::notice("Admins only.", false, "board").into_response();
+    }
+    if !matches!(ctx.state(), db::State::Draft | db::State::Signup) {
+        return render::notice(
+            "A test generation runs only before the season is generated.",
+            false,
+            "admin",
+        )
+        .into_response();
+    }
+    let left_out: Vec<Id> = fields
+        .iter()
+        .filter(|(k, _)| k == "exclude")
+        .filter_map(|(_, v)| v.parse().ok())
+        .collect();
+    let start = ctx.rt.with_genstate(|g| {
+        if g.0 {
+            return false;
+        }
+        g.0 = true;
+        g.1 = "Test generation: starting…".into();
+        true
+    }) == Some(true);
+    if start {
+        let (db, rts, id) = (st.db.clone(), st.seasons.clone(), ctx.id);
+        tokio::spawn(async move { generate::test_run(db, rts, id, left_out).await });
+    }
+    Redirect::to(&ctx.url("/admin")).into_response()
+}
+
+/// The last generation's log, as a text file.
+pub(crate) async fn admin_generation_log(ctx: scope::SeasonCtx, me: auth::Me) -> Response {
+    let (_me, is_admin) = ctx.ident(&me);
+    if !is_admin {
+        return render::notice("Admins only.", false, "board").into_response();
+    }
+    match generate::last_generation(ctx.id).await {
+        Some((_, log)) => {
+            download_response(&format!("generation-{}.log", ctx.id), log.into_bytes())
+        }
+        None => render::notice("No generation has run yet.", false, "admin").into_response(),
+    }
 }
 
 pub(crate) async fn admin_regenerate(

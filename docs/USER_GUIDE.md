@@ -305,6 +305,16 @@ The season console has six tabs:
 
   Generation refuses while any signup is held, and names them. A warning shows
   when the server is short on memory for another live season.
+
+  After a generation, the page keeps its whole log in a box that scrolls
+  (opened at its end, where an error is), with **Copy** and **Download**
+  buttons. It's open when the run failed, and after a test. A YAML can pass its check and still
+  break generation: a world's own code only runs when the season is
+  generated. To find which signup does, use **Test generation** (before
+  generation only). It rolls the signups as generating would, but nothing goes
+  live, the season stays as it is and the test seed is thrown away. Tick the
+  players to leave out, and narrow it down until the test passes; signups that
+  are held are left out anyway.
 - **Signups & apworlds.** The roster with each signup's check result, the
   season's installed custom worlds and where each came from, and **apworlds
   waiting for approval**. A signup that failed its check is listed at the top

@@ -61,6 +61,8 @@ pub fn rule_for(method: &Method, path: &str) -> Option<Rule> {
         "/hint" => r("hint", 30, 10, false),
         // Each one that turns a priority on can notify another player.
         "/prioritize" => r("prioritize", 30, 10, false),
+        // Each holds the one generation slot every season queues for.
+        "/admin/test-generate" => r("test-generate", 10, 60, false),
         "/minesweeper/new" => r("minesweeper", 60, 10, false),
         // Each upload unpacks a pack and runs its Lua in a worker.
         p if p.starts_with("/game/") && p.ends_with("/poptracker") => r("pack", 20, 60, false),
@@ -271,6 +273,7 @@ mod tests {
             "/reset/abc",
             "/hint",
             "/prioritize",
+            "/admin/test-generate",
             "/minesweeper/new",
             "/game/1/poptracker",
         ] {

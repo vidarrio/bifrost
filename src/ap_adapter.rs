@@ -625,13 +625,45 @@ pub async fn generate(season: &SeasonDirs) -> Result<(), String> {
     let timeout = config::var("BIFROST_GENERATE_TIMEOUT_MIN")
         .and_then(|m| m.parse::<u64>().ok())
         .map_or(GENERATE_TIMEOUT, |m| Duration::from_secs(m * 60));
-    let out = run_helper("bifrost_generate.py", vec![], season, access, timeout)
-        .await
-        .map_err(|e| format!("generate: {e}"))?;
+    let out = run_helper("bifrost_generate.py", vec![], season, access, timeout).await;
+    // The whole of what it said, for the season admin page (what it printed,
+    // then its errors: the two aren't interleaved).
+    let log = match &out {
+        Ok(o) => format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        ),
+        Err(e) => format!("generation didn't run: {e}\n"),
+    };
+    keep_generation_log(season, &log).await;
+    let out = out.map_err(|e| format!("generate: {e}"))?;
     if !out.status.success() {
         return Err(format!("generation error: {}", stderr_tail(&out, 3)));
     }
     Ok(())
+}
+
+/// The most of a generation's output kept: its end, where an error is.
+const GENERATION_LOG_MAX: usize = 2 << 20;
+
+/// Where the last generation's output is kept: the season's own folder, which
+/// no sandboxed helper can write to (they get only `output/` and `logs/`), so
+/// a world's code can't plant anything there.
+pub fn generation_log_path(season: &SeasonDirs) -> PathBuf {
+    season.root.join("generation.log")
+}
+
+async fn keep_generation_log(season: &SeasonDirs, log: &str) {
+    // The end, cut where a character starts.
+    let mut start = log.len().saturating_sub(GENERATION_LOG_MAX);
+    while !log.is_char_boundary(start) {
+        start += 1;
+    }
+    let tail = &log.as_bytes()[start..];
+    if let Err(e) = crate::atomic::write_async(generation_log_path(season), tail.to_vec()).await {
+        tracing::warn!("keeping the generation log: {e}");
+    }
 }
 
 /// Universal Tracker's view of one slot: the location names in logic

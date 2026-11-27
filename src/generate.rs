@@ -43,6 +43,184 @@ async fn clear_ext(dir: &Path, ext: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Stage these signups' YAMLs into the season's Players/ (and nothing else
+/// there), and clear earlier seed archives. Only the YAMLs: custom apworlds
+/// are installed into worlds/ at signup time, so that's left alone.
+async fn stage_players(season_id: Id, subs: &[crate::db::SubmissionRow]) -> Result<(), String> {
+    let season = config::get().season(season_id);
+    clear_ext(&season.players, "yaml").await?;
+    clear_old_seeds(season_id).await;
+    for sub in subs {
+        // By id too: names that slugify alike mustn't overwrite each other.
+        let dst = season.players.join(format!(
+            "{}-{}.yaml",
+            sub.id,
+            crate::text::slug(&sub.slot_name)
+        ));
+        let src = config::get()
+            .data_file(&sub.yaml_file)
+            .ok_or_else(|| format!("{}'s YAML isn't in the data directory", sub.slot_name))?;
+        tokio::fs::copy(&src, &dst)
+            .await
+            .map_err(|e| format!("staging {}'s YAML: {e}", sub.slot_name))?;
+    }
+    Ok(())
+}
+
+/// Ends a run's "running" state if the run panics, so the season isn't left
+/// looking busy until a restart. Only then: a run that ended normally has
+/// set its own outcome, and another run may have started since.
+struct Running(GenState);
+impl Drop for Running {
+    fn drop(&mut self) {
+        if std::thread::panicking()
+            && let Ok(mut g) = self.0.lock()
+            && g.0
+        {
+            *g = (false, "Failed: it stopped unexpectedly".into());
+        }
+    }
+}
+
+/// What the season's last generation run was, kept beside its log
+/// (`generation.json` in the season's folder, which only Bifrost writes).
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct GenRecord {
+    /// "generate", "re-roll" or "test".
+    pub kind: String,
+    pub ok: bool,
+    pub at: i64,
+    /// What it said when it ended.
+    pub message: String,
+    /// A test's signups left out, by name.
+    #[serde(default)]
+    pub left_out: Vec<String>,
+}
+
+fn record_path(season: Id) -> PathBuf {
+    config::get().season(season).root.join("generation.json")
+}
+
+/// Forget the last run's log as a new one starts: a run that stops before
+/// generation itself (held signups, staging) mustn't show the old run's log.
+async fn forget_log(season: Id) {
+    let _ = tokio::fs::remove_file(ap_adapter::generation_log_path(
+        &config::get().season(season),
+    ))
+    .await;
+}
+
+async fn record(season: Id, kind: &str, ok: bool, message: &str, left_out: Vec<String>) {
+    // No log from this run: generation itself never ran.
+    let log = ap_adapter::generation_log_path(&config::get().season(season));
+    if !log.exists() {
+        let text = format!("Generation didn't run: {message}\n");
+        if let Err(e) = crate::atomic::write_async(log, text.into_bytes()).await {
+            tracing::warn!("season {season}: keeping the generation log: {e}");
+        }
+    }
+    let r = GenRecord {
+        kind: kind.into(),
+        ok,
+        at: now(),
+        message: message.into(),
+        left_out,
+    };
+    let json = serde_json::to_vec(&r).expect("record serializes");
+    if let Err(e) = crate::atomic::write_async(record_path(season), json).await {
+        tracing::warn!("season {season}: keeping the generation record: {e}");
+    }
+}
+
+/// The season's last generation run and its log, if one has run.
+pub async fn last_generation(season: Id) -> Option<(GenRecord, String)> {
+    let r: GenRecord =
+        serde_json::from_slice(&tokio::fs::read(record_path(season)).await.ok()?).ok()?;
+    let log = tokio::fs::read(ap_adapter::generation_log_path(
+        &config::get().season(season),
+    ))
+    .await
+    .map(|b| String::from_utf8_lossy(&b).into_owned())
+    .unwrap_or_default();
+    Some((r, log))
+}
+
+/// A test generation: roll the season's signups, but those in `left_out`
+/// (by id), as a real generation would, then throw the seed away. Nothing
+/// goes live and the season stays as it is; the log and the outcome are
+/// kept for the admin page. Held signups are left out too (their worlds
+/// aren't ready), and said so.
+pub async fn test_run(db: Db, rts: Arc<Runtimes>, season: Id, left_out: Vec<Id>) {
+    let state = rts.get(season).genstate.clone();
+    let _running = Running(state.clone());
+    forget_log(season).await;
+    let res = test_inner(&db, &state, season, &left_out).await;
+    let (ok, msg, names) = match res {
+        Ok((msg, names)) => (true, msg, names),
+        Err((e, names)) => (false, format!("Test failed: {e}"), names),
+    };
+    record(season, "test", ok, &msg, names).await;
+    set(&state, false, msg);
+}
+
+async fn test_inner(
+    db: &Db,
+    state: &GenState,
+    season: Id,
+    left_out: &[Id],
+) -> Result<(String, Vec<String>), (String, Vec<String>)> {
+    if !matches!(
+        db.season(season).await.map(|s| s.state()),
+        Some(State::Draft | State::Signup)
+    ) {
+        return Err((
+            "a test runs only before the season is generated".into(),
+            vec![],
+        ));
+    }
+    // As generating does: finish re-checks cut short first.
+    if !db.stale_holds(season).await.is_empty() {
+        set(state, true, "Test generation: checking held signups…");
+        crate::worlds::recheck_stale(db, season).await;
+    }
+    let subs = db
+        .submissions(season)
+        .await
+        .map_err(|e| (e.to_string(), vec![]))?;
+    let (rolled, out): (Vec<_>, Vec<_>) = subs
+        .into_iter()
+        .partition(|s| !left_out.contains(&s.id) && !s.held());
+    let mut names: Vec<String> = out.iter().map(|s| s.slot_name.clone()).collect();
+    names.sort_by_key(|n| n.to_lowercase());
+    let fail = |e: String| (e, names.clone());
+    if rolled.is_empty() {
+        return Err(fail("no signups left to roll".into()));
+    }
+    set(state, true, "Test generation: staging…");
+    stage_players(season, &rolled).await.map_err(fail)?;
+    stage_commons(db, season).await.map_err(fail)?;
+    stage_tracker_apworld(season).await;
+    set(
+        state,
+        true,
+        "Test generation: generating… (this can take a minute)",
+    );
+    let res = roll(state, season).await;
+    // The seed was only a test.
+    clear_old_seeds(season).await;
+    res.map_err(fail)?;
+    let n = rolled.len();
+    let mut msg = format!(
+        "Test generation passed with {n} signup{}",
+        if n == 1 { "" } else { "s" }
+    );
+    if !names.is_empty() {
+        msg.push_str(&format!(", leaving out {}", names.join(", ")));
+    }
+    msg.push('.');
+    Ok((msg, names))
+}
+
 /// Remove previously-generated seed archives (AP_*.zip), leaving current.zip.
 async fn clear_old_seeds(season: Id) {
     if let Ok(mut rd) = tokio::fs::read_dir(config::get().season(season).output).await {
@@ -376,6 +554,10 @@ pub async fn clear_player_yamls(season: Id) -> Result<(), String> {
 /// Delete a season's logs, so a cancelled run's don't end up in its bundle.
 pub async fn clear_logs(season: Id) {
     let dirs = config::get().season(season);
+    // And the last generation's, with its record: a cancelled run's mustn't
+    // show afterwards.
+    let _ = tokio::fs::remove_file(ap_adapter::generation_log_path(&dirs)).await;
+    let _ = tokio::fs::remove_file(record_path(season)).await;
     if let Err(e) = tokio::fs::remove_dir_all(&dirs.logs).await
         && e.kind() != std::io::ErrorKind::NotFound
     {
@@ -496,6 +678,7 @@ async fn read_seed(
 /// on failure. Updates `state` as it goes.
 pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
     let state = rts.get(season).genstate.clone();
+    let _running = Running(state.clone());
     let Some(prev) = db.season(season).await.map(|s| s.state()) else {
         return set(&state, false, "Failed: no such season");
     };
@@ -527,28 +710,31 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
             return set(&state, false, format!("Failed: {e}"));
         }
     }
-    let told = match run_inner(&db, &rts, &state, season).await {
+    forget_log(season).await;
+    // (shown, told): what the page says, and what its moderators are told.
+    let (shown, told) = match run_inner(&db, &rts, &state, season).await {
         Ok(msg) => match db.transition(season, State::Live, now()).await {
             Ok(()) => {
                 rts.start_live(season).await;
-                set(&state, false, msg.clone());
-                msg
+                (msg.clone(), msg)
             }
             Err(e) => {
                 let _ = db.transition(season, prev, now()).await;
                 let msg = format!("Generated, but couldn't go live: {e}");
-                set(&state, false, msg.clone());
-                msg
+                (msg.clone(), msg)
             }
         },
         Err(e) => {
             let _ = db.transition(season, prev, now()).await;
-            set(&state, false, format!("Failed: {e}"));
-            format!("generation failed: {e}")
+            (format!("Failed: {e}"), format!("generation failed: {e}"))
         }
     };
+    let ok = !told.starts_with("generation failed") && !told.starts_with("Generated, but");
+    record(season, "generate", ok, &told, vec![]).await;
     // Its moderators hear how it went, wherever they are.
     crate::notify::generated(&db, season, &told).await;
+    // Last: once the season shows idle, another run may start.
+    set(&state, false, shown);
 }
 
 /// Re-roll a live season's lineup: reuse its staged Players/ + installed
@@ -557,9 +743,11 @@ pub async fn run(db: Db, rts: Arc<Runtimes>, season: Id) {
 /// submissions.
 pub async fn regenerate(db: Db, rts: Arc<Runtimes>, season: Id) {
     let state = rts.get(season).genstate.clone();
+    let _running = Running(state.clone());
     if let Err(e) = db.transition(season, State::Generating, now()).await {
         return set(&state, false, format!("Failed: {e}"));
     }
+    forget_log(season).await;
     let r = regen_inner(&db, &rts, &state, season).await;
     // Live either way: on failure the previous seed is still deployed.
     let _ = db.transition(season, State::Live, now()).await;
@@ -567,6 +755,7 @@ pub async fn regenerate(db: Db, rts: Arc<Runtimes>, season: Id) {
         Ok(msg) => msg.clone(),
         Err(e) => format!("the re-roll failed, so the previous seed stays: {e}"),
     };
+    record(season, "re-roll", r.is_ok(), &told, vec![]).await;
     crate::notify::generated(&db, season, &told).await;
     match r {
         Ok(msg) => set(&state, false, msg),
@@ -722,27 +911,8 @@ async fn run_inner(
     }
 
     set(state, true, "Staging submissions…");
-    // Only the player YAMLs are staged here; custom apworlds are installed into
-    // the season's worlds/ at signup time (so the checker can validate against them),
-    // so we leave that directory alone.
     let season_id = season;
-    let season = config::get().season(season);
-    clear_ext(&season.players, "yaml").await?;
-    clear_old_seeds(season_id).await;
-    for sub in &subs {
-        // By id too: names that slugify alike mustn't overwrite each other.
-        let dst = season.players.join(format!(
-            "{}-{}.yaml",
-            sub.id,
-            crate::text::slug(&sub.slot_name)
-        ));
-        let src = config::get()
-            .data_file(&sub.yaml_file)
-            .ok_or_else(|| format!("{}'s YAML isn't in the data directory", sub.slot_name))?;
-        tokio::fs::copy(&src, &dst)
-            .await
-            .map_err(|e| format!("staging {}'s YAML: {e}", sub.slot_name))?;
-    }
+    stage_players(season_id, &subs).await?;
 
     // Always: it also removes what an earlier roll staged for common games
     // the season no longer has.
