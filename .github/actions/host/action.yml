@@ -16,6 +16,12 @@ runs:
       env:
         PACKAGES: ${{ inputs.packages }}
       run: |
+        # Ubuntu's archive only: what we install comes from there, and a
+        # third-party source the runner image carries (Microsoft's has
+        # answered 403) would fail apt-get update for nothing.
+        for f in /etc/apt/sources.list.d/*; do
+          [ "$(basename "$f")" = ubuntu.sources ] || sudo rm -f "$f"
+        done
         sudo apt-get update
         # Word splitting on purpose: one argument per package.
         # shellcheck disable=SC2086
